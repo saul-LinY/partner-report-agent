@@ -523,6 +523,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `weekly-collect` 入口和建任务说明；Scheduled Task 由 Codex 官方桌面端或 Web 界面创建，正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
 - Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
 - Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。
+- Admin 页面必须完整展示新生成的 Binding Code，并提供一键复制；关闭生成弹窗后仍可在对应 Partner 下查看和复制。Binding Code 不得通过 Partner、Plugin 或公开接口返回。
 - Partner 不需要登录 Report Service；Plugin 输入 Binding Code 后即可建立 `binding_code_id -> plugin_instance_id -> partner_id` 关系。
 - Plugin 上传时不得自行指定可信 `partner_id`；服务端必须根据 Binding Code 对应的实例推导 Tenant、Team 和 Partner 归属。
 - Binding Code 用于首次绑定一个 Plugin Instance，认领后由实例 Token 持续访问；同一 Partner 可生成多个 Code，Admin 可在认领前停用 Code，并可在认领后停用对应 Plugin Instance。
@@ -1534,6 +1535,7 @@ flowchart LR
 ### 17.3 凭证安全
 
 - Binding Code 必须使用足够随机、不可顺序猜测的值；不强制一次性或自动过期。
+- Binding Code 原文只允许在经过身份验证的 Admin 管理页面查询和复制，不得进入普通日志、模型 Prompt 或非 Admin API 响应。
 - 每个 Plugin Instance 使用独立 Binding Code，不允许多台设备共用一个 Code。
 - 支持 Admin 停用 Binding Code 和 Plugin Instance；停用后立即停止接收数据。
 - Binding Code 不得出现在 Prompt、飞书卡片、普通错误信息和非 Admin 日志中。

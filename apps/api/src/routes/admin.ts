@@ -3,32 +3,44 @@ import type { FastifyInstance } from "fastify";
 import semver from "semver";
 import { z } from "zod";
 import { sqlClient as sql } from "@partner-report/db";
-import { ApiError, audit, randomToken, requireWebActor, sha256, userCode } from "../common.js";
+import {
+  ApiError,
+  audit,
+  randomToken,
+  requireWebActor,
+  sha256,
+  userCode,
+} from "../common.js";
 
 const inviteSchema = z.object({
   email: z.string().email(),
-  roles: z.array(z.enum(["admin", "partner"])).min(1)
+  roles: z.array(z.enum(["admin", "partner"])).min(1),
 });
 
 const projectSchema = z.object({
   name: z.string().min(1).max(120),
   aliases: z.array(z.string().max(120)).default([]),
   allowedPaths: z.array(z.string().max(1000)).default([]),
-  externalIds: z.array(z.string().max(200)).default([])
+  externalIds: z.array(z.string().max(200)).default([]),
 });
 
 const teamUpdateSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   timezone: z.string().min(1).max(100).optional(),
   evidenceExcerptEnabled: z.boolean().optional(),
-  sessionQuietPeriodMinutes: z.number().int().min(15).max(24 * 60).optional(),
-  minimumPluginVersion: z.string().min(1).max(40).optional()
+  sessionQuietPeriodMinutes: z
+    .number()
+    .int()
+    .min(15)
+    .max(24 * 60)
+    .optional(),
+  minimumPluginVersion: z.string().min(1).max(40).optional(),
 });
 
 const partnerUpdateSchema = z.object({
   displayName: z.string().min(1).max(120).optional(),
   status: z.enum(["active", "suspended"]).optional(),
-  preferences: z.record(z.unknown()).optional()
+  preferences: z.record(z.unknown()).optional(),
 });
 
 const partnerCreateSchema = z.object({
@@ -43,25 +55,37 @@ const bindingCodeSchema = z.object({
 const templateSchema = z.object({
   name: z.string().min(1).max(120),
   sections: z.array(z.string().min(1).max(100)).length(7),
-  isDefault: z.boolean().default(false)
+  isDefault: z.boolean().default(false),
 });
 
-const periodSchema = z.object({
-  periodKey: z.string().min(1).max(80),
-  startsAt: z.string().datetime({ offset: true }),
-  endsAt: z.string().datetime({ offset: true }),
-  cutoffAt: z.string().datetime({ offset: true }),
-  timezone: z.string().min(1).max(100),
-  templateId: z.string().uuid().optional(),
-  status: z.enum(["open", "closed"]).default("open")
-}).superRefine((value, context) => {
-  if (new Date(value.startsAt) >= new Date(value.endsAt)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["endsAt"], message: "endsAt 必须晚于 startsAt" });
-  }
-  try { new Intl.DateTimeFormat("en-US", { timeZone: value.timezone }); } catch {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["timezone"], message: "无效 IANA 时区" });
-  }
-});
+const periodSchema = z
+  .object({
+    periodKey: z.string().min(1).max(80),
+    startsAt: z.string().datetime({ offset: true }),
+    endsAt: z.string().datetime({ offset: true }),
+    cutoffAt: z.string().datetime({ offset: true }),
+    timezone: z.string().min(1).max(100),
+    templateId: z.string().uuid().optional(),
+    status: z.enum(["open", "closed"]).default("open"),
+  })
+  .superRefine((value, context) => {
+    if (new Date(value.startsAt) >= new Date(value.endsAt)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endsAt"],
+        message: "endsAt 必须晚于 startsAt",
+      });
+    }
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: value.timezone });
+    } catch {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["timezone"],
+        message: "无效 IANA 时区",
+      });
+    }
+  });
 
 export function pluginHealth(row: {
   status: string;
@@ -73,20 +97,47 @@ export function pluginHealth(row: {
   runnerState?: string | null;
 }) {
   if (row.status !== "active") return "blocked";
-  if (!semver.valid(row.version) || !semver.gte(row.version, row.minimumPluginVersion)) return "blocked";
-  const completedAt = row.lastCollectionCompletedAt ? new Date(row.lastCollectionCompletedAt).getTime() : 0;
+  if (
+    !semver.valid(row.version) ||
+    !semver.gte(row.version, row.minimumPluginVersion)
+  )
+    return "blocked";
+  const completedAt = row.lastCollectionCompletedAt
+    ? new Date(row.lastCollectionCompletedAt).getTime()
+    : 0;
   const ageDays = (Date.now() - completedAt) / 86_400_000;
   if (!completedAt || ageDays > 8) return "offline";
-  if (ageDays > 7 || row.runnerState === "error" || row.retryCount > 0 || row.lastErrorCode) return "delayed";
+  if (
+    ageDays > 7 ||
+    row.runnerState === "error" ||
+    row.retryCount > 0 ||
+    row.lastErrorCode
+  )
+    return "delayed";
   return "healthy";
 }
 
 export async function adminRoutes(app: FastifyInstance) {
   app.get("/v1/admin/overview", async (request) => {
     const actor = await requireWebActor(request, "admin");
-    const [teamRows, projectRows, partnerRows, templateRows, periodRows, pluginRows, jobRows, auditRows, bindingRows, queueRows] = await Promise.all([
-      sql<any[]>`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
-      sql<any[]>`select * from projects where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId} order by name`,
+    const [
+      teamRows,
+      projectRows,
+      partnerRows,
+      templateRows,
+      periodRows,
+      pluginRows,
+      jobRows,
+      auditRows,
+      bindingRows,
+      queueRows,
+    ] = await Promise.all([
+      sql<
+        any[]
+      >`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
+      sql<
+        any[]
+      >`select * from projects where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId} order by name`,
       sql<any[]>`
         select p.id, p.display_name, p.email, p.status, p.preferences, p.user_id, p.created_at
         from partners p
@@ -141,7 +192,7 @@ export async function adminRoutes(app: FastifyInstance) {
         order by created_at desc limit 20
       `,
       sql<any[]>`
-        select id, partner_id, code_prefix, label, status, plugin_instance_id,
+        select id, partner_id, code_value, code_prefix, label, status, plugin_instance_id,
           claimed_at, last_used_at, created_at
         from plugin_binding_codes
         where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
@@ -159,7 +210,7 @@ export async function adminRoutes(app: FastifyInstance) {
           and ir.tenant_id = r.tenant_id
         where r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
         order by r.updated_at desc limit 100
-      `
+      `,
     ]);
 
     return {
@@ -168,15 +219,18 @@ export async function adminRoutes(app: FastifyInstance) {
       partners: partnerRows,
       templates: templateRows,
       periods: periodRows,
-      plugins: pluginRows.map((row) => ({ ...row, health: pluginHealth({
-        status: row.status,
-        version: row.version,
-        minimumPluginVersion: row.minimum_plugin_version,
-        lastCollectionCompletedAt: row.last_collection_completed_at,
-        retryCount: row.retry_count,
-        lastErrorCode: row.last_error_code,
-        runnerState: row.runner_state
-      }) })),
+      plugins: pluginRows.map((row) => ({
+        ...row,
+        health: pluginHealth({
+          status: row.status,
+          version: row.version,
+          minimumPluginVersion: row.minimum_plugin_version,
+          lastCollectionCompletedAt: row.last_collection_completed_at,
+          retryCount: row.retry_count,
+          lastErrorCode: row.last_error_code,
+          runnerState: row.runner_state,
+        }),
+      })),
       jobs: jobRows,
       auditEvents: auditRows,
       bindingCodes: bindingRows,
@@ -198,7 +252,12 @@ export async function adminRoutes(app: FastifyInstance) {
       await audit(request, actor, "partner.created", "partner", id, { email });
       return rows[0];
     } catch (error: any) {
-      if (error?.code === "23505") throw new ApiError(409, "PARTNER_EMAIL_EXISTS", "该工作邮箱已存在 Partner。");
+      if (error?.code === "23505")
+        throw new ApiError(
+          409,
+          "PARTNER_EMAIL_EXISTS",
+          "该工作邮箱已存在 Partner。",
+        );
       throw error;
     }
   });
@@ -211,22 +270,35 @@ export async function adminRoutes(app: FastifyInstance) {
       select id from partners where id = ${id} and tenant_id = ${actor.tenantId}
         and team_id = ${actor.teamId} and status = 'active' limit 1
     `;
-    if (!partners[0]) throw new ApiError(404, "NOT_FOUND", "Partner 不存在或未启用。");
+    if (!partners[0])
+      throw new ApiError(404, "NOT_FOUND", "Partner 不存在或未启用。");
     const code = `PR-${userCode()}`;
     const bindingId = randomUUID();
     await sql`
       insert into plugin_binding_codes (
-        id, tenant_id, team_id, partner_id, code_hash, code_prefix, label, created_by
+        id, tenant_id, team_id, partner_id, code_hash, code_value, code_prefix, label, created_by
       ) values (
-        ${bindingId}, ${actor.tenantId}, ${actor.teamId}, ${id}, ${sha256(code)},
+        ${bindingId}, ${actor.tenantId}, ${actor.teamId}, ${id}, ${sha256(code)}, ${code},
         ${code.slice(0, 7)}, ${input.label}, ${actor.userId}
       )
     `;
-    await audit(request, actor, "plugin.binding_code.created", "plugin_binding_code", bindingId, {
-      partnerId: id,
+    await audit(
+      request,
+      actor,
+      "plugin.binding_code.created",
+      "plugin_binding_code",
+      bindingId,
+      {
+        partnerId: id,
+        label: input.label,
+      },
+    );
+    return {
+      id: bindingId,
+      code,
+      codePrefix: code.slice(0, 7),
       label: input.label,
-    });
-    return { id: bindingId, code, codePrefix: code.slice(0, 7), label: input.label };
+    };
   });
 
   app.delete("/v1/admin/binding-codes/:id", async (request) => {
@@ -237,8 +309,19 @@ export async function adminRoutes(app: FastifyInstance) {
       where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
         and status = 'active' returning id
     `;
-    if (!rows[0]) throw new ApiError(409, "BINDING_CODE_NOT_REVOCABLE", "绑定码不存在或已使用。");
-    await audit(request, actor, "plugin.binding_code.revoked", "plugin_binding_code", id);
+    if (!rows[0])
+      throw new ApiError(
+        409,
+        "BINDING_CODE_NOT_REVOCABLE",
+        "绑定码不存在或已使用。",
+      );
+    await audit(
+      request,
+      actor,
+      "plugin.binding_code.revoked",
+      "plugin_binding_code",
+      id,
+    );
     return { ok: true };
   });
 
@@ -263,8 +346,10 @@ export async function adminRoutes(app: FastifyInstance) {
   app.post("/v1/admin/invitations", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const input = inviteSchema.parse(request.body);
-    const existing = await sql`select 1 from users where email = ${input.email.trim().toLowerCase()} limit 1`;
-    if (existing.length > 0) throw new ApiError(409, "EMAIL_EXISTS", "该邮箱已存在账号。");
+    const existing =
+      await sql`select 1 from users where email = ${input.email.trim().toLowerCase()} limit 1`;
+    if (existing.length > 0)
+      throw new ApiError(409, "EMAIL_EXISTS", "该邮箱已存在账号。");
     const token = randomToken();
     const id = randomUUID();
     const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
@@ -275,11 +360,14 @@ export async function adminRoutes(app: FastifyInstance) {
         ${JSON.stringify(input.roles)}::jsonb, ${sha256(token)}, ${expiresAt.toISOString()}, ${actor.userId}
       )
     `;
-    await audit(request, actor, "partner.invited", "invitation", id, { email: input.email, roles: input.roles });
+    await audit(request, actor, "partner.invited", "invitation", id, {
+      email: input.email,
+      roles: input.roles,
+    });
     return {
       id,
       expiresAt,
-      inviteUrl: `${process.env.WEB_ORIGIN ?? "http://127.0.0.1:4311"}/accept-invite?token=${encodeURIComponent(token)}`
+      inviteUrl: `${process.env.WEB_ORIGIN ?? "http://127.0.0.1:4311"}/accept-invite?token=${encodeURIComponent(token)}`,
     };
   });
 
@@ -316,7 +404,14 @@ export async function adminRoutes(app: FastifyInstance) {
       `;
       return rows[0];
     });
-    await audit(request, actor, "report_template.created", "report_template", id, { name: input.name, isDefault: input.isDefault });
+    await audit(
+      request,
+      actor,
+      "report_template.created",
+      "report_template",
+      id,
+      { name: input.name, isDefault: input.isDefault },
+    );
     return result;
   });
 
@@ -344,7 +439,14 @@ export async function adminRoutes(app: FastifyInstance) {
       `;
       return rows[0];
     });
-    await audit(request, actor, "report_template.version_created", "report_template", nextId, { previousId: id, version: result.version });
+    await audit(
+      request,
+      actor,
+      "report_template.version_created",
+      "report_template",
+      nextId,
+      { previousId: id, version: result.version },
+    );
     return result;
   });
 
@@ -352,8 +454,14 @@ export async function adminRoutes(app: FastifyInstance) {
     const actor = await requireWebActor(request, "admin");
     const input = periodSchema.parse(request.body);
     if (input.templateId) {
-      const templates = await sql`select 1 from report_templates where id = ${input.templateId} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}`;
-      if (templates.length === 0) throw new ApiError(400, "TEMPLATE_NOT_FOUND", "报告模板不属于当前 Team。");
+      const templates =
+        await sql`select 1 from report_templates where id = ${input.templateId} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}`;
+      if (templates.length === 0)
+        throw new ApiError(
+          400,
+          "TEMPLATE_NOT_FOUND",
+          "报告模板不属于当前 Team。",
+        );
     }
     const id = randomUUID();
     const rows = await sql<any[]>`
@@ -363,17 +471,30 @@ export async function adminRoutes(app: FastifyInstance) {
         ${input.cutoffAt}, ${input.timezone}, ${input.status}, ${input.templateId ?? null}
       ) returning *
     `;
-    await audit(request, actor, "report_period.created", "report_period", id, { periodKey: input.periodKey });
+    await audit(request, actor, "report_period.created", "report_period", id, {
+      periodKey: input.periodKey,
+    });
     return rows[0];
   });
 
   app.patch("/v1/admin/report-periods/:id", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const input = z.object({ status: z.enum(["open", "closed"]), templateId: z.string().uuid().nullable().optional() }).parse(request.body);
+    const input = z
+      .object({
+        status: z.enum(["open", "closed"]),
+        templateId: z.string().uuid().nullable().optional(),
+      })
+      .parse(request.body);
     if (input.templateId) {
-      const templates = await sql`select 1 from report_templates where id = ${input.templateId} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}`;
-      if (templates.length === 0) throw new ApiError(400, "TEMPLATE_NOT_FOUND", "报告模板不属于当前 Team。");
+      const templates =
+        await sql`select 1 from report_templates where id = ${input.templateId} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}`;
+      if (templates.length === 0)
+        throw new ApiError(
+          400,
+          "TEMPLATE_NOT_FOUND",
+          "报告模板不属于当前 Team。",
+        );
     }
     const rows = await sql<any[]>`
       update report_periods set status = ${input.status},
@@ -383,7 +504,14 @@ export async function adminRoutes(app: FastifyInstance) {
       returning *
     `;
     if (!rows[0]) throw new ApiError(404, "NOT_FOUND", "报告周期不存在。");
-    await audit(request, actor, "report_period.updated", "report_period", id, input);
+    await audit(
+      request,
+      actor,
+      "report_period.updated",
+      "report_period",
+      id,
+      input,
+    );
     return rows[0];
   });
 
@@ -399,7 +527,9 @@ export async function adminRoutes(app: FastifyInstance) {
         ${JSON.stringify(input.externalIds)}::jsonb
       ) returning *
     `;
-    await audit(request, actor, "project.created", "project", id, { name: input.name });
+    await audit(request, actor, "project.created", "project", id, {
+      name: input.name,
+    });
     return rows[0];
   });
 
@@ -433,7 +563,12 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/v1/admin/agent-jobs", async (request) => {
     const actor = await requireWebActor(request, "admin");
-    const query = z.object({ status: z.string().max(40).optional(), type: z.string().max(80).optional() }).parse(request.query);
+    const query = z
+      .object({
+        status: z.string().max(40).optional(),
+        type: z.string().max(80).optional(),
+      })
+      .parse(request.query);
     return sql<any[]>`
       select id, partner_id, plugin_instance_id, type, status, attempt_count, max_attempts,
         error_code, lease_until, completed_at, created_at, updated_at
@@ -464,7 +599,8 @@ export async function adminRoutes(app: FastifyInstance) {
       select * from plugin_instances where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
     `;
     const plugin = plugins[0];
-    if (!plugin) throw new ApiError(404, "NOT_FOUND", "Plugin Instance 不存在。");
+    if (!plugin)
+      throw new ApiError(404, "NOT_FOUND", "Plugin Instance 不存在。");
     const jobId = randomUUID();
     const key = `rescan:${id}:${new Date().toISOString().slice(0, 13)}`;
     const jobs = await sql<any[]>`
@@ -476,7 +612,14 @@ export async function adminRoutes(app: FastifyInstance) {
       ) on conflict (tenant_id, idempotency_key) do update set updated_at = agent_jobs.updated_at
       returning *
     `;
-    await audit(request, actor, "plugin.rescan_requested", "plugin_instance", id, { jobId: jobs[0].id });
+    await audit(
+      request,
+      actor,
+      "plugin.rescan_requested",
+      "plugin_instance",
+      id,
+      { jobId: jobs[0].id },
+    );
     return jobs[0];
   });
 
@@ -488,8 +631,15 @@ export async function adminRoutes(app: FastifyInstance) {
       where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
       returning id
     `;
-    if (!rows[0]) throw new ApiError(404, "NOT_FOUND", "Plugin Instance 不存在。");
-    await audit(request, actor, "plugin.binding.revoked", "plugin_instance", id);
+    if (!rows[0])
+      throw new ApiError(404, "NOT_FOUND", "Plugin Instance 不存在。");
+    await audit(
+      request,
+      actor,
+      "plugin.binding.revoked",
+      "plugin_instance",
+      id,
+    );
     return { ok: true };
   });
 
@@ -502,7 +652,12 @@ export async function adminRoutes(app: FastifyInstance) {
         and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
       returning id
     `;
-    if (!rows[0]) throw new ApiError(409, "JOB_NOT_CANCELLABLE", "任务不存在或当前不可取消。");
+    if (!rows[0])
+      throw new ApiError(
+        409,
+        "JOB_NOT_CANCELLABLE",
+        "任务不存在或当前不可取消。",
+      );
     await audit(request, actor, "agent_job.cancelled", "agent_job", id);
     return { ok: true };
   });

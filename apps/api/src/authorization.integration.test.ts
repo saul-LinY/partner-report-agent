@@ -48,7 +48,7 @@ suite("tenant and role authorization", () => {
       await tx`insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids) values (${fixture.projectA}, ${fixture.tenantA}, ${fixture.teamA}, 'Fixture Project A', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)`;
       await tx`insert into work_items (id, tenant_id, team_id, partner_id, period_id, review_id, project_id, title, status, fact_ids, payload) values (${fixture.workItemA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.periodA}, ${fixture.reviewA}, ${fixture.projectA}, 'Direct progress item', 'completed', '[]'::jsonb, '{"summary":"Visible in data platform","outcomes":["Done"],"blockers":[],"nextSteps":[],"importance":{"partnerEmphasis":3}}'::jsonb)`;
       await tx`insert into plugin_instances (id, tenant_id, team_id, partner_id, device_name, version, access_token_hash, refresh_token_hash, access_expires_at) values (${fixture.pluginA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'fixture-device', '0.1.0', ${createHash("sha256").update(pluginToken).digest("hex")}, ${createHash("sha256").update(`refresh-${fixture.pluginA}`).digest("hex")}, ${new Date(Date.now() + 3_600_000).toISOString()})`;
-      await tx`insert into plugin_binding_codes (id, tenant_id, team_id, partner_id, code_hash, code_prefix, label, created_by) values (${fixture.bindingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${createHash("sha256").update(bindingCode).digest("hex")}, 'PR-TEST', 'Fixture Codex', ${fixture.userA})`;
+      await tx`insert into plugin_binding_codes (id, tenant_id, team_id, partner_id, code_hash, code_value, code_prefix, label, created_by) values (${fixture.bindingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${createHash("sha256").update(bindingCode).digest("hex")}, ${bindingCode}, 'PR-TEST', 'Fixture Codex', ${fixture.userA})`;
       await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, plugin_instance_id, type, status, idempotency_key, input_payload, output_payload, completed_at) values (${fixture.jobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, 'RESCAN_SESSIONS', 'COMPLETED', ${`fixture:${fixture.jobA}`}, '{}'::jsonb, '{"completed":true,"batchIds":[]}'::jsonb, now())`;
       await tx`insert into report_periods (id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, timezone) values (${fixture.periodB}, ${fixture.tenantB}, ${fixture.teamB}, 'fixture-period', '2026-08-01T00:00:00Z', '2026-08-08T00:00:00Z', '2026-08-08T00:00:00Z', 'Asia/Shanghai')`;
       await tx`insert into reviews (id, tenant_id, team_id, partner_id, period_id) values (${fixture.reviewB}, ${fixture.tenantB}, ${fixture.teamB}, ${fixture.partnerB}, ${fixture.periodB})`;
@@ -85,10 +85,17 @@ suite("tenant and role authorization", () => {
     const claim = await app.inject({
       method: "POST",
       url: "/v1/plugin-bindings/claim",
-      payload: { bindingCode, deviceName: "Fixture Laptop", pluginVersion: "0.2.0" },
+      payload: {
+        bindingCode,
+        deviceName: "Fixture Laptop",
+        pluginVersion: "0.2.0",
+      },
     });
     expect(claim.statusCode).toBe(200);
-    expect(claim.json()).toMatchObject({ partnerId: fixture.partnerA, pluginInstanceId: expect.any(String) });
+    expect(claim.json()).toMatchObject({
+      partnerId: fixture.partnerA,
+      pluginInstanceId: expect.any(String),
+    });
     const policy = await app.inject({
       method: "GET",
       url: "/v1/plugin-bindings/me",
@@ -96,10 +103,26 @@ suite("tenant and role authorization", () => {
     });
     expect(policy.statusCode).toBe(200);
     expect(policy.json().partnerId).toBe(fixture.partnerA);
+    const overview = await app.inject({
+      method: "GET",
+      url: "/v1/admin/overview",
+      headers,
+    });
+    expect(overview.statusCode).toBe(200);
+    expect(overview.json().bindingCodes).toContainEqual(
+      expect.objectContaining({
+        id: fixture.bindingA,
+        code_value: bindingCode,
+      }),
+    );
     const reused = await app.inject({
       method: "POST",
       url: "/v1/plugin-bindings/claim",
-      payload: { bindingCode, deviceName: "Second Device", pluginVersion: "0.2.0" },
+      payload: {
+        bindingCode,
+        deviceName: "Second Device",
+        pluginVersion: "0.2.0",
+      },
     });
     expect(reused.statusCode).toBe(400);
     expect(reused.json().code).toBe("BINDING_CODE_INVALID");

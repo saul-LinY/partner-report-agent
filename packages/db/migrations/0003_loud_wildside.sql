@@ -1,0 +1,1 @@
+ALTER TABLE "plugin_binding_codes" ADD COLUMN "code_value" text;
