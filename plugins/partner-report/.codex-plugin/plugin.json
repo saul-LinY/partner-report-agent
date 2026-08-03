@@ -1,7 +1,7 @@
 {
   "name": "partner-report",
-  "version": "0.2.0+codex.20260803153405",
-  "description": "Collect complete Codex project-session turns on a configurable Scheduled task and sync structured facts to Partner Report.",
+  "version": "0.2.0+codex.20260803161616",
+  "description": "Collect complete Codex project-session turns with explicit persisted consent and sync validated structured facts on a configurable Scheduled task.",
   "author": {
     "name": "\u6797\u6797\u52c7's team",
     "url": "https://github.com/saul615"
@@ -17,7 +17,7 @@
   "interface": {
     "displayName": "Partner Report",
     "shortDescription": "Build a reviewed weekly Partner report",
-    "longDescription": "On a Codex Scheduled task, initially set to 13:00 Beijing time, use the task's active model to extract structured facts from complete project-session turns and upload them for central aggregation and two-stage web review. Users can change the schedule, model, reasoning effort, and notifications in Codex.",
+    "longDescription": "With explicit, revocable consent bound to the current endpoint and plugin instance, use a configurable Codex Scheduled task and its active model to extract validated structured facts from complete project-session turns. Raw transcripts and sensitive automation memory are prohibited. Users can change the schedule, model, reasoning effort, and notifications in Codex.",
     "developerName": "\u6797\u6797\u52c7's team",
     "category": "Productivity",
     "capabilities": [

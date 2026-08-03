@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_COLLECTION_MODEL,
   DEFAULT_COLLECTION_REASONING_EFFORT,
+  SCHEDULED_COLLECTION_PROMPT,
   SCHEDULED_COLLECTION_TASK,
 } from "./collection-config.js";
 
@@ -25,9 +26,18 @@ describe("scheduled collection", () => {
       model: DEFAULT_COLLECTION_MODEL,
       reasoningEffort: DEFAULT_COLLECTION_REASONING_EFFORT,
       notifications: "failures_only",
-      prompt:
-        "Use $partner-report-sync to run daily-collect and return only the safe collection summary.",
+      prompt: SCHEDULED_COLLECTION_PROMPT,
     });
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "explicitly granted ongoing consent",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("endpoint-bound consent");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "Do not create or update automation memory",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "never store Session content, Facts, evidence",
+    );
   });
 
   it("does not launch a nested Codex model", () => {
