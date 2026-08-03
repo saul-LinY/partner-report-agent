@@ -1,0 +1,20 @@
+{
+  "name": "partner-report-marketplace",
+  "interface": {
+    "displayName": "Partner Report Marketplace"
+  },
+  "plugins": [
+    {
+      "name": "partner-report",
+      "source": {
+        "source": "local",
+        "path": "./plugins/partner-report"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

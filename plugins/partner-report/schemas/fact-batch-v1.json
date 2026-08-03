@@ -1,0 +1,338 @@
+{
+  "$ref": "#/definitions/FactBatchV1",
+  "definitions": {
+    "FactBatchV1": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "producerVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "batchId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pluginInstanceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "periodCandidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceRevision": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "sourceHash": {
+                "type": "string",
+                "minLength": 16
+              },
+              "fromTurnId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "toTurnId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "extracted",
+                  "failed_read",
+                  "failed_extract",
+                  "excluded"
+                ]
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "string",
+                      "const": "1.0"
+                    },
+                    "factId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sourceRevision": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "sourceHash": {
+                      "type": "string",
+                      "minLength": 16
+                    },
+                    "fromTurnId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "toTurnId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "projectHint": {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "discussion",
+                        "planned",
+                        "in_progress",
+                        "awaiting_validation",
+                        "completed",
+                        "blocked",
+                        "cancelled"
+                      ]
+                    },
+                    "actions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "default": []
+                    },
+                    "outcomes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "default": []
+                    },
+                    "impact": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "default": []
+                    },
+                    "decisions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "default": []
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "default": []
+                    },
+                    "nextSteps": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "default": []
+                    },
+                    "timeline": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "$ref": "#/definitions/FactBatchV1/properties/sessions/items/properties/facts/items/properties/status"
+                          },
+                          "occurredAt": {
+                            "$ref": "#/definitions/FactBatchV1/properties/sessions/items/properties/observedAt"
+                          },
+                          "summary": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 600
+                          },
+                          "evidenceTurnIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "default": []
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "occurredAt",
+                          "summary"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "turnId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "occurredAt": {
+                            "$ref": "#/definitions/FactBatchV1/properties/sessions/items/properties/observedAt"
+                          },
+                          "excerpt": {
+                            "type": "string",
+                            "maxLength": 240
+                          },
+                          "excerptHash": {
+                            "type": "string",
+                            "minLength": 16
+                          },
+                          "redacted": {
+                            "type": "boolean",
+                            "default": false
+                          }
+                        },
+                        "required": [
+                          "turnId",
+                          "occurredAt",
+                          "excerptHash"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "default": []
+                    },
+                    "completionSupport": {
+                      "type": "string",
+                      "enum": [
+                        "evidence",
+                        "uncertain"
+                      ]
+                    },
+                    "factOrigin": {
+                      "type": "string",
+                      "enum": [
+                        "ai_extracted",
+                        "partner_supplied"
+                      ]
+                    },
+                    "redactionSummary": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "default": {}
+                    },
+                    "production": {
+                      "type": "object",
+                      "properties": {
+                        "skillVersion": {
+                          "type": "string",
+                          "const": "partner-report-sync/0.1.0"
+                        },
+                        "promptVersion": {
+                          "type": "string",
+                          "const": "2026-08-03.v2"
+                        },
+                        "schemaVersion": {
+                          "type": "string",
+                          "const": "1.0"
+                        },
+                        "producer": {
+                          "type": "string",
+                          "const": "codex-skill"
+                        },
+                        "modelVersion": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "skillVersion",
+                        "promptVersion",
+                        "schemaVersion",
+                        "producer"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "factId",
+                    "sessionId",
+                    "sourceRevision",
+                    "sourceHash",
+                    "fromTurnId",
+                    "toTurnId",
+                    "title",
+                    "status",
+                    "timeline",
+                    "completionSupport",
+                    "factOrigin",
+                    "production"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "sessionId",
+              "sourceRevision",
+              "sourceHash",
+              "fromTurnId",
+              "toTurnId",
+              "observedAt",
+              "status",
+              "facts"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "producerVersion",
+        "batchId",
+        "pluginInstanceId",
+        "sessions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "partner-report-codex-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/contracts",
+    "plugins/partner-report"
+  ],
+  "scripts": {
+    "build": "npm run contracts:generate && npm run build --workspaces --if-present",
+    "contracts:generate": "node --import tsx packages/contracts/src/generate-json-schema.ts",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "zod-to-json-schema": "^3.24.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

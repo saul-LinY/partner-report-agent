@@ -1,0 +1,4 @@
+interface:
+  display_name: "Partner Report Sync"
+  short_description: "Extract sessions and run partner report jobs"
+  default_prompt: "Use $partner-report-sync to sync my Codex sessions and continue pending report jobs."
