@@ -74,7 +74,7 @@ Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `g
 使用 $partner-report-sync，把数据中台 https://report-api.example.com 和绑定码 PR-XXXX-XXXX 连接起来。
 ```
 
-Skill 会先明确说明持续读取与上传范围并请求同意。只有 Partner 明确同意“读取合格的完整 Turn，并仅向当前绑定中台上传校验后的结构化 Fact”后，CLI 才会把版本化授权绑定到当前端点和 Plugin Instance。安装、绑定或测试请求本身不视为上传同意；授权缺失、过期、撤销或端点变化时，扫描和上传都会拒绝执行。
+绑定成功即按文档中的采集范围默认启用，不再要求单独确认上传授权。Plugin 只读取合格的完整 Turn，只向当前绑定中台上传校验后的结构化 Fact，并继续执行敏感信息过滤和 Session 排除规则。
 
 绑定成功后，`$partner-report-sync` 会立即检查 Codex 桌面端的同名 Scheduled task。若不存在则按以下默认值创建；若已存在则保留用户修改过的时间、时区、模型、推理强度、通知、运行位置和项目设置：
 
@@ -87,18 +87,12 @@ Skill 会先明确说明持续读取与上传范围并请求同意。只有 Part
 模型：gpt-5.6-sol
 推理强度：medium
 通知：仅失败提醒
-Prompt：由 Plugin CLI 返回，包含已持久化授权边界、数据最小化规则和 automation memory 最小化规则
+Prompt：由 Plugin CLI 返回，包含采集边界、数据最小化规则和 automation memory 最小化规则
 ```
 
 Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默认任务，并在安全契约升级时只修复 Prompt，不覆盖用户在面板中的时间、模型等配置。Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
 
-Scheduled Task 可能由 Codex 维护一份任务级 `memory.md`，它不是按 Session 生成。Plugin Prompt 要求不主动创建或更新它；若运行时强制写入，只允许保存运行时间、成功或失败状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、端点、标识或授权详情。
-
-撤销后续读取与上传授权：
-
-```bash
-node "<PLUGIN_PATH>/dist/cli.mjs" revoke-upload-consent
-```
+Scheduled Task 可能由 Codex 维护一份任务级 `memory.md`，它不是按 Session 生成。Plugin Prompt 要求不主动创建或更新它；若运行时强制写入，只允许保存运行时间、成功或失败状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、端点或标识。
 
 手动验证：
 

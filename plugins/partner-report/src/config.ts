@@ -10,18 +10,6 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 export const PLUGIN_VERSION = "0.2.0";
-export const STRUCTURED_FACT_UPLOAD_CONSENT_VERSION = "2026-08-04.v1";
-export const STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE =
-  "read-eligible-complete-turns-and-upload-validated-structured-facts";
-
-export type StructuredFactUploadConsent = {
-  version: typeof STRUCTURED_FACT_UPLOAD_CONSENT_VERSION;
-  scope: typeof STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE;
-  grantedAt: string;
-  serverUrl: string;
-  pluginInstanceId: string;
-  source: "interactive-user-confirmation";
-};
 
 export type PluginConfig = {
   serverUrl: string;
@@ -30,45 +18,7 @@ export type PluginConfig = {
   accessExpiresAt: string;
   excludedSessionIds: string[];
   excludedPaths: string[];
-  structuredFactUploadConsent?: StructuredFactUploadConsent;
 };
-
-export function withStructuredFactUploadConsent(
-  config: PluginConfig,
-  grantedAt = new Date().toISOString(),
-): PluginConfig {
-  return {
-    ...config,
-    structuredFactUploadConsent: {
-      version: STRUCTURED_FACT_UPLOAD_CONSENT_VERSION,
-      scope: STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE,
-      grantedAt,
-      serverUrl: config.serverUrl,
-      pluginInstanceId: config.pluginInstanceId,
-      source: "interactive-user-confirmation",
-    },
-  };
-}
-
-export function withoutStructuredFactUploadConsent(
-  config: PluginConfig,
-): PluginConfig {
-  const { structuredFactUploadConsent: _consent, ...remaining } = config;
-  return remaining;
-}
-
-export function hasValidStructuredFactUploadConsent(config: PluginConfig) {
-  const consent = config.structuredFactUploadConsent;
-  return Boolean(
-    consent &&
-    consent.version === STRUCTURED_FACT_UPLOAD_CONSENT_VERSION &&
-    consent.scope === STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE &&
-    consent.serverUrl === config.serverUrl &&
-    consent.pluginInstanceId === config.pluginInstanceId &&
-    consent.source === "interactive-user-confirmation" &&
-    !Number.isNaN(Date.parse(consent.grantedAt)),
-  );
-}
 
 const DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 const BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";

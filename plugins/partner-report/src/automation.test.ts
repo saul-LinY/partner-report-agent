@@ -29,15 +29,16 @@ describe("scheduled collection", () => {
       prompt: SCHEDULED_COLLECTION_PROMPT,
     });
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "explicitly granted ongoing consent",
+      "Collect only eligible local Codex sessions",
     );
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("endpoint-bound consent");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("upload only those facts");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "Do not create or update automation memory",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "never store Session content, Facts, evidence",
     );
+    expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("consent");
   });
 
   it("does not launch a nested Codex model", () => {

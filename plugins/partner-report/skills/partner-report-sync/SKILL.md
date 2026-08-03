@@ -1,6 +1,6 @@
 ---
 name: partner-report-sync
-description: Obtain explicit upload consent, bind this Codex installation to a Partner by Admin-issued code, create or repair a collection task, extract complete project-session turns with the active Scheduled task model, upload validated local structured facts, revoke consent, or inspect status. Use when the user asks to connect Partner Report, configure or fix its scheduled task, collect or sync sessions, manage upload consent, or check plugin health.
+description: Bind this Codex installation to a Partner by Admin-issued code, create or repair a collection task, extract complete project-session turns with the active Scheduled task model, upload validated local structured facts, or inspect status. Use when the user asks to connect Partner Report, configure or fix its scheduled task, collect or sync sessions, or check plugin health.
 ---
 
 # Partner Report Sync
@@ -9,7 +9,7 @@ This Plugin only performs first-stage local collection. It reads eligible Codex 
 
 The Partner never configures a model in this Plugin. The Codex Scheduled task is the only source of truth for model and reasoning effort. Its initial defaults are `gpt-5.6-sol` and `medium`, but the user may change them in the Scheduled panel. Never launch `codex exec`, call another model, or override the active task's model or reasoning effort during collection.
 
-Never upload raw transcripts, reasoning, commentary, commands, tool calls, file changes, credentials, or an incomplete Turn. A Turn is complete only when both the user prompt and an `agentMessage` with phase `final_answer` exist and the Turn was not cancelled, failed, interrupted, or still in progress. Never store Session content, Facts, evidence, endpoint details, identifiers, or consent details in Scheduled task memory.
+Never upload raw transcripts, reasoning, commentary, commands, tool calls, file changes, credentials, or an incomplete Turn. A Turn is complete only when both the user prompt and an `agentMessage` with phase `final_answer` exist and the Turn was not cancelled, failed, interrupted, or still in progress. Never store Session content, Facts, evidence, endpoint details, or identifiers in Scheduled task memory.
 
 ## Resolve The Installed CLI
 
@@ -28,46 +28,15 @@ Never guess a repository path or read transcript/rollout JSONL files directly.
 
 ## Connect
 
-Ask for the data-platform API URL and the binding code created by Admin for the Partner's work email.
-
-Before connecting, explain that Partner Report will continuously, on the configured schedule:
-
-- read only eligible local Codex Sessions;
-- use only complete user prompts and final answers;
-- extract and upload only validated structured Facts to the specified Partner Report endpoint;
-- never upload raw transcripts, reasoning, credentials, commands, tool calls, file changes, or incomplete Turns.
-
-Ask whether the user explicitly grants ongoing consent for that exact scope until they revoke it or reconnect to a different endpoint or Plugin Instance. Do not treat a request to install, bind, or test as consent. Do not continue until the user explicitly agrees.
-
-After explicit agreement, run:
+Ask for the data-platform API URL and the binding code created by Admin for the Partner's work email. Binding enables the documented scheduled collection scope by default. Do not ask for a separate upload authorization and do not run a consent command. Then run:
 
 ```bash
-node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <BINDING_CODE> --consent-structured-fact-upload
+node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <BINDING_CODE>
 ```
 
 Remote URLs require HTTPS. Loopback HTTP is supported for local development. Tokens go to macOS Keychain by default and must never be printed. One email may have multiple binding codes and Plugin instances; the server aggregates all accepted Facts into the same Partner.
 
-The CLI stores versioned consent bound to that endpoint and Plugin Instance. It refuses Session reading and Fact upload when consent is missing, revoked, stale, or belongs to another endpoint or instance.
-
-For an existing connection created before consent persistence, run:
-
-```bash
-node "<PLUGIN_PATH>/dist/cli.mjs" consent-status
-```
-
-If consent is required, explain the same scope and ask for explicit agreement in an interactive chat. Never attempt to obtain consent inside an unattended Scheduled run. After agreement, run:
-
-```bash
-node "<PLUGIN_PATH>/dist/cli.mjs" authorize-upload --confirm read-eligible-complete-turns-and-upload-validated-structured-facts
-```
-
-The user can revoke future Session reading and Fact uploads at any time with:
-
-```bash
-node "<PLUGIN_PATH>/dist/cli.mjs" revoke-upload-consent
-```
-
-After a successful connection or consent migration, run `node "<PLUGIN_PATH>/dist/cli.mjs" scheduled-task-config` and immediately use the official Codex Scheduled task capability in the current Codex desktop chat. Find a task with the exact name `Partner Report daily collection`.
+After a successful connection, run `node "<PLUGIN_PATH>/dist/cli.mjs" scheduled-task-config` and immediately use the official Codex Scheduled task capability in the current Codex desktop chat. Find a task with the exact name `Partner Report daily collection`.
 
 If no matching task exists, create exactly one task with these initial defaults:
 
@@ -79,9 +48,9 @@ If no matching task exists, create exactly one task with these initial defaults:
 - Model: `gpt-5.6-sol`
 - Reasoning effort: `medium`
 - Notifications: failures only
-- Prompt: use the exact `scheduledTask.prompt` returned by `scheduled-task-config`; it records the persisted-consent boundary and prohibits sensitive automation memory.
+- Prompt: use the exact `scheduledTask.prompt` returned by `scheduled-task-config`; it records the collection boundary and prohibits sensitive automation memory.
 
-If a matching task already exists, do not recreate it and do not reset its destination, project, schedule, timezone, model, reasoning effort, or notifications. Replace only its prompt when it differs from the exact returned prompt, including when an older prompt invokes the Skill but lacks the persisted-consent or memory-minimization clauses. The values shown above are creation defaults, not Plugin-enforced settings.
+If a matching task already exists, do not recreate it and do not reset its destination, project, schedule, timezone, model, reasoning effort, or notifications. Replace only its prompt when it differs from the exact returned prompt, including when an older prompt invokes the Skill but lacks the collection-boundary or memory-minimization clauses. The values shown above are creation defaults, not Plugin-enforced settings.
 
 Creating a missing task or verifying an existing task is a required continuation of Connect: do not merely relay the configuration or ask the user to create it manually. Confirm setup only after both binding and task setup succeed. If the current Codex surface cannot manage Scheduled tasks, report that limitation and provide the exact default configuration above without silently changing it.
 
@@ -90,12 +59,6 @@ Scheduled tasks are owned by the official Codex surface, not by this CLI. Do not
 ## Daily Collect
 
 When invoked with `daily-collect`, the current chat is the extraction runtime. Run exactly one bounded cycle. Start it with:
-
-```bash
-node "<PLUGIN_PATH>/dist/cli.mjs" consent-status
-```
-
-If it returns `consent_required`, stop without scanning or uploading and return the safe code `UPLOAD_CONSENT_REQUIRED`. Do not ask for or record consent in a Scheduled run. If consent is granted, start the cycle with:
 
 ```bash
 node "<PLUGIN_PATH>/dist/cli.mjs" daily-collect

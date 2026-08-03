@@ -1,6 +1,6 @@
 # Partner Report Agent 产品需求文档
 
-> MVP 实现决策（2026-08-04）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 13:00、`gpt-5.6-sol` 和 `medium` 推理，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。连接前 Skill 必须取得明确、持续、可撤销的结构化事实上传同意，CLI 将授权版本绑定到当前端点和 Plugin Instance，并在 Session 读取与上传前重复校验。绑定成功后 Skill 仅在同名任务不存在时创建默认任务；安全契约升级时只修复 Prompt，已有任务的用户配置保持不变。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
+> MVP 实现决策（2026-08-04）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 13:00、`gpt-5.6-sol` 和 `medium` 推理，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；安全契约升级时只修复 Prompt，已有任务的用户配置保持不变。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
 
 ## 1. 产品摘要
 
@@ -288,7 +288,7 @@ Plugin 负责：
 
 - 完整原始 Session 默认留在 Partner 本地。
 - 上传结构化工作事实、Session 标识、时间、项目和有限证据摘要。
-- 连接前必须取得明确、持续、可撤销的授权；安装、绑定或测试请求本身不构成上传同意。授权必须绑定当前端点、Plugin Instance 和版本，缺失、撤销或失配时不得扫描或上传。
+- 绑定成功即默认启用既定采集范围，不增加单独的上传授权或授权状态校验步骤。
 - 如果服务端已有足够事实，修改在服务端重新聚合。
 - 如果必须重新深挖原始聊天，创建 Re-analysis Request，由本地插件领取并执行。
 - Partner 可以选择对特定 Session 完全排除，或授权上传更详细证据。
@@ -459,7 +459,7 @@ tenant_id
 Partner 设置采用四步向导：
 
 ```text
-输入绑定码 -> 隐私授权 -> 同步测试 -> 完成
+输入绑定码 -> 同步测试 -> 完成
 ```
 
 必须设置：
@@ -521,7 +521,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 插件必须可由 GitHub Marketplace 稳定 Release 通过 Codex 官方途径安装和升级；生产入口不得直接跟随未验证的 `main`。
 - Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新输入 Binding Code 或重新配置项目。
 - 本地 SQLite 必须有 Schema 版本和向前迁移；Daily Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
-- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `daily-collect` 入口；绑定成功后 Skill 必须通过 Codex 官方能力在同名任务不存在时自动创建默认任务，存在时保留用户的调度和模型配置，并在安全契约升级时只修复 Prompt。Prompt 必须声明已持久化授权的边界和 automation memory 最小化规则，不能只提示 Partner 手工创建。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
+- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `daily-collect` 入口；绑定成功后 Skill 必须通过 Codex 官方能力在同名任务不存在时自动创建默认任务，存在时保留用户的调度和模型配置，并在安全契约升级时只修复 Prompt。Prompt 必须声明采集边界和 automation memory 最小化规则，不能只提示 Partner 手工创建。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
 - Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
 - Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。
 - Admin 页面必须完整展示新生成的 Binding Code，并提供一键复制；关闭生成弹窗后仍可在对应 Partner 下查看和复制。Binding Code 不得通过 Partner、Plugin 或公开接口返回。
@@ -806,7 +806,7 @@ MVP 不展示：
 
 记录：
 
-- Plugin 安装、绑定、授权和撤销。
+- Plugin 安装、绑定和升级。
 - Session 同步批次和覆盖率。
 - AI 提取器版本和 Prompt 版本。
 - 中台聚合、修改解析和 Report 生成所使用的模型、Prompt 版本、输入 Checksum 和输出 Schema 版本。
@@ -1519,7 +1519,7 @@ flowchart LR
 
 ### 17.1 最小权限
 
-- Plugin 只读取 Partner 明确授权范围内的 Session。
+- Plugin 只读取绑定后默认采集范围内的 Session。
 - 飞书机器人只在应用可用范围内向 Partner 和 Monitor 接收目标发消息或发送文件。
 - Monitor 只能接收最终团队报告，无权通过本产品查看个人 Report、工作事实、证据摘要或原始 Session。
 - Team Admin 不默认拥有原始证据读取权限。
@@ -1531,7 +1531,7 @@ flowchart LR
 - Evidence Excerpt 必须截断并通过敏感信息检测。
 - 不上传工具输出中的密钥、环境变量和大段源代码。
 - 不上传被 Partner 排除的 Session。
-- Scheduled Task 不主动创建或更新任务 memory；若 Codex 运行时强制维护 `memory.md`，只允许时间、成功或失败状态、聚合计数和安全错误码，不得写入 Session 内容、Fact、证据、端点、标识或授权详情。
+- Scheduled Task 不主动创建或更新任务 memory；若 Codex 运行时强制维护 `memory.md`，只允许时间、成功或失败状态、聚合计数和安全错误码，不得写入 Session 内容、Fact、证据、端点或标识。
 - 修改范围扩大时先确认授权，再重新分析。
 
 ### 17.3 凭证安全

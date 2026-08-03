@@ -8335,31 +8335,6 @@ import {
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 var PLUGIN_VERSION = "0.2.0";
-var STRUCTURED_FACT_UPLOAD_CONSENT_VERSION = "2026-08-04.v1";
-var STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE = "read-eligible-complete-turns-and-upload-validated-structured-facts";
-function withStructuredFactUploadConsent(config, grantedAt = (/* @__PURE__ */ new Date()).toISOString()) {
-  return {
-    ...config,
-    structuredFactUploadConsent: {
-      version: STRUCTURED_FACT_UPLOAD_CONSENT_VERSION,
-      scope: STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE,
-      grantedAt,
-      serverUrl: config.serverUrl,
-      pluginInstanceId: config.pluginInstanceId,
-      source: "interactive-user-confirmation"
-    }
-  };
-}
-function withoutStructuredFactUploadConsent(config) {
-  const { structuredFactUploadConsent: _consent, ...remaining } = config;
-  return remaining;
-}
-function hasValidStructuredFactUploadConsent(config) {
-  const consent = config.structuredFactUploadConsent;
-  return Boolean(
-    consent && consent.version === STRUCTURED_FACT_UPLOAD_CONSENT_VERSION && consent.scope === STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE && consent.serverUrl === config.serverUrl && consent.pluginInstanceId === config.pluginInstanceId && consent.source === "interactive-user-confirmation" && !Number.isNaN(Date.parse(consent.grantedAt))
-  );
-}
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 function normalizeServerUrl(value, allowInsecureHttp = false) {
@@ -9535,10 +9510,9 @@ async function failCollectionCycle(cliPath, errorCode = "LOCAL_AGENT_FAILED") {
 var DEFAULT_COLLECTION_MODEL = "gpt-5.6-sol";
 var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
 var SCHEDULED_COLLECTION_PROMPT = [
-  "The Partner explicitly granted ongoing consent during setup for this exact Partner Report plugin instance and endpoint to read eligible local Codex sessions, use only complete user prompts and final answers, extract validated structured facts, and upload only those facts to the configured Partner Report endpoint.",
-  "The CLI persists and revalidates that endpoint-bound consent before reading sessions or uploading; if consent is absent or stale, stop without scanning or uploading and return UPLOAD_CONSENT_REQUIRED.",
+  "Collect only eligible local Codex sessions, use only complete user prompts and final answers, extract validated structured facts, and upload only those facts to the configured Partner Report endpoint.",
   "Never upload raw transcripts, reasoning, credentials, commands, tool calls, file changes, or incomplete turns.",
-  "Do not create or update automation memory for this run. If the runtime requires a memory update, store only the run timestamp, completed or failed status, aggregate counts, and a safe error code; never store Session content, Facts, evidence, endpoint details, identifiers, or consent details.",
+  "Do not create or update automation memory for this run. If the runtime requires a memory update, store only the run timestamp, completed or failed status, aggregate counts, and a safe error code; never store Session content, Facts, evidence, endpoint details, or identifiers.",
   "Use $partner-report-sync to run daily-collect and return only the safe collection summary."
 ].join(" ");
 var SCHEDULED_COLLECTION_TASK = {
@@ -9567,62 +9541,6 @@ function flag(name) {
 function output(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}
 `);
-}
-var SafePluginError = class extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-  }
-};
-function requireStructuredFactUploadConsent() {
-  const config = loadConfig();
-  if (!hasValidStructuredFactUploadConsent(config)) {
-    throw new SafePluginError(
-      "UPLOAD_CONSENT_REQUIRED",
-      "\u7F3A\u5C11\u5F53\u524D Plugin Instance \u4E0E\u4E2D\u53F0\u7AEF\u70B9\u7ED1\u5B9A\u7684\u7ED3\u6784\u5316\u4E8B\u5B9E\u4E0A\u4F20\u6388\u6743\u3002\u8BF7\u5728\u4EA4\u4E92\u5F0F\u804A\u5929\u4E2D\u660E\u786E\u540C\u610F\u540E\u8FD0\u884C authorize-upload\u3002"
-    );
-  }
-  return config;
-}
-function consentStatus() {
-  const config = loadConfig(false);
-  const granted = Boolean(
-    config && hasValidStructuredFactUploadConsent(config)
-  );
-  output({
-    status: granted ? "consent_granted" : "consent_required",
-    granted,
-    version: granted ? config.structuredFactUploadConsent.version : STRUCTURED_FACT_UPLOAD_CONSENT_VERSION,
-    scope: STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE,
-    grantedAt: granted ? config.structuredFactUploadConsent.grantedAt : null
-  });
-}
-function authorizeUpload() {
-  if (option("confirm") !== STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE) {
-    throw new SafePluginError(
-      "UPLOAD_CONSENT_REQUIRED",
-      `authorize-upload \u53EA\u80FD\u5728\u7528\u6237\u660E\u786E\u540C\u610F\u540E\u4F7F\u7528 --confirm ${STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE}\u3002`
-    );
-  }
-  const config = withStructuredFactUploadConsent(loadConfig());
-  saveConfig(config);
-  output({
-    status: "consent_granted",
-    granted: true,
-    version: config.structuredFactUploadConsent.version,
-    scope: config.structuredFactUploadConsent.scope,
-    grantedAt: config.structuredFactUploadConsent.grantedAt
-  });
-}
-function revokeUploadConsent() {
-  const config = loadConfig();
-  saveConfig(withoutStructuredFactUploadConsent(config));
-  output({
-    status: "consent_revoked",
-    granted: false,
-    version: STRUCTURED_FACT_UPLOAD_CONSENT_VERSION,
-    scope: STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE
-  });
 }
 function scheduledTaskConfig() {
   output({
@@ -9670,12 +9588,6 @@ async function connect() {
       "connect \u9700\u8981 Admin \u5728\u6570\u636E\u4E2D\u53F0\u751F\u6210\u7684 --binding-code <code>\u3002"
     );
   }
-  if (!flag("consent-structured-fact-upload")) {
-    throw new SafePluginError(
-      "UPLOAD_CONSENT_REQUIRED",
-      "\u8FDE\u63A5\u524D\u5FC5\u987B\u53D6\u5F97\u7528\u6237\u5BF9\u6301\u7EED\u8BFB\u53D6\u5408\u683C\u5B8C\u6574 Turn \u5E76\u4EC5\u4E0A\u4F20\u6821\u9A8C\u540E\u7ED3\u6784\u5316\u4E8B\u5B9E\u7684\u660E\u786E\u540C\u610F\uFF0C\u7136\u540E\u6DFB\u52A0 --consent-structured-fact-upload\u3002"
-    );
-  }
   const tokens = await publicRequest(serverUrl, "/v1/plugin-bindings/claim", {
     method: "POST",
     body: JSON.stringify({
@@ -9689,16 +9601,14 @@ async function connect() {
     removeSecrets(existing.pluginInstanceId);
   saveSecret(tokens.pluginInstanceId, "access", tokens.accessToken);
   saveSecret(tokens.pluginInstanceId, "refresh", tokens.refreshToken);
-  saveConfig(
-    withStructuredFactUploadConsent({
-      serverUrl,
-      pluginInstanceId: tokens.pluginInstanceId,
-      deviceName,
-      accessExpiresAt: tokens.expiresAt,
-      excludedSessionIds: existing?.excludedSessionIds ?? [],
-      excludedPaths: existing?.excludedPaths ?? []
-    })
-  );
+  saveConfig({
+    serverUrl,
+    pluginInstanceId: tokens.pluginInstanceId,
+    deviceName,
+    accessExpiresAt: tokens.expiresAt,
+    excludedSessionIds: existing?.excludedSessionIds ?? [],
+    excludedPaths: existing?.excludedPaths ?? []
+  });
   output({
     status: "connected",
     pluginInstanceId: tokens.pluginInstanceId,
@@ -9722,7 +9632,7 @@ async function connect() {
   });
 }
 async function prepare() {
-  const config = requireStructuredFactUploadConsent();
+  const config = loadConfig();
   const db = openDatabase();
   try {
     const policy = await fetchPolicy(db);
@@ -9751,7 +9661,6 @@ function materialize(prefix, id, input) {
   return { inputPath, resultPath };
 }
 function nextLocal() {
-  requireStructuredFactUploadConsent();
   const db = openDatabase();
   try {
     const job = db.prepare(
@@ -9781,7 +9690,6 @@ function nextLocal() {
   }
 }
 function completeLocal() {
-  requireStructuredFactUploadConsent();
   const jobId = option("job-id");
   const resultPath = option("result");
   if (!jobId || !resultPath)
@@ -9907,7 +9815,6 @@ function buildBatch(db, jobs, policy) {
   return { batchId, payload };
 }
 async function sync() {
-  requireStructuredFactUploadConsent();
   const db = openDatabase();
   try {
     const policy = await fetchPolicy(db);
@@ -10080,9 +9987,6 @@ async function collectionStatus() {
 }
 async function status() {
   const config = loadConfig(false);
-  const uploadConsentGranted = Boolean(
-    config && hasValidStructuredFactUploadConsent(config)
-  );
   const db = openDatabase();
   try {
     const health = localCoverage(db);
@@ -10091,12 +9995,6 @@ async function status() {
       pluginVersion: PLUGIN_VERSION,
       pluginInstanceId: config?.pluginInstanceId ?? null,
       serverUrl: config?.serverUrl ?? null,
-      structuredFactUploadConsent: {
-        granted: uploadConsentGranted,
-        version: uploadConsentGranted ? config.structuredFactUploadConsent.version : STRUCTURED_FACT_UPLOAD_CONSENT_VERSION,
-        scope: STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE,
-        grantedAt: uploadConsentGranted ? config.structuredFactUploadConsent.grantedAt : null
-      },
       lastScanAt: getState(db, "last_scan_at"),
       lastSyncAt: getState(db, "last_sync_at"),
       lastHeartbeatAt: getState(db, "last_heartbeat_at"),
@@ -10116,10 +10014,7 @@ async function status() {
 function help() {
   output({
     commands: [
-      "connect --server <url> --binding-code <code> --consent-structured-fact-upload [--device-name <name>]",
-      `authorize-upload --confirm ${STRUCTURED_FACT_UPLOAD_CONSENT_SCOPE}`,
-      "revoke-upload-consent",
-      "consent-status",
+      "connect --server <url> --binding-code <code> [--device-name <name>]",
       "scheduled-task-config",
       "daily-collect [--force]",
       "weekly-collect [--force] (deprecated alias)",
@@ -10138,12 +10033,8 @@ function help() {
 var command = process.argv[2] ?? "help";
 try {
   if (command === "connect") await connect();
-  else if (command === "authorize-upload") authorizeUpload();
-  else if (command === "revoke-upload-consent") revokeUploadConsent();
-  else if (command === "consent-status") consentStatus();
   else if (command === "scheduled-task-config") scheduledTaskConfig();
   else if (command === "run-once" || command === "daily-collect" || command === "weekly-collect") {
-    requireStructuredFactUploadConsent();
     output(
       await beginCollectionCycle(resolve5(process.argv[1]), flag("force"))
     );
@@ -10167,7 +10058,7 @@ try {
   else if (command === "status") await status();
   else help();
 } catch (error) {
-  const code = error instanceof HttpError || error instanceof SafePluginError ? error.code : "PLUGIN_COMMAND_FAILED";
+  const code = error instanceof HttpError ? error.code : "PLUGIN_COMMAND_FAILED";
   process.stderr.write(
     `${JSON.stringify({ status: "error", code, message: error instanceof Error ? error.message : String(error) })}
 `

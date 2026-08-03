@@ -22,14 +22,9 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("start a new chat for every run");
     expect(skill).toContain("required continuation of Connect");
     expect(skill).toContain(
-      "Do not treat a request to install, bind, or test as consent",
+      "Binding enables the documented scheduled collection scope by default",
     );
-    expect(skill).toContain("--consent-structured-fact-upload");
-    expect(skill).toContain("consent-status");
-    expect(skill).toContain(
-      "authorize-upload --confirm read-eligible-complete-turns-and-upload-validated-structured-facts",
-    );
-    expect(skill).toContain("revoke-upload-consent");
+    expect(skill).toContain("Do not ask for a separate upload authorization");
     expect(skill).toContain("scheduled-task-config");
     expect(skill).toContain("do not reset its destination");
     expect(skill).toContain("Replace only its prompt when it differs");
@@ -42,8 +37,10 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("must never hardcode or guess it");
     expect(skill).toContain("Do not create or update automation memory");
     expect(skill).toContain(
-      "Never store Session content, Facts, evidence, endpoint details, identifiers, or consent details",
+      "Never store Session content, Facts, evidence, endpoint details, or identifiers",
     );
+    expect(skill).not.toContain("consent-status");
+    expect(skill).not.toContain("authorize-upload");
     expect(skill).not.toContain("Stop` and `SessionEnd");
     expect(skill).not.toContain('node "${PLUGIN_ROOT}/dist/cli.mjs"');
   });
