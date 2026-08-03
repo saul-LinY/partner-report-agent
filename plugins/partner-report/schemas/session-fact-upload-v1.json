@@ -8,6 +8,32 @@
           "type": "string",
           "minLength": 1
         },
+        "project": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "matchMethod": {
+              "type": "string",
+              "enum": [
+                "exact_root",
+                "descendant_path"
+              ]
+            },
+            "rootFingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "matchMethod",
+            "rootFingerprint"
+          ],
+          "additionalProperties": false
+        },
         "sourceRevision": {
           "type": "integer",
           "exclusiveMinimum": 0
@@ -233,11 +259,15 @@
                 "properties": {
                   "skillVersion": {
                     "type": "string",
-                    "const": "partner-report-sync/0.1.0"
+                    "enum": [
+                      "partner-report-sync/0.2.0",
+                      "partner-report-platform/0.2.0"
+                    ]
                   },
                   "promptVersion": {
                     "type": "string",
-                    "const": "2026-08-03.v2"
+                    "minLength": 1,
+                    "maxLength": 80
                   },
                   "schemaVersion": {
                     "type": "string",
@@ -245,7 +275,10 @@
                   },
                   "producer": {
                     "type": "string",
-                    "const": "codex-skill"
+                    "enum": [
+                      "codex-skill",
+                      "data-platform"
+                    ]
                   },
                   "modelVersion": {
                     "type": "string",
@@ -282,6 +315,7 @@
       },
       "required": [
         "sessionId",
+        "project",
         "sourceRevision",
         "sourceHash",
         "fromTurnId",

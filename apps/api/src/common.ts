@@ -91,7 +91,27 @@ export async function requireWebActor(request: FastifyRequest, role?: "admin" | 
   `;
   const actor = rows[0];
   if (!actor) throw new ApiError(401, "UNAUTHENTICATED", "登录已过期，请重新登录。");
-  if (role && !actor.roles.includes(role)) throw new ApiError(403, "FORBIDDEN", "当前账号没有此操作权限。");
+  if (role && !actor.roles.includes(role)) {
+    if (!(role === "partner" && actor.roles.includes("admin"))) {
+      throw new ApiError(403, "FORBIDDEN", "当前账号没有此操作权限。");
+    }
+  }
+
+  if (role === "partner" && actor.roles.includes("admin")) {
+    const simulatedPartnerId = request.headers["x-partner-id"];
+    if (typeof simulatedPartnerId === "string" && simulatedPartnerId) {
+      const partners = await sql<{ id: string }[]>`
+        select id from partners
+        where id = ${simulatedPartnerId} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and status = 'active'
+        limit 1
+      `;
+      if (!partners[0]) {
+        throw new ApiError(403, "PARTNER_SCOPE_INVALID", "模拟审核的 Partner 不属于当前 Team。");
+      }
+      actor.partnerId = partners[0].id;
+    }
+  }
 
   await sql`update web_sessions set last_seen_at = now() where token_hash = ${sha256(token)}`;
   return actor;

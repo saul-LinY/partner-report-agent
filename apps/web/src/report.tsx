@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CheckCircle2, Download, FileClock, RefreshCw, RotateCcw, Send, SlidersHorizontal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useLocation, useRoute } from "wouter";
-import { api, apiUrl } from "./api.js";
+import { api } from "./api.js";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Modal } from "./components.js";
 
 type ReportData = {
@@ -81,6 +81,17 @@ export function ReportPage() {
       await queryClient.invalidateQueries({ queryKey: ["partner-dashboard"] });
     }
   });
+  const download = useMutation({
+    mutationFn: () => api<string>(`/v1/individual-reports/${reportId}/download.md`),
+    onSuccess: (markdown) => {
+      const href = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = `partner-report-${reportId}.md`;
+      anchor.click();
+      URL.revokeObjectURL(href);
+    },
+  });
 
   if (query.isLoading) return <div className="page-loading"><RefreshCw className="spin" />加载 Report</div>;
   if (query.isError) return <div className="page"><ErrorBanner error={query.error} /></div>;
@@ -101,15 +112,15 @@ export function ReportPage() {
           {!isLocked && <Button variant="secondary" icon={<ArrowLeft size={16} />} loading={returnToItems.isPending} onClick={() => returnToItems.mutate()}>事实有误，返回事项</Button>}
           {!isLocked && data.current && <Button variant="secondary" icon={<SlidersHorizontal size={16} />} onClick={() => setPreferencesOpen(true)}>调整表达</Button>}
           {!isLocked && data.report.status === "REPORT_REVIEW" && <Button icon={<Send size={16} />} onClick={() => setSubmitOpen(true)}>提交并锁定</Button>}
-          {data.current && <a className="button button-secondary" href={apiUrl(`/v1/individual-reports/${reportId}/download.md`)}><Download size={16} /><span>Markdown</span></a>}
+          {data.current && <Button variant="secondary" icon={<Download size={16} />} loading={download.isPending} onClick={() => download.mutate()}>Markdown</Button>}
         </div>
       </header>
-      <ErrorBanner error={regenerate.error ?? returnToItems.error ?? submit.error} />
+      <ErrorBanner error={regenerate.error ?? returnToItems.error ?? submit.error ?? download.error} />
 
       {!data.current ? (
         <section className="generation-state">
           <span className="generation-icon"><FileClock size={24} /></span>
-          <div><strong>本地 Agent 正在生成 Report</strong><span>页面会在任务完成后自动更新。</span></div>
+          <div><strong>数据中台正在生成 Report</strong><span>页面会在任务完成后自动更新。</span></div>
           <RefreshCw className="spin" size={18} />
         </section>
       ) : (

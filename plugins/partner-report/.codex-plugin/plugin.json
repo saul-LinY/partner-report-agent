@@ -1,7 +1,7 @@
 {
   "name": "partner-report",
-  "version": "0.1.0+codex.20260803041934",
-  "description": "Collect local Codex progress during the week, then generate Partner-reviewed project cards and a weekly report.",
+  "version": "0.2.0+codex.20260803080811",
+  "description": "Collect complete Codex project-session turns every Friday and sync structured facts to Partner Report.",
   "author": {
     "name": "\u6797\u6797\u52c7's team",
     "url": "https://github.com/saul615"
@@ -17,18 +17,18 @@
   "interface": {
     "displayName": "Partner Report",
     "shortDescription": "Build a reviewed weekly Partner report",
-    "longDescription": "Track local Codex session activity, extract only user tasks and final outcomes after the quiet window, accumulate validated facts for one week, then run project-card aggregation, first review, weekly report generation, and second review in the Partner data platform.",
+    "longDescription": "Every Friday at 13:00, collect only complete user-question and final-answer turns from configured project folders, extract structured facts locally, and upload them for central aggregation and two-stage web review.",
     "developerName": "\u6797\u6797\u52c7's team",
     "category": "Productivity",
     "capabilities": [
-      "Quiet-window session extraction",
-      "Runner health heartbeat",
-      "Weekly work item aggregation",
-      "Two-stage data platform review"
+      "Complete-turn session extraction",
+      "Project-root and subfolder mapping",
+      "Weekly structured-fact sync",
+      "Binding-code data isolation"
     ],
     "defaultPrompt": [
-      "Use $partner-report-sync to connect this Codex device.",
-      "Use $partner-report-sync to sync my sessions and check weekly report progress."
+      "Use $partner-report-sync to connect this Codex installation with an Admin binding code.",
+      "Use $partner-report-sync to run weekly-collect and return the safe summary."
     ],
     "websiteURL": "https://github.com/saul615/partner-report-agent"
   }

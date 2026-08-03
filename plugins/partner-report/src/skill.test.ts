@@ -9,6 +9,9 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("codex plugin list --json");
     expect(skill).toContain("source.path");
     expect(skill).toContain("node \"<PLUGIN_PATH>/dist/cli.mjs\"");
+    expect(skill).toContain("weekly-collect");
+    expect(skill).toContain("every Friday at 13:00");
+    expect(skill).not.toContain("Stop` and `SessionEnd");
     expect(skill).not.toContain("node \"${PLUGIN_ROOT}/dist/cli.mjs\"");
   });
 });

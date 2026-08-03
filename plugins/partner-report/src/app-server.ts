@@ -31,7 +31,7 @@ export class CodexAppServer {
       }
       this.pending.clear();
     });
-    await this.request("initialize", { clientInfo: { name: "partner_report", title: "Partner Report", version: "0.1.0" } });
+    await this.request("initialize", { clientInfo: { name: "partner_report", title: "Partner Report", version: "0.2.0" } });
     this.notify("initialized", {});
   }
 

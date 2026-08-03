@@ -47,7 +47,8 @@ export const teams = pgTable(
     evidenceExcerptEnabled: boolean("evidence_excerpt_enabled").notNull().default(false),
     evidenceExcerptMaxChars: integer("evidence_excerpt_max_chars").notNull().default(240),
     sessionQuietPeriodMinutes: integer("session_quiet_period_minutes").notNull().default(120),
-    minimumPluginVersion: text("minimum_plugin_version").notNull().default("0.1.0"),
+    collectionGraceMinutes: integer("collection_grace_minutes").notNull().default(120),
+    minimumPluginVersion: text("minimum_plugin_version").notNull().default("0.2.0"),
     ...timestamps()
   },
   (table) => [index("teams_tenant_idx").on(table.tenantId)]
@@ -60,6 +61,7 @@ export const partners = pgTable(
     tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
     teamId: uuid("team_id").notNull().references(() => teams.id),
     userId: uuid("user_id").references(() => users.id),
+    email: text("email").notNull(),
     displayName: text("display_name").notNull(),
     status: text("status").notNull().default("active"),
     preferences: jsonb("preferences").notNull().default({}),
@@ -67,7 +69,8 @@ export const partners = pgTable(
   },
   (table) => [
     index("partners_tenant_team_idx").on(table.tenantId, table.teamId),
-    uniqueIndex("partners_tenant_user_unique").on(table.tenantId, table.userId)
+    uniqueIndex("partners_tenant_user_unique").on(table.tenantId, table.userId),
+    uniqueIndex("partners_team_email_unique").on(table.tenantId, table.teamId, table.email)
   ]
 );
 
@@ -226,9 +229,37 @@ export const pluginInstances = pgTable(
     pendingLocalJobs: integer("pending_local_jobs").notNull().default(0),
     retryCount: integer("retry_count").notNull().default(0),
     lastErrorCode: text("last_error_code"),
+    lastCollectionStartedAt: timestamp("last_collection_started_at", { withTimezone: true }),
+    lastCollectionCompletedAt: timestamp("last_collection_completed_at", { withTimezone: true }),
+    lastCollectionPeriodKey: text("last_collection_period_key"),
+    lastCollectionSessionCount: integer("last_collection_session_count").notNull().default(0),
+    lastCollectionFactCount: integer("last_collection_fact_count").notNull().default(0),
     ...timestamps()
   },
   (table) => [index("plugin_instances_partner_idx").on(table.tenantId, table.partnerId)]
+);
+
+export const pluginBindingCodes = pgTable(
+  "plugin_binding_codes",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    teamId: uuid("team_id").notNull().references(() => teams.id),
+    partnerId: uuid("partner_id").notNull().references(() => partners.id),
+    codeHash: text("code_hash").notNull(),
+    codePrefix: text("code_prefix").notNull(),
+    label: text("label").notNull().default("Codex Plugin"),
+    status: text("status").notNull().default("active"),
+    pluginInstanceId: uuid("plugin_instance_id").references(() => pluginInstances.id),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    ...timestamps()
+  },
+  (table) => [
+    uniqueIndex("plugin_binding_codes_hash_unique").on(table.codeHash),
+    index("plugin_binding_codes_partner_idx").on(table.tenantId, table.partnerId)
+  ]
 );
 
 export const syncBatches = pgTable(

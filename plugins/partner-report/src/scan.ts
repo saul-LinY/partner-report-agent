@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { PluginConfig } from "./config.js";
 import { CodexAppServer } from "./app-server.js";
-import { setState, type SessionActivity } from "./database.js";
+import { setState } from "./database.js";
 
 type ProjectPolicy = {
   id: string;
@@ -14,7 +14,6 @@ type ProjectPolicy = {
 type ServerPolicy = {
   team: {
     evidence_excerpt_enabled: boolean;
-    session_quiet_period_minutes?: number;
   };
   projects: ProjectPolicy[];
   currentPeriod: {
@@ -141,6 +140,21 @@ export function normalizeProgressTurns(turns: any[]): ProgressTurn[] {
     });
 }
 
+export function isCompleteTurn(turn: ProgressTurn) {
+  const interrupted = new Set([
+    "cancelled",
+    "canceled",
+    "failed",
+    "interrupted",
+    "in_progress",
+  ]);
+  return Boolean(
+    turn.userPrompt?.trim() &&
+    turn.assistantFinal?.trim() &&
+    !interrupted.has(turn.status?.toLowerCase() ?? ""),
+  );
+}
+
 export function selectIncrementalTurns(
   turns: ProgressTurn[],
   lastTurnId?: string | null,
@@ -181,14 +195,35 @@ function inventory(
   ).run(sessionId, cwd, projectId, status, reasonCode, now, now);
 }
 
-function mappedProject(cwd: string, projects: ProjectPolicy[]) {
+export function mappedProject(cwd: string, projects: ProjectPolicy[]) {
   const matches = projects.flatMap((project) =>
     project.allowed_paths
       .filter((root) => isAbsolute(root) && withinPath(cwd, root))
-      .map((root) => ({ project, rootLength: resolve(root).length })),
+      .map((root) => {
+        const normalizedRoot = resolve(root);
+        return {
+          project,
+          rootLength: normalizedRoot.length,
+          matchMethod:
+            resolve(cwd) === normalizedRoot
+              ? ("exact_root" as const)
+              : ("descendant_path" as const),
+          rootFingerprint: hash({
+            projectId: project.id,
+            root: normalizedRoot,
+          }),
+        };
+      }),
   );
   matches.sort((left, right) => right.rootLength - left.rootLength);
-  return matches[0]?.project ?? null;
+  const match = matches[0];
+  return match
+    ? {
+        ...match.project,
+        matchMethod: match.matchMethod,
+        rootFingerprint: match.rootFingerprint,
+      }
+    : null;
 }
 
 export async function prepareSessionJobs(
@@ -217,11 +252,6 @@ export async function prepareSessionJobs(
   const cursorForSession = db.prepare(
     "select * from session_cursors where session_id = ?",
   );
-  const activityForSession = db.prepare(
-    "select * from session_activity where session_id = ?",
-  );
-  const quietPeriodMinutes = policy.team.session_quiet_period_minutes ?? 120;
-
   try {
     await server.connect();
     const threads = await server.listThreads();
@@ -276,23 +306,16 @@ export async function prepareSessionJobs(
         stats.outOfPeriod += 1;
         continue;
       }
-      const activity = activityForSession.get(sessionId) as
-        SessionActivity | undefined;
-      const lastActivityAt = Math.max(
-        updatedAt,
-        timestamp(activity?.last_activity_at),
-      );
+      const lastActivityAt = updatedAt;
       const observedActivityAt = new Date(
         lastActivityAt || Date.now(),
       ).toISOString();
-      const dueAt = quietUntil(observedActivityAt, quietPeriodMinutes);
-      if (!activity) stats.hookMissed += 1;
       db.prepare(
         `
         insert into session_activity (
           session_id, latest_turn_id, cwd, model, last_event_name, last_activity_at,
           quiet_until, processing_state, generation, updated_at
-        ) values (?, null, ?, null, 'COMPENSATION_DISCOVERY', ?, ?, 'DIRTY', 1, ?)
+        ) values (?, null, ?, null, 'WEEKLY_DISCOVERY', ?, ?, 'DIRTY', 1, ?)
         on conflict(session_id) do update set
           cwd = excluded.cwd,
           last_activity_at = excluded.last_activity_at,
@@ -307,24 +330,9 @@ export async function prepareSessionJobs(
         sessionId,
         cwd || null,
         observedActivityAt,
-        dueAt,
+        observedActivityAt,
         new Date().toISOString(),
       );
-      if (!force && !isSessionQuiet(observedActivityAt, quietPeriodMinutes)) {
-        db.prepare(
-          "update session_activity set processing_state = 'QUIET_WAIT', quiet_until = ?, updated_at = ? where session_id = ?",
-        ).run(dueAt, new Date().toISOString(), sessionId);
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          project.id,
-          "quiet_wait",
-          "SESSION_ACTIVE",
-        );
-        stats.deferred += 1;
-        continue;
-      }
       if (activeForSession.get(sessionId)) {
         inventory(
           db,
@@ -370,13 +378,26 @@ export async function prepareSessionJobs(
       );
       if (cursor && !force && !incremental.cursorMatched)
         stats.warnings.push(`CURSOR_RESET:${sessionId}`);
-      const newTurns = incremental.turns;
+      const newTurns = incremental.turns.filter(isCompleteTurn);
       if (newTurns.length === 0) {
-        inventory(db, sessionId, cwd, project.id, "synced", null);
+        const hasIncompleteTurn = incremental.turns.length > 0;
+        inventory(
+          db,
+          sessionId,
+          cwd,
+          project.id,
+          hasIncompleteTurn ? "awaiting_complete_turn" : "synced",
+          hasIncompleteTurn ? "INCOMPLETE_TURN_SKIPPED" : null,
+        );
         db.prepare(
-          "update session_activity set processing_state = 'CLEAN', updated_at = ? where session_id = ?",
-        ).run(new Date().toISOString(), sessionId);
-        stats.unchanged += 1;
+          "update session_activity set processing_state = ?, updated_at = ? where session_id = ?",
+        ).run(
+          hasIncompleteTurn ? "DIRTY" : "CLEAN",
+          new Date().toISOString(),
+          sessionId,
+        );
+        if (hasIncompleteTurn) stats.deferred += 1;
+        else stats.unchanged += 1;
         continue;
       }
       const sourceRevision = (cursor?.source_revision ?? 0) + 1;
@@ -395,6 +416,8 @@ export async function prepareSessionJobs(
             id: project.id,
             name: project.name,
             aliases: project.aliases,
+            matchMethod: project.matchMethod,
+            rootFingerprint: project.rootFingerprint,
           },
           sourceRevision,
           sourceHash,
@@ -425,10 +448,15 @@ export async function prepareSessionJobs(
         },
         outputRequirements: {
           status: "extracted",
+          project: {
+            id: project.id,
+            matchMethod: project.matchMethod,
+            rootFingerprint: project.rootFingerprint,
+          },
           factOrigin: "ai_extracted",
           production: {
-            skillVersion: "partner-report-sync/0.1.0",
-            promptVersion: "2026-08-03.v2",
+            skillVersion: "partner-report-sync/0.2.0",
+            promptVersion: "2026-08-03.v3",
             schemaVersion: "1.0",
             producer: "codex-skill",
             ...(process.env.CODEX_MODEL

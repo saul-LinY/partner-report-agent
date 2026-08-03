@@ -11,6 +11,7 @@ type DuePeriod = {
   cutoff_at: Date;
   timezone: string;
   template_id: string | null;
+  collection_grace_minutes: number;
 };
 
 export type WeeklyScheduleResult = {
@@ -76,11 +77,19 @@ export async function scheduleDueWeeklyReports(
   onlyPeriodId?: string,
 ): Promise<WeeklyScheduleResult> {
   const candidates = await sql<DuePeriod[]>`
-    select rp.*
+    select rp.*, t.collection_grace_minutes
     from report_periods rp
     join teams t on t.id = rp.team_id and t.tenant_id = rp.tenant_id
     where rp.status = 'open' and t.report_type = 'weekly'
       and rp.cutoff_at <= ${now.toISOString()}
+      and (
+        rp.cutoff_at + make_interval(mins => t.collection_grace_minutes) <= ${now.toISOString()}
+        or not exists (
+          select 1 from plugin_instances pi
+          where pi.tenant_id = rp.tenant_id and pi.team_id = rp.team_id and pi.status = 'active'
+            and pi.last_collection_period_key is distinct from rp.period_key
+        )
+      )
     order by rp.cutoff_at
   `;
   const duePeriods = onlyPeriodId
@@ -93,8 +102,9 @@ export async function scheduleDueWeeklyReports(
   for (const candidate of duePeriods) {
     const result = await sql.begin(async (tx) => {
       const lockedRows = await tx<DuePeriod[]>`
-        select * from report_periods
-        where id = ${candidate.id} and status = 'open' and cutoff_at <= ${now.toISOString()}
+        select rp.*, t.collection_grace_minutes from report_periods rp
+        join teams t on t.id = rp.team_id and t.tenant_id = rp.tenant_id
+        where rp.id = ${candidate.id} and rp.status = 'open' and rp.cutoff_at <= ${now.toISOString()}
         for update
       `;
       const period = lockedRows[0];
@@ -108,6 +118,11 @@ export async function scheduleDueWeeklyReports(
         order by partner_id
       `;
       let jobs = 0;
+      const projects = await tx<any[]>`
+        select id, name, aliases, allowed_paths, external_ids
+        from projects where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
+          and status = 'active' order by name
+      `;
 
       for (const { partner_id: partnerId } of partners) {
         const facts = await tx<any[]>`
@@ -143,6 +158,7 @@ export async function scheduleDueWeeklyReports(
               },
               reviewId: reviewRows[0]!.id,
               facts,
+              projects,
               constraints: {
                 lowConfidenceStaysIndependent: true,
                 completedNeedsEvidence: true,

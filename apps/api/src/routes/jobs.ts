@@ -197,14 +197,16 @@ export async function jobRoutes(app: FastifyInstance) {
     await sql`
       update agent_jobs set status = 'PENDING', lease_token_hash = null, lease_until = null, updated_at = now()
       where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
+        and plugin_instance_id = ${actor.pluginInstanceId}
+        and type in ('RESCAN_SESSIONS', 'REANALYZE_SESSIONS')
         and status = 'LEASED' and lease_until < now() and attempt_count < max_attempts
     `;
     return sql<any[]>`
       select id, type, status, attempt_count, max_attempts, created_at
       from agent_jobs
       where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
-        and status = 'PENDING'
-        and (plugin_instance_id is null or plugin_instance_id = ${actor.pluginInstanceId})
+        and plugin_instance_id = ${actor.pluginInstanceId}
+        and type in ('RESCAN_SESSIONS', 'REANALYZE_SESSIONS') and status = 'PENDING'
       order by created_at asc limit 20
     `;
   });
@@ -218,8 +220,8 @@ export async function jobRoutes(app: FastifyInstance) {
         status = 'LEASED', lease_token_hash = ${sha256(leaseToken)}, lease_until = now() + interval '15 minutes',
         attempt_count = attempt_count + 1, updated_at = now()
       where id = ${id} and tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
-        and status = 'PENDING'
-        and (plugin_instance_id is null or plugin_instance_id = ${actor.pluginInstanceId})
+        and plugin_instance_id = ${actor.pluginInstanceId}
+        and type in ('RESCAN_SESSIONS', 'REANALYZE_SESSIONS') and status = 'PENDING'
       returning id, type, input_payload, attempt_count, lease_until
     `;
     const job = rows[0];

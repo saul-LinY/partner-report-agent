@@ -4065,10 +4065,13 @@ var workStatusSchema = external_exports.enum([
   "cancelled"
 ]);
 var productionMetadataSchema = external_exports.object({
-  skillVersion: external_exports.literal("partner-report-sync/0.1.0"),
-  promptVersion: external_exports.literal("2026-08-03.v2"),
+  skillVersion: external_exports.enum([
+    "partner-report-sync/0.2.0",
+    "partner-report-platform/0.2.0"
+  ]),
+  promptVersion: external_exports.string().min(1).max(80),
   schemaVersion: external_exports.literal("1.0"),
-  producer: external_exports.literal("codex-skill"),
+  producer: external_exports.enum(["codex-skill", "data-platform"]),
   modelVersion: external_exports.string().min(1).optional()
 });
 var evidenceSchema = external_exports.object({
@@ -4110,6 +4113,11 @@ var sessionWorkFactSchema = external_exports.object({
 });
 var sessionFactUploadSchema = external_exports.object({
   sessionId: external_exports.string().min(1),
+  project: external_exports.object({
+    id: idSchema,
+    matchMethod: external_exports.enum(["exact_root", "descendant_path"]),
+    rootFingerprint: external_exports.string().regex(/^[a-f0-9]{64}$/)
+  }),
   sourceRevision: external_exports.number().int().positive(),
   sourceHash: external_exports.string().min(16),
   fromTurnId: external_exports.string().min(1),
@@ -4248,24 +4256,22 @@ var heartbeatSchema = external_exports.object({
   lastErrorCode: external_exports.string().max(120).optional(),
   coverage: coverageSchema.optional()
 });
+var collectionStatusSchema = external_exports.object({
+  pluginVersion: external_exports.string().min(1),
+  deviceName: external_exports.string().min(1).max(120),
+  phase: external_exports.enum(["started", "completed", "failed"]),
+  periodKey: external_exports.string().min(1).max(80),
+  sessionCount: external_exports.number().int().nonnegative().default(0),
+  factCount: external_exports.number().int().nonnegative().default(0),
+  pendingLocalJobs: external_exports.number().int().nonnegative().default(0),
+  lastScanAt: isoDateTimeSchema.optional(),
+  lastSyncAt: isoDateTimeSchema.optional(),
+  errorCode: external_exports.string().max(120).optional(),
+  coverage: coverageSchema.optional()
+});
 function assertFactSemantics(fact) {
   if (fact.status === "completed" && (fact.completionSupport !== "evidence" || fact.evidence.length === 0)) {
     throw new Error("Completed facts require explicit evidence.");
-  }
-}
-function assertReportSemantics(report) {
-  const required = [
-    "summary",
-    "achievements",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coordination",
-    "coverage"
-  ];
-  const actual = new Set(report.sections.map((section) => section.key));
-  if (actual.size !== required.length || required.some((key) => !actual.has(key))) {
-    throw new Error("Report must contain each required section exactly once.");
   }
 }
 
@@ -8321,7 +8327,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-var PLUGIN_VERSION = "0.1.0";
+var PLUGIN_VERSION = "0.2.0";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 function normalizeServerUrl(value, allowInsecureHttp = false) {
@@ -8817,7 +8823,7 @@ var CodexAppServer = class {
       }
       this.pending.clear();
     });
-    await this.request("initialize", { clientInfo: { name: "partner_report", title: "Partner Report", version: "0.1.0" } });
+    await this.request("initialize", { clientInfo: { name: "partner_report", title: "Partner Report", version: "0.2.0" } });
     this.notify("initialized", {});
   }
   request(method, params, timeoutMs = 3e4) {
@@ -8901,14 +8907,6 @@ function timestamp(value) {
   if (typeof value !== "number") return 0;
   return value > 1e10 ? value : value * 1e3;
 }
-function quietUntil(lastActivityAt, quietPeriodMinutes = 120) {
-  return new Date(
-    timestamp(lastActivityAt) + quietPeriodMinutes * 6e4
-  ).toISOString();
-}
-function isSessionQuiet(lastActivityAt, quietPeriodMinutes = 120, now = Date.now()) {
-  return timestamp(lastActivityAt) + quietPeriodMinutes * 6e4 <= now;
-}
 function textContent(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -8940,6 +8938,18 @@ function normalizeProgressTurns(turns) {
     };
   });
 }
+function isCompleteTurn(turn) {
+  const interrupted = /* @__PURE__ */ new Set([
+    "cancelled",
+    "canceled",
+    "failed",
+    "interrupted",
+    "in_progress"
+  ]);
+  return Boolean(
+    turn.userPrompt?.trim() && turn.assistantFinal?.trim() && !interrupted.has(turn.status?.toLowerCase() ?? "")
+  );
+}
 function selectIncrementalTurns(turns, lastTurnId, force = false) {
   if (force)
     return { turns, mode: "full_rescan", cursorMatched: true };
@@ -8968,10 +8978,26 @@ function inventory(db, sessionId, cwd, projectId, status2, reasonCode) {
 }
 function mappedProject(cwd, projects) {
   const matches = projects.flatMap(
-    (project) => project.allowed_paths.filter((root) => isAbsolute(root) && withinPath(cwd, root)).map((root) => ({ project, rootLength: resolve3(root).length }))
+    (project) => project.allowed_paths.filter((root) => isAbsolute(root) && withinPath(cwd, root)).map((root) => {
+      const normalizedRoot = resolve3(root);
+      return {
+        project,
+        rootLength: normalizedRoot.length,
+        matchMethod: resolve3(cwd) === normalizedRoot ? "exact_root" : "descendant_path",
+        rootFingerprint: hash({
+          projectId: project.id,
+          root: normalizedRoot
+        })
+      };
+    })
   );
   matches.sort((left, right) => right.rootLength - left.rootLength);
-  return matches[0]?.project ?? null;
+  const match = matches[0];
+  return match ? {
+    ...match.project,
+    matchMethod: match.matchMethod,
+    rootFingerprint: match.rootFingerprint
+  } : null;
 }
 async function prepareSessionJobs(db, config, policy, force = false) {
   if (!policy.currentPeriod)
@@ -8994,10 +9020,6 @@ async function prepareSessionJobs(db, config, policy, force = false) {
   const cursorForSession = db.prepare(
     "select * from session_cursors where session_id = ?"
   );
-  const activityForSession = db.prepare(
-    "select * from session_activity where session_id = ?"
-  );
-  const quietPeriodMinutes = policy.team.session_quiet_period_minutes ?? 120;
   try {
     await server.connect();
     const threads = await server.listThreads();
@@ -9044,22 +9066,16 @@ async function prepareSessionJobs(db, config, policy, force = false) {
         stats.outOfPeriod += 1;
         continue;
       }
-      const activity = activityForSession.get(sessionId);
-      const lastActivityAt = Math.max(
-        updatedAt,
-        timestamp(activity?.last_activity_at)
-      );
+      const lastActivityAt = updatedAt;
       const observedActivityAt = new Date(
         lastActivityAt || Date.now()
       ).toISOString();
-      const dueAt = quietUntil(observedActivityAt, quietPeriodMinutes);
-      if (!activity) stats.hookMissed += 1;
       db.prepare(
         `
         insert into session_activity (
           session_id, latest_turn_id, cwd, model, last_event_name, last_activity_at,
           quiet_until, processing_state, generation, updated_at
-        ) values (?, null, ?, null, 'COMPENSATION_DISCOVERY', ?, ?, 'DIRTY', 1, ?)
+        ) values (?, null, ?, null, 'WEEKLY_DISCOVERY', ?, ?, 'DIRTY', 1, ?)
         on conflict(session_id) do update set
           cwd = excluded.cwd,
           last_activity_at = excluded.last_activity_at,
@@ -9074,24 +9090,9 @@ async function prepareSessionJobs(db, config, policy, force = false) {
         sessionId,
         cwd || null,
         observedActivityAt,
-        dueAt,
+        observedActivityAt,
         (/* @__PURE__ */ new Date()).toISOString()
       );
-      if (!force && !isSessionQuiet(observedActivityAt, quietPeriodMinutes)) {
-        db.prepare(
-          "update session_activity set processing_state = 'QUIET_WAIT', quiet_until = ?, updated_at = ? where session_id = ?"
-        ).run(dueAt, (/* @__PURE__ */ new Date()).toISOString(), sessionId);
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          project.id,
-          "quiet_wait",
-          "SESSION_ACTIVE"
-        );
-        stats.deferred += 1;
-        continue;
-      }
       if (activeForSession.get(sessionId)) {
         inventory(
           db,
@@ -9135,13 +9136,26 @@ async function prepareSessionJobs(db, config, policy, force = false) {
       );
       if (cursor && !force && !incremental.cursorMatched)
         stats.warnings.push(`CURSOR_RESET:${sessionId}`);
-      const newTurns = incremental.turns;
+      const newTurns = incremental.turns.filter(isCompleteTurn);
       if (newTurns.length === 0) {
-        inventory(db, sessionId, cwd, project.id, "synced", null);
+        const hasIncompleteTurn = incremental.turns.length > 0;
+        inventory(
+          db,
+          sessionId,
+          cwd,
+          project.id,
+          hasIncompleteTurn ? "awaiting_complete_turn" : "synced",
+          hasIncompleteTurn ? "INCOMPLETE_TURN_SKIPPED" : null
+        );
         db.prepare(
-          "update session_activity set processing_state = 'CLEAN', updated_at = ? where session_id = ?"
-        ).run((/* @__PURE__ */ new Date()).toISOString(), sessionId);
-        stats.unchanged += 1;
+          "update session_activity set processing_state = ?, updated_at = ? where session_id = ?"
+        ).run(
+          hasIncompleteTurn ? "DIRTY" : "CLEAN",
+          (/* @__PURE__ */ new Date()).toISOString(),
+          sessionId
+        );
+        if (hasIncompleteTurn) stats.deferred += 1;
+        else stats.unchanged += 1;
         continue;
       }
       const sourceRevision = (cursor?.source_revision ?? 0) + 1;
@@ -9159,7 +9173,9 @@ async function prepareSessionJobs(db, config, policy, force = false) {
           project: {
             id: project.id,
             name: project.name,
-            aliases: project.aliases
+            aliases: project.aliases,
+            matchMethod: project.matchMethod,
+            rootFingerprint: project.rootFingerprint
           },
           sourceRevision,
           sourceHash,
@@ -9190,10 +9206,15 @@ async function prepareSessionJobs(db, config, policy, force = false) {
         },
         outputRequirements: {
           status: "extracted",
+          project: {
+            id: project.id,
+            matchMethod: project.matchMethod,
+            rootFingerprint: project.rootFingerprint
+          },
           factOrigin: "ai_extracted",
           production: {
-            skillVersion: "partner-report-sync/0.1.0",
-            promptVersion: "2026-08-03.v2",
+            skillVersion: "partner-report-sync/0.2.0",
+            promptVersion: "2026-08-03.v3",
             schemaVersion: "1.0",
             producer: "codex-skill",
             ...process.env.CODEX_MODEL ? { modelVersion: process.env.CODEX_MODEL } : {}
@@ -9251,12 +9272,7 @@ import {
 } from "node:fs";
 import { dirname, resolve as resolve4 } from "node:path";
 var DEFAULT_MODEL = "gpt-5.6-sol";
-var DEFAULT_INTERVAL_MINUTES = 5;
 var COMPENSATION_INTERVAL_MS = 6 * 60 * 60 * 1e3;
-function boundedMinutes(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 1 ? Math.min(parsed, 60) : fallback;
-}
 function safeError(error) {
   if (error instanceof Error) return error.message.slice(0, 500);
   return String(error).slice(0, 500);
@@ -9321,15 +9337,15 @@ function buildCodexExecArgs(job, model = process.env.PARTNER_REPORT_MODEL ?? DEF
 }
 function taskRules(kind) {
   if (kind === "EXTRACT_SESSION_FACTS") {
-    return `Return one SessionFactUpload object. Copy the source boundary and observedAt exactly from input.session. Each input turn contains only userPrompt (the task) and assistantFinal (the final outcome or progress). Extract project-level progress from those fields only. Ignore missing final answers and do not infer implementation details, reasoning, commands, tools, or file changes. A completed fact needs explicit evidence. Never return a transcript, full prompt, response, command output, credential, or secret. Use the exact production object from input.outputRequirements.`;
+    return `Return one SessionFactUpload object. Copy project, source boundary, and observedAt exactly from input.outputRequirements and input.session. Each input turn contains only userPrompt (the task) and assistantFinal (the final outcome or progress). Extract project-level progress from those fields only. Ignore missing final answers and do not infer implementation details, reasoning, commands, tools, or file changes. A completed fact needs explicit evidence. Never return a transcript, full prompt, response, command output, credential, or secret. Use the exact production object from input.outputRequirements.`;
   }
   if (kind === "AGGREGATE_WORK_ITEMS") {
-    return `Return AggregationResultV1. Account for every input fact exactly once in one group or unassignedFactIds. Merge facts by project and overall task progress, not by code files or implementation steps. Merge only clearly related work. A usable fact without a configured project should become an independent group without projectId; reserve unassignedFactIds for facts that cannot form a usable work item. Never invent a project ID. Use production {"skillVersion":"partner-report-sync/0.1.0","promptVersion":"2026-08-03.v2","schemaVersion":"1.0","producer":"codex-skill","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
+    return `Return AggregationResultV1. Account for every input fact exactly once in one group or unassignedFactIds. Never invent a project ID. Use production {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-03.central.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
   }
   if (["GENERATE_INDIVIDUAL_REPORT", "REGENERATE_INDIVIDUAL_REPORT"].includes(
     kind
   )) {
-    return `Return IndividualReportResultV1. Include the seven required sections exactly once. Every factual claim must cite allowed Work Item IDs. Preferences may change presentation but not facts. State coverage limits plainly. Use production {"skillVersion":"partner-report-sync/0.1.0","promptVersion":"2026-08-03.v2","schemaVersion":"1.0","producer":"codex-skill","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
+    return `Return IndividualReportResultV1. Include the seven required sections exactly once. Every factual claim must cite allowed Work Item IDs. Preferences may change presentation but not facts. State coverage limits plainly. Use production {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-03.central.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
   }
   throw new Error(`Unsupported structured job type: ${kind}`);
 }
@@ -9355,24 +9371,6 @@ async function runCodexStructuredJob(job) {
   );
   if (!existsSync2(job.resultPath))
     throw new Error(`Codex did not create a result for ${job.jobId}`);
-}
-function shouldDiscoverSessions(force) {
-  if (force) return true;
-  const db = openDatabase();
-  try {
-    const due = db.prepare(
-      `
-      select 1 from session_activity
-      where processing_state in ('DIRTY', 'QUIET_WAIT') and quiet_until <= ?
-      limit 1
-    `
-    ).get((/* @__PURE__ */ new Date()).toISOString());
-    const lastDiscoveryAt = getState(db, "last_discovery_at");
-    const compensationDue = !lastDiscoveryAt || Date.now() - new Date(lastDiscoveryAt).getTime() >= COMPENSATION_INTERVAL_MS;
-    return Boolean(due) || compensationDue;
-  } finally {
-    db.close();
-  }
 }
 function markRunner(state, errorCode) {
   const db = openDatabase();
@@ -9475,55 +9473,6 @@ async function syncLocalJobs(cliPath, maxBatches) {
   }
   return batchIds;
 }
-async function completeRescanJob(cliPath, job, maxJobs) {
-  await runCli(cliPath, ["prepare", "--force"]);
-  await processLocalJobs(cliPath, maxJobs);
-  const batchIds = await syncLocalJobs(
-    cliPath,
-    Math.max(1, Math.ceil(maxJobs / 50))
-  );
-  writeFileSync2(
-    job.resultPath,
-    `${JSON.stringify({ completed: true, batchIds })}
-`,
-    { mode: 384 }
-  );
-}
-async function processRemoteJobs(cliPath, maxJobs) {
-  let completed = 0;
-  while (completed < maxJobs) {
-    const next = await runCli(cliPath, ["lease-next"]);
-    if (next.status === "empty") break;
-    const job = next;
-    try {
-      if (["RESCAN_SESSIONS", "REANALYZE_SESSIONS"].includes(job.kind)) {
-        await completeRescanJob(cliPath, job, maxJobs);
-      } else {
-        await runCodexStructuredJob(job);
-      }
-      await runCli(cliPath, [
-        "complete-remote",
-        "--job-id",
-        job.jobId,
-        "--result",
-        job.resultPath
-      ]);
-      completed += 1;
-    } catch (error) {
-      await runCli(cliPath, [
-        "fail-remote",
-        "--job-id",
-        job.jobId,
-        "--error-code",
-        "LOCAL_AGENT_FAILED",
-        "--message",
-        safeError(error)
-      ]).catch(() => void 0);
-      throw error;
-    }
-  }
-  return completed;
-}
 async function runAutomaticCycle(cliPath, force = false) {
   const maxJobs = Math.max(
     1,
@@ -9531,122 +9480,41 @@ async function runAutomaticCycle(cliPath, force = false) {
   );
   markRunner("working");
   try {
+    await runCli(cliPath, ["collection-status", "--phase", "started"]);
     const recoveredLocalJobs = recoverStaleLocalJobs();
     const cleanup = cleanupOldLocalState();
-    let discovered = false;
-    if (shouldDiscoverSessions(force)) {
-      await runCli(cliPath, force ? ["prepare", "--force"] : ["prepare"]);
-      const db = openDatabase();
-      try {
-        setState(db, "last_discovery_at", (/* @__PURE__ */ new Date()).toISOString());
-      } finally {
-        db.close();
-      }
-      discovered = true;
+    await runCli(cliPath, force ? ["prepare", "--force"] : ["prepare"]);
+    const db = openDatabase();
+    try {
+      setState(db, "last_discovery_at", (/* @__PURE__ */ new Date()).toISOString());
+    } finally {
+      db.close();
     }
     const localJobs = await processLocalJobs(cliPath, maxJobs);
     const batchIds = await syncLocalJobs(
       cliPath,
       Math.max(1, Math.ceil(maxJobs / 50))
     );
-    const remoteJobs = await processRemoteJobs(cliPath, maxJobs);
     markRunner("idle");
-    await runCli(cliPath, ["heartbeat"]);
+    await runCli(cliPath, ["collection-status", "--phase", "completed"]);
     return {
       status: "completed",
-      discovered,
+      discovered: true,
       recoveredLocalJobs,
       cleanup,
       localJobs,
-      batchIds,
-      remoteJobs
+      batchIds
     };
   } catch (error) {
-    markRunner("error", "AUTO_RUNNER_FAILED");
-    await runCli(cliPath, ["heartbeat"]).catch(() => void 0);
-    throw new Error(`Automatic cycle failed: ${safeError(error)}`);
-  }
-}
-function runnerPidPath() {
-  return resolve4(dataDirectory(), "runner.pid");
-}
-function processIsAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function acquireRunnerLock() {
-  const path = runnerPidPath();
-  if (existsSync2(path)) {
-    const pid = Number(readFileSync2(path, "utf8").trim());
-    if (Number.isInteger(pid) && pid > 0 && processIsAlive(pid)) return false;
-    try {
-      unlinkSync(path);
-    } catch {
-      return false;
-    }
-  }
-  try {
-    const descriptor = openSync(path, "wx", 384);
-    writeFileSync2(descriptor, `${process.pid}
-`);
-    closeSync(descriptor);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function startRunnerDetached(cliPath) {
-  if (!existsSync2(cliPath)) return false;
-  const child = spawn2(process.execPath, [cliPath, "runner"], {
-    detached: true,
-    env: { ...process.env, PARTNER_REPORT_AUTOMATION: "1" },
-    stdio: "ignore"
-  });
-  child.unref();
-  return true;
-}
-async function runRunner(cliPath) {
-  if (!acquireRunnerLock()) return { status: "already_running" };
-  markRunner("starting");
-  let stopping = false;
-  const stop = () => {
-    stopping = true;
-  };
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  try {
-    do {
-      try {
-        await runAutomaticCycle(cliPath);
-      } catch {
-      }
-      if (stopping) break;
-      const interval = boundedMinutes(
-        process.env.PARTNER_REPORT_RUNNER_INTERVAL_MINUTES,
-        DEFAULT_INTERVAL_MINUTES
-      ) * 6e4;
-      await new Promise((resolveWait) => {
-        const finish = () => {
-          clearTimeout(timer);
-          process.removeListener("SIGINT", finish);
-          process.removeListener("SIGTERM", finish);
-          resolveWait();
-        };
-        const timer = setTimeout(finish, interval);
-        process.once("SIGINT", finish);
-        process.once("SIGTERM", finish);
-      });
-    } while (!stopping);
-    return { status: "stopped" };
-  } finally {
-    try {
-      unlinkSync(runnerPidPath());
-    } catch {
-    }
+    markRunner("error", "WEEKLY_COLLECTION_FAILED");
+    await runCli(cliPath, [
+      "collection-status",
+      "--phase",
+      "failed",
+      "--error-code",
+      "WEEKLY_COLLECTION_FAILED"
+    ]).catch(() => void 0);
+    throw new Error(`Weekly collection failed: ${safeError(error)}`);
   }
 }
 
@@ -9696,58 +9564,41 @@ async function connect() {
     flag("allow-insecure-http")
   );
   const deviceName = option("device-name", hostname());
-  const authorization = await publicRequest(serverUrl, "/v1/plugin-bindings/device-authorizations", {
+  const bindingCode = option("binding-code") ?? process.env.PARTNER_REPORT_BINDING_CODE;
+  if (!bindingCode) {
+    throw new Error(
+      "connect \u9700\u8981 Admin \u5728\u6570\u636E\u4E2D\u53F0\u751F\u6210\u7684 --binding-code <code>\u3002"
+    );
+  }
+  const tokens = await publicRequest(serverUrl, "/v1/plugin-bindings/claim", {
     method: "POST",
-    body: JSON.stringify({ deviceName, pluginVersion: PLUGIN_VERSION })
+    body: JSON.stringify({
+      bindingCode,
+      deviceName,
+      pluginVersion: PLUGIN_VERSION
+    })
+  });
+  const existing = loadConfig(false);
+  if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
+    removeSecrets(existing.pluginInstanceId);
+  saveSecret(tokens.pluginInstanceId, "access", tokens.accessToken);
+  saveSecret(tokens.pluginInstanceId, "refresh", tokens.refreshToken);
+  saveConfig({
+    serverUrl,
+    pluginInstanceId: tokens.pluginInstanceId,
+    deviceName,
+    accessExpiresAt: tokens.expiresAt,
+    excludedSessionIds: existing?.excludedSessionIds ?? [],
+    excludedPaths: existing?.excludedPaths ?? []
   });
   output({
-    status: "authorization_required",
-    userCode: authorization.userCode,
-    verificationUri: authorization.verificationUri,
-    expiresAt: authorization.expiresAt
+    status: "connected",
+    pluginInstanceId: tokens.pluginInstanceId,
+    partnerId: tokens.partnerId,
+    deviceName,
+    schedule: "\u6BCF\u5468\u4E94 13:00\uFF08Team \u65F6\u533A\uFF09",
+    nextStep: "\u5728 Codex Scheduled tasks \u4E2D\u521B\u5EFA\u6BCF\u5468\u4EFB\u52A1\uFF1A$partner-report-sync weekly-collect"
   });
-  while (Date.now() < new Date(authorization.expiresAt).getTime()) {
-    await new Promise(
-      (resolveWait) => setTimeout(resolveWait, authorization.intervalSeconds * 1e3)
-    );
-    try {
-      const tokens = await publicRequest(serverUrl, "/v1/plugin-bindings/device-authorizations/token", {
-        method: "POST",
-        body: JSON.stringify({ deviceCode: authorization.deviceCode })
-      });
-      const existing = loadConfig(false);
-      if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
-        removeSecrets(existing.pluginInstanceId);
-      saveSecret(tokens.pluginInstanceId, "access", tokens.accessToken);
-      saveSecret(tokens.pluginInstanceId, "refresh", tokens.refreshToken);
-      saveConfig({
-        serverUrl,
-        pluginInstanceId: tokens.pluginInstanceId,
-        deviceName,
-        accessExpiresAt: tokens.expiresAt,
-        excludedSessionIds: existing?.excludedSessionIds ?? [],
-        excludedPaths: existing?.excludedPaths ?? []
-      });
-      const hasHookDataDirectory = Boolean(
-        process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA
-      );
-      const usesStableFileDirectory = process.platform !== "darwin" || process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS === "1";
-      const runnerStarted = hasHookDataDirectory || usesStableFileDirectory ? startRunnerDetached(resolve5(process.argv[1])) : false;
-      output({
-        status: "connected",
-        pluginInstanceId: tokens.pluginInstanceId,
-        deviceName,
-        runnerStarted,
-        ...runnerStarted ? {} : { runnerStartPending: "NEXT_TRUSTED_HOOK" }
-      });
-      return;
-    } catch (error) {
-      if (error instanceof HttpError && error.code === "AUTHORIZATION_PENDING")
-        continue;
-      throw error;
-    }
-  }
-  throw new Error("\u8BBE\u5907\u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u8FD0\u884C connect\u3002");
 }
 async function prepare() {
   const config = loadConfig();
@@ -9823,7 +9674,7 @@ function completeLocal() {
       const raw = JSON.parse(readFileSync3(resultPath, "utf8"));
       const result = sessionFactUploadSchema.parse(raw);
       for (const fact of result.facts) assertFactSemantics(fact);
-      if (result.sessionId !== job.session_id || result.sourceRevision !== job.source_revision || result.sourceHash !== job.source_hash || result.fromTurnId !== job.from_turn_id || result.toTurnId !== job.to_turn_id) {
+      if (result.sessionId !== job.session_id || result.project.id !== input.session.project.id || result.project.matchMethod !== input.session.project.matchMethod || result.project.rootFingerprint !== input.session.project.rootFingerprint || result.sourceRevision !== job.source_revision || result.sourceHash !== job.source_hash || result.fromTurnId !== job.from_turn_id || result.toTurnId !== job.to_turn_id) {
         throw new Error("\u63D0\u53D6\u7ED3\u679C\u7684 Session \u6765\u6E90\u8FB9\u754C\u4E0E\u672C\u5730\u4EFB\u52A1\u4E0D\u4E00\u81F4\u3002");
       }
       if (!input.extractionPolicy.evidenceExcerptEnabled && result.facts.some(
@@ -10029,138 +9880,49 @@ async function heartbeat(existingDb) {
     if (!existingDb) db.close();
   }
 }
-async function leaseNext() {
+async function collectionStatus() {
+  const phase = external_exports2.enum(["started", "completed", "failed"]).parse(option("phase"));
+  const config = loadConfig();
   const db = openDatabase();
   try {
-    let existing = db.prepare(
-      "select * from remote_leases where status = 'LEASED' order by created_at asc limit 1"
-    ).get();
-    if (existing && Date.now() - new Date(existing.updated_at).getTime() >= 15 * 6e4) {
+    const policy = await fetchPolicy(db);
+    if (!policy.currentPeriod)
+      throw new Error("\u670D\u52A1\u7AEF\u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002");
+    const health = localCoverage(db);
+    const sessionCount = Number(
       db.prepare(
-        "update remote_leases set status = 'EXPIRED', updated_at = ? where job_id = ? and status = 'LEASED'"
-      ).run((/* @__PURE__ */ new Date()).toISOString(), existing.job_id);
-      existing = void 0;
-    }
-    if (existing) {
-      const paths2 = materialize(
-        "remote",
-        existing.job_id,
-        JSON.parse(existing.input_json)
-      );
-      return output({
-        status: "ready",
-        kind: existing.type,
-        jobId: existing.job_id,
-        ...paths2,
-        schemaPath: schemaForRemoteType(existing.type)
-      });
-    }
-    const pending = await authenticatedRequest("/v1/agent-jobs/pending");
-    if (pending.length === 0) return output({ status: "empty" });
-    const leased = await authenticatedRequest(`/v1/agent-jobs/${pending[0].id}/ack`, { method: "POST" });
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    db.prepare(
-      `
-      insert into remote_leases (job_id, type, lease_token, input_json, status, created_at, updated_at)
-      values (?, ?, ?, ?, 'LEASED', ?, ?)
-      on conflict(job_id) do update set type = excluded.type, lease_token = excluded.lease_token,
-        input_json = excluded.input_json, status = 'LEASED', updated_at = excluded.updated_at
-    `
-    ).run(
-      leased.id,
-      leased.type,
-      leased.leaseToken,
-      JSON.stringify(leased.input_payload),
-      now,
-      now
+        "select count(*) as count from session_inventory where status = 'synced'"
+      ).get().count
     );
-    const paths = materialize("remote", leased.id, leased.input_payload);
-    output({
-      status: "ready",
-      kind: leased.type,
-      jobId: leased.id,
-      leaseUntil: leased.lease_until,
-      ...paths,
-      schemaPath: schemaForRemoteType(leased.type)
-    });
-  } finally {
-    db.close();
-  }
-}
-function schemaForRemoteType(type) {
-  const root = process.env.PLUGIN_ROOT ?? resolve5(import.meta.dirname, "..");
-  if (type === "AGGREGATE_WORK_ITEMS")
-    return resolve5(root, "schemas/aggregation-result-v1.json");
-  if (["GENERATE_INDIVIDUAL_REPORT", "REGENERATE_INDIVIDUAL_REPORT"].includes(
-    type
-  ))
-    return resolve5(root, "schemas/individual-report-result-v1.json");
-  return null;
-}
-async function completeRemote() {
-  const jobId = option("job-id");
-  const resultPath = option("result");
-  if (!jobId || !resultPath)
-    throw new Error("complete-remote \u9700\u8981 --job-id \u4E0E --result\u3002");
-  const db = openDatabase();
-  try {
-    const lease = db.prepare(
-      "select * from remote_leases where job_id = ? and status = 'LEASED'"
-    ).get(jobId);
-    if (!lease) throw new Error("\u8FDC\u7A0B\u4EFB\u52A1\u79DF\u7EA6\u4E0D\u5B58\u5728\u3002");
-    const raw = JSON.parse(readFileSync3(resultPath, "utf8"));
-    const result = lease.type === "AGGREGATE_WORK_ITEMS" ? aggregationResultSchema.parse(raw) : [
-      "GENERATE_INDIVIDUAL_REPORT",
-      "REGENERATE_INDIVIDUAL_REPORT"
-    ].includes(lease.type) ? individualReportResultSchema.parse(raw) : external_exports2.object({
-      completed: external_exports2.literal(true),
-      batchIds: external_exports2.array(external_exports2.string()).default([])
-    }).parse(raw);
-    if (["GENERATE_INDIVIDUAL_REPORT", "REGENERATE_INDIVIDUAL_REPORT"].includes(
-      lease.type
-    )) {
-      assertReportSemantics(
-        result
-      );
-    }
-    if (containsSensitive(result))
-      throw new Error("Agent Job \u7ED3\u679C\u89E6\u53D1\u654F\u611F\u4FE1\u606F\u62E6\u622A\u3002");
-    await authenticatedRequest(`/v1/agent-jobs/${jobId}/complete`, {
-      method: "POST",
-      headers: { "x-job-lease": lease.lease_token },
-      body: JSON.stringify(result)
-    });
-    db.prepare(
-      "update remote_leases set status = 'COMPLETED', updated_at = ? where job_id = ?"
-    ).run((/* @__PURE__ */ new Date()).toISOString(), jobId);
-    output({ status: "completed", jobId, type: lease.type });
-  } finally {
-    db.close();
-  }
-}
-async function failRemote() {
-  const jobId = option("job-id");
-  if (!jobId) throw new Error("fail-remote \u9700\u8981 --job-id\u3002");
-  const db = openDatabase();
-  try {
-    const lease = db.prepare(
-      "select * from remote_leases where job_id = ? and status = 'LEASED'"
-    ).get(jobId);
-    if (!lease) throw new Error("\u8FDC\u7A0B\u4EFB\u52A1\u79DF\u7EA6\u4E0D\u5B58\u5728\u3002");
+    const rows = db.prepare(
+      "select result_json from local_jobs where status = 'SYNCED' and result_json is not null"
+    ).all();
+    const factCount = rows.reduce((total, row) => {
+      try {
+        return total + (JSON.parse(row.result_json).facts?.length ?? 0);
+      } catch {
+        return total;
+      }
+    }, 0);
     const body = {
-      errorCode: option("error-code", "LOCAL_AGENT_FAILED"),
-      message: option("message", "Local Codex task failed"),
-      retryable: !flag("terminal")
+      pluginVersion: PLUGIN_VERSION,
+      deviceName: config.deviceName,
+      phase,
+      periodKey: policy.currentPeriod.period_key,
+      sessionCount,
+      factCount,
+      pendingLocalJobs: pendingLocalCount(db),
+      ...getState(db, "last_scan_at") ? { lastScanAt: getState(db, "last_scan_at") } : {},
+      ...getState(db, "last_sync_at") ? { lastSyncAt: getState(db, "last_sync_at") } : {},
+      ...option("error-code") ? { errorCode: option("error-code") } : {},
+      coverage: health.coverage
     };
-    await authenticatedRequest(`/v1/agent-jobs/${jobId}/fail`, {
+    await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
       method: "POST",
-      headers: { "x-job-lease": lease.lease_token },
       body: JSON.stringify(body)
     });
-    db.prepare(
-      "update remote_leases set status = 'FAILED', updated_at = ? where job_id = ?"
-    ).run((/* @__PURE__ */ new Date()).toISOString(), jobId);
-    output({ status: "failed", jobId, ...body });
+    setState(db, `last_collection_${phase}_at`, (/* @__PURE__ */ new Date()).toISOString());
+    output({ status: `collection_${phase}`, ...body });
   } finally {
     db.close();
   }
@@ -10194,18 +9956,14 @@ async function status() {
 function help() {
   output({
     commands: [
-      "connect --server <url> [--device-name <name>] [--allow-insecure-http]",
+      "connect --server <url> --binding-code <code> [--device-name <name>]",
+      "weekly-collect [--force]",
       "run-once [--force]",
-      "runner",
       "prepare [--force]",
       "next-local",
       "complete-local --job-id <id> --result <path>",
       "fail-local --job-id <id> [--error-code <code>]",
       "sync",
-      "lease-next",
-      "complete-remote --job-id <id> --result <path>",
-      "fail-remote --job-id <id> [--error-code <code>] [--message <text>] [--terminal]",
-      "heartbeat",
       "status"
     ]
   });
@@ -10213,18 +9971,15 @@ function help() {
 var command = process.argv[2] ?? "help";
 try {
   if (command === "connect") await connect();
-  else if (command === "run-once")
+  else if (command === "run-once" || command === "weekly-collect")
     output(await runAutomaticCycle(resolve5(process.argv[1]), flag("force")));
-  else if (command === "runner") await runRunner(resolve5(process.argv[1]));
   else if (command === "prepare") await prepare();
   else if (command === "next-local") nextLocal();
   else if (command === "complete-local") completeLocal();
   else if (command === "fail-local") failLocal();
   else if (command === "sync") await sync();
-  else if (command === "lease-next") await leaseNext();
-  else if (command === "complete-remote") await completeRemote();
-  else if (command === "fail-remote") await failRemote();
   else if (command === "heartbeat") await heartbeat();
+  else if (command === "collection-status") await collectionStatus();
   else if (command === "status") await status();
   else help();
 } catch (error) {

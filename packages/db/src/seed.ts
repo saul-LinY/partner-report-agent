@@ -7,7 +7,7 @@ const email = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "admin@local.test").trim().t
 const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? "ChangeMe-Partner-Report-2026!";
 const displayName = process.env.BOOTSTRAP_DISPLAY_NAME ?? "Saul";
 const teamName = process.env.BOOTSTRAP_TEAM_NAME ?? "Partner Report Pilot";
-const minimumPluginVersion = process.env.PLUGIN_MIN_VERSION ?? "0.1.0";
+const minimumPluginVersion = process.env.PLUGIN_MIN_VERSION ?? "0.2.0";
 const timezone = process.env.BOOTSTRAP_TIMEZONE ?? "Asia/Shanghai";
 
 const existing = await sql<{ user_id: string; tenant_id: string; team_id: string }[]>`
@@ -41,8 +41,8 @@ if (existing.length === 0) {
       values (${teamId}, ${tenantId}, ${teamName}, ${timezone}, ${minimumPluginVersion})
     `;
     await tx`
-      insert into partners (id, tenant_id, team_id, user_id, display_name)
-      values (${partnerId}, ${tenantId}, ${teamId}, ${userId}, ${displayName})
+      insert into partners (id, tenant_id, team_id, user_id, email, display_name)
+      values (${partnerId}, ${tenantId}, ${teamId}, ${userId}, ${email}, ${displayName})
     `;
     await tx`
       insert into memberships (id, tenant_id, team_id, user_id, partner_id, roles)

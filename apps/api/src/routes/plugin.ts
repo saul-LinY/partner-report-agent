@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { heartbeatSchema } from "@partner-report/contracts";
+import { collectionStatusSchema, heartbeatSchema } from "@partner-report/contracts";
 import { sqlClient as sql } from "@partner-report/db";
 import {
   ApiError,
@@ -20,12 +20,70 @@ const deviceStartSchema = z.object({
 
 const deviceTokenSchema = z.object({ deviceCode: z.string().min(20) });
 const refreshSchema = z.object({ refreshToken: z.string().min(20) });
+const claimSchema = z.object({
+  bindingCode: z.string().min(8).max(80),
+  deviceName: z.string().min(1).max(120),
+  pluginVersion: z.string().min(1).max(40),
+});
 
 function accessExpiry() {
   return new Date(Date.now() + 60 * 60 * 1000);
 }
 
 export async function pluginRoutes(app: FastifyInstance) {
+  app.post("/v1/plugin-bindings/claim", async (request) => {
+    const input = claimSchema.parse(request.body);
+    const normalizedCode = input.bindingCode.trim().toUpperCase();
+    const accessToken = randomToken();
+    const refreshToken = randomToken();
+    const pluginInstanceId = randomUUID();
+    const expiresAt = accessExpiry();
+
+    const binding = await sql.begin(async (tx) => {
+      const rows = await tx<any[]>`
+        select * from plugin_binding_codes
+        where code_hash = ${sha256(normalizedCode)} and status = 'active'
+        for update
+      `;
+      const row = rows[0];
+      if (!row) return null;
+      await tx`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at
+        ) values (
+          ${pluginInstanceId}, ${row.tenant_id}, ${row.team_id}, ${row.partner_id},
+          ${input.deviceName}, ${input.pluginVersion}, ${sha256(accessToken)},
+          ${sha256(refreshToken)}, ${expiresAt.toISOString()}
+        )
+      `;
+      await tx`
+        update plugin_binding_codes set status = 'claimed', plugin_instance_id = ${pluginInstanceId},
+          claimed_at = now(), last_used_at = now(), updated_at = now()
+        where id = ${row.id}
+      `;
+      await tx`
+        insert into audit_events (
+          id, tenant_id, team_id, actor_type, actor_id, action,
+          target_type, target_id, request_id, metadata
+        ) values (
+          ${randomUUID()}, ${row.tenant_id}, ${row.team_id}, 'plugin', ${pluginInstanceId},
+          'plugin.binding.claimed', 'plugin_binding_code', ${row.id}, ${request.id},
+          ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
+        )
+      `;
+      return row;
+    });
+    if (!binding) throw new ApiError(400, "BINDING_CODE_INVALID", "绑定码无效或已使用。");
+    return {
+      accessToken,
+      refreshToken,
+      expiresAt,
+      pluginInstanceId,
+      partnerId: binding.partner_id,
+    };
+  });
+
   app.post("/v1/plugin-bindings/device-authorizations", async (request) => {
     const input = deviceStartSchema.parse(request.body);
     const deviceCode = randomToken();
@@ -263,6 +321,45 @@ export async function pluginRoutes(app: FastifyInstance) {
         lastErrorCode: input.lastErrorCode ?? null,
       },
     );
+    return { ok: true, serverTime: new Date().toISOString() };
+  });
+
+  app.post("/v1/plugin-instances/me/collection-status", async (request) => {
+    const actor = await requirePluginActor(request);
+    const input = collectionStatusSchema.parse(request.body);
+    const completed = input.phase === "completed";
+    await sql`
+      update plugin_instances set
+        version = ${input.pluginVersion}, device_name = ${input.deviceName},
+        last_heartbeat_at = now(), last_scan_at = coalesce(${input.lastScanAt ?? null}, last_scan_at),
+        last_sync_at = coalesce(${input.lastSyncAt ?? null}, last_sync_at),
+        last_collection_started_at = case when ${input.phase} = 'started' then now() else last_collection_started_at end,
+        last_collection_completed_at = case when ${completed} then now() else last_collection_completed_at end,
+        last_collection_period_key = case when ${completed} then ${input.periodKey} else last_collection_period_key end,
+        last_collection_session_count = case when ${completed} then ${input.sessionCount} else last_collection_session_count end,
+        last_collection_fact_count = case when ${completed} then ${input.factCount} else last_collection_fact_count end,
+        pending_local_jobs = ${input.pendingLocalJobs},
+        runner_state = case when ${input.phase} = 'started' then 'working' when ${input.phase} = 'completed' then 'idle' else 'error' end,
+        last_error_code = ${input.errorCode ?? null}, updated_at = now()
+      where id = ${actor.pluginInstanceId} and tenant_id = ${actor.tenantId}
+    `;
+    if (input.coverage) {
+      const periods = await sql<{ id: string }[]>`
+        select id from report_periods where tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and period_key = ${input.periodKey} limit 1
+      `;
+      if (periods[0]) await sql`
+        insert into coverage_snapshots (id, tenant_id, team_id, partner_id, period_id, payload)
+        values (${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
+          ${periods[0].id}, ${JSON.stringify(input.coverage)}::jsonb)
+      `;
+    }
+    await audit(request, actor, `plugin.collection.${input.phase}`, "plugin_instance", actor.pluginInstanceId, {
+      periodKey: input.periodKey,
+      sessionCount: input.sessionCount,
+      factCount: input.factCount,
+      errorCode: input.errorCode ?? null,
+    });
     return { ok: true, serverTime: new Date().toISOString() };
   });
 }

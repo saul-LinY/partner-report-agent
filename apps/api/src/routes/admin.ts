@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import semver from "semver";
 import { z } from "zod";
 import { sqlClient as sql } from "@partner-report/db";
-import { ApiError, audit, randomToken, requireWebActor, sha256 } from "../common.js";
+import { ApiError, audit, randomToken, requireWebActor, sha256, userCode } from "../common.js";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -29,6 +29,15 @@ const partnerUpdateSchema = z.object({
   displayName: z.string().min(1).max(120).optional(),
   status: z.enum(["active", "suspended"]).optional(),
   preferences: z.record(z.unknown()).optional()
+});
+
+const partnerCreateSchema = z.object({
+  email: z.string().email(),
+  displayName: z.string().min(1).max(120),
+});
+
+const bindingCodeSchema = z.object({
+  label: z.string().min(1).max(120).default("Codex Plugin"),
 });
 
 const templateSchema = z.object({
@@ -58,32 +67,29 @@ export function pluginHealth(row: {
   status: string;
   version: string;
   minimumPluginVersion: string;
-  lastHeartbeatAt: Date | string | null;
+  lastCollectionCompletedAt: Date | string | null;
   retryCount: number;
   lastErrorCode: string | null;
   runnerState?: string | null;
 }) {
   if (row.status !== "active") return "blocked";
   if (!semver.valid(row.version) || !semver.gte(row.version, row.minimumPluginVersion)) return "blocked";
-  const heartbeat = row.lastHeartbeatAt ? new Date(row.lastHeartbeatAt).getTime() : 0;
-  const ageMinutes = (Date.now() - heartbeat) / 60_000;
-  if (ageMinutes > 60) return "offline";
-  if (ageMinutes > 15 || ["unknown", "delayed", "error"].includes(row.runnerState ?? "") || row.retryCount > 0 || row.lastErrorCode) return "delayed";
+  const completedAt = row.lastCollectionCompletedAt ? new Date(row.lastCollectionCompletedAt).getTime() : 0;
+  const ageDays = (Date.now() - completedAt) / 86_400_000;
+  if (!completedAt || ageDays > 8) return "offline";
+  if (ageDays > 7 || row.runnerState === "error" || row.retryCount > 0 || row.lastErrorCode) return "delayed";
   return "healthy";
 }
 
 export async function adminRoutes(app: FastifyInstance) {
   app.get("/v1/admin/overview", async (request) => {
     const actor = await requireWebActor(request, "admin");
-    const [teamRows, projectRows, partnerRows, templateRows, periodRows, pluginRows, jobRows, auditRows] = await Promise.all([
+    const [teamRows, projectRows, partnerRows, templateRows, periodRows, pluginRows, jobRows, auditRows, bindingRows, queueRows] = await Promise.all([
       sql<any[]>`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
       sql<any[]>`select * from projects where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId} order by name`,
       sql<any[]>`
-        select p.id, p.display_name, p.status, p.preferences, p.user_id, p.created_at, u.email,
-          coalesce(m.roles, '[]'::jsonb) as roles
+        select p.id, p.display_name, p.email, p.status, p.preferences, p.user_id, p.created_at
         from partners p
-        left join users u on u.id = p.user_id
-        left join memberships m on m.partner_id = p.id and m.tenant_id = p.tenant_id and m.team_id = p.team_id
         where p.team_id = ${actor.teamId} and p.tenant_id = ${actor.tenantId}
         order by p.display_name
       `,
@@ -103,6 +109,8 @@ export async function adminRoutes(app: FastifyInstance) {
           pi.access_expires_at, pi.last_heartbeat_at, pi.last_hook_at, pi.last_runner_at,
           pi.last_scan_at, pi.last_sync_at, pi.next_due_at, pi.runner_state, pi.dirty_sessions,
           pi.extracting_sessions, pi.pending_local_jobs, pi.retry_count, pi.last_error_code,
+          pi.last_collection_started_at, pi.last_collection_completed_at,
+          pi.last_collection_period_key, pi.last_collection_session_count, pi.last_collection_fact_count,
           pi.created_at, pi.updated_at,
           p.display_name as partner_name, t.minimum_plugin_version, coverage.payload as coverage,
           coalesce(pending_jobs.count, 0)::int as pending_agent_jobs
@@ -131,6 +139,26 @@ export async function adminRoutes(app: FastifyInstance) {
         select * from audit_events
         where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
         order by created_at desc limit 20
+      `,
+      sql<any[]>`
+        select id, partner_id, code_prefix, label, status, plugin_instance_id,
+          claimed_at, last_used_at, created_at
+        from plugin_binding_codes
+        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        order by created_at desc
+      `,
+      sql<any[]>`
+        select r.id as review_id, r.state as review_state, r.version as review_version,
+          r.pending_count, r.approved_count, r.excluded_count, r.updated_at,
+          p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
+          rp.period_key, ir.id as report_id, ir.status as report_status, ir.current_version
+        from reviews r
+        join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
+        join report_periods rp on rp.id = r.period_id and rp.tenant_id = r.tenant_id
+        left join individual_reports ir on ir.partner_id = r.partner_id and ir.period_id = r.period_id
+          and ir.tenant_id = r.tenant_id
+        where r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
+        order by r.updated_at desc limit 100
       `
     ]);
 
@@ -144,14 +172,74 @@ export async function adminRoutes(app: FastifyInstance) {
         status: row.status,
         version: row.version,
         minimumPluginVersion: row.minimum_plugin_version,
-        lastHeartbeatAt: row.last_heartbeat_at,
+        lastCollectionCompletedAt: row.last_collection_completed_at,
         retryCount: row.retry_count,
         lastErrorCode: row.last_error_code,
         runnerState: row.runner_state
       }) })),
       jobs: jobRows,
-      auditEvents: auditRows
+      auditEvents: auditRows,
+      bindingCodes: bindingRows,
+      reviewQueue: queueRows,
     };
+  });
+
+  app.post("/v1/admin/partners", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const input = partnerCreateSchema.parse(request.body);
+    const email = input.email.trim().toLowerCase();
+    const id = randomUUID();
+    try {
+      const rows = await sql<any[]>`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${id}, ${actor.tenantId}, ${actor.teamId}, ${email}, ${input.displayName.trim()})
+        returning *
+      `;
+      await audit(request, actor, "partner.created", "partner", id, { email });
+      return rows[0];
+    } catch (error: any) {
+      if (error?.code === "23505") throw new ApiError(409, "PARTNER_EMAIL_EXISTS", "该工作邮箱已存在 Partner。");
+      throw error;
+    }
+  });
+
+  app.post("/v1/admin/partners/:id/binding-codes", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const input = bindingCodeSchema.parse(request.body ?? {});
+    const partners = await sql<{ id: string }[]>`
+      select id from partners where id = ${id} and tenant_id = ${actor.tenantId}
+        and team_id = ${actor.teamId} and status = 'active' limit 1
+    `;
+    if (!partners[0]) throw new ApiError(404, "NOT_FOUND", "Partner 不存在或未启用。");
+    const code = `PR-${userCode()}`;
+    const bindingId = randomUUID();
+    await sql`
+      insert into plugin_binding_codes (
+        id, tenant_id, team_id, partner_id, code_hash, code_prefix, label, created_by
+      ) values (
+        ${bindingId}, ${actor.tenantId}, ${actor.teamId}, ${id}, ${sha256(code)},
+        ${code.slice(0, 7)}, ${input.label}, ${actor.userId}
+      )
+    `;
+    await audit(request, actor, "plugin.binding_code.created", "plugin_binding_code", bindingId, {
+      partnerId: id,
+      label: input.label,
+    });
+    return { id: bindingId, code, codePrefix: code.slice(0, 7), label: input.label };
+  });
+
+  app.delete("/v1/admin/binding-codes/:id", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const rows = await sql<{ id: string }[]>`
+      update plugin_binding_codes set status = 'revoked', updated_at = now()
+      where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        and status = 'active' returning id
+    `;
+    if (!rows[0]) throw new ApiError(409, "BINDING_CODE_NOT_REVOCABLE", "绑定码不存在或已使用。");
+    await audit(request, actor, "plugin.binding_code.revoked", "plugin_binding_code", id);
+    return { ok: true };
   });
 
   app.patch("/v1/admin/team", async (request) => {

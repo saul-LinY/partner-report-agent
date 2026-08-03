@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@partner-report/db": "0.1.0"
+    "@partner-report/contracts": "0.1.0",
+    "@partner-report/db": "0.1.0",
+    "zod-to-json-schema": "^3.24.0"
   }
 }

@@ -637,17 +637,6 @@ export async function reviewRoutes(app: FastifyInstance) {
     const checksum = stableJsonHash(payload);
     const snapshotId = randomUUID();
     const reportId = randomUUID();
-    const activePlugins = await sql<any[]>`
-      select id from plugin_instances where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId} and status = 'active'
-      order by created_at desc limit 1
-    `;
-    const plugin = activePlugins[0];
-    if (!plugin)
-      throw new ApiError(
-        409,
-        "PLUGIN_OFFLINE",
-        "没有可生成 Report 的活动 Plugin。",
-      );
     let templates = await sql<any[]>`
       select rt.* from report_periods rp
       join report_templates rt on rt.id = rp.template_id and rt.tenant_id = rp.tenant_id
@@ -685,14 +674,14 @@ export async function reviewRoutes(app: FastifyInstance) {
         insert into agent_jobs (
           id, tenant_id, team_id, partner_id, plugin_instance_id, type, idempotency_key, input_payload
         ) values (
-          ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${plugin.id},
+          ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
           'GENERATE_INDIVIDUAL_REPORT', ${`report:${snapshotId}:${checksum}`},
           ${JSON.stringify({
             schemaVersion: "1.0",
             reportId,
             snapshotId,
             sourceChecksum: checksum,
-            generatorVersion: "partner-report-sync/0.1.0",
+            generatorVersion: "partner-report-platform/0.2.0",
             workItems: payload.workItems,
             coverage: coverage.payload,
             template: templates[0] ?? null,

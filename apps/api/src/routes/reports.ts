@@ -43,12 +43,8 @@ export async function reportRoutes(app: FastifyInstance) {
     const preferences = preferencesSchema.parse(request.body);
     const report = await loadReport(actor, id);
     if (["SUBMITTED", "LOCKED"].includes(report.status)) throw new ApiError(409, "REPORT_LOCKED", "Report 已提交，不能重新生成。");
-    const [snapshotRows, pluginRows, templateRows] = await Promise.all([
+    const [snapshotRows, templateRows] = await Promise.all([
       sql<any[]>`select * from work_item_snapshots where id = ${report.snapshot_id} and tenant_id = ${actor.tenantId}`,
-      sql<any[]>`
-        select id from plugin_instances where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId} and status = 'active'
-        order by created_at desc limit 1
-      `,
       sql<any[]>`
         select rt.* from report_periods rp
         join report_templates rt on rt.id = rp.template_id and rt.tenant_id = rp.tenant_id
@@ -64,21 +60,20 @@ export async function reportRoutes(app: FastifyInstance) {
       `
     ]);
     const snapshot = snapshotRows[0];
-    const plugin = pluginRows[0];
-    if (!snapshot || !plugin) throw new ApiError(409, "REPORT_DEPENDENCY_MISSING", "缺少 Snapshot 或活动 Plugin。");
+    if (!snapshot) throw new ApiError(409, "REPORT_DEPENDENCY_MISSING", "缺少 Work Item Snapshot。");
     const key = stableJsonHash({ snapshot: snapshot.checksum, preferences, next: report.current_version + 1 });
     const jobRows = await sql<any[]>`
       insert into agent_jobs (
         id, tenant_id, team_id, partner_id, plugin_instance_id, type, idempotency_key, input_payload
       ) values (
-        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${plugin.id},
+        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
         'REGENERATE_INDIVIDUAL_REPORT', ${`report-regenerate:${id}:${key}`},
         ${JSON.stringify({
           schemaVersion: "1.0",
           reportId: id,
           snapshotId: snapshot.id,
           sourceChecksum: snapshot.checksum,
-          generatorVersion: "partner-report-sync/0.1.0",
+          generatorVersion: "partner-report-platform/0.2.0",
           workItems: snapshot.payload.workItems,
           coverage: snapshot.payload.coverage,
           template: templateRows[0] ?? null,

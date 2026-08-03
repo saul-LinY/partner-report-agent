@@ -1,12 +1,12 @@
 # Partner Report Agent 产品需求文档
 
-> 当前实施说明（2026-08-03）：本轮只实现本地增量提取、结构化事实同步、项目聚合和数据中台直接展示。飞书审核、个人/团队 Report、Monitor 与 PDF 仍是后续产品目标，不是当前版本的前置流程。
+> MVP 实现决策（2026-08-03）：Plugin 按 Team 时区每周五 13:00 由 Codex Scheduled Task 调用，逐 Session 发现更新，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
 
 ## 1. 产品摘要
 
 Partner Report Agent 是一个面向团队工作汇报的 Human-in-the-loop 系统。
 
-系统在 Partner 自己的 Codex 环境中读取其已授权的本地 Session，在本地提取结构化工作事实，并将不包含完整原始聊天的 Session 工作事实同步到 Report Service。系统随后通过飞书向 Partner 推送工作事项审核，Partner 确认事实、补充遗漏、调整侧重点后，系统生成个人 Report 并进行第二轮审核。
+系统在 Partner 自己的 Codex 环境中逐 Session 读取已授权的本地内容，过滤推理、命令和工具调用，在本地提取基础工作事实，并将不包含完整原始聊天的结构化事实同步到 Report Service。报告周期结束后，Report Service 按 Partner 和项目对多个 Session 的事实进行第二轮聚合，生成工作卡片并通过飞书发起第一轮审核；Partner 确认或修改后，Report Service 基于确认快照生成个人 Report 并发起第二轮审核。
 
 所有 Partner 的个人 Report 提交后，系统按项目聚合团队进展，保留无法归入公共项目的独立工作事项，与上期 Report 比较，生成团队总结和可视化内容，最终通过飞书消息和文件附件发送给 Monitor。Monitor 仅作为最终团队报告的接收者，不参与报告审核、修改或追问流程。
 
@@ -28,28 +28,27 @@ Partner Report Agent 是一个面向团队工作汇报的 Human-in-the-loop 系�
 
 ### 2.2 产品机会
 
-在 Partner 本地完成 Session 事实提取，在服务端保存可追溯的结构化工作事实，并通过飞书建立双层审核，可以同时满足：
+在 Partner 本地完成逐 Session 事实提取，在服务端统一完成跨 Session 聚合、修改和报告生成，并通过飞书建立双层审核，可以同时满足：
 
 - 降低 Partner 整理报告的时间成本。
 - 提高报告事实准确性和可读性。
 - 让 Partner 保持最终控制权。
 - 让团队汇总和上期比较具备稳定的数据基础。
 - 降低集中存储完整聊天记录带来的隐私风险。
+- 让模型、系统 Prompt 和报告策略只在数据中台更新，减少 Plugin 升级频率。
 
 ## 3. 产品目标
 
 ### 3.1 MVP 目标
 
-1. Partner 可以安装并授权一个 Codex Report Plugin。
+1. Team Admin 可以按唯一工作邮箱创建 Partner，并为同一 Partner 分配一个或多个 Plugin 绑定码。
 2. 插件可以发现指定时间段内的本地 Codex Session，并报告数据覆盖率。
-3. 插件在本地逐 Session 提取结构化工作事实并完成第一轮聚合。
-4. Report Service 可以通过飞书向对应 Partner 推送工作事项审核。
-5. Partner 可以通过按钮、表单和自然语言完成事实审核与修改。
-6. 工作事项通过后，系统生成个人 Report 草稿并进行第二轮审核。
-7. 只有 Partner 确认的个人 Report 才进入团队汇总。
-8. 系统可以按项目聚合团队进展，保留独立工作，并与上期比较。
-9. 系统可以通过飞书向 Monitor 发送最终团队报告、基础可视化内容和报告文件附件。
-10. 所有报告结论可以追溯到 Session 事实或 Partner 补充事实。
+3. 插件在本地逐 Session 提取结构化基础事实，不执行跨 Session、周期级或 Report 级聚合。
+4. Report Service 在周期结束后调用中台大模型，按 Partner 和项目聚合多个 Session 并生成工作卡片。
+5. 当前阶段由 Admin 在 Web 中模拟 Partner，通过按钮和表单完成真实工作卡片审核与修改。
+6. 工作事项通过后，Report Service 调用中台大模型生成个人 Report 草稿并进行第二轮审核。
+7. 只有 Web 第二轮确认并锁定的个人 Report 才视为完成。
+8. 所有报告结论可以追溯到 Session 事实或审核时补充的事实。
 
 ### 3.2 成功标准
 
@@ -70,6 +69,7 @@ MVP 不包含：
 - Monitor 审核、修改、追问或重新生成团队报告。
 - Monitor 下钻查看个人 Report、工作事实、证据摘要或 Partner 提交进度。
 - 支持所有外部聊天平台。
+- 飞书卡片审核、飞书消息通知、Monitor 交付和团队 Report 聚合；这些属于后续阶段。
 - 对 Codex 云端、其他设备或关闭历史记录后的 Session 作完整性保证。
 - 高自由度的 BI 仪表盘和自定义报表设计器。
 
@@ -79,14 +79,14 @@ MVP 不包含：
 
 团队成员。拥有以下权限：
 
-- 安装和授权本地 Codex Plugin。
+- 安装本地 Codex Plugin，并输入 Team Admin 分配的绑定码。
 - 选择可用于报告的项目、Session 和时间范围。
 - 查看并审核自己的工作事项。
 - 查看有限的证据摘要。
 - 补充、修正、排除、合并工作事项。
 - 调整本期侧重点和长期表达偏好。
 - 审核并提交个人 Report。
-- 撤销授权和请求删除自己的同步数据。
+- 请求 Admin 停用 Plugin 绑定码或删除自己的同步数据。
 
 ### 4.2 Monitor
 
@@ -103,6 +103,7 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 负责组织配置和权限管理：
 
 - 配置团队、Partner、Monitor 和项目映射。
+- 以唯一工作邮箱创建 Partner，并为每个 Partner 生成、停用和查看多个 Plugin 绑定码。
 - 配置报告周期、截止时间、模板和通知策略。
 - 管理飞书应用可用范围。
 - 管理数据保留、安全策略和插件分发策略。
@@ -112,11 +113,11 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 
 系统代理，负责：
 
-- Session 事实提取。
-- 工作事项识别、去重和时间线重建。
+- 在 Plugin 本地完成逐 Session 事实提取。
+- 在数据中台完成跨 Session 工作事项识别、去重和时间线重建。
 - 重要性排序。
-- 修改意图解析。
-- 个人和团队报告生成。
+- 在数据中台完成修改意图解析。
+- 在数据中台完成个人和团队报告生成。
 - 上期比较、质量检查、提醒和交付。
 
 ## 5. 关键术语
@@ -124,8 +125,11 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 | 术语                | 定义                                                      |
 | ------------------- | --------------------------------------------------------- |
 | Session             | Partner 与 Codex Agent 的一次独立对话线程                 |
+| Complete Turn       | 同一 Turn 中同时存在用户问题和正常完成的 Assistant 最终回复；中断、取消、报错或只有过程输出不算完整 |
 | Session Work Fact   | 从一个 Session 中提取的结构化工作事实                     |
 | Work Item           | 跨一个或多个 Session 聚合出的稳定工作事项                 |
+| Binding Code        | Admin 分配给某个 Partner 的长期 Plugin 接入码；一个 Partner 可有多个 |
+| Project Root        | Admin 配置的项目根目录；该目录及其任意层级子目录属于同一项目 |
 | Evidence            | 支撑事实结论的 Session、时间、消息摘要或 Partner 补充记录 |
 | Individual Report   | 经 Partner 确认的个人周报或月报                           |
 | Team Report         | 基于已提交个人 Report 生成的团队报告                      |
@@ -152,6 +156,7 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 11. 本地 Scheduled Task 依赖电脑开机、Codex 桌面应用运行以及适当的文件和网络权限。
 12. Codex CLI 和 IDE 当前不是 Scheduled Tasks 的管理入口。
 13. Partner 关闭历史记录、删除 Session、使用多个设备或云端 Session 时，可能出现覆盖缺口。
+14. 本产品正常采集链路不使用每 Turn 的 `Stop`/`SessionEnd` Hook，而使用 Codex Scheduled Task 每周五 13:00 触发一次结构化扫描；生命周期 Hook 仅作为已知平台能力保留，不是 MVP 依赖。
 
 官方参考：
 
@@ -180,43 +185,62 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 ### 7.1 MVP 支持范围
 
 - 报告类型：周报优先，数据模型兼容月报。
-- 默认周期：周一 00:00 至周日 23:59，按 Team 时区配置。
+- 默认数据周期：上周五 13:00 至本周五 13:00，按 Team 时区配置；本周五 13:00 后完成的 Turn 进入下一周期。
 - Codex 客户端：macOS Codex 桌面端。
-- 设备范围：单设备。
+- 设备范围：一个 Partner 可以使用一个或多个 Plugin Instance；每个实例使用独立绑定码。
 - Codex 来源：当前设备、本地 `CODEX_HOME` 中保存的 Session。
-- 后续范围：CLI、IDE、多设备和云端 Session 不进入 MVP 完整性承诺。
-- 飞书来源：企业自建应用机器人；Partner 审核使用单聊，Monitor 最终交付支持单聊或群聊。
-- 审核方式：飞书卡片 + 飞书自然语言回复。
-- Partner 审核输出：飞书卡片和 Web 详情页。
-- Monitor 交付输出：飞书最终消息 + 文件附件；MVP 文件格式为 PDF。
+- 后续范围：CLI、IDE 和云端 Session 不进入 MVP 完整性承诺；多 Plugin 数据可以归并到同一 Partner，但跨设备 Coverage 完整性不作保证。
+- 飞书来源（后续阶段）：企业自建应用机器人；当前实现不接入。
+- 当前审核方式：Admin Web 代表 Partner 完成两轮真实数据审核；飞书卡片与自然语言审核留待后续。
+- 当前审核输出：Admin Web 模拟 Partner 两轮审核，数据来自真实 Fact 和不可变 Snapshot；Partner 不登录数据中台。
+- 后续审核与交付：飞书卡片和 Monitor 最终消息不进入当前 MVP 实现。
 - 原始聊天：默认只在 Partner 本地处理。
 - 中心服务：保存结构化 Session Work Facts、Work Items、报告版本和有限证据摘要。
+- AI 执行边界：逐 Session 基础事实提取在 Plugin 本地执行；跨 Session 聚合、工作卡片总结、修改意图解析和 Report 生成在数据中台执行。
+- Prompt 管理：中台 Prompt、模型和生成策略集中版本化管理；兼容 Schema 下的 Prompt 更新不要求 Partner 升级 Plugin。
+- 身份绑定：Partner 不登录 Report Service；Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 创建多个长期绑定码。
+- 项目识别：Plugin 使用 Session 工作目录与项目根目录做边界安全的祖先目录匹配；子目录归属同一项目，多重匹配时选择最长、最具体的项目根目录。
 
 ### 7.2 数据同步策略
 
-采用“Session 静默后自动增量提取、周期结束聚合”，不采用“每个 Turn 立即提取”或“周五首次读取全周 Session”。默认静默窗口为 2 小时，由 Team Admin 统一配置。
+采用“每周一次定时扫描、按 Complete Turn 增量提取、周期结束后中台聚合”。正常链路不再依赖每个 Turn 的 `Stop` Hook、`SessionEnd` Hook、2 小时静默窗口、每 5 分钟 Runner 或每 6 小时补偿扫描。
 
-Session 采集使用五种互补信号：
+默认采集规则：
 
-1. `Stop` Hook：每个 Agent Turn 停止后，将 Session 标记为 `DIRTY`，更新最新 `turn_id`、`last_activity_at` 和 `quiet_until`；Hook 不读取完整线程、不执行 AI、不联网。
-2. `SessionEnd` Hook：记录阶段结束，但仍遵守 2 小时静默窗口，不认为 Session 永久结束。
-3. Local Runner：默认每 5 分钟检查一次；当 `now >= quiet_until` 时自动读取、提取和同步，并至少每 5 分钟向中心服务发送不含 Session 正文的健康心跳。
-4. 补偿扫描：Plugin 启动时及至少每 6 小时扫描本地线程列表，补偿 Hook 未触发、未信任、超时或应用异常退出。
-5. 报告截止快照：到达周报或月报截止时间后，强制扫描本周期 Session；仍活跃的 Session 也生成当前快照并标记进行中。
+1. Plugin 按 Team 时区每周五 13:00 触发一次 Weekly Collection Run。
+2. 每个报告数据窗口为“上一次周五 13:00 至本次周五 13:00”；13:00 之后完成的 Turn 进入下一个窗口。
+3. Weekly Collection Run 通过 Codex App Server `thread/list` 获取候选 Session，再用 `thread/read(includeTurns)` 读取结构化 Turn，不依赖生命周期 Hook 提供增量提示。
+4. Plugin 对比 Session ID、Turn ID、`last_processed_complete_turn_id` 和内容 Hash，提取上次成功同步后新增或发生变化的 Complete Turn，确保低频扫描仍能发现更新。
+5. 扫描发生时正在回答的 Turn、被中断的 Turn 或没有正常 `final_answer` 的 Turn 一律跳过，不创建 Fact，也不推进完成游标。
+6. 被跳过的 Turn 保留在本地等待状态；后续恢复并正常完成后，由下一次 Weekly Collection Run 或明确的人工 Re-analysis 补提，不会被标记为已处理。
+7. 如果周五 13:00 时设备或 Codex 不可用，Plugin 下次启动时检测未完成的周期任务并只补跑一次；服务端在此期间显示该 Binding Code 本周未同步。
+8. Weekly Collection Run 开始和结束时各发送一次状态，Admin 通过最后计划时间、最后成功时间、Session/Fact 数量和错误查看 Plugin 是否正常，不维持高频心跳。
+9. 同一 Binding Code、报告窗口和输入快照使用稳定幂等键，重复启动不得重复创建 Fact。
+10. 数据中台等待本周期所有活动 Binding Code 完成上报，或等待配置的收集宽限期结束后，再冻结 Partner Fact Snapshot；未按期上报的实例进入 Coverage Warning，但不阻塞其他 Partner。
 
 每个 Session 保存增量处理游标：
 
 ```text
 session_id
 + last_seen_turn_id
-+ last_processed_turn_id
++ last_processed_complete_turn_id
++ pending_incomplete_turn_id
 + last_activity_at
-+ quiet_until
 + content_hash
 + processing_state
++ last_weekly_scan_at
++ last_successful_weekly_sync_at
 ```
 
-同一 Session 恢复后，只处理新增 Turn，并更新已有 Work Item 的状态链。
+同一 Session 恢复后，只处理新增的 Complete Turn 并上传新的 Fact 修订；跨 Session 的 Work Item 状态链由数据中台在周期聚合时重建。
+
+Turn 只有同时满足以下条件才进入提取：
+
+- 存在非空用户问题。
+- 存在非空且正常完成的 Assistant `final_answer`。
+- Turn 未被标记为中断、取消或失败。
+
+如果用户已提问但模型输出中途被中断，Plugin 不处理该 Turn、不创建 Fact，也不推进 `last_processed_complete_turn_id`。若该 Turn 后续恢复并产生完整最终回复，则在下一次扫描时重新判断。Session 中更早已经完整的 Turn 仍可正常处理；如果 Session 只有不完整 Turn，则保持 `WAITING_COMPLETE_TURN`。
 
 原因：
 
@@ -224,19 +248,41 @@ session_id
 - 减少 Session 删除或历史关闭造成的数据丢失。
 - 修改时间范围时可以直接重用已同步事实。
 - 支持失败重试和覆盖率监控。
-- 周期结束时只需聚合，不必重新读取全部聊天。
+- 避免每个 Turn 触发 Hook 和频繁后台扫描。
+- 通过全量发现、增量游标和内容 Hash，在低频运行下仍能提取本周更新。
+- 周期结束时中台只需聚合结构化 Fact，不必重新读取全部聊天。
 
-### 7.4 Re-analysis 交付策略
+### 7.3 Re-analysis 交付策略
 
 Report Service 不假设可以主动唤醒 Partner 设备上的 Codex Plugin。
 
 - 服务端把 Re-analysis Request 写入待领取队列。
-- 本地 Runner 在每次心跳周期轮询待处理请求，无需 Partner 手动运行 Skill。
-- Partner 可以从飞书点击“立即重新同步”，该请求在下一个 Runner 周期绕过静默窗口。
+- 正常链路不高频轮询待处理请求；Re-analysis 由 Partner 或 Admin 明确发起后，在 Plugin 中人工立即执行，或由下一次 Weekly Collection Run 领取。
+- Partner 可以从飞书点击“立即重新同步”，并按提示在本地启动一次 Re-analysis；该操作不改变每周一次的正常采集计划。
 - Plugin 离线时，飞书必须显示“等待本地 Codex”，不得显示处理完成。
 - 请求支持超时、取消、幂等和重复领取保护。
 
-### 7.3 隐私策略
+### 7.4 Plugin 与数据中台职责边界
+
+Plugin 负责：
+
+- 发现本机 Session，维护 Turn 游标和本地 Outbox。
+- 逐 Session 读取新增 Turn，只把包含用户问题和正常完成 `final_answer` 的 Complete Turn 送入提取。
+- 在单个 Session 内提取基础 Fact、有限去重、脱敏和 Schema 校验。
+- 根据 Admin 下发的项目根目录识别 `project_id`，上传相对目录和匹配方式。
+- 可靠上传、失败重试、Weekly Collection Run 状态与 Coverage 上报，以及执行必须读取原始 Session 的 Re-analysis Request。
+
+数据中台负责：
+
+- 通过 Binding Code 识别 Plugin，并将数据归属到工作邮箱对应的内部 `partner_id`。
+- 保存 Fact 修订、来源关系、项目归属、Coverage 和生成审计。
+- 在周期截止后冻结 Fact Snapshot，调用中台大模型完成跨 Session、按项目的第二轮聚合。
+- 生成工作卡片，执行确定性审核操作，并用中台大模型解析需要语义处理的修改。
+- 在第一轮确认后冻结 Work Item Snapshot，调用中台大模型生成或重新生成 Individual Report。
+
+除 Re-analysis 外，Plugin 不领取或执行 `AGGREGATE_WORK_ITEMS`、`GENERATE_INDIVIDUAL_REPORT`、`REGENERATE_INDIVIDUAL_REPORT` 等中台 AI 任务。
+
+### 7.5 隐私策略
 
 采用混合模式：
 
@@ -251,22 +297,23 @@ Report Service 不假设可以主动唤醒 Partner 设备上的 Codex Plugin。
 ```mermaid
 flowchart TD
     install[Partner 安装插件]
-    bind[绑定飞书身份]
+    bind[输入 Admin 分配的绑定码]
     session[Partner 使用 Codex]
-    stopHook[Stop 标记新增 Turn]
-    sessionEnd[SessionEnd 标记阶段结束]
-    quietWindow[连续 2 小时无新 Turn]
-    localRunner[本地 Runner 心跳]
-    scheduledScan[启动时及每 6 小时补偿扫描]
-    cutoffScan[报告截止快照]
+    weeklyRun[每周五 13:00 单次触发]
+    scheduledScan[thread/list + thread/read 扫描]
+    completeTurn{问答是否完整?}
+    pendingTurn[保留等待且不推进游标]
+    catchup[错过计划时下次启动补跑一次]
     queue[写入本地 Outbox]
     extract[本地提取工作事实]
     sync[同步结构化事实]
-    aggregate[聚合工作事项]
+    cutoffSnapshot[中台冻结周期 Fact 快照]
+    aggregate[中台大模型跨 Session 聚合]
     itemReview[Partner 审核事项]
     itemApproved{事项通过?}
-    itemModify[修改事实或范围]
-    reportDraft[生成个人草稿]
+    itemModify[中台应用修改条件]
+    itemSnapshot[冻结 Work Item 快照]
+    reportDraft[中台大模型生成个人草稿]
     reportReview[Partner 审核报告]
     reportApproved{报告通过?}
     reportModify[调整表达或返回事实]
@@ -277,15 +324,14 @@ flowchart TD
     deliver[通过飞书发送最终内容与文件]
 
     install --> bind --> session
-    session --> stopHook --> queue
-    session --> sessionEnd --> queue
-    queue --> quietWindow --> localRunner
-    scheduledScan --> localRunner
-    cutoffScan --> scheduledScan
-    localRunner --> extract --> sync --> aggregate
+    session --> weeklyRun --> scheduledScan --> completeTurn
+    catchup --> weeklyRun
+    completeTurn -->|正在回答或中断| pendingTurn
+    pendingTurn -->|下周或人工补跑| weeklyRun
+    completeTurn -->|存在完整 final_answer| extract --> queue --> sync --> cutoffSnapshot --> aggregate
     aggregate --> itemReview --> itemApproved
-    itemApproved -->|否| itemModify --> aggregate
-    itemApproved -->|是| reportDraft --> reportReview --> reportApproved
+    itemApproved -->|否| itemModify --> itemReview
+    itemApproved -->|是| itemSnapshot --> reportDraft --> reportReview --> reportApproved
     reportApproved -->|否| reportModify --> reportDraft
     reportModify -.->|事实有误| itemReview
     reportApproved -->|是| submit --> teamAggregate --> compare --> teamReport --> deliver
@@ -295,67 +341,71 @@ flowchart TD
 
 ### 9.1 Partner 首次安装与绑定
 
-1. Team Admin 分发 GitHub Marketplace 稳定版本入口；Partner 通过 Codex 官方 Plugin 命令或 Plugin Directory 安装。
-2. Partner 安装并启用 Plugin，只在首次安装或 Hook 内容变化时审查 Hook 信任。
-3. Codex 要求 Partner 审查并信任 Plugin Hook。
-4. Partner 调用插件的连接流程。
-5. Plugin 通过 OAuth 或一次性设备码连接 Report Service。
-6. Partner 在 Web 授权页登录飞书并确认身份。
-7. Report Service 建立以下绑定：
+1. Team Admin 使用唯一工作邮箱创建 Partner；邮箱标准化后全局唯一，内部生成稳定 `partner_id`，后续邮箱展示信息变化不改变数据主键。
+2. Team Admin 为该 Partner 创建一个或多个长期 Binding Code；每个 Code 代表一个独立 Plugin Instance，可设置设备名称并由 Admin 停用。
+3. Team Admin 分发 GitHub Marketplace 稳定版本入口和对应 Binding Code；Partner 不需要登录 Report Service。
+4. Partner 安装并启用 Plugin，并在 Codex 官方桌面端或 Web 界面创建每周五 13:00 的 Scheduled Task；正常链路不安装每 Turn 触发的生命周期 Hook。
+5. Partner 在 Plugin 连接流程中输入 Binding Code 和设备名称。
+6. Report Service 根据 Binding Code 建立以下绑定：
 
 ```text
 tenant_id
   + partner_id
-  + feishu_open_id
+  + normalized_work_email
+  + binding_code_id
   + plugin_instance_id
-  + codex_user_binding
+  + device_name
 ```
 
+7. 同一工作邮箱可以拥有多个 Binding Code 和 Plugin Instance；所有实例上传的数据最终归属同一个 `partner_id`，Admin 仍可按 Binding Code 查看各实例状态。
 8. Partner 配置：
-   - 确认当前使用 macOS Codex 桌面端和单设备模式。
+   - 确认当前使用 macOS Codex 桌面端。
    - 确认本地 Session 历史记录已启用。
    - 默认报告周期。
-   - 包含或排除的项目目录。
+   - 从中台获取允许或排除的项目根目录。
    - 是否上传有限证据摘要。
-   - 自动同步静默窗口，Team 默认 120 分钟。
+   - Team 时区和每周五 13:00 的采集计划。
    - 是否允许访问 Report Service 网络域名。
 9. 系统执行一次只读预检，展示可发现 Session 数量，不立即上传完整数据。
 10. 系统执行一次测试同步，展示读取、排除、失败和待处理数量。
-11. Partner 确认后注册并启动 Local Runner；后续 Marketplace 升级复用同一 `PLUGIN_DATA`、Plugin Instance 和系统 Keychain 凭证，不重复绑定。
+11. 测试同步成功后启用 Weekly Collection Task；后续 Marketplace 兼容升级复用同一 `PLUGIN_DATA`、Binding Code 和 Plugin Instance，不重复绑定。
 
-### 9.2 Session 发现与本地提取
+### 9.2 每周 Session 发现与本地提取
 
-1. 每个 Agent Turn 停止时，`Stop` Hook 只执行快速操作：记录 `session_id`、`turn_id`、时间和项目目录，并把 Session 标记为 `DIRTY`。
-2. `SessionEnd` 触发时记录阶段结束；同一 Session 后续恢复时仍沿用原 `session_id`，并重新计算 2 小时静默截止时间。
-3. 两类 Hook 都只写入 Plugin 本地 Outbox，不直接运行 LLM 提取或网络长任务。
-4. Local Runner 每 5 分钟检查活动状态；连续 2 小时没有新 Turn 的 Session 自动进入提取，不要求 Partner 手动触发。
-5. Plugin 启动时及至少每 6 小时执行补偿扫描，通过 App Server 线程列表发现遗漏 Hook。
-6. 报告截止、Admin 强制重扫和最大积压超时可绕过静默窗口；仍活跃 Session 按固定 `to_turn_id` 快照处理。
-7. 本地读取器优先通过 Codex App Server 获取完整线程结构。
-8. 根据 `last_processed_turn_id` 只读取和处理新增 Turn。
-9. 过滤不在时间、目录、项目和用户授权范围内的 Session。
-10. 逐 Session 提取结构化 Work Events，并更新 Work Item 状态链。
+1. Codex Scheduled Task 按 Team 时区在每周五 13:00 启动一次 Weekly Collection Run，不在每个 Agent Turn 结束时运行 Hook。
+2. Plugin 记录本次报告窗口、Binding Code、计划时间和幂等键，并向中台发送“本周采集开始”状态。
+3. 本地读取器通过 Codex App Server `thread/list` 发现报告窗口内的所有候选 Session，再通过 `thread/read(includeTurns)` 读取结构化 Turn。
+4. Plugin 根据 Session ID、Turn ID、`last_processed_complete_turn_id` 和内容 Hash，找出上次成功同步以后新增或更新的 Turn。
+5. 对每个候选 Turn 检查用户问题、Assistant `final_answer` 和结束状态；只有完整问答进入后续过滤和提取。
+6. 扫描时模型仍在回答，或 Turn 被中断、取消、失败、缺少最终回复时，标记 `WAITING_COMPLETE_TURN`，不创建 Fact、不上传内容、不推进完成游标。
+7. 同一 Session 中更早已经完成且尚未同步的 Turn 仍正常处理，不因最后一个 Turn 正在回答而跳过整个 Session。
+8. 过滤不在时间、目录、项目和授权范围内的 Session。
+9. 规范化 Session 工作目录，并在配置的项目根目录中执行祖先目录匹配：工作目录等于项目根目录或位于其任意层级子目录时归属该项目；同时匹配多个项目时选择最长根目录。
+10. 逐 Session 提取最小粒度的结构化 Fact，并仅在单个 Session 内做有限去重；不得在 Plugin 中执行跨 Session 或周期级工作事项聚合。
 11. 本地完成敏感信息扫描、证据截断和质量校验。
-12. 通过 HTTPS API 批量上传结构化结果。
-13. 上传成功后更新处理游标；提取期间如出现新 Turn，Session 保持 `DIRTY` 并等待下一次静默窗口。
+12. 通过 HTTPS API 批量上传 Fact，同时携带 `project_id`、项目根目录指纹、Session 相对目录、匹配方式和 Plugin Instance 来源。
+13. 上传成功后只将最后一个已接受的 Complete Turn 写入完成游标；被跳过的 Turn 保持待处理，留给下周任务或人工 Re-analysis。
+14. Plugin 向中台发送“本周采集完成”状态，包括扫描、提取、跳过、上传和失败数量；中台据此展示该 Binding Code 是否按期同步。
+15. 如果计划时间设备不可用，下次启动只补跑一次未完成的 Weekly Collection Run，不启动高频常驻 Runner。
 
 ### 9.3 工作事项审核
 
-1. 周期结束时，Report Service 汇总该 Partner 的 Session Work Facts。
-2. 系统按工作事项、项目和时间进行聚类、去重和状态重建。
-3. 系统生成 Work Item Draft，并按重要性排序。
+1. 周五任务完成且收集宽限期结束后，Report Service 按 `tenant_id + partner_id + period_id` 冻结 Session Work Fact Snapshot；来自同一 Partner 多个 Binding Code 的数据进入同一快照，未按期同步的实例记录 Coverage Warning。
+2. 中台优先按明确 `project_id` 分组，再调用中台大模型按工作事项、项目和时间进行跨 Session 聚类、去重和状态重建。
+3. 中台生成 Work Item Draft，并按重要性排序；每个结论必须保留源 `fact_id`。
 4. 飞书机器人发送审核总览卡。
 5. Partner 逐项确认、修改、排除或查看证据。
-6. 每次修改先生成结构化 Change Preview。
-7. Partner 确认 Change Preview 后才应用修改。
-8. 所有工作事项确认后，生成不可变的 Work Item Snapshot。
+6. 标题、状态、排除、重点和明确项目调整等确定性修改由中台规则直接处理；合并、拆分和自然语言重写等语义修改由中台大模型生成受限结构化操作。
+7. 每次修改先生成结构化 Change Preview。
+8. Partner 确认 Change Preview 后才应用修改。
+9. 所有工作事项确认后，生成不可变的 Work Item Snapshot。
 
 ### 9.4 个人 Report 审核
 
-1. 系统基于已确认 Work Item Snapshot 生成个人 Report 草稿。
+1. 数据中台调用统一模型服务，基于已确认 Work Item Snapshot 生成个人 Report 草稿；Plugin 不参与 Report 生成。
 2. 飞书机器人发送 Report 审核卡。
 3. Partner 可以调整结构、侧重点、长度和语言风格。
-4. 表达修改直接重新生成 Report。
+4. 表达修改由数据中台根据修改条件和已确认事实重新生成 Report。
 5. 如果 Partner 指出事实错误，必须返回工作事项层修正。
 6. Partner 确认后生成不可变的 Individual Report Snapshot。
 7. 个人 Report 状态变为 `SUBMITTED`。
@@ -405,22 +455,21 @@ tenant_id
 
 ### 9.8 Partner 首次设置清单
 
-Partner 设置采用五步向导：
+Partner 设置采用四步向导：
 
 ```text
-连接身份 -> 选择项目 -> 隐私授权 -> 同步测试 -> 完成
+输入绑定码 -> 隐私授权 -> 同步测试 -> 完成
 ```
 
 必须设置：
 
 1. 安装并启用团队 Report Plugin。
-2. 审查并信任 `Stop` 和 `SessionEnd` Hook。
-3. 绑定 Report Service 与飞书身份。
-4. 确认本地 Session 历史记录未关闭。
-5. 选择允许分析和必须排除的项目目录。
-6. 选择是否允许上传有限 Evidence Excerpt。
-7. 开启每日增量同步，并授权访问 Report Service 网络域名。
-8. 完成一次测试同步，确认 Session 覆盖和错误提示。
+2. 输入 Team Admin 分配的 Binding Code 和设备名称；不需要登录 Report Service。
+3. 确认本地 Session 历史记录未关闭。
+4. 选择允许分析和必须排除的项目目录。
+5. 选择是否允许上传有限 Evidence Excerpt。
+6. 启用 Team 时区每周五 13:00 的 Weekly Collection Task，并授权访问 Report Service 网络域名。
+7. 完成一次测试同步，确认 Session 覆盖和错误提示。
 
 可选设置：
 
@@ -432,9 +481,9 @@ Partner 设置采用五步向导：
 MVP 运行条件：
 
 - 使用 macOS Codex 桌面端。
-- 使用一个主要设备。
+- 每台设备使用独立 Binding Code；多个设备可以归属同一工作邮箱对应的 Partner。
 - 定时执行时设备开机且 Codex 桌面应用运行。
-- 多设备使用者需要等待后续能力，或接受 Coverage Warning。
+- 多设备之间若存在重复 Session，由服务端基于 Session 标识、来源修订和内容 Hash 去重。
 
 ### 9.9 Monitor 使用要求
 
@@ -452,30 +501,33 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 
 1. 创建并发布飞书企业自建应用。
 2. 配置机器人可用范围、卡片回调、事件权限、消息权限、文件上传与发送权限和接收地址。
-3. 维护 Team、Partner 与 `feishu_open_id` 映射，以及 Monitor 接收目标的 `open_id` 或 `chat_id`。
-4. 维护项目 ID、项目别名和独立工作分类规则。
-5. 配置 Report Plugin 私有分发渠道和最低版本。
-6. 配置 Report Service 域名、网络允许规则和 OAuth。
-7. 配置报告模板、周期、时区、截止时间和提醒策略。
-8. 配置数据保留、删除、离职处理和审计策略。
-9. 配置 Monitor 的飞书单聊或群聊接收目标，以及最终报告的发送时间和附件格式。
+3. 使用唯一工作邮箱创建 Partner，为每个 Partner 创建一个或多个 Binding Code，并查看每个 Code 对应 Plugin 的设备、上次计划运行、上次成功同步、Fact 数量和错误状态。
+4. 维护 Partner 的飞书审核接收目标，以及 Monitor 接收目标的 `open_id` 或 `chat_id`；飞书身份不参与 Plugin 绑定。
+5. 维护项目 ID、项目根目录、排除目录、项目别名和独立工作分类规则。
+6. 配置 Report Plugin 私有分发渠道和最低版本。
+7. 配置 Report Service 域名和网络允许规则。
+8. 配置报告模板、周期、时区、截止时间和提醒策略。
+9. 配置数据保留、删除、离职处理和审计策略。
+10. 配置 Monitor 的飞书单聊或群聊接收目标，以及最终报告的发送时间和附件格式。
 
 ## 10. 功能需求
 
-### FR-01 插件安装与身份绑定
+### FR-01 插件安装与绑定码身份识别
 
 优先级：P0
 
 - 插件必须包含唯一名称、版本和更新机制。
 - 插件必须可由 GitHub Marketplace 稳定 Release 通过 Codex 官方途径安装和升级；生产入口不得直接跟随未验证的 `main`。
-- Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新绑定、重新配置项目或重新生成长期凭证。
-- 本地 SQLite 必须有 Schema 版本和向前迁移，Hook 变化导致重新信任时必须在发布说明和 Admin 状态中明确展示。
-- Partner 必须主动安装、启用和信任 Hook。
-- 插件必须支持与 Report Service 的安全认证。
-- 不允许要求 Partner 在聊天中粘贴长期 API Key。
-- 绑定流程必须把 Codex Plugin Instance 与 `partner_id`、`feishu_open_id` 关联。
-- Partner 可以撤销绑定。
-- 服务端必须立即停止接收已撤销实例的数据。
+- Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新输入 Binding Code 或重新配置项目。
+- 本地 SQLite 必须有 Schema 版本和向前迁移；Weekly Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
+- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `weekly-collect` 入口和建任务说明；Scheduled Task 由 Codex 官方桌面端或 Web 界面创建，正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
+- Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
+- Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。
+- Partner 不需要登录 Report Service；Plugin 输入 Binding Code 后即可建立 `binding_code_id -> plugin_instance_id -> partner_id` 关系。
+- Plugin 上传时不得自行指定可信 `partner_id`；服务端必须根据 Binding Code 对应的实例推导 Tenant、Team 和 Partner 归属。
+- Binding Code 用于首次绑定一个 Plugin Instance，认领后由实例 Token 持续访问；同一 Partner 可生成多个 Code，Admin 可在认领前停用 Code，并可在认领后停用对应 Plugin Instance。
+- Admin 必须能够按 Binding Code 查看设备名称、Plugin 版本、上次计划时间、上次开始/完成时间、最后同步、Session/Fact 数量、最近错误和状态。
+- 服务端必须立即停止接收已停用 Binding Code 或 Plugin Instance 的数据。
 
 ### FR-02 Session 发现与覆盖率
 
@@ -484,13 +536,17 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 支持按创建或更新时间筛选 Session。
 - 支持按项目目录和显式排除规则过滤。
 - 支持发现活跃和已归档本地 Session。
-- `Stop` Hook 必须记录新增 Turn，`SessionEnd` Hook 必须记录阶段性结束，两者都只做快速入队。
-- Local Runner 必须按 Team 配置的静默窗口自动处理；默认连续 120 分钟无新 Turn 后提取，任何新 Turn 都重新顺延。
-- Runner 必须定期发送健康心跳，并在启动时及至少每 6 小时通过线程列表补偿 Hook 遗漏。
-- 报告截止快照必须覆盖仍然活跃的 Session，不能等待 `SessionEnd`。
+- Plugin 必须按 Team 时区每周五 13:00 运行一次 Weekly Collection Run，正常情况下不在其他时间自动扫描。
+- Weekly Collection Run 必须直接通过 `thread/list` 和 `thread/read(includeTurns)` 发现本报告窗口内所有候选 Session，不能依赖生命周期 Hook 是否触发。
+- Plugin 必须比较 Session ID、Turn ID、完成游标和内容 Hash，确保一周内新增或更新的 Complete Turn 即使没有 Hook 提示也能被发现。
+- 扫描时正在回答的 Turn 必须跳过且不推进完成游标；同一 Session 中更早的 Complete Turn 仍应正常提取。
+- 计划运行错过时，Plugin 下次启动只补跑一次；不得恢复每 5 分钟或每 6 小时的常驻扫描。
+- 每次 Weekly Collection Run 必须向中台上报计划时间、开始时间、完成时间、扫描数、Complete Turn 数、等待中 Turn 数、上传数和错误。
+- 数据中台必须等待活动 Binding Code 全部完成或收集宽限期结束后再冻结 Fact Snapshot；单个 Plugin 未按期运行不得阻塞其他 Partner。
 - 同一 Session 恢复后必须使用处理游标增量读取，不能重复分析全部历史。
+- 只有同时包含用户问题和正常完成 Assistant `final_answer` 的 Turn 才能进入提取；中断、取消、失败或只有过程输出的 Turn 不得进入事实提取，保留等待状态供后续扫描重新判断。
 - 支持幂等同步，不能重复创建同一 Session 事实。
-- 每个周期展示：发现数、成功读取数、成功提取数、失败数、被排除数。
+- 每个周期展示：发现数、成功读取数、成功提取数、不完整 Turn 等待数、失败数、被排除数。
 - 如果 Partner 关闭历史、Session 删除或设备离线，必须显示覆盖不足，不能静默忽略。
 
 ### FR-03 Session 事实提取
@@ -514,6 +570,22 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - Confidence：提取置信度。
 - Sensitivity Flags：敏感信息标记。
 
+提取输入只能包含 Complete Turn：
+
+- 一个非空用户问题。
+- 一个非空且正常完成的 Assistant `final_answer`。
+- 明确的 `turn_id`、完成时间和来源边界。
+
+不得将被中断的 Assistant 片段、commentary、reasoning 或工具输出拼接成最终回复；每周五 13:00 到达、人工补跑或报告截止本身也不能把不完整 Turn 变成 Complete Turn。
+
+每次上传还必须携带：
+
+- `plugin_instance_id` 或等价的可信来源实例标识。
+- Session 工作目录对应的 `project_id`。
+- 项目根目录指纹和 Session 相对目录；默认不要求中心保存包含本机用户名的完整绝对路径。
+- 项目匹配方法，例如 `exact_root`、`descendant_path` 或 `unassigned`。
+- `source_revision`、`source_hash` 和 Turn 范围。
+
 必须区分：
 
 - 讨论或探索。
@@ -524,17 +596,35 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 被阻塞。
 - 已取消。
 
+Plugin 只允许在单个 Session 内做基础事实提取和有限去重，不得在本地完成跨 Session 工作事项聚合、周期总结或个人 Report 生成。
+
+### FR-03A 项目目录识别
+
+优先级：P0
+
+- Team Admin 为项目配置一个或多个 Project Root，并可配置排除目录；Project Root 可以按 Binding Code/Plugin Instance 配置，使同一项目在不同设备上的不同绝对路径映射到同一 `project_id`。
+- Plugin 在本地规范化 Project Root 和 Session 工作目录，处理路径分隔符、`.`、`..` 和符号链接后再匹配。
+- 当 `session_cwd == project_root` 时，Session 归属该项目。
+- 当 `session_cwd` 是 `project_root` 的任意层级子目录时，Session 仍归属该项目。
+- 路径匹配必须使用目录边界；`/projects/crm-v2` 不得误匹配 `/projects/crm`。
+- 同时命中多个 Project Root 时，选择最长、最具体的根目录。
+- 没有目录匹配时上传为未分配，不得仅为提高聚合率而强行猜测项目。
+- Partner 在第一轮审核中修正项目后，中台可以更新项目映射规则供后续 Plugin 同步使用。
+
 ### FR-04 工作事项聚合
 
 优先级：P0
 
-- 跨 Session 识别同一工作事项。
+- 聚合必须由数据中台在周期结束后调用统一模型服务执行，不依赖 Partner 设备在线。
+- 按 `tenant_id + partner_id + period_id` 汇总 Fact；同一 Partner 下多个 Binding Code 的数据必须进入同一聚合输入。
+- 优先按可信 `project_id` 分组，再跨 Session 识别同一工作事项。
 - 去除重复讨论和重复状态。
 - 保留重要决策和状态变化。
 - 按项目聚合，时间顺序用于重建过程。
 - 生成稳定 `work_item_id`。
 - 不确定合并必须保留置信度并允许 Partner 拆分。
 - 独立工作不得为提高聚合率而强行归入项目。
+- 每次聚合必须记录模型版本、Prompt 名称和版本、输入快照 Checksum、输出 Schema 版本和执行状态。
 
 ### FR-05 重要性排序
 
@@ -592,6 +682,7 @@ Partner 必须能够：
 - 在应用前展示 Change Preview。
 - 区分 AI 提取事实与 Partner 补充事实。
 - 使用乐观锁防止旧卡片覆盖新版本。
+- 确定性修改由中台规则执行；需要语义理解的修改由中台模型返回受限操作，不允许模型直接写数据库。
 
 ### FR-07 Re-analysis Request
 
@@ -606,17 +697,20 @@ Partner 必须能够：
 
 服务端创建请求后：
 
-- Plugin Runner 在下一个心跳周期轮询并领取请求。
-- Partner 或 Admin 可请求立即同步，但普通链路不要求 Partner 手动运行 Skill。
+- 正常链路不高频轮询。Partner 或 Admin 明确发起后，Partner 在 Plugin 中立即执行 Re-analysis；未人工执行的请求由下一次 Weekly Collection Run 领取。
+- 普通每周链路不要求 Partner 手动运行 Skill；只有希望在下周五前补提时才需要人工立即执行。
 - 飞书卡片显示“等待本地 Codex 重新分析”。
 - Plugin 离线时不得假装修改已完成。
 - 请求需要超时、取消和重试能力。
-- 请求必须支持幂等领取和租约超时，避免多设备或重复任务并发处理。
+- 请求必须支持幂等领取和租约超时，避免多设备、人工执行和周五任务重复处理。
 - MVP 不提供服务端直接唤醒本地 Plugin 的能力。
 
 ### FR-08 个人 Report 生成与审核
 
 优先级：P0
+
+- Individual Report 的生成、重新生成和表达修改必须由数据中台统一调用模型服务完成，不得下发给 Plugin 执行。
+- Report 只能读取已确认的 Work Item Snapshot、Coverage、模板和 Partner 偏好。
 
 默认结构：
 
@@ -713,6 +807,7 @@ MVP 不展示：
 - Plugin 安装、绑定、授权和撤销。
 - Session 同步批次和覆盖率。
 - AI 提取器版本和 Prompt 版本。
+- 中台聚合、修改解析和 Report 生成所使用的模型、Prompt 版本、输入 Checksum 和输出 Schema 版本。
 - Partner 修改前后差异。
 - 报告生成、确认、提交和发送。
 - Monitor 最终消息和文件附件的交付结果。
@@ -724,7 +819,7 @@ MVP 不展示：
 
 - 卡片负责通知、单项审核和确定性操作。
 - 自然语言负责复杂修改。
-- Web 工作台作为批量审核和复杂证据查看的增强入口。
+- Web 工作台作为批量审核和复杂证据查看的增强入口；Partner 侧若启用，使用飞书消息关联的短期签名链接，不要求数据中台账号登录。
 - 任何修改先预览，后应用。
 - 一张卡片只突出一个主任务。
 - 超过 8 至 10 个事项时，默认分批或进入 Web 工作台。
@@ -920,20 +1015,28 @@ Monitor 收到的是无交互按钮的最终消息，不进入审核卡片流程
 ### 12.1 分层处理
 
 ```text
-原始 Session
--> Session Work Facts
--> Work Item Timeline
--> Approved Work Item Snapshot
--> Individual Report
--> Team Project State
+Plugin 本地：原始 Session
+-> Plugin 本地：逐 Session Work Facts
+-> 数据中台：周期 Fact Snapshot
+-> 数据中台模型：跨 Session Work Item Timeline
+-> Partner 第一轮确认：Approved Work Item Snapshot
+-> 数据中台模型：Individual Report
+-> Partner 第二轮确认：Submitted Individual Report
+-> 数据中台模型：Team Project State
 -> Team Report
 ```
 
 不得使用一个大 Prompt 直接把所有原始 Session 生成团队报告。
 
+Plugin 只执行第一层逐 Session 提取；从周期 Fact Snapshot 开始的聚合、修改和 Report 生成均由数据中台执行。
+
 ### 12.2 Session 相关性分类
 
-先判断 Session 是否包含工作相关内容：
+先过滤 Turn 完整性，再判断 Session 是否包含工作相关内容。完整性过滤先于相关性分类，任何不完整 Turn 都不能进入模型输入。
+
+Complete Turn 必须包含用户问题和正常完成的 Assistant `final_answer`。仅有用户问题、输出中断、取消、失败、只有 commentary/reasoning 或只有工具调用结果时，本轮不处理。
+
+通过完整性过滤后，再判断是否包含：
 
 - 工作成果。
 - 设计或技术决策。
@@ -949,8 +1052,16 @@ Monitor 收到的是无交互按钮的最终消息，不进入审核卡片流程
 ```json
 {
   "session_id": "thr_456",
+  "plugin_instance_id": "plugin_instance_456",
+  "from_complete_turn_id": "turn_001",
+  "to_complete_turn_id": "turn_020",
   "occurred_at": "2026-07-30T10:00:00+08:00",
-  "project_candidates": [{ "name": "支付系统", "confidence": 0.93 }],
+  "project": {
+    "project_id": "project_payment",
+    "root_fingerprint": "sha256:...",
+    "relative_directory": "services/api",
+    "assignment_method": "descendant_path"
+  },
   "work_facts": [
     {
       "fact_id": "fact_001",
@@ -985,7 +1096,8 @@ Monitor 收到的是无交互按钮的最终消息，不进入审核卡片流程
 
 聚类特征：
 
-- 显式项目 ID 或项目名称。
+- Plugin 根据目录匹配得到的显式项目 ID。
+- 同一 Partner 下多个 Plugin Instance 上传的 Fact。
 - Issue、PR、任务编号。
 - 目标对象、模块、技术名词。
 - 时间接近性。
@@ -993,6 +1105,13 @@ Monitor 收到的是无交互按钮的最终消息，不进入审核卡片流程
 - Partner 修正历史。
 
 聚类输出必须保留源 `fact_id`，不得只保存最终自然语言摘要。
+
+聚类按以下顺序执行：
+
+1. 以 `partner_id + period_id` 建立聚合边界。
+2. 按明确 `project_id` 分组。
+3. 在同一项目内跨 Session 聚类工作事项并重建状态。
+4. 未分配项目的 Fact 保持独立或进入 Partner 确认，不使用模型强行分配。
 
 ### 12.5 报告生成
 
@@ -1005,6 +1124,8 @@ Report Generator 只能读取：
 - 上期已提交报告的结构化状态。
 
 Report Generator 不得重新读取未经确认的原始事实来覆盖 Partner 审核结果。
+
+Report Generator 在数据中台运行，Plugin 不接收 Report 生成输入，也不返回 Report 生成结果。
 
 ### 12.6 质量检查
 
@@ -1019,6 +1140,14 @@ Report Generator 不得重新读取未经确认的原始事实来覆盖 Partner 
 - 是否遗漏 Partner 标记的重点事项。
 - 是否包含敏感或已排除内容。
 - Report 与 Work Item Snapshot 是否一致。
+
+### 12.7 中台模型与 Prompt 管理
+
+- 数据中台通过统一 Model Gateway 调用模型，聚合、修改解析、个人 Report 和团队 Report 使用独立 Prompt。
+- Prompt 使用稳定名称和不可变版本，例如 `work-item-aggregation/v3`、`individual-report/v5`。
+- 发布新 Prompt 版本不得覆盖旧版本；任务必须记录实际使用的 Prompt 版本和模型版本。
+- 兼容既有输入、输出 Schema 的中台 Prompt 更新不要求 Plugin 升级。
+- 只有本地 Session 读取方式、隐私边界、上传协议或本地提取 Schema 发生不兼容变化时，才要求升级 Plugin。
 
 ## 13. 状态机
 
@@ -1054,18 +1183,47 @@ WAITING_SUBMISSIONS
 
 ## 14. 核心数据模型
 
-### 14.1 PartnerBinding
+### 14.1 Partner 与 PluginBinding
 
 ```json
 {
   "tenant_id": "tenant_001",
   "partner_id": "partner_123",
-  "feishu_open_id": "ou_xxx",
-  "plugin_instance_id": "plugin_instance_456",
+  "work_email": "partner@company.com",
+  "normalized_work_email": "partner@company.com",
   "status": "active",
-  "timezone": "Asia/Shanghai"
+  "plugin_bindings": [
+    {
+      "binding_code_id": "binding_001",
+      "binding_code": "CODE-001",
+      "plugin_instance_id": "plugin_instance_456",
+      "device_name": "Office-Mac",
+      "status": "active",
+      "last_scheduled_run_at": "2026-07-31T13:00:00+08:00",
+      "last_run_completed_at": "2026-07-31T13:08:00+08:00",
+      "last_sync_at": "2026-07-30T11:30:00+08:00",
+      "session_count": 14,
+      "fact_count": 36,
+      "last_error": null,
+      "project_roots": [
+        {
+          "project_id": "project_payment",
+          "root_fingerprint": "sha256:...",
+          "display_path": "/workspace/payment-service"
+        }
+      ]
+    }
+  ]
 }
 ```
+
+约束：
+
+- `normalized_work_email` 唯一，一个工作邮箱只对应一个稳定 `partner_id`。
+- 一个 `partner_id` 可以关联多个 Binding Code 和 Plugin Instance。
+- 同一个 `project_id` 可以在不同 Binding Code 下配置不同 Project Root；各设备路径不同也能归入同一项目。
+- Binding Code 用于识别数据来源，周期聚合始终以 `partner_id` 为边界，不按 Binding Code 分开生成报告。
+- Binding Code 可以长期有效，不强制一次性或自动过期，但必须支持 Admin 停用。
 
 ### 14.2 SessionRecord
 
@@ -1073,19 +1231,27 @@ WAITING_SUBMISSIONS
 {
   "session_id": "thr_456",
   "partner_id": "partner_123",
+  "binding_code_id": "binding_001",
   "plugin_instance_id": "plugin_instance_456",
-  "cwd": "/workspace/payment-service",
+  "project_id": "project_payment",
+  "project_root_fingerprint": "sha256:...",
+  "relative_directory": "services/api",
+  "project_assignment_method": "descendant_path",
   "started_at": "2026-07-30T10:00:00+08:00",
   "ended_at": "2026-07-30T11:30:00+08:00",
   "last_activity_at": "2026-07-30T11:30:00+08:00",
   "last_seen_turn_id": "turn_025",
-  "last_processed_turn_id": "turn_020",
-  "processing_state": "dirty",
+  "last_processed_complete_turn_id": "turn_020",
+  "pending_incomplete_turn_id": "turn_025",
+  "pending_incomplete_reason": "assistant_interrupted",
+  "processing_state": "waiting_complete_turn",
   "sync_status": "synced",
   "source_hash": "sha256:...",
   "extractor_version": "extractor-v1"
 }
 ```
+
+同一 Partner 多个 Plugin Instance 可能看到同一 Session。中台使用 Partner、Session 标识、来源修订和内容 Hash 检测重复，同时保留 Binding Code 来源以供 Admin 排查。
 
 ### 14.3 WorkItem
 
@@ -1184,6 +1350,27 @@ WAITING_SUBMISSIONS
 }
 ```
 
+### 14.7 CentralModelRun
+
+```json
+{
+  "model_run_id": "model_run_001",
+  "tenant_id": "tenant_001",
+  "partner_id": "partner_123",
+  "task_type": "aggregate_work_items",
+  "executor": "server",
+  "prompt_name": "work-item-aggregation",
+  "prompt_version": "v3",
+  "model": "configured-model",
+  "input_snapshot_id": "fact_snapshot_001",
+  "input_checksum": "sha256:...",
+  "output_schema_version": "1.0",
+  "status": "completed"
+}
+```
+
+跨 Session 聚合、修改解析和 Report 生成都必须产生 CentralModelRun；Re-analysis Request 的执行者仍是 Plugin。
+
 ## 15. 系统架构
 
 ```mermaid
@@ -1191,18 +1378,23 @@ flowchart LR
     subgraph local [Partner 本地]
         codex[Codex]
         plugin[Report Plugin]
-        stopHook[Stop Hook]
-        sessionEndHook[SessionEnd Hook]
+        weeklyTask[周五 13:00 Scheduled Task]
+        weeklyScanner[Weekly Session Scanner]
+        completeTurn{Complete Turn?}
         outbox[(Local Outbox)]
         extractor[Local Extractor]
-        scheduledScan[Scheduled Scan]
         cursorStore[(Cursor Store)]
     end
 
     subgraph service [Report Service]
         api[Ingestion API]
-        auth[Identity Service]
+        auth[Binding Code Identity Service]
         factStore[(Fact Store)]
+        factSnapshot[Period Fact Snapshot]
+        modelWorker[Central Model Worker]
+        modelGateway[Model Gateway]
+        promptRegistry[(Prompt Registry)]
+        workItemEngine[Work Item Engine]
         reportEngine[Report Engine]
         reviewEngine[Review Engine]
         teamEngine[Team Aggregator]
@@ -1218,27 +1410,30 @@ flowchart LR
         monitor[Monitor]
     end
 
-    codex --> stopHook --> outbox
-    codex --> sessionEndHook --> outbox
-    scheduledScan -->|thread list/read| codex
-    scheduledScan --> outbox
-    scheduledScan --> cursorStore
-    outbox --> extractor
+    weeklyTask --> weeklyScanner
+    weeklyScanner -->|thread list/read| codex
+    codex --> weeklyScanner --> completeTurn
+    completeTurn -->|完整| extractor
+    completeTurn -->|回答中或中断| cursorStore
     cursorStore <--> extractor
-    extractor --> plugin
-    plugin -->|结构化事实| api
+    extractor --> outbox --> plugin
+    plugin -->|Binding Code + 逐 Session 结构化事实| api
     plugin <--> auth
     api --> factStore
     api --> audit
-    factStore --> reportEngine
-    reportEngine --> reviewEngine
-    reviewEngine --> jobQueue
+    factStore --> factSnapshot --> modelWorker
+    promptRegistry --> modelWorker
+    modelWorker <--> modelGateway
+    modelWorker --> workItemEngine --> reviewEngine
     reviewEngine --> bot --> card --> partner
     partner -->|回调或消息| bot --> reviewEngine
-    reportEngine --> teamEngine
+    reviewEngine -->|确认 Work Item Snapshot| modelWorker
+    modelWorker --> reportEngine --> reviewEngine
+    reviewEngine -->|提交 Individual Report| teamEngine
     teamEngine --> fileRenderer
     fileRenderer -->|最终消息 + 文件附件| bot --> monitor
-    plugin -.->|轮询待处理请求| jobQueue
+    reviewEngine -->|仅原始 Session 重新分析| jobQueue
+    plugin -.->|周五任务或人工操作领取 Re-analysis| jobQueue
     jobQueue -->|返回重新分析任务| plugin
 ```
 
@@ -1248,10 +1443,20 @@ flowchart LR
 
 ### 16.1 插件认证与绑定
 
-- `POST /v1/plugin-bindings/start`
-- `POST /v1/plugin-bindings/complete`
+- `POST /v1/admin/partners`
+- `POST /v1/admin/partners/{partner_id}/binding-codes`
+- `GET /v1/admin/partners/{partner_id}/binding-codes`
+- `POST /v1/admin/plugin-bindings/{binding_code_id}/disable`
+- `POST /v1/plugin-bindings/activate`
 - `GET /v1/plugin-bindings/me`
-- `DELETE /v1/plugin-bindings/{id}`
+- `POST /v1/plugin-instances/me/weekly-run-status`
+
+约束：
+
+- Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 创建多个 Binding Code。
+- `activate` 接收 Binding Code 和设备信息，返回或确认对应 Plugin Instance。
+- 后续上传的 Tenant、Team 和 Partner 归属必须从 Binding Code/Plugin Instance 解析，不信任 Payload 自报身份。
+- Admin 列表必须展示每个 Binding Code 对应 Plugin 的本周任务状态、上次计划/完成时间、最后同步、Session/Fact 数量和最近错误。
 
 ### 16.2 Session 与事实同步
 
@@ -1269,6 +1474,8 @@ flowchart LR
 - 批量部分成功。
 - 压缩传输。
 - 最大证据长度限制。
+- 项目 ID、项目根目录指纹、相对 Session 目录和目录匹配方式。
+- 同一 Partner 多 Plugin Instance 的来源记录和重复 Session 检测。
 
 ### 16.3 审核
 
@@ -1287,6 +1494,18 @@ flowchart LR
 - `POST /v1/team-reports/generate`
 - `POST /v1/team-reports/{id}/deliver`
 - `GET /v1/reports/{id}/versions`
+
+聚合和 Report 生成接口只负责创建中台任务；Central Model Worker 消费任务并通过内部 Model Gateway 执行，不得由 Plugin 领取这些任务。
+
+### 16.4A 中台模型任务
+
+- `POST /internal/v1/model-jobs/aggregate-work-items`
+- `POST /internal/v1/model-jobs/interpret-review-change`
+- `POST /internal/v1/model-jobs/generate-individual-report`
+- `POST /internal/v1/model-jobs/regenerate-individual-report`
+- `GET /internal/v1/prompt-registry/{prompt_name}/active`
+
+中台模型任务必须引用不可变输入 Snapshot，并记录 Prompt、模型、输入 Checksum 和输出 Schema 版本。
 
 ### 16.5 飞书回调
 
@@ -1314,9 +1533,10 @@ flowchart LR
 
 ### 17.3 凭证安全
 
-- OAuth Token 和 Refresh Token 加密存储。
-- Plugin 使用短期访问令牌。
-- 支持令牌撤销和实例禁用。
+- Binding Code 必须使用足够随机、不可顺序猜测的值；不强制一次性或自动过期。
+- 每个 Plugin Instance 使用独立 Binding Code，不允许多台设备共用一个 Code。
+- 支持 Admin 停用 Binding Code 和 Plugin Instance；停用后立即停止接收数据。
+- Binding Code 不得出现在 Prompt、飞书卡片、普通错误信息和非 Admin 日志中。
 - 不在日志、Prompt、飞书卡片或错误信息中输出密钥。
 - 服务间请求必须签名并防重放。
 
@@ -1327,6 +1547,8 @@ flowchart LR
 - 对象存储、缓存和队列消息需要租户隔离。
 - 证据访问必须记录审计日志。
 - 自动化测试必须覆盖跨租户越权用例。
+- Plugin 请求的 `partner_id` 必须由服务端根据 Binding Code/Plugin Instance 推导，不能从上传 Payload 接受。
+- 同一 Partner 多个 Binding Code 的数据允许汇总；不同 `partner_id` 的数据不得进入同一个个人 Fact Snapshot 或 Work Item 聚合任务。
 
 ### 17.5 删除与保留
 
@@ -1336,13 +1558,14 @@ flowchart LR
 - Evidence Excerpt 保留时长。
 - Report 和审计日志保留时长。
 - Partner 离职后的处理方式。
-- Partner 撤销授权后是否保留已提交历史报告。
+- Admin 停用 Binding Code 或 Partner 离职后是否保留已提交历史报告。
 
 ## 18. 非功能需求
 
 ### NFR-01 可靠性
 
 - Session 上传、飞书回调和报告生成必须幂等。
+- 中台模型任务必须支持重试、超时和并发限制，不依赖 Partner 设备在线。
 - 定时任务失败后支持重试和人工补跑。
 - 不得因一个 Session 失败而丢弃整个周期。
 - 同步状态必须可观测。
@@ -1365,6 +1588,8 @@ flowchart LR
 
 - 报告周期和时区可配置。
 - 报告模板可按 Team 配置。
+- 项目根目录、排除目录和最长目录匹配规则可按 Team、Partner 或 Binding Code 配置。
+- 中台模型、Prompt 激活版本和生成策略可配置并保留历史版本。
 - Partner 可以保存个人表达偏好。
 - 敏感信息和项目排除规则可配置。
 
@@ -1372,33 +1597,39 @@ flowchart LR
 
 指标至少包括：
 
-- Plugin 在线和版本分布。
-- Runner 在线、最后 Hook、下一静默截止、DIRTY/EXTRACTING/待同步数量和各阶段滞留时间。
+- Plugin 安装和版本分布。
+- 每个 Binding Code 对应 Plugin 的设备、本周任务是否按期完成、最后同步、Session/Fact 数量和最近错误。
+- Weekly Collection Task 是否已配置、上次计划时间、上次开始/完成时间、下次周五 13:00、等待完整 Turn/EXTRACTING/待同步数量和各阶段滞留时间。
 - Session 发现、读取、提取和上传成功率。
 - Re-analysis Request 等待时间。
 - 飞书卡片回调成功率。
 - 报告生成耗时和失败率。
+- 中台模型任务按类型、Prompt 版本和模型版本统计的耗时、失败率与重试次数。
 - Partner 审核耗时和修改率。
 
 ## 19. 异常与边界场景
 
 | 场景                               | 预期处理                                                                |
 | ---------------------------------- | ----------------------------------------------------------------------- |
-| Partner 电脑休眠或关机             | 本地状态保留；下次启动立即补跑到期 Session，并在飞书/Admin 显示同步延迟 |
-| Codex 桌面应用未运行               | 保留 Outbox，后续补跑                                                   |
-| `Stop` 或 `SessionEnd` Hook 未触发 | 启动时及每 6 小时补偿扫描通过线程列表发现                               |
-| Session 在静默窗口内持续活跃       | 每个新 Turn 把 `quiet_until` 顺延 2 小时，不重复启动提取                |
-| 提取期间出现新 Turn                | 当前任务只处理已冻结 `to_turn_id`，新增 Turn 保持 DIRTY 等待下一窗口    |
-| Plugin Hook 尚未获得信任           | 显示配置错误，不把同步状态标为正常                                      |
-| Session 在 `SessionEnd` 后恢复     | 使用同一 `session_id` 和处理游标增量分析新 Turn                         |
-| 报告截止时 Session 仍活跃          | 生成当前快照并标记进行中                                                |
+| 周五 13:00 Partner 电脑休眠或关机   | 中台标记本周未同步；Plugin 下次启动只补跑一次该周期任务                 |
+| 周五 13:00 Codex 桌面应用未运行     | 本地记录计划未完成，应用恢复后补跑一次                                  |
+| Scheduled Task 重复启动            | 使用 Binding Code、报告窗口和输入快照幂等键，只允许一次成功同步         |
+| 扫描期间出现新 Turn                | 当前任务只处理已冻结 `to_complete_turn_id`，新增 Turn 进入下一窗口      |
+| 用户提问后模型输出被中断           | 该 Turn 标记 `WAITING_COMPLETE_TURN`，不提取、不上传、不推进完成游标    |
+| 不完整 Turn 后续恢复并正常结束      | 下一次扫描重新判断，产生 `final_answer` 后作为 Complete Turn 处理       |
+| Session 只有不完整 Turn            | 不创建 Fact；Coverage 记录不完整 Turn 等待数                           |
+| Session 在周五扫描后继续产生内容   | 使用同一 `session_id` 和完成游标，在下一周窗口增量分析                  |
+| 周五 13:00 Session 仍在回答         | 只处理此前 Complete Turn，正在回答的 Turn 跳过且不推进游标              |
 | Session 已删除                     | 标记无法读取，纳入 Coverage Warning                                     |
 | 历史记录关闭                       | 提示该时间段不可完整分析                                                |
-| Partner 使用多个设备               | 每个设备独立安装并绑定 Plugin Instance，服务端去重                      |
+| 一个工作邮箱使用多个 Plugin         | 每个 Plugin 使用独立 Binding Code，服务端统一归属同一 `partner_id`      |
 | 同一 Session 被重复上传            | 使用幂等键覆盖或忽略相同版本                                            |
 | Plugin 版本过旧                    | 提醒升级，必要时拒绝不兼容 Schema                                       |
+| Session 位于项目子目录             | 归入祖先 Project Root；多重匹配时选择最长、最具体的根目录                |
+| `/crm-v2` 与 `/crm` 名称相似        | 使用目录边界匹配，不视为父子目录                                        |
+| 某个 Binding Code 本周未完成采集    | Admin 显示未按期、最后成功时间和 Coverage Warning                       |
 | 飞书旧卡片被点击                   | 返回版本过期提示并刷新卡片                                              |
-| LLM 输出 Schema 不合法             | 自动重试，仍失败则进入人工处理                                          |
+| 中台 LLM 输出 Schema 不合法         | Central Model Worker 自动重试，仍失败则进入人工处理                     |
 | 工作事项项目归属不确定             | 保持独立并让 Partner 确认                                               |
 | Partner 修改到尚未同步日期         | 创建 Re-analysis Request                                                |
 | Partner 审核时发现敏感信息         | 立即排除并记录删除请求                                                  |
@@ -1412,26 +1643,29 @@ flowchart LR
 目标：验证关键能力是否可用。
 
 - 创建本地 Codex Plugin 原型。
-- 验证 `Stop`、`SessionEnd` Hook 安装、信任和快速入队。
-- 验证 2 小时静默窗口、重复 Hook 合并、本地 Runner 自动提取和心跳。
+- 验证周五 13:00 Weekly Collection Task 的安装、单次触发和运行状态上报。
+- 验证正常链路不会在每个 Turn、每 5 分钟或每 6 小时触发采集。
 - 验证同一 Session 恢复后使用 Turn 游标增量提取。
-- 验证 Scheduled Scan 可以补偿遗漏 Hook，并覆盖仍活跃 Session。
+- 验证一周内无 Hook 提示的新增内容仍可通过 `thread/list`、`thread/read`、游标和 Hash 被发现。
+- 验证扫描时正在回答的 Turn 被跳过且不推进游标，后续完成后可以补提。
 - 验证 App Server `thread/list`、`thread/read` 的读取覆盖。
-- 验证 macOS Codex 桌面端单设备 MVP 边界。
+- 验证同一工作邮箱的多个 Binding Code 可以正确归属、观测和去重。
 - 验证本地结构化提取。
+- 验证项目根目录、任意层级子目录、目录边界和最长根目录匹配。
+- 验证中台模型完成跨 Session 聚合和个人 Report 生成，且 Plugin 不执行这两类任务。
 - 验证飞书 JSON 2.0 卡片、表单和回调。
-- 验证 Codex 身份与飞书身份绑定。
+- 验证 Admin 以唯一工作邮箱创建 Partner 并分配 Binding Code，Partner 无需登录 Report Service。
 - 完成 3 至 5 名内部用户隐私评审。
 
 退出标准：可以从真实但脱敏的 Codex Session 生成并审核一份个人 Report。
 
 ### Phase 1：个人 Report MVP
 
-- Plugin 安装和授权。
-- 每日增量 Session 提取。
+- Plugin 安装和 Binding Code 接入。
+- 每周五 13:00 增量 Session 提取。
 - Session Work Facts 上传。
-- 工作事项聚合和重要性排序。
-- 飞书工作事项双层审核。
+- 中台跨 Session 工作事项聚合和重要性排序。
+- 飞书工作事项第一轮审核。
 - 自然语言修改和 Change Preview。
 - 个人 Report 生成、审核和提交。
 - 覆盖率、版本和审计日志。
@@ -1459,23 +1693,31 @@ flowchart LR
 
 ### AC-01 安装与绑定
 
-给定一个新 Partner，安装 Plugin 并完成授权后，系统可以准确映射到对应飞书账号，且其他 Partner 不能使用该绑定；从 GitHub Marketplace 升级兼容版本后无需重新绑定或重新配置。
+给定 Admin 以唯一工作邮箱创建的新 Partner，并为其生成两个 Binding Code，两台 Plugin 无需登录 Report Service 即可分别绑定；Admin 可以看到各自设备、周五任务状态和最后同步，两台 Plugin 的事实最终归属同一个 `partner_id`，且其他 Partner 的 Binding Code 不能写入该 Partner 数据。兼容版本升级后无需重新输入 Binding Code 或重新配置。
 
 ### AC-02 Session 发现
 
-给定一个包含 10 个本地 Session 的时间范围，系统能够报告发现、成功读取、排除和失败数量，且数量总和一致；Session 连续 120 分钟无新 Turn 后由 Runner 自动提取，即使某个 Hook 未触发或 Session 在截止时仍活跃，补偿/截止扫描也能发现并处理。
+给定一个报告窗口内包含 10 个本地 Session，Plugin 在 Team 时区周五 13:00 只触发一次 Weekly Collection Run，并能通过 App Server 报告发现、成功读取、Complete Turn、等待完整、排除和失败数量，且数量关系一致；即使一周内没有任何生命周期 Hook 提示，新增内容仍能被发现。
 
 ### AC-02A 增量处理
 
-给定一个已处理到 Turn 20 的 Session，在 Session 恢复并新增 Turn 21 至 25 后，系统只处理新增 Turn，更新原 Work Item 状态链，且不重复创建旧事实。
+给定上周已处理到 Turn 20 的 Session，在本周新增 Turn 21 至 25 后，周五 13:00 的任务只处理新增 Complete Turn，更新对应 Fact 修订，且不重复创建旧事实。
+
+### AC-02B 完整问答约束
+
+给定周五 13:00 扫描时一个只有用户问题、Assistant 正在回答或输出被中断且没有正常 `final_answer` 的 Turn，Plugin 不创建提取任务、不生成 Fact、不上传该 Turn，也不推进完成游标；同一 Session 中更早已完成的 Turn 仍正常处理。该 Turn 后续恢复并产生完整 `final_answer` 后，下周五任务或人工 Re-analysis 只处理一次。
 
 ### AC-03 事实提取
 
 给定包含讨论、计划、执行和完成的测试 Session，系统能区分不同状态，并为完成结论提供证据或不确定标记。
 
+### AC-03A 项目目录识别
+
+给定项目根目录 `/projects/crm`，在 `/projects/crm`、`/projects/crm/apps/api` 和任意更深子目录创建的 Session 都归属同一项目；`/projects/crm-v2` 不得归入该项目。若 `/projects/crm/apps` 也是独立项目根目录，则其子目录选择该更长根目录。
+
 ### AC-04 工作事项聚合
 
-给定多个描述同一任务的 Session，系统能够聚合为一个 Work Item；对不确定事项不强制合并。
+给定同一 Partner 的一个或多个 Plugin 上传的多个 Session Fact，周期结束后数据中台在 Partner 设备离线时仍能按项目聚合为 Work Item；对不确定事项不强制合并，所有结论保留 Fact 来源。任务记录中包含中台模型、Prompt 版本和输入 Snapshot Checksum。
 
 ### AC-05 飞书审核
 
@@ -1491,7 +1733,7 @@ Partner 可以在飞书完成确认、排除、修改状态、补充事实、设
 
 ### AC-08 个人 Report
 
-只有全部必要事项审核完成后才能生成 Report；Report 中发现事实问题时可以返回事项层修正。
+只有全部必要事项审核完成后，数据中台才能基于不可变 Work Item Snapshot 调用模型生成 Report；Plugin 不领取 Report 生成任务。Report 中发现事实问题时可以返回事项层修正。
 
 ### AC-09 团队聚合
 
@@ -1511,7 +1753,7 @@ Partner 无法读取其他 Partner 的事实和报告；Monitor 只能收到最�
 
 ### AC-12 数据删除
 
-Partner 撤销授权后，Plugin 令牌立即失效，并可以按策略删除未提交的同步事实。
+Admin 停用 Binding Code 后，对应 Plugin 立即不能继续上传；其他属于同一 Partner 的活动 Binding Code 不受影响。未提交同步事实可以按策略删除。
 
 ## 22. 产品指标
 
@@ -1519,6 +1761,7 @@ Partner 撤销授权后，Plugin 令牌立即失效，并可以按策略删除�
 
 - Plugin 安装率。
 - Partner 绑定成功率。
+- 每个 Partner 的活动 Binding Code 数和 Weekly Collection Run 按期完成率。
 - 周报按时提交率。
 - 飞书审核完成率。
 - Monitor 最终消息和文件附件交付成功率。
@@ -1535,6 +1778,7 @@ Partner 撤销授权后，Plugin 令牌立即失效，并可以按策略删除�
 ### 22.3 效率指标
 
 - Session 平均提取时间和成本。
+- 中台跨 Session 聚合与个人 Report 生成的平均耗时和成本。
 - Partner 工作事项审核时间。
 - Partner Report 审核时间。
 - 团队报告生成时间。
@@ -1544,14 +1788,17 @@ Partner 撤销授权后，Plugin 令牌立即失效，并可以按策略删除�
 
 | 风险                         | 影响               | 缓解措施                                |
 | ---------------------------- | ------------------ | --------------------------------------- |
-| 本地 Session 覆盖不完整      | 报告遗漏           | 显示 Coverage，不承诺全量；每日增量同步 |
+| 本地 Session 覆盖不完整      | 报告遗漏           | 显示 Coverage；周五全量发现和游标增量读取 |
 | transcript 格式变化          | 插件失效           | 优先使用 App Server；版本兼容测试       |
-| Stop 或 SessionEnd Hook 超时 | Session 未及时入队 | Hook 只做快速写入；Scheduled Scan 补偿  |
+| 周五 Scheduled Task 未运行   | 本周事实未同步     | Admin 标记未按期；Plugin 下次启动补跑一次 |
 | Partner 未保持应用运行       | 定时任务延迟       | 下次启动补跑；飞书显示延迟              |
 | 上传结构化事实后无法任意深挖 | 修改受限           | Re-analysis Request + 本地重新分析      |
 | 上传完整聊天带来隐私风险     | 合规问题           | MVP 默认不上传原始 transcript           |
 | AI 把讨论写成完成            | 事实错误           | 状态 Schema、证据约束、双层审核         |
 | 项目语义匹配错误             | 团队报告错误       | 优先显式 ID，低置信度保持独立           |
+| 项目目录边界或嵌套匹配错误   | Fact 归错项目      | 规范化路径、目录边界判断、最长根目录优先 |
+| 多 Plugin 上传重复 Session    | 工作进度重复统计   | Session 标识、来源修订和内容 Hash 去重   |
+| 中台模型服务不可用           | 卡片或 Report 延迟 | 队列重试、超时、模型降级和人工补跑       |
 | 飞书卡片内容过长             | 审核体验差         | 单项卡片、分页、Web 工作台              |
 | 旧卡片覆盖新数据             | 数据冲突           | `base_version` 乐观锁                   |
 | Monitor 将报告用于个人排名   | 组织风险           | 产品不提供排名和消息量指标              |
@@ -1560,39 +1807,42 @@ Partner 撤销授权后，Plugin 令牌立即失效，并可以按策略删除�
 
 开发前需要由任务负责人确认：
 
-1. MVP 验证后，CLI、IDE、多设备和云端 Session 的扩展优先级是什么？
+1. MVP 验证后，CLI、IDE 和云端 Session 的扩展优先级是什么？
 2. 团队已有的个人和团队报告模板是什么？
 3. 周报、月报的截止时间和时区规则是什么？
-4. Team、Partner、Monitor 和项目关系从哪里维护？
+4. Team、Partner、Monitor 和项目关系统一由哪个 Admin 数据源维护？
 5. 是否允许上传 Evidence Excerpt，最大长度和敏感规则是什么？
 6. Session Work Facts、证据摘要、报告和审计日志分别保留多久？
-7. Partner 撤销授权或离职后，历史已提交报告如何处理？
+7. Admin 停用 Binding Code 或 Partner 离职后，历史已提交报告如何处理？
 8. Monitor 最终报告除 PDF 外，是否还需要 DOCX 或 XLSX 附件格式？
 9. 报告是否会用于绩效评价？如果会，需要增加申诉和更严格的审核机制。
 10. 模型供应商、预算、延迟和数据驻留要求是什么？
 11. 飞书应用是企业自建应用还是商店应用，管理员能否批准所需权限？
+12. Binding Code 是否在 Admin 中显示完整值，还是仅显示名称和末尾字符？
+13. 多 Plugin 看到同一云同步 Session 时，是否存在跨设备稳定 Session ID？
 
 ## 25. 建议研发拆分
 
 ### Codex Plugin
 
 - Plugin Manifest。
-- Stop Hook。
-- SessionEnd Hook。
 - Local Outbox。
 - Session Cursor Store。
 - App Server Reader。
 - Extraction Skill。
-- Scheduled Scan Setup。
-- 报告截止快照和遗漏 Hook 补偿。
+- 周五 13:00 Weekly Collection Task 安装、幂等运行和错过后单次补跑。
+- Complete Turn 判断、回答中 Turn 跳过和完成游标管理。
 - Remote MCP 或 Sync Client。
-- 本地配置、授权和排除规则。
+- Binding Code、本地配置和排除规则。
+- 项目根目录规范化、目录边界判断和最长根目录匹配。
+- 仅用于 Re-analysis Request 的远程任务领取；不执行周期聚合和 Report 生成。
 
 ### Report Backend
 
 - Identity and Binding Service。
 - Session Fact Ingestion。
 - Work Item Aggregator。
+- Central Model Worker、Model Gateway 和 Prompt Registry。
 - Review and Revision Engine。
 - Individual Report Generator。
 - Team Aggregator and Comparator。
@@ -1612,7 +1862,7 @@ Partner 撤销授权后，Plugin 令牌立即失效，并可以按策略删除�
 ### Web Console
 
 - Team 配置。
-- Partner 绑定状态。
+- Partner 工作邮箱、Binding Code 和各 Plugin Instance 状态。
 - 报告周期和模板配置。
 - 同步覆盖与失败监控。
 - 批量审核和完整报告查看。
@@ -1632,27 +1882,31 @@ Partner 撤销授权后，Plugin 令牌立即失效，并可以按策略删除�
 
 1. 用脱敏 Session 做离线提取和聚类验证。
 2. 打通 Codex Plugin -> 本地读取 -> 结构化 JSON。
-3. 打通 Plugin 身份绑定和上传。
-4. 实现飞书工作事项审核卡和版本控制。
-5. 实现修改意图解析与 Change Preview。
-6. 实现个人 Report 双层审核。
-7. 实现团队项目聚合和独立工作保留。
-8. 实现上期比较和基础可视化。
-9. 完成权限、删除、审计和故障补偿。
-10. 进行小团队试点并用真实修改数据优化提取规则。
+3. 打通工作邮箱 -> Partner -> 多 Binding Code -> Plugin Instance 的身份识别和上传。
+4. 实现项目根目录、子目录和最长路径匹配。
+5. 实现中台跨 Session 聚合、Model Gateway 和 Prompt Registry。
+6. 实现飞书工作事项审核卡和版本控制。
+7. 实现中台修改意图解析与 Change Preview。
+8. 实现中台个人 Report 生成和第二轮审核。
+9. 实现团队项目聚合和独立工作保留。
+10. 实现上期比较和基础可视化。
+11. 完成权限、删除、审计和故障补偿。
+12. 进行小团队试点并用真实修改数据优化提取规则。
 
 ## 27. 最小可演示场景
 
 演示使用 2 个 Partner、1 个 Monitor、2 个公共项目和 1 个独立事项：
 
 1. Partner A 和 Partner B 各自在本地 Codex 完成多个 Session。
-2. Plugin 本地提取并上传结构化 Session Work Facts。
-3. Partner A 在飞书确认 3 个事项、排除 1 个事项、补充 1 个完成结果。
-4. Partner B 修改时间范围，触发一次本地重新分析。
-5. 两位 Partner 分别审核并提交个人 Report。
-6. 系统把两人的支付项目内容合并，把 Partner B 的独立调研保留为独立工作。
-7. 系统与上周比较，识别一个已完成事项和一个新增阻塞。
-8. 系统生成最终团队报告正文和 PDF 文件，通过飞书一次性发送给 Monitor。
-9. Monitor 可以直接阅读消息并下载附件，消息中不存在审核、修改、追问或个人数据下钻入口。
+2. Admin 以工作邮箱创建 Partner A 和 Partner B；Partner A 的两个 Binding Code 对应两台 Plugin，数据统一归属 Partner A。
+3. Plugin 逐 Session 提取并上传带项目目录依据的结构化 Session Work Facts。
+4. 周期结束后数据中台调用模型完成跨 Session、按项目的第二轮聚合并生成工作卡片。
+5. Partner A 在飞书确认 3 个事项、排除 1 个事项、补充 1 个完成结果。
+6. Partner B 修改时间范围，触发一次 Plugin 本地重新分析。
+7. 两位 Partner 完成工作事项确认后，数据中台分别生成个人 Report 并完成第二轮审核。
+8. 系统把两人的支付项目内容合并，把 Partner B 的独立调研保留为独立工作。
+9. 系统与上周比较，识别一个已完成事项和一个新增阻塞。
+10. 系统生成最终团队报告正文和 PDF 文件，通过飞书一次性发送给 Monitor。
+11. Monitor 可以直接阅读消息并下载附件，消息中不存在审核、修改、追问或个人数据下钻入口。
 
 该场景完整通过后，视为产品主链路成立。

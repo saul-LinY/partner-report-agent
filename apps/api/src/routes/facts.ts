@@ -117,7 +117,12 @@ export async function factRoutes(app: FastifyInstance) {
               ) values (
                 ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
                 ${session.sessionId}, ${fact.factId}, ${session.sourceRevision}, ${session.sourceHash},
-                ${JSON.stringify(fact)}::jsonb, true
+                ${JSON.stringify({
+                  ...fact,
+                  projectId: session.project.id,
+                  projectMatchMethod: session.project.matchMethod,
+                  projectRootFingerprint: session.project.rootFingerprint,
+                })}::jsonb, true
               ) on conflict (tenant_id, partner_id, session_id, source_revision, external_fact_id)
                 do update set payload = excluded.payload, source_hash = excluded.source_hash, current = true, updated_at = now()
             `;

@@ -14,6 +14,8 @@ export class ApiClientError extends Error {
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  const simulatedPartnerId = window.localStorage.getItem("partner-report-simulated-partner");
+  if (simulatedPartnerId) headers.set("x-partner-id", simulatedPartnerId);
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers,

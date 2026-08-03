@@ -1,5 +1,6 @@
 import { closeDatabase, sqlClient as sql } from "@partner-report/db";
 import { scheduleDueWeeklyReports } from "./weekly.js";
+import { processNextGenerationJob } from "./generation.js";
 
 let stopping = false;
 
@@ -10,6 +11,8 @@ async function tick() {
       `Weekly cutoff closed ${weekly.closedPeriods} period(s) and queued ${weekly.aggregationJobs} aggregation job(s).`,
     );
   }
+  const generation = await processNextGenerationJob();
+  if (generation.processed) console.log("Central generation job processed", generation);
   await sql`
     update plugin_device_authorizations set status = 'expired'
     where status in ('pending', 'approved') and expires_at < now()

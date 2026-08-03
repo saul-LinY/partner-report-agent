@@ -191,11 +191,15 @@
           "properties": {
             "skillVersion": {
               "type": "string",
-              "const": "partner-report-sync/0.1.0"
+              "enum": [
+                "partner-report-sync/0.2.0",
+                "partner-report-platform/0.2.0"
+              ]
             },
             "promptVersion": {
               "type": "string",
-              "const": "2026-08-03.v2"
+              "minLength": 1,
+              "maxLength": 80
             },
             "schemaVersion": {
               "type": "string",
@@ -203,7 +207,10 @@
             },
             "producer": {
               "type": "string",
-              "const": "codex-skill"
+              "enum": [
+                "codex-skill",
+                "data-platform"
+              ]
             },
             "modelVersion": {
               "type": "string",

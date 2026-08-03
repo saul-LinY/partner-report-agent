@@ -33,11 +33,7 @@ import {
 import { localCoverage } from "./coverage.js";
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
 import { containsSensitive, prepareSessionJobs } from "./scan.js";
-import {
-  runAutomaticCycle,
-  runRunner,
-  startRunnerDetached,
-} from "./automation.js";
+import { runAutomaticCycle } from "./automation.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -45,7 +41,6 @@ type Policy = {
   team: {
     minimum_plugin_version: string;
     evidence_excerpt_enabled: boolean;
-    session_quiet_period_minutes?: number;
   };
   projects: Array<{
     id: string;
@@ -115,74 +110,49 @@ async function connect() {
     flag("allow-insecure-http"),
   );
   const deviceName = option("device-name", hostname())!;
-  const authorization = await publicRequest<{
-    deviceCode: string;
-    userCode: string;
-    verificationUri: string;
+  const bindingCode =
+    option("binding-code") ?? process.env.PARTNER_REPORT_BINDING_CODE;
+  if (!bindingCode) {
+    throw new Error(
+      "connect 需要 Admin 在数据中台生成的 --binding-code <code>。",
+    );
+  }
+  const tokens = await publicRequest<{
+    accessToken: string;
+    refreshToken: string;
     expiresAt: string;
-    intervalSeconds: number;
-  }>(serverUrl, "/v1/plugin-bindings/device-authorizations", {
+    pluginInstanceId: string;
+    partnerId: string;
+  }>(serverUrl, "/v1/plugin-bindings/claim", {
     method: "POST",
-    body: JSON.stringify({ deviceName, pluginVersion: PLUGIN_VERSION }),
+    body: JSON.stringify({
+      bindingCode,
+      deviceName,
+      pluginVersion: PLUGIN_VERSION,
+    }),
+  });
+  const existing = loadConfig(false);
+  if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
+    removeSecrets(existing.pluginInstanceId);
+  saveSecret(tokens.pluginInstanceId, "access", tokens.accessToken);
+  saveSecret(tokens.pluginInstanceId, "refresh", tokens.refreshToken);
+  saveConfig({
+    serverUrl,
+    pluginInstanceId: tokens.pluginInstanceId,
+    deviceName,
+    accessExpiresAt: tokens.expiresAt,
+    excludedSessionIds: existing?.excludedSessionIds ?? [],
+    excludedPaths: existing?.excludedPaths ?? [],
   });
   output({
-    status: "authorization_required",
-    userCode: authorization.userCode,
-    verificationUri: authorization.verificationUri,
-    expiresAt: authorization.expiresAt,
+    status: "connected",
+    pluginInstanceId: tokens.pluginInstanceId,
+    partnerId: tokens.partnerId,
+    deviceName,
+    schedule: "每周五 13:00（Team 时区）",
+    nextStep:
+      "在 Codex Scheduled tasks 中创建每周任务：$partner-report-sync weekly-collect",
   });
-  while (Date.now() < new Date(authorization.expiresAt).getTime()) {
-    await new Promise((resolveWait) =>
-      setTimeout(resolveWait, authorization.intervalSeconds * 1_000),
-    );
-    try {
-      const tokens = await publicRequest<{
-        accessToken: string;
-        refreshToken: string;
-        expiresAt: string;
-        pluginInstanceId: string;
-      }>(serverUrl, "/v1/plugin-bindings/device-authorizations/token", {
-        method: "POST",
-        body: JSON.stringify({ deviceCode: authorization.deviceCode }),
-      });
-      const existing = loadConfig(false);
-      if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
-        removeSecrets(existing.pluginInstanceId);
-      saveSecret(tokens.pluginInstanceId, "access", tokens.accessToken);
-      saveSecret(tokens.pluginInstanceId, "refresh", tokens.refreshToken);
-      saveConfig({
-        serverUrl,
-        pluginInstanceId: tokens.pluginInstanceId,
-        deviceName,
-        accessExpiresAt: tokens.expiresAt,
-        excludedSessionIds: existing?.excludedSessionIds ?? [],
-        excludedPaths: existing?.excludedPaths ?? [],
-      });
-      const hasHookDataDirectory = Boolean(
-        process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA,
-      );
-      const usesStableFileDirectory =
-        process.platform !== "darwin" ||
-        process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS === "1";
-      const runnerStarted =
-        hasHookDataDirectory || usesStableFileDirectory
-          ? startRunnerDetached(resolve(process.argv[1]!))
-          : false;
-      output({
-        status: "connected",
-        pluginInstanceId: tokens.pluginInstanceId,
-        deviceName,
-        runnerStarted,
-        ...(runnerStarted ? {} : { runnerStartPending: "NEXT_TRUSTED_HOOK" }),
-      });
-      return;
-    } catch (error) {
-      if (error instanceof HttpError && error.code === "AUTHORIZATION_PENDING")
-        continue;
-      throw error;
-    }
-  }
-  throw new Error("设备授权已过期，请重新运行 connect。");
 }
 
 async function prepare() {
@@ -267,6 +237,10 @@ function completeLocal() {
       for (const fact of result.facts) assertFactSemantics(fact);
       if (
         result.sessionId !== job.session_id ||
+        result.project.id !== input.session.project.id ||
+        result.project.matchMethod !== input.session.project.matchMethod ||
+        result.project.rootFingerprint !==
+          input.session.project.rootFingerprint ||
         result.sourceRevision !== job.source_revision ||
         result.sourceHash !== job.source_hash ||
         result.fromTurnId !== job.from_turn_id ||
@@ -519,6 +493,66 @@ async function heartbeat(existingDb?: ReturnType<typeof openDatabase>) {
   }
 }
 
+async function collectionStatus() {
+  const phase = z
+    .enum(["started", "completed", "failed"])
+    .parse(option("phase"));
+  const config = loadConfig()!;
+  const db = openDatabase();
+  try {
+    const policy = await fetchPolicy(db);
+    if (!policy.currentPeriod)
+      throw new Error("服务端没有开放的 Report Period。");
+    const health = localCoverage(db);
+    const sessionCount = Number(
+      (
+        db
+          .prepare(
+            "select count(*) as count from session_inventory where status = 'synced'",
+          )
+          .get() as { count: number }
+      ).count,
+    );
+    const rows = db
+      .prepare(
+        "select result_json from local_jobs where status = 'SYNCED' and result_json is not null",
+      )
+      .all() as Array<{ result_json: string }>;
+    const factCount = rows.reduce((total, row) => {
+      try {
+        return total + (JSON.parse(row.result_json).facts?.length ?? 0);
+      } catch {
+        return total;
+      }
+    }, 0);
+    const body = {
+      pluginVersion: PLUGIN_VERSION,
+      deviceName: config.deviceName,
+      phase,
+      periodKey: policy.currentPeriod.period_key,
+      sessionCount,
+      factCount,
+      pendingLocalJobs: pendingLocalCount(db),
+      ...(getState(db, "last_scan_at")
+        ? { lastScanAt: getState(db, "last_scan_at")! }
+        : {}),
+      ...(getState(db, "last_sync_at")
+        ? { lastSyncAt: getState(db, "last_sync_at")! }
+        : {}),
+      ...(option("error-code") ? { errorCode: option("error-code") } : {}),
+      coverage: health.coverage,
+    };
+    await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    setState(db, `last_collection_${phase}_at`, new Date().toISOString());
+    output({ status: `collection_${phase}`, ...body });
+  } finally {
+    db.close();
+  }
+}
+
 async function leaseNext() {
   const db = openDatabase();
   try {
@@ -720,18 +754,14 @@ async function status() {
 function help() {
   output({
     commands: [
-      "connect --server <url> [--device-name <name>] [--allow-insecure-http]",
+      "connect --server <url> --binding-code <code> [--device-name <name>]",
+      "weekly-collect [--force]",
       "run-once [--force]",
-      "runner",
       "prepare [--force]",
       "next-local",
       "complete-local --job-id <id> --result <path>",
       "fail-local --job-id <id> [--error-code <code>]",
       "sync",
-      "lease-next",
-      "complete-remote --job-id <id> --result <path>",
-      "fail-remote --job-id <id> [--error-code <code>] [--message <text>] [--terminal]",
-      "heartbeat",
       "status",
     ],
   });
@@ -740,18 +770,15 @@ function help() {
 const command = process.argv[2] ?? "help";
 try {
   if (command === "connect") await connect();
-  else if (command === "run-once")
+  else if (command === "run-once" || command === "weekly-collect")
     output(await runAutomaticCycle(resolve(process.argv[1]!), flag("force")));
-  else if (command === "runner") await runRunner(resolve(process.argv[1]!));
   else if (command === "prepare") await prepare();
   else if (command === "next-local") nextLocal();
   else if (command === "complete-local") completeLocal();
   else if (command === "fail-local") failLocal();
   else if (command === "sync") await sync();
-  else if (command === "lease-next") await leaseNext();
-  else if (command === "complete-remote") await completeRemote();
-  else if (command === "fail-remote") await failRemote();
   else if (command === "heartbeat") await heartbeat();
+  else if (command === "collection-status") await collectionStatus();
   else if (command === "status") await status();
   else help();
 } catch (error) {

@@ -41,13 +41,17 @@ export function weeklyPeriodAt(now: Date, timezone: string) {
   const local = partsInZone(now, timezone);
   const localDate = new Date(Date.UTC(local.year, local.month - 1, local.day));
   const day = localDate.getUTCDay();
-  localDate.setUTCDate(localDate.getUTCDate() - (day === 0 ? 6 : day - 1));
-  const nextMonday = new Date(localDate.getTime() + 7 * 86_400_000);
-  const startsAt = zonedDate({ year: localDate.getUTCFullYear(), month: localDate.getUTCMonth() + 1, day: localDate.getUTCDate(), hour: 0, minute: 0, second: 0 }, timezone);
-  const nextStartsAt = zonedDate({ year: nextMonday.getUTCFullYear(), month: nextMonday.getUTCMonth() + 1, day: nextMonday.getUTCDate(), hour: 0, minute: 0, second: 0 }, timezone);
+  const daysSinceFriday = (day - 5 + 7) % 7;
+  localDate.setUTCDate(localDate.getUTCDate() - daysSinceFriday);
+  if (daysSinceFriday === 0 && local.hour < 13) {
+    localDate.setUTCDate(localDate.getUTCDate() - 7);
+  }
+  const nextFriday = new Date(localDate.getTime() + 7 * 86_400_000);
+  const startsAt = zonedDate({ year: localDate.getUTCFullYear(), month: localDate.getUTCMonth() + 1, day: localDate.getUTCDate(), hour: 13, minute: 0, second: 0 }, timezone);
+  const nextStartsAt = zonedDate({ year: nextFriday.getUTCFullYear(), month: nextFriday.getUTCMonth() + 1, day: nextFriday.getUTCDate(), hour: 13, minute: 0, second: 0 }, timezone);
   return {
     periodKey: isoWeekKey(localDate),
     startsAt,
-    endsAt: new Date(nextStartsAt.getTime() - 1)
+    endsAt: nextStartsAt
   };
 }

@@ -4,7 +4,34 @@ import {
   assertReportSemantics,
   containsSensitiveValue,
   individualReportResultSchema,
+  sessionFactUploadSchema,
 } from "./index.js";
+
+describe("session upload project identity", () => {
+  it("requires the server project identity and folder match metadata", () => {
+    const base = {
+      sessionId: "session-1",
+      sourceRevision: 1,
+      sourceHash: "a".repeat(64),
+      fromTurnId: "turn-1",
+      toTurnId: "turn-1",
+      observedAt: "2026-08-03T05:00:00.000Z",
+      status: "extracted",
+      facts: [],
+    };
+    expect(sessionFactUploadSchema.safeParse(base).success).toBe(false);
+    expect(
+      sessionFactUploadSchema.safeParse({
+        ...base,
+        project: {
+          id: "11111111-1111-4111-8111-111111111111",
+          matchMethod: "descendant_path",
+          rootFingerprint: "b".repeat(64),
+        },
+      }).success,
+    ).toBe(true);
+  });
+});
 
 describe("fact and report semantic guards", () => {
   it("requires explicit evidence for completed facts", () => {
@@ -66,10 +93,10 @@ describe("fact and report semantic guards", () => {
       sections,
       markdown: "# 周报",
       production: {
-        skillVersion: "partner-report-sync/0.1.0",
-        promptVersion: "2026-08-03.v2",
+        skillVersion: "partner-report-platform/0.2.0",
+        promptVersion: "2026-08-03.central.v1",
         schemaVersion: "1.0",
-        producer: "codex-skill",
+        producer: "data-platform",
         modelVersion: "gpt-5.6-sol",
       },
     });

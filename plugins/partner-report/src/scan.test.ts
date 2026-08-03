@@ -1,12 +1,49 @@
 import { describe, expect, it } from "vitest";
 import {
   containsSensitive,
-  isSessionQuiet,
+  isCompleteTurn,
+  mappedProject,
   normalizeProgressTurns,
-  quietUntil,
   redactSensitive,
   selectIncrementalTurns,
 } from "./scan.js";
+
+describe("project folder mapping", () => {
+  const projects = [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "主项目",
+      aliases: [],
+      allowed_paths: ["/work/main"],
+    },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "嵌套项目",
+      aliases: [],
+      allowed_paths: ["/work/main/nested"],
+    },
+  ];
+
+  it("maps a project root and its subfolders to the configured project", () => {
+    expect(mappedProject("/work/main", projects)).toMatchObject({
+      id: projects[0]!.id,
+      matchMethod: "exact_root",
+    });
+    expect(mappedProject("/work/main/src/feature", projects)).toMatchObject({
+      id: projects[0]!.id,
+      matchMethod: "descendant_path",
+    });
+  });
+
+  it("uses the longest configured root for nested projects", () => {
+    const mapped = mappedProject("/work/main/nested/src", projects);
+    expect(mapped).toMatchObject({
+      id: projects[1]!.id,
+      matchMethod: "descendant_path",
+    });
+    expect(mapped?.rootFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
 
 describe("local session redaction", () => {
   it("redacts credentials before a turn can enter a local extraction task", () => {
@@ -22,25 +59,6 @@ describe("local session redaction", () => {
       containsSensitive({ detail: "Bearer abcdefghijklmnopqrstuvwxyz.123" }),
     ).toBe(true);
     expect(containsSensitive({ detail: "报告生成成功" })).toBe(false);
-  });
-
-  it("waits for two hours of inactivity by default", () => {
-    const lastActivity = "2026-08-02T01:00:00.000Z";
-    expect(quietUntil(lastActivity)).toBe("2026-08-02T03:00:00.000Z");
-    expect(
-      isSessionQuiet(
-        lastActivity,
-        120,
-        new Date("2026-08-02T02:59:59.999Z").getTime(),
-      ),
-    ).toBe(false);
-    expect(
-      isSessionQuiet(
-        lastActivity,
-        120,
-        new Date("2026-08-02T03:00:00.000Z").getTime(),
-      ),
-    ).toBe(true);
   });
 });
 
@@ -106,6 +124,13 @@ describe("progress-only turn input", () => {
     expect(JSON.stringify(turns)).not.toContain("npm test");
     expect(JSON.stringify(turns)).not.toContain("App.tsx");
     expect(JSON.stringify(turns)).not.toContain("正在读取");
+  });
+
+  it("accepts only a complete question and final answer", () => {
+    expect(isCompleteTurn(turns[0]!)).toBe(true);
+    expect(isCompleteTurn(turns[1]!)).toBe(false);
+    expect(isCompleteTurn({ ...turns[0]!, status: "in_progress" })).toBe(false);
+    expect(isCompleteTurn({ ...turns[0]!, assistantFinal: null })).toBe(false);
   });
 
   it("treats a session without a cursor as new", () => {

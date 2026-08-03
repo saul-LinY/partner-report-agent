@@ -16,10 +16,13 @@ export const workStatusSchema: z.ZodTypeAny = z.enum([
 ]);
 
 export const productionMetadataSchema: z.ZodTypeAny = z.object({
-  skillVersion: z.literal("partner-report-sync/0.1.0"),
-  promptVersion: z.literal("2026-08-03.v2"),
+  skillVersion: z.enum([
+    "partner-report-sync/0.2.0",
+    "partner-report-platform/0.2.0",
+  ]),
+  promptVersion: z.string().min(1).max(80),
   schemaVersion: z.literal("1.0"),
-  producer: z.literal("codex-skill"),
+  producer: z.enum(["codex-skill", "data-platform"]),
   modelVersion: z.string().min(1).optional(),
 });
 
@@ -65,6 +68,11 @@ export const sessionWorkFactSchema: z.ZodTypeAny = z.object({
 
 export const sessionFactUploadSchema: z.ZodTypeAny = z.object({
   sessionId: z.string().min(1),
+  project: z.object({
+    id: idSchema,
+    matchMethod: z.enum(["exact_root", "descendant_path"]),
+    rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
   sourceRevision: z.number().int().positive(),
   sourceHash: z.string().min(16),
   fromTurnId: z.string().min(1),
@@ -215,6 +223,20 @@ export const heartbeatSchema: z.ZodTypeAny = z.object({
   pendingLocalJobs: z.number().int().nonnegative(),
   retryCount: z.number().int().nonnegative(),
   lastErrorCode: z.string().max(120).optional(),
+  coverage: coverageSchema.optional(),
+});
+
+export const collectionStatusSchema: z.ZodTypeAny = z.object({
+  pluginVersion: z.string().min(1),
+  deviceName: z.string().min(1).max(120),
+  phase: z.enum(["started", "completed", "failed"]),
+  periodKey: z.string().min(1).max(80),
+  sessionCount: z.number().int().nonnegative().default(0),
+  factCount: z.number().int().nonnegative().default(0),
+  pendingLocalJobs: z.number().int().nonnegative().default(0),
+  lastScanAt: isoDateTimeSchema.optional(),
+  lastSyncAt: isoDateTimeSchema.optional(),
+  errorCode: z.string().max(120).optional(),
   coverage: coverageSchema.optional(),
 });
 

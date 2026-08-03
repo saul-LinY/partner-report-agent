@@ -116,17 +116,17 @@ export function buildCodexExecArgs(
 
 function taskRules(kind: string) {
   if (kind === "EXTRACT_SESSION_FACTS") {
-    return `Return one SessionFactUpload object. Copy the source boundary and observedAt exactly from input.session. Each input turn contains only userPrompt (the task) and assistantFinal (the final outcome or progress). Extract project-level progress from those fields only. Ignore missing final answers and do not infer implementation details, reasoning, commands, tools, or file changes. A completed fact needs explicit evidence. Never return a transcript, full prompt, response, command output, credential, or secret. Use the exact production object from input.outputRequirements.`;
+    return `Return one SessionFactUpload object. Copy project, source boundary, and observedAt exactly from input.outputRequirements and input.session. Each input turn contains only userPrompt (the task) and assistantFinal (the final outcome or progress). Extract project-level progress from those fields only. Ignore missing final answers and do not infer implementation details, reasoning, commands, tools, or file changes. A completed fact needs explicit evidence. Never return a transcript, full prompt, response, command output, credential, or secret. Use the exact production object from input.outputRequirements.`;
   }
   if (kind === "AGGREGATE_WORK_ITEMS") {
-    return `Return AggregationResultV1. Account for every input fact exactly once in one group or unassignedFactIds. Merge facts by project and overall task progress, not by code files or implementation steps. Merge only clearly related work. A usable fact without a configured project should become an independent group without projectId; reserve unassignedFactIds for facts that cannot form a usable work item. Never invent a project ID. Use production {"skillVersion":"partner-report-sync/0.1.0","promptVersion":"2026-08-03.v2","schemaVersion":"1.0","producer":"codex-skill","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
+    return `Return AggregationResultV1. Account for every input fact exactly once in one group or unassignedFactIds. Never invent a project ID. Use production {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-03.central.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
   }
   if (
     ["GENERATE_INDIVIDUAL_REPORT", "REGENERATE_INDIVIDUAL_REPORT"].includes(
       kind,
     )
   ) {
-    return `Return IndividualReportResultV1. Include the seven required sections exactly once. Every factual claim must cite allowed Work Item IDs. Preferences may change presentation but not facts. State coverage limits plainly. Use production {"skillVersion":"partner-report-sync/0.1.0","promptVersion":"2026-08-03.v2","schemaVersion":"1.0","producer":"codex-skill","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
+    return `Return IndividualReportResultV1. Include the seven required sections exactly once. Every factual claim must cite allowed Work Item IDs. Preferences may change presentation but not facts. State coverage limits plainly. Use production {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-03.central.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${process.env.PARTNER_REPORT_MODEL ?? DEFAULT_MODEL}"}.`;
   }
   throw new Error(`Unsupported structured job type: ${kind}`);
 }
@@ -355,40 +355,41 @@ export async function runAutomaticCycle(cliPath: string, force = false) {
   );
   markRunner("working");
   try {
+    await runCli(cliPath, ["collection-status", "--phase", "started"]);
     const recoveredLocalJobs = recoverStaleLocalJobs();
     const cleanup = cleanupOldLocalState();
-    let discovered = false;
-    if (shouldDiscoverSessions(force)) {
-      await runCli(cliPath, force ? ["prepare", "--force"] : ["prepare"]);
-      const db = openDatabase();
-      try {
-        setState(db, "last_discovery_at", new Date().toISOString());
-      } finally {
-        db.close();
-      }
-      discovered = true;
+    await runCli(cliPath, force ? ["prepare", "--force"] : ["prepare"]);
+    const db = openDatabase();
+    try {
+      setState(db, "last_discovery_at", new Date().toISOString());
+    } finally {
+      db.close();
     }
     const localJobs = await processLocalJobs(cliPath, maxJobs);
     const batchIds = await syncLocalJobs(
       cliPath,
       Math.max(1, Math.ceil(maxJobs / 50)),
     );
-    const remoteJobs = await processRemoteJobs(cliPath, maxJobs);
     markRunner("idle");
-    await runCli(cliPath, ["heartbeat"]);
+    await runCli(cliPath, ["collection-status", "--phase", "completed"]);
     return {
       status: "completed",
-      discovered,
+      discovered: true,
       recoveredLocalJobs,
       cleanup,
       localJobs,
       batchIds,
-      remoteJobs,
     };
   } catch (error) {
-    markRunner("error", "AUTO_RUNNER_FAILED");
-    await runCli(cliPath, ["heartbeat"]).catch(() => undefined);
-    throw new Error(`Automatic cycle failed: ${safeError(error)}`);
+    markRunner("error", "WEEKLY_COLLECTION_FAILED");
+    await runCli(cliPath, [
+      "collection-status",
+      "--phase",
+      "failed",
+      "--error-code",
+      "WEEKLY_COLLECTION_FAILED",
+    ]).catch(() => undefined);
+    throw new Error(`Weekly collection failed: ${safeError(error)}`);
   }
 }
 

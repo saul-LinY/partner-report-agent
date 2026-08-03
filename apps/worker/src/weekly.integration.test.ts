@@ -26,16 +26,16 @@ suite("weekly report scheduling", () => {
         values (${fixture.team}, ${fixture.tenant}, 'Weekly Team', 'Asia/Shanghai', 'weekly')
       `;
       await tx`
-        insert into partners (id, tenant_id, team_id, display_name)
-        values (${fixture.partner}, ${fixture.tenant}, ${fixture.team}, 'Weekly Partner')
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${fixture.partner}, ${fixture.tenant}, ${fixture.team}, 'weekly@example.com', 'Weekly Partner')
       `;
       await tx`
         insert into report_periods (
           id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, timezone
         ) values (
           ${fixture.period}, ${fixture.tenant}, ${fixture.team}, '2026-W31',
-          '2026-07-26T16:00:00.000Z', '2026-08-02T15:59:59.999Z',
-          '2026-08-02T15:59:59.999Z', 'Asia/Shanghai'
+          '2026-07-31T05:00:00.000Z', '2026-08-07T05:00:00.000Z',
+          '2026-08-07T05:00:00.000Z', 'Asia/Shanghai'
         )
       `;
       await tx`
@@ -65,19 +65,19 @@ suite("weekly report scheduling", () => {
 
   it("waits until cutoff and then enqueues one aggregation exactly once", async () => {
     const before = await scheduleDueWeeklyReports(
-      new Date("2026-08-02T15:59:00.000Z"),
+      new Date("2026-08-07T04:59:00.000Z"),
       fixture.period,
     );
     expect(before).toEqual({ closedPeriods: 0, aggregationJobs: 0 });
 
     const first = await scheduleDueWeeklyReports(
-      new Date("2026-08-02T16:00:00.000Z"),
+      new Date("2026-08-07T05:00:00.000Z"),
       fixture.period,
     );
     expect(first).toEqual({ closedPeriods: 1, aggregationJobs: 1 });
 
     const repeated = await scheduleDueWeeklyReports(
-      new Date("2026-08-02T16:01:00.000Z"),
+      new Date("2026-08-07T05:01:00.000Z"),
       fixture.period,
     );
     expect(repeated).toEqual({ closedPeriods: 0, aggregationJobs: 0 });
@@ -117,7 +117,7 @@ suite("weekly report scheduling", () => {
       where team_id = ${fixture.team} and period_key = '2026-W32'
     `;
     const created = await ensureCurrentWeeklyPeriods(
-      new Date("2026-08-03T03:00:00.000Z"),
+      new Date("2026-08-10T03:00:00.000Z"),
       fixture.team,
     );
     expect(created).toBe(1);
