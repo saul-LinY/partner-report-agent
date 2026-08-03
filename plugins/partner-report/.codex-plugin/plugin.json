@@ -1,19 +1,23 @@
 {
   "name": "partner-report",
-  "version": "0.2.0+codex.20260803150020",
-  "description": "Collect complete Codex project-session turns every day and sync structured facts to Partner Report.",
+  "version": "0.2.0+codex.20260803153405",
+  "description": "Collect complete Codex project-session turns on a configurable Scheduled task and sync structured facts to Partner Report.",
   "author": {
     "name": "\u6797\u6797\u52c7's team",
     "url": "https://github.com/saul615"
   },
   "homepage": "https://github.com/saul615/partner-report-agent#readme",
   "repository": "https://github.com/saul615/partner-report-agent",
-  "keywords": ["codex", "weekly-report", "project-progress"],
+  "keywords": [
+    "codex",
+    "weekly-report",
+    "project-progress"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Partner Report",
     "shortDescription": "Build a reviewed weekly Partner report",
-    "longDescription": "Every day at 13:00 Beijing time, collect only complete user-question and final-answer turns from configured project folders, extract structured facts locally, and upload them for central aggregation and two-stage web review.",
+    "longDescription": "On a Codex Scheduled task, initially set to 13:00 Beijing time, use the task's active model to extract structured facts from complete project-session turns and upload them for central aggregation and two-stage web review. Users can change the schedule, model, reasoning effort, and notifications in Codex.",
     "developerName": "\u6797\u6797\u52c7's team",
     "category": "Productivity",
     "capabilities": [

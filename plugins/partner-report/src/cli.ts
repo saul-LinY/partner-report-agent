@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   aggregationResultSchema,
   assertFactSemantics,
@@ -33,7 +40,12 @@ import {
 import { localCoverage } from "./coverage.js";
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
 import { containsSensitive, prepareSessionJobs } from "./scan.js";
-import { runAutomaticCycle } from "./automation.js";
+import {
+  beginCollectionCycle,
+  collectionWorkDirectory,
+  failCollectionCycle,
+  finishCollectionCycle,
+} from "./automation.js";
 import { SCHEDULED_COLLECTION_TASK } from "./collection-config.js";
 
 type Policy = {
@@ -151,8 +163,22 @@ async function connect() {
     partnerId: tokens.partnerId,
     deviceName,
     scheduledTask: SCHEDULED_COLLECTION_TASK,
+    taskSetupMode: "create_if_missing",
+    existingTaskPolicy: {
+      preserve: [
+        "schedule",
+        "timezone",
+        "model",
+        "reasoningEffort",
+        "notifications",
+        "destination",
+        "project",
+      ],
+      requiredPrompt:
+        "Use $partner-report-sync to run daily-collect and return only the safe collection summary.",
+    },
     nextStep:
-      "由 $partner-report-sync 立即创建或更新上面的 Codex Scheduled task。",
+      "由 $partner-report-sync 在同名任务不存在时创建上面的默认 Codex Scheduled task；已有任务保留用户配置。",
   });
 }
 
@@ -175,7 +201,7 @@ async function prepare() {
 }
 
 function materialize(prefix: string, id: string, input: unknown) {
-  const workDir = resolve(dataDirectory(), "work");
+  const workDir = collectionWorkDirectory();
   mkdirSync(workDir, { recursive: true, mode: 0o700 });
   const inputPath = resolve(workDir, `${prefix}-${id}-input.json`);
   const resultPath = resolve(workDir, `${prefix}-${id}-result.json`);
@@ -223,6 +249,12 @@ function completeLocal() {
   const resultPath = option("result");
   if (!jobId || !resultPath)
     throw new Error("complete-local 需要 --job-id 与 --result。");
+  const expectedResultPath = resolve(
+    collectionWorkDirectory(),
+    `local-${jobId}-result.json`,
+  );
+  if (resolve(resultPath) !== expectedResultPath)
+    throw new Error("complete-local 的结果路径与本地任务不一致。");
   const db = openDatabase();
   try {
     const job = db
@@ -245,10 +277,35 @@ function completeLocal() {
         result.sourceRevision !== job.source_revision ||
         result.sourceHash !== job.source_hash ||
         result.fromTurnId !== job.from_turn_id ||
-        result.toTurnId !== job.to_turn_id
+        result.toTurnId !== job.to_turn_id ||
+        result.observedAt !== input.session.observedAt ||
+        result.status !== input.outputRequirements.status
       ) {
         throw new Error("提取结果的 Session 来源边界与本地任务不一致。");
       }
+      const invalidFactBoundary = result.facts.some(
+        (fact: {
+          sessionId: string;
+          sourceRevision: number;
+          sourceHash: string;
+          fromTurnId: string;
+          toTurnId: string;
+          factOrigin: string;
+          production: unknown;
+        }) =>
+          fact.sessionId !== job.session_id ||
+          fact.sourceRevision !== job.source_revision ||
+          fact.sourceHash !== job.source_hash ||
+          fact.fromTurnId !== job.from_turn_id ||
+          fact.toTurnId !== job.to_turn_id ||
+          fact.factOrigin !== input.outputRequirements.factOrigin ||
+          !isDeepStrictEqual(
+            fact.production,
+            input.outputRequirements.production,
+          ),
+      );
+      if (invalidFactBoundary)
+        throw new Error("Fact 来源边界或生产元数据与本地任务不一致。");
       if (
         !input.extractionPolicy.evidenceExcerptEnabled &&
         result.facts.some((fact: { evidence: Array<{ excerpt?: string }> }) =>
@@ -271,8 +328,23 @@ function completeLocal() {
       db.prepare(
         "update session_activity set processing_state = 'READY_TO_SYNC', updated_at = ? where session_id = ?",
       ).run(now, job.session_id);
+      for (const path of [
+        resolve(collectionWorkDirectory(), `local-${jobId}-input.json`),
+        expectedResultPath,
+      ]) {
+        try {
+          unlinkSync(path);
+        } catch {
+          // Validation is complete; cleanup can be retried by retention handling.
+        }
+      }
       output({ status: "validated", jobId, factCount: result.facts.length });
     } catch (error) {
+      try {
+        unlinkSync(expectedResultPath);
+      } catch {
+        // The agent may have failed before writing a result.
+      }
       const message = error instanceof Error ? error.message : String(error);
       db.prepare(
         "update local_jobs set status = 'PENDING', error_code = 'LOCAL_RESULT_INVALID', updated_at = ? where id = ?",
@@ -759,6 +831,8 @@ function help() {
       "daily-collect [--force]",
       "weekly-collect [--force] (deprecated alias)",
       "run-once [--force]",
+      "daily-finish",
+      "daily-fail [--error-code <code>]",
       "prepare [--force]",
       "next-local",
       "complete-local --job-id <id> --result <path>",
@@ -777,8 +851,20 @@ try {
     command === "daily-collect" ||
     command === "weekly-collect"
   )
-    output(await runAutomaticCycle(resolve(process.argv[1]!), flag("force")));
-  else if (command === "prepare") await prepare();
+    output(
+      await beginCollectionCycle(resolve(process.argv[1]!), flag("force")),
+    );
+  else if (command === "daily-finish")
+    output(await finishCollectionCycle(resolve(process.argv[1]!)));
+  else if (command === "daily-fail") {
+    output(
+      await failCollectionCycle(
+        resolve(process.argv[1]!),
+        option("error-code", "LOCAL_AGENT_FAILED"),
+      ),
+    );
+    process.exitCode = 1;
+  } else if (command === "prepare") await prepare();
   else if (command === "next-local") nextLocal();
   else if (command === "complete-local") completeLocal();
   else if (command === "fail-local") failLocal();

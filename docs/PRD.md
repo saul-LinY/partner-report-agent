@@ -1,6 +1,6 @@
 # Partner Report Agent 产品需求文档
 
-> MVP 实现决策（2026-08-03）：Plugin 每天北京时间 13:00 由无项目的独立 Codex Scheduled Task 在新聊天中调用，任务使用 `gpt-5.6-sol` 和 `medium` 推理，逐 Session 发现更新，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功后 Skill 自动创建或更新该任务，Partner 不在 Plugin 中配置模型。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
+> MVP 实现决策（2026-08-03）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 13:00、`gpt-5.6-sol` 和 `medium` 推理，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功后 Skill 仅在同名任务不存在时创建默认任务，已有任务保留用户配置。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
 
 ## 1. 产品摘要
 
@@ -122,20 +122,20 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 
 ## 5. 关键术语
 
-| 术语                | 定义                                                      |
-| ------------------- | --------------------------------------------------------- |
-| Session             | Partner 与 Codex Agent 的一次独立对话线程                 |
+| 术语                | 定义                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| Session             | Partner 与 Codex Agent 的一次独立对话线程                                                           |
 | Complete Turn       | 同一 Turn 中同时存在用户问题和正常完成的 Assistant 最终回复；中断、取消、报错或只有过程输出不算完整 |
-| Session Work Fact   | 从一个 Session 中提取的结构化工作事实                     |
-| Work Item           | 跨一个或多个 Session 聚合出的稳定工作事项                 |
-| Binding Code        | Admin 分配给某个 Partner 的长期 Plugin 接入码；一个 Partner 可有多个 |
-| Project Root        | Admin 配置的项目根目录；该目录及其任意层级子目录属于同一项目 |
-| Evidence            | 支撑事实结论的 Session、时间、消息摘要或 Partner 补充记录 |
-| Individual Report   | 经 Partner 确认的个人周报或月报                           |
-| Team Report         | 基于已提交个人 Report 生成的团队报告                      |
-| Review Cycle        | 一次工作事项审核或 Report 审核循环                        |
-| Re-analysis Request | 服务端要求本地插件重新读取 Session 的请求                 |
-| Coverage            | 指定周期内可发现、可读取、成功分析的 Session 覆盖情况     |
+| Session Work Fact   | 从一个 Session 中提取的结构化工作事实                                                               |
+| Work Item           | 跨一个或多个 Session 聚合出的稳定工作事项                                                           |
+| Binding Code        | Admin 分配给某个 Partner 的长期 Plugin 接入码；一个 Partner 可有多个                                |
+| Project Root        | Admin 配置的项目根目录；该目录及其任意层级子目录属于同一项目                                        |
+| Evidence            | 支撑事实结论的 Session、时间、消息摘要或 Partner 补充记录                                           |
+| Individual Report   | 经 Partner 确认的个人周报或月报                                                                     |
+| Team Report         | 基于已提交个人 Report 生成的团队报告                                                                |
+| Review Cycle        | 一次工作事项审核或 Report 审核循环                                                                  |
+| Re-analysis Request | 服务端要求本地插件重新读取 Session 的请求                                                           |
+| Coverage            | 指定周期内可发现、可读取、成功分析的 Session 覆盖情况                                               |
 
 ## 6. 已知平台能力与约束
 
@@ -156,7 +156,7 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 11. 本地 Scheduled Task 依赖电脑开机、Codex 桌面应用运行以及适当的文件和网络权限。
 12. Codex CLI 和 IDE 当前不是 Scheduled Tasks 的管理入口。
 13. Partner 关闭历史记录、删除 Session、使用多个设备或云端 Session 时，可能出现覆盖缺口。
-14. 本产品正常采集链路不使用每 Turn 的 `Stop`/`SessionEnd` Hook，而使用 Codex Scheduled Task 每天北京时间 13:00 触发一次结构化扫描；生命周期 Hook 仅作为已知平台能力保留，不是 MVP 依赖。
+14. 本产品正常采集链路不使用每 Turn 的 `Stop`/`SessionEnd` Hook，而使用 Codex Scheduled Task 按面板配置触发结构化扫描（首次默认每天北京时间 13:00）；生命周期 Hook 仅作为已知平台能力保留，不是 MVP 依赖。
 
 官方参考：
 
@@ -207,13 +207,13 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 
 默认采集规则：
 
-1. Plugin 每天北京时间 13:00 触发一次 Daily Collection Run。
+1. Plugin 按 Codex Scheduled 面板配置触发 Daily Collection Run，首次默认每天北京时间 13:00。
 2. 每个报告数据窗口为“上一次周五 13:00 至本次周五 13:00”；13:00 之后完成的 Turn 进入下一个窗口。
 3. Daily Collection Run 通过 Codex App Server `thread/list` 获取候选 Session，再用 `thread/read(includeTurns)` 读取结构化 Turn，不依赖生命周期 Hook 提供增量提示。
 4. Plugin 对比 Session ID、Turn ID、`last_processed_complete_turn_id` 和内容 Hash，提取上次成功同步后新增或发生变化的 Complete Turn，确保低频扫描仍能发现更新。
 5. 扫描发生时正在回答的 Turn、被中断的 Turn 或没有正常 `final_answer` 的 Turn 一律跳过，不创建 Fact，也不推进完成游标。
 6. 被跳过的 Turn 保留在本地等待状态；后续恢复并正常完成后，由下一次 Daily Collection Run 或明确的人工 Re-analysis 补提，不会被标记为已处理。
-7. 如果每天北京时间 13:00 时设备或 Codex 不可用，下一次 Scheduled Task 运行时继续增量采集；服务端在此期间显示该 Binding Code 最近一次采集未完成。
+7. 如果计划时间设备或 Codex 不可用，下一次 Scheduled Task 运行时继续增量采集；服务端在此期间显示该 Binding Code 最近一次采集未完成。
 8. Daily Collection Run 开始和结束时各发送一次状态，Admin 通过最后计划时间、最后成功时间、Session/Fact 数量和错误查看 Plugin 是否正常，不维持高频心跳。
 9. 同一 Binding Code、报告窗口和输入快照使用稳定幂等键，重复启动不得重复创建 Fact。
 10. 数据中台等待本周期所有活动 Binding Code 完成上报，或等待配置的收集宽限期结束后，再冻结 Partner Fact Snapshot；未按期上报的实例进入 Coverage Warning，但不阻塞其他 Partner。
@@ -299,7 +299,7 @@ flowchart TD
     install[Partner 安装插件]
     bind[输入 Admin 分配的绑定码]
     session[Partner 使用 Codex]
-    dailyRun[每天北京时间 13:00 单次触发]
+    dailyRun[按 Scheduled 面板触发<br/>首次默认每天北京时间 13:00]
     scheduledScan[thread/list + thread/read 扫描]
     completeTurn{问答是否完整?}
     pendingTurn[保留等待且不推进游标]
@@ -344,7 +344,7 @@ flowchart TD
 1. Team Admin 使用唯一工作邮箱创建 Partner；邮箱标准化后全局唯一，内部生成稳定 `partner_id`，后续邮箱展示信息变化不改变数据主键。
 2. Team Admin 为该 Partner 创建一个或多个长期 Binding Code；每个 Code 代表一个独立 Plugin Instance，可设置设备名称并由 Admin 停用。
 3. Team Admin 分发 GitHub Marketplace 稳定版本入口和对应 Binding Code；Partner 不需要登录 Report Service。
-4. Partner 安装并启用 Plugin；绑定成功后 Skill 在 Codex 桌面端自动创建或更新每天北京时间 13:00 的独立 Scheduled Task，运行于新聊天且项目为无；正常链路不安装每 Turn 触发的生命周期 Hook。
+4. Partner 安装并启用 Plugin；绑定成功后 Skill 在同名任务不存在时创建独立 Scheduled Task，默认每天北京时间 13:00、运行于新聊天且项目为无；已有任务保留 Partner 在面板中的配置，正常链路不安装每 Turn 触发的生命周期 Hook。
 5. Partner 在 Plugin 连接流程中输入 Binding Code 和设备名称。
 6. Report Service 根据 Binding Code 建立以下绑定：
 
@@ -364,7 +364,7 @@ tenant_id
    - 默认报告周期。
    - 从中台获取允许或排除的项目根目录。
    - 是否上传有限证据摘要。
-   - 北京时区和每天 13:00 的采集计划。
+   - 首次默认的北京时区和每天 13:00 采集计划；之后以 Scheduled 面板为准。
    - 是否允许访问 Report Service 网络域名。
 9. 系统执行一次只读预检，展示可发现 Session 数量，不立即上传完整数据。
 10. 系统执行一次测试同步，展示读取、排除、失败和待处理数量。
@@ -372,7 +372,7 @@ tenant_id
 
 ### 9.2 每日 Session 发现与本地提取
 
-1. Codex Scheduled Task 每天北京时间 13:00 在新聊天中启动一次 Daily Collection Run，不在每个 Agent Turn 结束时运行 Hook。
+1. Codex Scheduled Task 按面板配置在新聊天中启动 Daily Collection Run（首次默认每天北京时间 13:00），不在每个 Agent Turn 结束时运行 Hook。
 2. Plugin 记录本次报告窗口、Binding Code、计划时间和幂等键，并向中台发送“本次采集开始”状态。
 3. 本地读取器通过 Codex App Server `thread/list` 发现报告窗口内的所有候选 Session，再通过 `thread/read(includeTurns)` 读取结构化 Turn。
 4. Plugin 根据 Session ID、Turn ID、`last_processed_complete_turn_id` 和内容 Hash，找出上次成功同步以后新增或更新的 Turn。
@@ -468,7 +468,7 @@ Partner 设置采用四步向导：
 3. 确认本地 Session 历史记录未关闭。
 4. 选择允许分析和必须排除的项目目录。
 5. 选择是否允许上传有限 Evidence Excerpt。
-6. 确认 Skill 已创建每天北京时间 13:00、运行于新聊天、项目为无、模型为 `gpt-5.6-sol`、推理强度为 `medium`、仅失败提醒的 Daily Collection Task，并授权访问 Report Service 网络域名。
+6. 确认 Skill 已创建默认每天北京时间 13:00、运行于新聊天、项目为无、模型为 `gpt-5.6-sol`、推理强度为 `medium`、仅失败提醒的 Daily Collection Task；这些值可在 Scheduled 面板修改，并授权访问 Report Service 网络域名。
 7. 完成一次测试同步，确认 Session 覆盖和错误提示。
 
 可选设置：
@@ -520,7 +520,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 插件必须可由 GitHub Marketplace 稳定 Release 通过 Codex 官方途径安装和升级；生产入口不得直接跟随未验证的 `main`。
 - Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新输入 Binding Code 或重新配置项目。
 - 本地 SQLite 必须有 Schema 版本和向前迁移；Daily Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
-- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `daily-collect` 入口；绑定成功后 Skill 必须通过 Codex 官方能力自动创建或更新该任务，不能只提示 Partner 手工创建。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
+- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `daily-collect` 入口；绑定成功后 Skill 必须通过 Codex 官方能力在同名任务不存在时自动创建默认任务，存在时保留用户的调度和模型配置并校验激活 Prompt，不能只提示 Partner 手工创建。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
 - Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
 - Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。
 - Admin 页面必须完整展示新生成的 Binding Code，并提供一键复制；关闭生成弹窗后仍可在对应 Partner 下查看和复制。Binding Code 不得通过 Partner、Plugin 或公开接口返回。
@@ -537,7 +537,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 支持按创建或更新时间筛选 Session。
 - 支持按项目目录和显式排除规则过滤。
 - 支持发现活跃和已归档本地 Session。
-- Plugin 必须每天北京时间 13:00 运行一次 Daily Collection Run，正常情况下不在其他时间自动扫描。
+- Plugin 必须按 Codex Scheduled 面板配置运行 Daily Collection Run，首次默认每天北京时间 13:00；正常情况下不在计划外自动扫描。
 - Daily Collection Run 必须直接通过 `thread/list` 和 `thread/read(includeTurns)` 发现本报告窗口内所有候选 Session，不能依赖生命周期 Hook 是否触发。
 - Plugin 必须比较 Session ID、Turn ID、完成游标和内容 Hash，确保一周内新增或更新的 Complete Turn 即使没有 Hook 提示也能被发现。
 - 扫描时正在回答的 Turn 必须跳过且不推进完成游标；同一 Session 中更早的 Complete Turn 仍应正常提取。
@@ -577,7 +577,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 一个非空且正常完成的 Assistant `final_answer`。
 - 明确的 `turn_id`、完成时间和来源边界。
 
-不得将被中断的 Assistant 片段、commentary、reasoning 或工具输出拼接成最终回复；每天 13:00 到达、人工补跑或报告截止本身也不能把不完整 Turn 变成 Complete Turn。
+不得将被中断的 Assistant 片段、commentary、reasoning 或工具输出拼接成最终回复；计划时间到达、人工补跑或报告截止本身也不能把不完整 Turn 变成 Complete Turn。
 
 每次上传还必须携带：
 
@@ -1379,7 +1379,7 @@ flowchart LR
     subgraph local [Partner 本地]
         codex[Codex]
         plugin[Report Plugin]
-        dailyTask[每天北京时间 13:00 Scheduled Task]
+        dailyTask[Codex Scheduled Task<br/>首次默认每天北京时间 13:00]
         dailyScanner[Daily Session Scanner]
         completeTurn{Complete Turn?}
         outbox[(Local Outbox)]
@@ -1601,7 +1601,7 @@ flowchart LR
 
 - Plugin 安装和版本分布。
 - 每个 Binding Code 对应 Plugin 的设备、最近任务是否按期完成、最后同步、Session/Fact 数量和最近错误。
-- Daily Collection Task 是否已配置、上次计划时间、上次开始/完成时间、下次北京时间 13:00、等待完整 Turn/EXTRACTING/待同步数量和各阶段滞留时间。
+- Daily Collection Task 是否已配置、上次计划时间、上次开始/完成时间、面板配置的下次运行时间、等待完整 Turn/EXTRACTING/待同步数量和各阶段滞留时间。
 - Session 发现、读取、提取和上传成功率。
 - Re-analysis Request 等待时间。
 - 飞书卡片回调成功率。
@@ -1611,32 +1611,32 @@ flowchart LR
 
 ## 19. 异常与边界场景
 
-| 场景                               | 预期处理                                                                |
-| ---------------------------------- | ----------------------------------------------------------------------- |
-| 每天 13:00 Partner 电脑休眠或关机   | 中台标记最近一次采集未完成；下一次任务按游标增量采集                     |
-| 每天 13:00 Codex 桌面应用未运行     | 中台记录计划未完成，下一次任务按游标增量采集                             |
-| Scheduled Task 重复启动            | 使用 Binding Code、报告窗口和输入快照幂等键，只允许一次成功同步         |
-| 扫描期间出现新 Turn                | 当前任务只处理已冻结 `to_complete_turn_id`，新增 Turn 进入下一窗口      |
-| 用户提问后模型输出被中断           | 该 Turn 标记 `WAITING_COMPLETE_TURN`，不提取、不上传、不推进完成游标    |
-| 不完整 Turn 后续恢复并正常结束      | 下一次扫描重新判断，产生 `final_answer` 后作为 Complete Turn 处理       |
-| Session 只有不完整 Turn            | 不创建 Fact；Coverage 记录不完整 Turn 等待数                           |
-| Session 在每日扫描后继续产生内容   | 使用同一 `session_id` 和完成游标，在次日任务中增量分析                  |
-| 每天 13:00 Session 仍在回答         | 只处理此前 Complete Turn，正在回答的 Turn 跳过且不推进游标              |
-| Session 已删除                     | 标记无法读取，纳入 Coverage Warning                                     |
-| 历史记录关闭                       | 提示该时间段不可完整分析                                                |
-| 一个工作邮箱使用多个 Plugin         | 每个 Plugin 使用独立 Binding Code，服务端统一归属同一 `partner_id`      |
-| 同一 Session 被重复上传            | 使用幂等键覆盖或忽略相同版本                                            |
-| Plugin 版本过旧                    | 提醒升级，必要时拒绝不兼容 Schema                                       |
-| Session 位于项目子目录             | 归入祖先 Project Root；多重匹配时选择最长、最具体的根目录                |
-| `/crm-v2` 与 `/crm` 名称相似        | 使用目录边界匹配，不视为父子目录                                        |
-| 某个 Binding Code 本周未完成采集    | Admin 显示未按期、最后成功时间和 Coverage Warning                       |
-| 飞书旧卡片被点击                   | 返回版本过期提示并刷新卡片                                              |
-| 中台 LLM 输出 Schema 不合法         | Central Model Worker 自动重试，仍失败则进入人工处理                     |
-| 工作事项项目归属不确定             | 保持独立并让 Partner 确认                                               |
-| Partner 修改到尚未同步日期         | 创建 Re-analysis Request                                                |
-| Partner 审核时发现敏感信息         | 立即排除并记录删除请求                                                  |
-| 飞书最终消息或附件发送失败         | 自动重试并保持幂等；成功前不标记为 `DELIVERED`                          |
-| 部分 Partner 未提交                | 团队报告显示缺失，不使用草稿替代                                        |
+| 场景                             | 预期处理                                                             |
+| -------------------------------- | -------------------------------------------------------------------- |
+| 计划时间 Partner 电脑休眠或关机  | 中台标记最近一次采集未完成；下一次任务按游标增量采集                 |
+| 计划时间 Codex 桌面应用未运行    | 中台记录计划未完成，下一次任务按游标增量采集                         |
+| Scheduled Task 重复启动          | 使用 Binding Code、报告窗口和输入快照幂等键，只允许一次成功同步      |
+| 扫描期间出现新 Turn              | 当前任务只处理已冻结 `to_complete_turn_id`，新增 Turn 进入下一窗口   |
+| 用户提问后模型输出被中断         | 该 Turn 标记 `WAITING_COMPLETE_TURN`，不提取、不上传、不推进完成游标 |
+| 不完整 Turn 后续恢复并正常结束   | 下一次扫描重新判断，产生 `final_answer` 后作为 Complete Turn 处理    |
+| Session 只有不完整 Turn          | 不创建 Fact；Coverage 记录不完整 Turn 等待数                         |
+| Session 在每日扫描后继续产生内容 | 使用同一 `session_id` 和完成游标，在次日任务中增量分析               |
+| 计划时间 Session 仍在回答        | 只处理此前 Complete Turn，正在回答的 Turn 跳过且不推进游标           |
+| Session 已删除                   | 标记无法读取，纳入 Coverage Warning                                  |
+| 历史记录关闭                     | 提示该时间段不可完整分析                                             |
+| 一个工作邮箱使用多个 Plugin      | 每个 Plugin 使用独立 Binding Code，服务端统一归属同一 `partner_id`   |
+| 同一 Session 被重复上传          | 使用幂等键覆盖或忽略相同版本                                         |
+| Plugin 版本过旧                  | 提醒升级，必要时拒绝不兼容 Schema                                    |
+| Session 位于项目子目录           | 归入祖先 Project Root；多重匹配时选择最长、最具体的根目录            |
+| `/crm-v2` 与 `/crm` 名称相似     | 使用目录边界匹配，不视为父子目录                                     |
+| 某个 Binding Code 本周未完成采集 | Admin 显示未按期、最后成功时间和 Coverage Warning                    |
+| 飞书旧卡片被点击                 | 返回版本过期提示并刷新卡片                                           |
+| 中台 LLM 输出 Schema 不合法      | Central Model Worker 自动重试，仍失败则进入人工处理                  |
+| 工作事项项目归属不确定           | 保持独立并让 Partner 确认                                            |
+| Partner 修改到尚未同步日期       | 创建 Re-analysis Request                                             |
+| Partner 审核时发现敏感信息       | 立即排除并记录删除请求                                               |
+| 飞书最终消息或附件发送失败       | 自动重试并保持幂等；成功前不标记为 `DELIVERED`                       |
+| 部分 Partner 未提交              | 团队报告显示缺失，不使用草稿替代                                     |
 
 ## 20. MVP 交付范围
 
@@ -1645,7 +1645,7 @@ flowchart LR
 目标：验证关键能力是否可用。
 
 - 创建本地 Codex Plugin 原型。
-- 验证每天北京时间 13:00 Daily Collection Task 的自动创建、单次触发和运行状态上报。
+- 验证默认每天北京时间 13:00 Daily Collection Task 的首次创建、用户配置保留、单次触发和运行状态上报。
 - 验证正常链路不会在每个 Turn、每 5 分钟或每 6 小时触发采集。
 - 验证同一 Session 恢复后使用 Turn 游标增量提取。
 - 验证一周内无 Hook 提示的新增内容仍可通过 `thread/list`、`thread/read`、游标和 Hash 被发现。
@@ -1664,7 +1664,7 @@ flowchart LR
 ### Phase 1：个人 Report MVP
 
 - Plugin 安装和 Binding Code 接入。
-- 每天北京时间 13:00 增量 Session 提取。
+- Scheduled 面板可配置、首次默认每天北京时间 13:00 的增量 Session 提取。
 - Session Work Facts 上传。
 - 中台跨 Session 工作事项聚合和重要性排序。
 - 飞书工作事项第一轮审核。
@@ -1695,11 +1695,11 @@ flowchart LR
 
 ### AC-01 安装与绑定
 
-给定 Admin 以唯一工作邮箱创建的新 Partner，并为其生成两个 Binding Code，两台 Plugin 无需登录 Report Service 即可分别绑定；每次绑定成功后 Skill 自动创建符合固定配置的 Daily Collection Task，Admin 可以看到各自设备、每日任务状态和最后同步，两台 Plugin 的事实最终归属同一个 `partner_id`，且其他 Partner 的 Binding Code 不能写入该 Partner 数据。兼容版本升级后无需重新输入 Binding Code 或重新配置。
+给定 Admin 以唯一工作邮箱创建的新 Partner，并为其生成两个 Binding Code，两台 Plugin 无需登录 Report Service 即可分别绑定；首次绑定后 Skill 自动创建符合默认配置的 Daily Collection Task，再次绑定或兼容升级不覆盖用户在 Scheduled 面板修改的时间、模型、推理强度和通知策略。Admin 可以看到各自设备、任务状态和最后同步，两台 Plugin 的事实最终归属同一个 `partner_id`，且其他 Partner 的 Binding Code 不能写入该 Partner 数据；升级后无需重新输入 Binding Code。
 
 ### AC-02 Session 发现
 
-给定一个报告窗口内包含 10 个本地 Session，Plugin 每天北京时间 13:00 只触发一次 Daily Collection Run，并能通过 App Server 报告发现、成功读取、Complete Turn、等待完整、排除和失败数量，且数量关系一致；即使一天内没有任何生命周期 Hook 提示，新增内容仍能被发现。
+给定一个报告窗口内包含 10 个本地 Session，Plugin 按 Scheduled 面板的单次触发启动 Daily Collection Run，并能通过 App Server 报告发现、成功读取、Complete Turn、等待完整、排除和失败数量，且数量关系一致；即使两个计划运行点之间没有任何生命周期 Hook 提示，新增内容仍能被发现。
 
 ### AC-02A 增量处理
 
@@ -1707,7 +1707,7 @@ flowchart LR
 
 ### AC-02B 完整问答约束
 
-给定每天 13:00 扫描时一个只有用户问题、Assistant 正在回答或输出被中断且没有正常 `final_answer` 的 Turn，Plugin 不创建提取任务、不生成 Fact、不上传该 Turn，也不推进完成游标；同一 Session 中更早已完成的 Turn 仍正常处理。该 Turn 后续恢复并产生完整 `final_answer` 后，次日任务或人工 Re-analysis 只处理一次。
+给定计划扫描时一个只有用户问题、Assistant 正在回答或输出被中断且没有正常 `final_answer` 的 Turn，Plugin 不创建提取任务、不生成 Fact、不上传该 Turn，也不推进完成游标；同一 Session 中更早已完成的 Turn 仍正常处理。该 Turn 后续恢复并产生完整 `final_answer` 后，下一次任务或人工 Re-analysis 只处理一次。
 
 ### AC-03 事实提取
 
@@ -1788,22 +1788,22 @@ Admin 停用 Binding Code 后，对应 Plugin 立即不能继续上传；其他�
 
 ## 23. 主要风险与缓解
 
-| 风险                         | 影响               | 缓解措施                                |
-| ---------------------------- | ------------------ | --------------------------------------- |
+| 风险                         | 影响               | 缓解措施                                  |
+| ---------------------------- | ------------------ | ----------------------------------------- |
 | 本地 Session 覆盖不完整      | 报告遗漏           | 显示 Coverage；周五全量发现和游标增量读取 |
-| transcript 格式变化          | 插件失效           | 优先使用 App Server；版本兼容测试       |
-| 周五 Scheduled Task 未运行   | 本周事实未同步     | Admin 标记未按期；Plugin 下次启动补跑一次 |
-| Partner 未保持应用运行       | 定时任务延迟       | 下次启动补跑；飞书显示延迟              |
-| 上传结构化事实后无法任意深挖 | 修改受限           | Re-analysis Request + 本地重新分析      |
-| 上传完整聊天带来隐私风险     | 合规问题           | MVP 默认不上传原始 transcript           |
-| AI 把讨论写成完成            | 事实错误           | 状态 Schema、证据约束、双层审核         |
-| 项目语义匹配错误             | 团队报告错误       | 优先显式 ID，低置信度保持独立           |
-| 项目目录边界或嵌套匹配错误   | Fact 归错项目      | 规范化路径、目录边界判断、最长根目录优先 |
-| 多 Plugin 上传重复 Session    | 工作进度重复统计   | Session 标识、来源修订和内容 Hash 去重   |
-| 中台模型服务不可用           | 卡片或 Report 延迟 | 队列重试、超时、模型降级和人工补跑       |
-| 飞书卡片内容过长             | 审核体验差         | 单项卡片、分页、Web 工作台              |
-| 旧卡片覆盖新数据             | 数据冲突           | `base_version` 乐观锁                   |
-| Monitor 将报告用于个人排名   | 组织风险           | 产品不提供排名和消息量指标              |
+| transcript 格式变化          | 插件失效           | 优先使用 App Server；版本兼容测试         |
+| Scheduled Task 未运行        | 本期事实未同步     | Admin 标记未按期；Plugin 下次启动补跑一次 |
+| Partner 未保持应用运行       | 定时任务延迟       | 下次启动补跑；飞书显示延迟                |
+| 上传结构化事实后无法任意深挖 | 修改受限           | Re-analysis Request + 本地重新分析        |
+| 上传完整聊天带来隐私风险     | 合规问题           | MVP 默认不上传原始 transcript             |
+| AI 把讨论写成完成            | 事实错误           | 状态 Schema、证据约束、双层审核           |
+| 项目语义匹配错误             | 团队报告错误       | 优先显式 ID，低置信度保持独立             |
+| 项目目录边界或嵌套匹配错误   | Fact 归错项目      | 规范化路径、目录边界判断、最长根目录优先  |
+| 多 Plugin 上传重复 Session   | 工作进度重复统计   | Session 标识、来源修订和内容 Hash 去重    |
+| 中台模型服务不可用           | 卡片或 Report 延迟 | 队列重试、超时、模型降级和人工补跑        |
+| 飞书卡片内容过长             | 审核体验差         | 单项卡片、分页、Web 工作台                |
+| 旧卡片覆盖新数据             | 数据冲突           | `base_version` 乐观锁                     |
+| Monitor 将报告用于个人排名   | 组织风险           | 产品不提供排名和消息量指标                |
 
 ## 24. 待确认决策
 
@@ -1832,7 +1832,7 @@ Admin 停用 Binding Code 后，对应 Plugin 立即不能继续上传；其他�
 - Session Cursor Store。
 - App Server Reader。
 - Extraction Skill。
-- 每天北京时间 13:00 Daily Collection Task 自动创建、幂等运行和错过后增量补采。
+- 默认每天北京时间 13:00 Daily Collection Task 首次创建、用户配置保留、幂等运行和错过后增量补采。
 - Complete Turn 判断、回答中 Turn 跳过和完成游标管理。
 - Remote MCP 或 Sync Client。
 - Binding Code、本地配置和排除规则。

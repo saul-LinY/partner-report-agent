@@ -21,6 +21,14 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("Notifications: failures only");
     expect(skill).toContain("start a new chat for every run");
     expect(skill).toContain("required continuation of Connect");
+    expect(skill).toContain("do not reset its destination");
+    expect(skill).toContain(
+      "only source of truth for model and reasoning effort",
+    );
+    expect(skill).toContain("Never launch `codex exec`");
+    expect(skill).toContain("daily-finish");
+    expect(skill).toContain("at most three total extraction attempts");
+    expect(skill).toContain("must never hardcode or guess it");
     expect(skill).not.toContain("Stop` and `SessionEnd");
     expect(skill).not.toContain('node "${PLUGIN_ROOT}/dist/cli.mjs"');
   });

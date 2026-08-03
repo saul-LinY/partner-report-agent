@@ -1,6 +1,6 @@
 # Partner Report Agent
 
-Partner Report 是一个 Codex Plugin + 数据中台 MVP：Plugin 每天北京时间 13:00 从配置的项目目录中读取本地 Codex Session，只处理完整的一问一答，并上传结构化 Fact；数据中台再按 Partner 跨 Session 聚合工作卡片、完成第一次 Web 模拟审核、生成个人 Report，并完成第二次 Web 模拟审核。
+Partner Report 是一个 Codex Plugin + 数据中台 MVP：Plugin 默认每天北京时间 13:00 从配置的项目目录中读取本地 Codex Session，只处理完整的一问一答，并上传结构化 Fact；数据中台再按 Partner 跨 Session 聚合工作卡片、完成第一次 Web 模拟审核、生成个人 Report，并完成第二次 Web 模拟审核。Partner 可以在 Codex Scheduled 面板修改实际运行时间、模型、推理强度和通知策略。
 
 当前不接入飞书和 Monitor。Web 审核使用真实 Fact、Work Item、Snapshot 和 Report Version，不生成演示假数据。
 
@@ -12,7 +12,7 @@ Plugin：
 - 通过 Codex App Server 读取 `thread/list` 与 `thread/read(includeTurns)`。
 - 用最长项目根目录匹配 Session；根目录下任意层级子目录都属于同一项目。
 - 只保留非空用户问题和正常 `final_answer`。正在回答、中断、取消或失败的 Turn 不处理、不推进游标。
-- 在本机用隔离的 `codex exec` 将单个 Session 提取成结构化 Fact，并做脱敏、Schema 校验和幂等上传。
+- 由当前 Codex Scheduled task 会话一次处理一个 Session，将其提取成结构化 Fact，并做脱敏、Schema 校验和幂等上传。
 - 不做跨 Session 聚合，不生成工作卡片或 Report，不安装生命周期 Hook，不运行常驻 Runner。
 
 数据中台：
@@ -66,7 +66,7 @@ codex plugin marketplace add saul615/partner-report-agent --ref v0.2.0
 
 然后在 Codex 桌面端打开 `/plugins`，从 `Partner Report Marketplace` 安装 `Partner Report`，并新建会话。
 
-Plugin 不提供模型配置。Codex 定时任务和 Session 级 Fact 提取统一固定为 `gpt-5.6-sol`、`medium` 推理；Partner 只需要提供中台地址与绑定码。跨 Session 聚合和 Report 生成仍使用 Admin 在中台选择的模型。
+Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `gpt-5.6-sol`、`medium` 推理；之后 Codex Scheduled 面板是运行时间、模型、推理强度和通知策略的唯一配置来源。定时任务当前选择的模型直接完成 Session 级 Fact 提取，Plugin 不会再启动或指定另一个模型。跨 Session 聚合和 Report 生成仍使用 Admin 在中台选择的模型。
 
 在 Admin Web 中先创建 Partner，再生成绑定码。随后在 Codex 中说：
 
@@ -74,7 +74,7 @@ Plugin 不提供模型配置。Codex 定时任务和 Session 级 Fact 提取统�
 使用 $partner-report-sync，把数据中台 https://report-api.example.com 和绑定码 PR-XXXX-XXXX 连接起来。
 ```
 
-绑定成功后，`$partner-report-sync` 会立即通过 Codex 桌面端的官方 Scheduled task 能力创建或更新以下任务，无需 Partner 手动配置：
+绑定成功后，`$partner-report-sync` 会立即检查 Codex 桌面端的同名 Scheduled task。若不存在则按以下默认值创建；若已存在则保留用户修改过的时间、时区、模型、推理强度、通知、运行位置和项目设置：
 
 ```text
 名称：Partner Report daily collection
@@ -88,13 +88,13 @@ Plugin 不提供模型配置。Codex 定时任务和 Session 级 Fact 提取统�
 Prompt：Use $partner-report-sync to run daily-collect and return only the safe collection summary.
 ```
 
-Scheduled tasks 仍由 Codex 官方界面管理；Skill 负责在绑定对话中调用该能力，Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
+Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默认任务并确保任务 Prompt 仍会激活插件，Plugin CLI 不写私有调度器，也不覆盖用户在面板中的配置。定时运行依赖电脑开机且 Codex 桌面应用运行。
 
 手动验证：
 
 ```bash
 node "<PLUGIN_PATH>/dist/cli.mjs" status
-node "<PLUGIN_PATH>/dist/cli.mjs" daily-collect
+使用 $partner-report-sync 运行一次 daily-collect，并只返回安全摘要。
 ```
 
 macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTNER_REPORT_ALLOW_FILE_TOKENS=1` 才允许文件凭据回退。
@@ -102,10 +102,11 @@ macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTN
 ## 数据流
 
 ```text
-Codex Scheduled task（每天北京时间 13:00，新聊天、无项目）
+Codex Scheduled task（默认每天北京时间 13:00、新聊天、无项目；面板可修改）
+  -> 当前任务选择的模型与推理强度
   -> 项目根目录与子目录 Session 扫描
   -> 过滤为完整 user question + final_answer Turn
-  -> Plugin 本地逐 Session 提取结构化 Fact
+  -> 当前 Scheduled 会话逐 Session 提取，Plugin 逐个校验结构化 Fact
   -> HTTPS 幂等上传并推进 Complete Turn Cursor
   -> 中台按 Partner 冻结本周期 Fact
   -> 中台模型跨 Session 聚合 Work Item
