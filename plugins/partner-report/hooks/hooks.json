@@ -1,0 +1,27 @@
+{
+  "description": "Queue lightweight local scan hints after Codex work stops or a main session ends.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/capture-event.mjs\"",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/capture-event.mjs\"",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+!plugins/partner-report/dist/
+!plugins/partner-report/dist/cli.mjs
+.vite/
+coverage/
+playwright-report/
+test-results/
+dogfood-output/
+.partner-report-data/
+.env
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+plugins/partner-report/.data/

@@ -1,0 +1,37 @@
+{
+  "name": "partner-report-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "plugins/partner-report"
+  ],
+  "scripts": {
+    "build": "npm run contracts:generate && npm run build --workspaces --if-present",
+    "contracts:generate": "node --import tsx packages/contracts/src/generate-json-schema.ts",
+    "db:generate": "drizzle-kit generate --config packages/db/drizzle.config.ts",
+    "db:migrate": "node --import tsx packages/db/src/migrate.ts",
+    "db:seed": "node --import tsx packages/db/src/seed.ts",
+    "dev": "concurrently -k -n api,web,worker -c cyan,green,yellow \"npm run dev -w @partner-report/api\" \"npm run dev -w @partner-report/web\" \"npm run dev -w @partner-report/worker\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "concurrently": "^9.2.0",
+    "drizzle-kit": "^0.31.0",
+    "prettier": "^3.6.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "zod-to-json-schema": "^3.24.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

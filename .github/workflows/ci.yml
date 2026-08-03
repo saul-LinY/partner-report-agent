@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: partner_report
+          POSTGRES_USER: partner_report
+          POSTGRES_PASSWORD: partner_report
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U partner_report -d partner_report"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://partner_report:partner_report@127.0.0.1:54329/partner_report
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run db:migrate
+      - run: RUN_DB_TESTS=1 npx vitest run apps/api/src/authorization.integration.test.ts apps/worker/src/weekly.integration.test.ts
+      - run: npm run build
+      - name: Verify committed Plugin bundle
+        run: git diff --exit-code -- plugins/partner-report/dist/cli.mjs plugins/partner-report/schemas

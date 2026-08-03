@@ -1,0 +1,25 @@
+{
+  "name": "@partner-report/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "dev": "node --watch --import tsx src/server.ts",
+    "start": "node --import tsx src/server.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.0",
+    "@fastify/cors": "^11.0.0",
+    "@partner-report/contracts": "0.1.0",
+    "@partner-report/db": "0.1.0",
+    "argon2": "^0.41.0",
+    "fastify": "^5.4.0",
+    "semver": "^7.7.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/semver": "^7.7.0"
+  }
+}

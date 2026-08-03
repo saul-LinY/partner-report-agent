@@ -1,0 +1,24 @@
+{
+  "name": "@partner-report/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "partner-report": "./dist/cli.mjs"
+  },
+  "scripts": {
+    "build": "esbuild src/cli.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/cli.mjs --banner:js='#!/usr/bin/env node' && chmod +x dist/cli.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. plugins/partner-report/src"
+  },
+  "dependencies": {
+    "@partner-report/contracts": "0.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

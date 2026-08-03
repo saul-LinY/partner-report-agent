@@ -1,0 +1,231 @@
+{
+  "$ref": "#/definitions/AggregationResultV1",
+  "definitions": {
+    "AggregationResultV1": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "clientKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "factIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "projectId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "projectConfidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "assignmentMethod": {
+                "type": "string",
+                "enum": [
+                  "explicit",
+                  "external_id",
+                  "alias",
+                  "semantic",
+                  "independent"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "discussion",
+                  "planned",
+                  "in_progress",
+                  "awaiting_validation",
+                  "completed",
+                  "blocked",
+                  "cancelled"
+                ]
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "outcomes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "default": []
+              },
+              "blockers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "default": []
+              },
+              "nextSteps": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "default": []
+              },
+              "importance": {
+                "type": "object",
+                "properties": {
+                  "outcome": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "impact": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "statusChange": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "decision": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "blocker": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "monitorAction": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "partnerEmphasis": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "repetitionPenalty": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "impact",
+                  "statusChange",
+                  "decision",
+                  "blocker",
+                  "monitorAction",
+                  "partnerEmphasis",
+                  "repetitionPenalty"
+                ],
+                "additionalProperties": false
+              },
+              "mergeConfidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "rationaleCodes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              }
+            },
+            "required": [
+              "clientKey",
+              "title",
+              "factIds",
+              "projectConfidence",
+              "assignmentMethod",
+              "status",
+              "summary",
+              "importance",
+              "mergeConfidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "unassignedFactIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "qualityWarnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "production": {
+          "type": "object",
+          "properties": {
+            "skillVersion": {
+              "type": "string",
+              "const": "partner-report-sync/0.1.0"
+            },
+            "promptVersion": {
+              "type": "string",
+              "const": "2026-08-03.v2"
+            },
+            "schemaVersion": {
+              "type": "string",
+              "const": "1.0"
+            },
+            "producer": {
+              "type": "string",
+              "const": "codex-skill"
+            },
+            "modelVersion": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "skillVersion",
+            "promptVersion",
+            "schemaVersion",
+            "producer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "groups",
+        "production"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
