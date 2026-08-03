@@ -6,8 +6,8 @@ import { api } from "./api.js";
 import { Button, ErrorBanner, Field, SuccessBanner } from "./components.js";
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
-  const [email, setEmail] = useState("admin@local.test");
-  const [password, setPassword] = useState("ChangeMe-Partner-Report-2026!");
+  const [email, setEmail] = useState("saul@laien.io");
+  const [password, setPassword] = useState("123456");
   const login = useMutation({
     mutationFn: () => api("/v1/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
     onSuccess

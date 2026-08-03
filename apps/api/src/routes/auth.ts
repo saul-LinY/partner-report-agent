@@ -7,7 +7,7 @@ import { ApiError, audit, randomToken, requireWebActor, sha256 } from "../common
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8).max(200)
+  password: z.string().min(6).max(200)
 });
 
 const inviteAcceptSchema = z.object({

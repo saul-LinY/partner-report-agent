@@ -42,8 +42,8 @@ API：`http://127.0.0.1:4310`
 默认本地账号：
 
 ```text
-admin@local.test
-ChangeMe-Partner-Report-2026!
+saul@laien.io
+123456
 ```
 
 中台模型任务需要配置：
@@ -61,7 +61,7 @@ export OPENAI_REASONING_EFFORT=low
 仓库包含 Codex Marketplace 清单、Plugin Manifest、Skill、JSON Schema 和已构建 CLI。添加 Marketplace：
 
 ```bash
-codex plugin marketplace add saul615/partner-report-agent --ref main
+codex plugin marketplace add saul615/partner-report-agent --ref v0.2.0
 ```
 
 然后在 Codex 桌面端打开 `/plugins`，从 `Partner Report Marketplace` 安装 `Partner Report`，并新建会话。

@@ -1,6 +1,6 @@
 {
   "name": "partner-report",
-  "version": "0.2.0+codex.20260803080811",
+  "version": "0.2.0+codex.20260803082727",
   "description": "Collect complete Codex project-session turns every Friday and sync structured facts to Partner Report.",
   "author": {
     "name": "\u6797\u6797\u52c7's team",

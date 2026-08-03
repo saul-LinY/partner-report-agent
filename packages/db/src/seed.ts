@@ -3,8 +3,8 @@ import argon2 from "argon2";
 import { closeDatabase, sqlClient as sql } from "./index.js";
 import { weeklyPeriodAt } from "./period.js";
 
-const email = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "admin@local.test").trim().toLowerCase();
-const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? "ChangeMe-Partner-Report-2026!";
+const email = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "saul@laien.io").trim().toLowerCase();
+const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? "123456";
 const displayName = process.env.BOOTSTRAP_DISPLAY_NAME ?? "Saul";
 const teamName = process.env.BOOTSTRAP_TEAM_NAME ?? "Partner Report Pilot";
 const minimumPluginVersion = process.env.PLUGIN_MIN_VERSION ?? "0.2.0";
@@ -22,7 +22,6 @@ if (existing.length === 0) {
   const tenantId = randomUUID();
   const teamId = randomUUID();
   const userId = randomUUID();
-  const partnerId = randomUUID();
   const membershipId = randomUUID();
   const identityId = randomUUID();
   const templateId = randomUUID();
@@ -41,12 +40,8 @@ if (existing.length === 0) {
       values (${teamId}, ${tenantId}, ${teamName}, ${timezone}, ${minimumPluginVersion})
     `;
     await tx`
-      insert into partners (id, tenant_id, team_id, user_id, email, display_name)
-      values (${partnerId}, ${tenantId}, ${teamId}, ${userId}, ${email}, ${displayName})
-    `;
-    await tx`
-      insert into memberships (id, tenant_id, team_id, user_id, partner_id, roles)
-      values (${membershipId}, ${tenantId}, ${teamId}, ${userId}, ${partnerId}, ${JSON.stringify(["admin", "partner"])}::jsonb)
+      insert into memberships (id, tenant_id, team_id, user_id, roles)
+      values (${membershipId}, ${tenantId}, ${teamId}, ${userId}, ${JSON.stringify(["admin"])}::jsonb)
     `;
     await tx`
       insert into external_identities (id, tenant_id, user_id, provider, external_subject)
@@ -70,7 +65,7 @@ if (existing.length === 0) {
     `;
   });
 
-  console.log(`Seeded ${email} as Admin + Partner for ${teamName}.`);
+  console.log(`Seeded ${email} as Admin for ${teamName}.`);
 } else {
   const account = existing[0]!;
   await sql`
