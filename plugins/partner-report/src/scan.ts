@@ -459,9 +459,6 @@ export async function prepareSessionJobs(
             promptVersion: "2026-08-03.v3",
             schemaVersion: "1.0",
             producer: "codex-skill",
-            ...(process.env.CODEX_MODEL
-              ? { modelVersion: process.env.CODEX_MODEL }
-              : {}),
           },
         },
       };

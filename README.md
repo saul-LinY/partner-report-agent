@@ -1,6 +1,6 @@
 # Partner Report Agent
 
-Partner Report 是一个 Codex Plugin + 数据中台 MVP：Plugin 每周五 13:00 从配置的项目目录中读取本地 Codex Session，只处理完整的一问一答，并上传结构化 Fact；数据中台再按 Partner 跨 Session 聚合工作卡片、完成第一次 Web 模拟审核、生成个人 Report，并完成第二次 Web 模拟审核。
+Partner Report 是一个 Codex Plugin + 数据中台 MVP：Plugin 每天北京时间 13:00 从配置的项目目录中读取本地 Codex Session，只处理完整的一问一答，并上传结构化 Fact；数据中台再按 Partner 跨 Session 聚合工作卡片、完成第一次 Web 模拟审核、生成个人 Report，并完成第二次 Web 模拟审核。
 
 当前不接入飞书和 Monitor。Web 审核使用真实 Fact、Work Item、Snapshot 和 Report Version，不生成演示假数据。
 
@@ -66,27 +66,35 @@ codex plugin marketplace add saul615/partner-report-agent --ref v0.2.0
 
 然后在 Codex 桌面端打开 `/plugins`，从 `Partner Report Marketplace` 安装 `Partner Report`，并新建会话。
 
+Plugin 不提供模型配置。Codex 定时任务和 Session 级 Fact 提取统一固定为 `gpt-5.6-sol`、`medium` 推理；Partner 只需要提供中台地址与绑定码。跨 Session 聚合和 Report 生成仍使用 Admin 在中台选择的模型。
+
 在 Admin Web 中先创建 Partner，再生成绑定码。随后在 Codex 中说：
 
 ```text
 使用 $partner-report-sync，把数据中台 https://report-api.example.com 和绑定码 PR-XXXX-XXXX 连接起来。
 ```
 
-绑定完成后，在 Codex 桌面端或 Web 的 Scheduled tasks 中创建项目级任务：
+绑定成功后，`$partner-report-sync` 会立即通过 Codex 桌面端的官方 Scheduled task 能力创建或更新以下任务，无需 Partner 手动配置：
 
 ```text
-名称：Partner Report weekly collection
-时间：Team 时区每周五 13:00
-Prompt：Use $partner-report-sync to run weekly-collect and return only the safe collection summary.
+名称：Partner Report daily collection
+运行于：新聊天
+项目：无
+时间：每天 13:00
+时区：Asia/Shanghai（北京时间）
+模型：gpt-5.6-sol
+推理强度：medium
+通知：仅失败提醒
+Prompt：Use $partner-report-sync to run daily-collect and return only the safe collection summary.
 ```
 
-Scheduled tasks 由 Codex 官方界面管理，CLI/IDE 目前不提供创建入口。定时运行依赖电脑开机且 Codex 桌面应用运行。
+Scheduled tasks 仍由 Codex 官方界面管理；Skill 负责在绑定对话中调用该能力，Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
 
 手动验证：
 
 ```bash
 node "<PLUGIN_PATH>/dist/cli.mjs" status
-node "<PLUGIN_PATH>/dist/cli.mjs" weekly-collect
+node "<PLUGIN_PATH>/dist/cli.mjs" daily-collect
 ```
 
 macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTNER_REPORT_ALLOW_FILE_TOKENS=1` 才允许文件凭据回退。
@@ -94,7 +102,7 @@ macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTN
 ## 数据流
 
 ```text
-Codex Scheduled task（周五 13:00）
+Codex Scheduled task（每天北京时间 13:00，新聊天、无项目）
   -> 项目根目录与子目录 Session 扫描
   -> 过滤为完整 user question + final_answer Turn
   -> Plugin 本地逐 Session 提取结构化 Fact

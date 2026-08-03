@@ -1,7 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 
-type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+type Pending = {
+  resolve: (value: any) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+};
 
 export class CodexAppServer {
   private process: ChildProcessWithoutNullStreams | null = null;
@@ -9,29 +13,61 @@ export class CodexAppServer {
   private pending = new Map<number, Pending>();
   private stderr = "";
 
+  constructor(private readonly codexBin = process.env.CODEX_BIN ?? "codex") {}
+
   async connect() {
-    this.process = spawn("codex", ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
+    this.process = spawn(
+      this.codexBin,
+      [
+        "app-server",
+        "--stdio",
+        "--disable",
+        "plugins",
+        "--disable",
+        "remote_plugin",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
     const lines = createInterface({ input: this.process.stdout });
     lines.on("line", (line) => {
       let message: any;
-      try { message = JSON.parse(line); } catch { return; }
+      try {
+        message = JSON.parse(line);
+      } catch {
+        return;
+      }
       if (typeof message.id !== "number") return;
       const waiting = this.pending.get(message.id);
       if (!waiting) return;
       clearTimeout(waiting.timer);
       this.pending.delete(message.id);
-      if (message.error) waiting.reject(new Error(message.error.message ?? "Codex app-server request failed"));
+      if (message.error)
+        waiting.reject(
+          new Error(message.error.message ?? "Codex app-server request failed"),
+        );
       else waiting.resolve(message.result);
     });
-    this.process.stderr.on("data", (chunk: Buffer) => { this.stderr = `${this.stderr}${chunk.toString("utf8")}`.slice(-4000); });
+    this.process.stderr.on("data", (chunk: Buffer) => {
+      this.stderr = `${this.stderr}${chunk.toString("utf8")}`.slice(-4000);
+    });
     this.process.on("exit", (code) => {
       for (const waiting of this.pending.values()) {
         clearTimeout(waiting.timer);
-        waiting.reject(new Error(`Codex app-server exited (${code ?? "unknown"}): ${this.stderr}`));
+        waiting.reject(
+          new Error(
+            `Codex app-server exited (${code ?? "unknown"}): ${this.stderr}`,
+          ),
+        );
       }
       this.pending.clear();
     });
-    await this.request("initialize", { clientInfo: { name: "partner_report", title: "Partner Report", version: "0.2.0" } });
+    await this.request("initialize", {
+      clientInfo: {
+        name: "partner_report",
+        title: "Partner Report",
+        version: "0.2.0",
+      },
+    });
     this.notify("initialized", {});
   }
 
@@ -62,7 +98,7 @@ export class CodexAppServer {
         limit: 100,
         sortKey: "updated_at",
         sortDirection: "desc",
-        sourceKinds: ["cli", "vscode", "appServer"]
+        sourceKinds: ["cli", "vscode", "appServer"],
       });
       threads.push(...(result.data ?? []));
       cursor = result.nextCursor ?? null;
@@ -71,7 +107,11 @@ export class CodexAppServer {
   }
 
   async readThread(threadId: string) {
-    const result = await this.request("thread/read", { threadId, includeTurns: true }, 60_000);
+    const result = await this.request(
+      "thread/read",
+      { threadId, includeTurns: true },
+      60_000,
+    );
     return result.thread;
   }
 

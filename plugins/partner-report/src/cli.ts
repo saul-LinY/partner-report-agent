@@ -34,6 +34,7 @@ import { localCoverage } from "./coverage.js";
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
 import { containsSensitive, prepareSessionJobs } from "./scan.js";
 import { runAutomaticCycle } from "./automation.js";
+import { SCHEDULED_COLLECTION_TASK } from "./collection-config.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -149,9 +150,9 @@ async function connect() {
     pluginInstanceId: tokens.pluginInstanceId,
     partnerId: tokens.partnerId,
     deviceName,
-    schedule: "每周五 13:00（Team 时区）",
+    scheduledTask: SCHEDULED_COLLECTION_TASK,
     nextStep:
-      "在 Codex Scheduled tasks 中创建每周任务：$partner-report-sync weekly-collect",
+      "由 $partner-report-sync 立即创建或更新上面的 Codex Scheduled task。",
   });
 }
 
@@ -755,7 +756,8 @@ function help() {
   output({
     commands: [
       "connect --server <url> --binding-code <code> [--device-name <name>]",
-      "weekly-collect [--force]",
+      "daily-collect [--force]",
+      "weekly-collect [--force] (deprecated alias)",
       "run-once [--force]",
       "prepare [--force]",
       "next-local",
@@ -770,7 +772,11 @@ function help() {
 const command = process.argv[2] ?? "help";
 try {
   if (command === "connect") await connect();
-  else if (command === "run-once" || command === "weekly-collect")
+  else if (
+    command === "run-once" ||
+    command === "daily-collect" ||
+    command === "weekly-collect"
+  )
     output(await runAutomaticCycle(resolve(process.argv[1]!), flag("force")));
   else if (command === "prepare") await prepare();
   else if (command === "next-local") nextLocal();

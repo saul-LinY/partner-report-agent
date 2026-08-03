@@ -1,34 +1,30 @@
 {
   "name": "partner-report",
-  "version": "0.2.0+codex.20260803082727",
-  "description": "Collect complete Codex project-session turns every Friday and sync structured facts to Partner Report.",
+  "version": "0.2.0+codex.20260803150020",
+  "description": "Collect complete Codex project-session turns every day and sync structured facts to Partner Report.",
   "author": {
     "name": "\u6797\u6797\u52c7's team",
     "url": "https://github.com/saul615"
   },
   "homepage": "https://github.com/saul615/partner-report-agent#readme",
   "repository": "https://github.com/saul615/partner-report-agent",
-  "keywords": [
-    "codex",
-    "weekly-report",
-    "project-progress"
-  ],
+  "keywords": ["codex", "weekly-report", "project-progress"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Partner Report",
     "shortDescription": "Build a reviewed weekly Partner report",
-    "longDescription": "Every Friday at 13:00, collect only complete user-question and final-answer turns from configured project folders, extract structured facts locally, and upload them for central aggregation and two-stage web review.",
+    "longDescription": "Every day at 13:00 Beijing time, collect only complete user-question and final-answer turns from configured project folders, extract structured facts locally, and upload them for central aggregation and two-stage web review.",
     "developerName": "\u6797\u6797\u52c7's team",
     "category": "Productivity",
     "capabilities": [
       "Complete-turn session extraction",
       "Project-root and subfolder mapping",
-      "Weekly structured-fact sync",
+      "Daily structured-fact sync",
       "Binding-code data isolation"
     ],
     "defaultPrompt": [
       "Use $partner-report-sync to connect this Codex installation with an Admin binding code.",
-      "Use $partner-report-sync to run weekly-collect and return the safe summary."
+      "Use $partner-report-sync to run daily-collect and return the safe summary."
     ],
     "websiteURL": "https://github.com/saul615/partner-report-agent"
   }

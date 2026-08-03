@@ -1,4 +1,4 @@
 interface:
   display_name: "Partner Report Sync"
-  short_description: "Collect complete sessions every Friday"
-  default_prompt: "Use $partner-report-sync to run weekly-collect and return the safe collection summary."
+  short_description: "Connect and schedule daily session collection"
+  default_prompt: "Use $partner-report-sync to connect Partner Report or run daily-collect and return the safe collection summary."
