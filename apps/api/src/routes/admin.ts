@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import semver from "semver";
 import { z } from "zod";
+import {
+  centralModelIdSchema,
+  centralModelIds,
+} from "@partner-report/contracts/models";
 import { sqlClient as sql } from "@partner-report/db";
 import {
   ApiError,
@@ -35,6 +39,7 @@ const teamUpdateSchema = z.object({
     .max(24 * 60)
     .optional(),
   minimumPluginVersion: z.string().min(1).max(40).optional(),
+  centralModel: centralModelIdSchema.optional(),
 });
 
 const partnerUpdateSchema = z.object({
@@ -235,6 +240,13 @@ export async function adminRoutes(app: FastifyInstance) {
       auditEvents: auditRows,
       bindingCodes: bindingRows,
       reviewQueue: queueRows,
+      modelConfig: {
+        selectedModel: teamRows[0]?.central_model,
+        availableModels: centralModelIds,
+        gatewayConfigured: Boolean(
+          process.env.MODEL_API_KEY ?? process.env.OPENAI_API_KEY,
+        ),
+      },
     };
   });
 
@@ -335,6 +347,7 @@ export async function adminRoutes(app: FastifyInstance) {
         evidence_excerpt_enabled = coalesce(${input.evidenceExcerptEnabled ?? null}, evidence_excerpt_enabled),
         session_quiet_period_minutes = coalesce(${input.sessionQuietPeriodMinutes ?? null}, session_quiet_period_minutes),
         minimum_plugin_version = coalesce(${input.minimumPluginVersion ?? null}, minimum_plugin_version),
+        central_model = coalesce(${input.centralModel ?? null}, central_model),
         updated_at = now()
       where id = ${actor.teamId} and tenant_id = ${actor.tenantId}
       returning *

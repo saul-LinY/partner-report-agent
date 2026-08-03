@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   Ban,
+  BrainCircuit,
   Check,
   ClipboardCheck,
   Copy,
@@ -10,6 +11,7 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
+  Save,
   Server,
   TriangleAlert,
   Users,
@@ -35,6 +37,11 @@ type Overview = {
   bindingCodes: any[];
   reviewQueue: any[];
   jobs: Array<{ status: string; type: string; count: number }>;
+  modelConfig: {
+    selectedModel: string;
+    availableModels: string[];
+    gatewayConfigured: boolean;
+  };
 };
 
 const healthTone: Record<string, "success" | "warning" | "danger" | "neutral"> =
@@ -132,6 +139,8 @@ function Operations({ data }: { data: Overview }) {
           tone={modelFailures ? "danger" : undefined}
         />
       </div>
+
+      <ModelSettings config={data.modelConfig} />
 
       <section className="section-block workflow-band">
         <div className="section-heading">
@@ -273,6 +282,64 @@ function Operations({ data }: { data: Overview }) {
         )}
       </section>
     </div>
+  );
+}
+
+function ModelSettings({ config }: { config: Overview["modelConfig"] }) {
+  const queryClient = useQueryClient();
+  const [model, setModel] = useState(config.selectedModel);
+  const mutation = useMutation({
+    mutationFn: () =>
+      api("/v1/admin/team", {
+        method: "PATCH",
+        body: JSON.stringify({ centralModel: model }),
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
+  });
+  const changed = model !== config.selectedModel;
+
+  return (
+    <section className="model-config-band">
+      <div className="model-config-summary">
+        <span className="model-config-icon">
+          <BrainCircuit size={19} />
+        </span>
+        <div>
+          <small>中台生成模型</small>
+          <strong>{config.selectedModel}</strong>
+          <span>用于跨 Session 聚合和 Report 生成</span>
+        </div>
+      </div>
+      <Badge tone={config.gatewayConfigured ? "success" : "danger"}>
+        {config.gatewayConfigured ? "网关已连接" : "网关未配置"}
+      </Badge>
+      <div className="model-config-controls">
+        <label>
+          <span>选择模型</span>
+          <select
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+          >
+            {config.availableModels.map((value) => (
+              <option value={value} key={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button
+          variant="secondary"
+          icon={<Save size={16} />}
+          loading={mutation.isPending}
+          disabled={!changed}
+          onClick={() => mutation.mutate()}
+        >
+          保存
+        </Button>
+      </div>
+      {mutation.error && <ErrorBanner error={mutation.error} />}
+    </section>
   );
 }
 

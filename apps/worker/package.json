@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",
-    "dev": "node --watch --import tsx src/worker.ts",
-    "start": "node --import tsx src/worker.ts",
+    "dev": "node --env-file-if-exists=../../.env --watch --import tsx src/worker.ts",
+    "start": "node --env-file-if-exists=../../.env --import tsx src/worker.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

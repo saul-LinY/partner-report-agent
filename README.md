@@ -46,15 +46,15 @@ saul@laien.io
 123456
 ```
 
-中台模型任务需要配置：
+中台模型任务使用 OpenAI-compatible Responses API。服务机密只放在本机 `.env`：
 
 ```bash
-export OPENAI_API_KEY=...
-export OPENAI_MODEL=gpt-5.6-sol
-export OPENAI_REASONING_EFFORT=low
+MODEL_API_BASE_URL=http://127.0.0.1:11434
+MODEL_API_KEY=...
+MODEL_REASONING_EFFORT=low
 ```
 
-没有 `OPENAI_API_KEY` 时，真实 Fact 仍会保存，但中台生成任务会明确标记为 `MODEL_NOT_CONFIGURED`，不会伪造结果。
+Admin 可在运行总览中为 Team 选择允许的模型。没有 `MODEL_API_KEY` 时，真实 Fact 仍会保存，但中台生成任务会明确标记为 `MODEL_NOT_CONFIGURED`，不会伪造结果。
 
 ## 从 GitHub 安装 Plugin
 

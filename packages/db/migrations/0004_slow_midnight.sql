@@ -1,0 +1,1 @@
+ALTER TABLE "teams" ADD COLUMN "central_model" text DEFAULT 'deepseek-v4-flash:cloud' NOT NULL;

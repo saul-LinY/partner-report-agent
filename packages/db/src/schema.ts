@@ -65,6 +65,9 @@ export const teams = pgTable(
     minimumPluginVersion: text("minimum_plugin_version")
       .notNull()
       .default("0.2.0"),
+    centralModel: text("central_model")
+      .notNull()
+      .default("deepseek-v4-flash:cloud"),
     ...timestamps(),
   },
   (table) => [index("teams_tenant_idx").on(table.tenantId)],

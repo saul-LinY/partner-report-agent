@@ -1455,6 +1455,71 @@ select:focus {
   margin-top: 2px;
   font-size: 21px;
 }
+.model-config-band {
+  min-height: 82px;
+  margin-bottom: 24px;
+  padding: 14px 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto minmax(360px, auto);
+  align-items: center;
+  gap: 18px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.model-config-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.model-config-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: #edf5f2;
+  border-radius: 5px;
+}
+.model-config-summary small,
+.model-config-summary strong,
+.model-config-summary div > span,
+.model-config-controls label > span {
+  display: block;
+}
+.model-config-summary small,
+.model-config-controls label > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.model-config-summary strong {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-config-summary div > span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.model-config-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.model-config-controls label {
+  min-width: 280px;
+}
+.model-config-controls select {
+  width: 100%;
+  margin-top: 4px;
+}
+.model-config-band > .error-banner {
+  grid-column: 1 / -1;
+}
 .admin-page > .section-block {
   margin-bottom: 18px;
   padding-right: 0;
@@ -1690,6 +1755,12 @@ select:focus {
   .workflow-steps {
     grid-template-columns: 1fr 1fr;
   }
+  .model-config-band {
+    grid-template-columns: 1fr auto;
+  }
+  .model-config-controls {
+    grid-column: 1 / -1;
+  }
   .flow-step {
     border-bottom: 1px solid var(--line);
   }
@@ -1730,6 +1801,20 @@ select:focus {
 }
 
 @media (max-width: 760px) {
+  .model-config-band {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .model-config-band > .badge {
+    justify-self: start;
+  }
+  .model-config-controls {
+    grid-column: auto;
+  }
+  .model-config-controls label {
+    min-width: 0;
+    flex: 1;
+  }
   .sidebar {
     position: static;
     width: 100%;
