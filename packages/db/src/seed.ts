@@ -9,7 +9,7 @@ const email = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "saul@laien.io")
 const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? "123456";
 const displayName = process.env.BOOTSTRAP_DISPLAY_NAME ?? "Saul";
 const teamName = process.env.BOOTSTRAP_TEAM_NAME ?? "Partner Report Pilot";
-const minimumPluginVersion = process.env.PLUGIN_MIN_VERSION ?? "0.2.0";
+const minimumPluginVersion = process.env.PLUGIN_MIN_VERSION ?? "0.3.0";
 const timezone = process.env.BOOTSTRAP_TIMEZONE ?? "Asia/Shanghai";
 
 const existing = await sql<
@@ -33,7 +33,6 @@ if (existing.length === 0) {
   const identityId = randomUUID();
   const templateId = randomUUID();
   const periodId = randomUUID();
-  const projectId = randomUUID();
   const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
 
   await sql.begin(async (tx) => {
@@ -71,10 +70,6 @@ if (existing.length === 0) {
         ${endsAt.toISOString()}, ${endsAt.toISOString()},
         ${submissionDeadlineAt.toISOString()}, ${timezone}, ${templateId}
       )
-    `;
-    await tx`
-      insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids)
-      values (${projectId}, ${tenantId}, ${teamId}, 'Partner Report Agent', ${JSON.stringify(["partner-report", "report-agent"])}::jsonb, ${JSON.stringify([process.cwd()])}::jsonb, '[]'::jsonb)
     `;
   });
 
