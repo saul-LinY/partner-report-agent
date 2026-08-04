@@ -36,6 +36,20 @@
       "when": 1785747653425,
       "tag": "0004_slow_midnight",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785807411323,
+      "tag": "0005_purple_gorgon",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785815436062,
+      "tag": "0006_little_unicorn",
+      "breakpoints": true
     }
   ]
 }

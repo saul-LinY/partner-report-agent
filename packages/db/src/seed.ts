@@ -3,20 +3,27 @@ import argon2 from "argon2";
 import { closeDatabase, sqlClient as sql } from "./index.js";
 import { weeklyPeriodAt } from "./period.js";
 
-const email = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "saul@laien.io").trim().toLowerCase();
+const email = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "saul@laien.io")
+  .trim()
+  .toLowerCase();
 const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? "123456";
 const displayName = process.env.BOOTSTRAP_DISPLAY_NAME ?? "Saul";
 const teamName = process.env.BOOTSTRAP_TEAM_NAME ?? "Partner Report Pilot";
 const minimumPluginVersion = process.env.PLUGIN_MIN_VERSION ?? "0.2.0";
 const timezone = process.env.BOOTSTRAP_TIMEZONE ?? "Asia/Shanghai";
 
-const existing = await sql<{ user_id: string; tenant_id: string; team_id: string }[]>`
+const existing = await sql<
+  { user_id: string; tenant_id: string; team_id: string }[]
+>`
   select u.id as user_id, m.tenant_id, m.team_id
   from users u join memberships m on m.user_id = u.id
   where u.email = ${email} limit 1
 `;
 
-const { periodKey, startsAt, endsAt } = weeklyPeriodAt(new Date(), timezone);
+const { periodKey, startsAt, endsAt, submissionDeadlineAt } = weeklyPeriodAt(
+  new Date(),
+  timezone,
+);
 
 if (existing.length === 0) {
   const tenantId = randomUUID();
@@ -56,8 +63,14 @@ if (existing.length === 0) {
       )
     `;
     await tx`
-      insert into report_periods (id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, timezone, template_id)
-      values (${periodId}, ${tenantId}, ${teamId}, ${periodKey}, ${startsAt.toISOString()}, ${endsAt.toISOString()}, ${endsAt.toISOString()}, ${timezone}, ${templateId})
+      insert into report_periods (
+        id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+        submission_deadline_at, timezone, template_id
+      ) values (
+        ${periodId}, ${tenantId}, ${teamId}, ${periodKey}, ${startsAt.toISOString()},
+        ${endsAt.toISOString()}, ${endsAt.toISOString()},
+        ${submissionDeadlineAt.toISOString()}, ${timezone}, ${templateId}
+      )
     `;
     await tx`
       insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids)
@@ -70,11 +83,14 @@ if (existing.length === 0) {
   const account = existing[0]!;
   await sql`
     update report_periods set starts_at = ${startsAt.toISOString()}, ends_at = ${endsAt.toISOString()},
-      cutoff_at = ${endsAt.toISOString()}, timezone = ${timezone}, updated_at = now()
+      cutoff_at = ${endsAt.toISOString()}, submission_deadline_at = ${submissionDeadlineAt.toISOString()},
+      timezone = ${timezone}, updated_at = now()
     where tenant_id = ${account.tenant_id} and team_id = ${account.team_id}
       and period_key = ${periodKey} and status = 'open'
   `;
-  console.log(`Seed verified ${email}; corrected ${periodKey} for ${timezone}.`);
+  console.log(
+    `Seed verified ${email}; corrected ${periodKey} for ${timezone}.`,
+  );
 }
 
 await closeDatabase();

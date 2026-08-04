@@ -17,6 +17,27 @@ export type LocalJob = {
   error_code: string | null;
   created_at: string;
   updated_at: string;
+  run_id: string | null;
+};
+
+export type LocalCollectionRun = {
+  id: string;
+  period_key: string;
+  status: string;
+  window_starts_at: string;
+  window_ends_at: string;
+  initial_lookback: number;
+  invocation_deadline_at: string;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  continuation_count: number;
+  discovered_count: number;
+  eligible_count: number;
+  deferred_count: number;
+  excluded_count: number;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type RemoteLease = {
@@ -123,10 +144,93 @@ export function openDatabase() {
       created_at text not null,
       updated_at text not null
     );
-    pragma user_version = 2;
+    create table if not exists diagnostic_outbox (
+      id text primary key,
+      stage text not null,
+      error_code text not null,
+      occurred_at text not null,
+      retryable integer not null,
+      request_id text,
+      safe_message text not null,
+      status text not null default 'PENDING',
+      created_at text not null,
+      updated_at text not null
+    );
+    create index if not exists diagnostic_outbox_status_idx on diagnostic_outbox(status, occurred_at);
+    create table if not exists collection_runs (
+      id text primary key,
+      period_key text not null,
+      status text not null,
+      window_starts_at text not null,
+      window_ends_at text not null,
+      initial_lookback integer not null default 0,
+      invocation_deadline_at text not null,
+      continuation_count integer not null default 0,
+      discovered_count integer not null default 0,
+      eligible_count integer not null default 0,
+      deferred_count integer not null default 0,
+      excluded_count integer not null default 0,
+      completed_at text,
+      error_code text,
+      created_at text not null,
+      updated_at text not null
+    );
+    create index if not exists collection_runs_status_idx on collection_runs(status, created_at);
+    pragma user_version = 4;
   `);
+  ensureColumn(db, "local_jobs", "run_id", "text");
+  ensureColumn(db, "pending_batches", "run_id", "text");
+  ensureColumn(db, "collection_runs", "lease_owner", "text");
+  ensureColumn(db, "collection_runs", "lease_expires_at", "text");
+  ensureColumn(
+    db,
+    "collection_runs",
+    "discovered_count",
+    "integer not null default 0",
+  );
+  ensureColumn(
+    db,
+    "collection_runs",
+    "eligible_count",
+    "integer not null default 0",
+  );
+  ensureColumn(
+    db,
+    "collection_runs",
+    "deferred_count",
+    "integer not null default 0",
+  );
+  ensureColumn(
+    db,
+    "collection_runs",
+    "excluded_count",
+    "integer not null default 0",
+  );
+  ensureColumn(db, "collection_runs", "completed_at", "text");
   chmodSync(path, 0o600);
   return db;
+}
+
+function ensureColumn(
+  db: DatabaseSync,
+  table: string,
+  column: string,
+  definition: string,
+) {
+  const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((entry) => entry.name === column)) {
+    db.exec(`alter table ${table} add column ${column} ${definition}`);
+  }
+}
+
+export function activeCollectionRun(db: DatabaseSync) {
+  return db
+    .prepare(
+      "select * from collection_runs where status in ('STARTED', 'RUNNING', 'CONTINUATION_PENDING') order by created_at asc limit 1",
+    )
+    .get() as LocalCollectionRun | undefined;
 }
 
 export function setState(db: DatabaseSync, key: string, value: string) {
@@ -234,12 +338,24 @@ export function cleanupLocalData(
       "delete from remote_leases where status in ('COMPLETED', 'FAILED', 'EXPIRED') and updated_at < ?",
     )
     .run(historyCutoff);
+  const diagnostics = db
+    .prepare(
+      "delete from diagnostic_outbox where status = 'UPLOADED' and updated_at < ?",
+    )
+    .run(historyCutoff);
+  const collectionRuns = db
+    .prepare(
+      "delete from collection_runs where status in ('COMPLETED', 'FAILED') and updated_at < ?",
+    )
+    .run(historyCutoff);
   db.exec("pragma optimize;");
   return {
     hooks: Number(hooks.changes),
     localJobs: Number(localJobs.changes),
     batches: Number(batches.changes),
     leases: Number(leases.changes),
+    diagnostics: Number(diagnostics.changes),
+    collectionRuns: Number(collectionRuns.changes),
     historyCutoff,
   };
 }

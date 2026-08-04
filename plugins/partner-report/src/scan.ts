@@ -1,15 +1,26 @@
 import { createHash, randomUUID } from "node:crypto";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { PluginConfig } from "./config.js";
 import { CodexAppServer } from "./app-server.js";
-import { setState } from "./database.js";
+import { getState, setState } from "./database.js";
 
 type ProjectPolicy = {
   id: string;
   name: string;
   aliases: string[];
   allowed_paths: string[];
+  external_ids?: string[];
 };
 type ServerPolicy = {
   team: {
@@ -49,6 +60,44 @@ export function containsSensitive(value: unknown): boolean {
     pattern.lastIndex = 0;
     return pattern.test(text);
   });
+}
+
+export function isPluginSystemThread(summary: Record<string, unknown>) {
+  const name = [summary.name, summary.title]
+    .find((value) => typeof value === "string")
+    ?.trim()
+    .toLowerCase();
+  if (!name) return false;
+  return (
+    name === "partner report daily collection" ||
+    name === "partner report collection continuation" ||
+    name === "配置插件定时任务" ||
+    name === "连接数据中台与绑定码" ||
+    name === "连接设备到本地服务" ||
+    name === "connect partner report" ||
+    name.startsWith("查看已安装插件") ||
+    name.startsWith("连接数据中台与 partner-report")
+  );
+}
+
+export function isPluginAdministrationSession(turns: ProgressTurn[]) {
+  const prompts = turns
+    .map((turn) => turn.userPrompt?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (prompts.length === 0) return false;
+  const allText = prompts.join("\n").toLowerCase();
+  const mentionsPartnerReport = /partner[ -]report/.test(allText);
+  const onlyDirectSkillInvocations = prompts.every(
+    (prompt) =>
+      prompt.replace(/[`\s]/g, "").toLowerCase() === "$partner-report-sync",
+  );
+  const administration =
+    /(安装|卸载|启用|禁用|绑定|连接|配置|定时任务|验证码|授权码|换绑|已安装|有哪些插件|查看.*插件|install|uninstall|enable|disable|bind|connect|configure|scheduled task)/i;
+  return (
+    onlyDirectSkillInvocations ||
+    (mentionsPartnerReport &&
+      prompts.every((prompt) => administration.test(prompt)))
+  );
 }
 
 function withinPath(candidate: string, root: string) {
@@ -105,6 +154,7 @@ function safeText(value: string, maxLength = 16_000) {
 export type ProgressTurn = {
   id: string;
   status: string | null;
+  occurredAt: string | null;
   userPrompt: string | null;
   assistantFinal: string | null;
 };
@@ -134,6 +184,12 @@ export function normalizeProgressTurns(turns: any[]): ProgressTurn[] {
       return {
         id: String(turn.id),
         status: typeof turn.status === "string" ? turn.status : null,
+        occurredAt:
+          (turn.completedAt ?? turn.updatedAt ?? turn.createdAt)
+            ? new Date(
+                timestamp(turn.completedAt ?? turn.updatedAt ?? turn.createdAt),
+              ).toISOString()
+            : null,
         userPrompt: userPrompt || null,
         assistantFinal: assistantFinal || null,
       };
@@ -172,8 +228,60 @@ export function selectIncrementalTurns(
   };
 }
 
+export function selectTurnsForCollectionRun(
+  turns: ProgressTurn[],
+  lastTurnId: string | null | undefined,
+  options: {
+    force?: boolean;
+    windowStartsAt?: string;
+    windowEndsAt?: string;
+    fallbackOccurredAt?: string;
+  } = {},
+) {
+  const incremental = selectIncrementalTurns(turns, lastTurnId, options.force);
+  const candidates =
+    !lastTurnId && options.windowStartsAt && options.windowEndsAt
+      ? incremental.turns.filter((turn) => {
+          const occurredAt = new Date(
+            turn.occurredAt ?? options.fallbackOccurredAt ?? 0,
+          ).getTime();
+          return (
+            Number.isFinite(occurredAt) &&
+            occurredAt >= new Date(options.windowStartsAt!).getTime() &&
+            occurredAt <= new Date(options.windowEndsAt!).getTime()
+          );
+        })
+      : incremental.turns;
+  return {
+    ...incremental,
+    turns: candidates.filter(isCompleteTurn),
+    hasIncompleteTurn: candidates.some((turn) => !isCompleteTurn(turn)),
+  };
+}
+
 function hash(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function discoveredRoot(cwd: string) {
+  let current = resolve(cwd);
+  if (current === resolve(homedir()) || current === dirname(current))
+    return null;
+  if (!existsSync(current)) return current;
+  while (current !== dirname(current)) {
+    if (existsSync(join(current, ".git"))) return current;
+    current = dirname(current);
+    if (current === resolve(homedir())) break;
+  }
+  return resolve(cwd);
+}
+
+function pathIdentity(root: string) {
+  const normalizedRoot = resolve(root);
+  return {
+    rootName: basename(normalizedRoot).slice(0, 120),
+    rootFingerprint: hash({ scope: "project-root", root: normalizedRoot }),
+  };
 }
 
 function inventory(
@@ -195,7 +303,17 @@ function inventory(
   ).run(sessionId, cwd, projectId, status, reasonCode, now, now);
 }
 
-export function mappedProject(cwd: string, projects: ProjectPolicy[]) {
+export function mappedProject(cwd: string | null, projects: ProjectPolicy[]) {
+  if (!cwd) {
+    return {
+      id: null,
+      name: "独立工作",
+      aliases: [],
+      matchMethod: "unassigned" as const,
+      rootFingerprint: hash({ scope: "unassigned", cwd: null }),
+      rootName: undefined,
+    };
+  }
   const matches = projects.flatMap((project) =>
     project.allowed_paths
       .filter((root) => isAbsolute(root) && withinPath(cwd, root))
@@ -208,22 +326,53 @@ export function mappedProject(cwd: string, projects: ProjectPolicy[]) {
             resolve(cwd) === normalizedRoot
               ? ("exact_root" as const)
               : ("descendant_path" as const),
-          rootFingerprint: hash({
-            projectId: project.id,
-            root: normalizedRoot,
-          }),
+          ...pathIdentity(normalizedRoot),
         };
       }),
   );
   matches.sort((left, right) => right.rootLength - left.rootLength);
   const match = matches[0];
-  return match
-    ? {
-        ...match.project,
-        matchMethod: match.matchMethod,
-        rootFingerprint: match.rootFingerprint,
-      }
-    : null;
+  if (match) {
+    return {
+      ...match.project,
+      matchMethod: match.matchMethod,
+      rootName: match.rootName,
+      rootFingerprint: match.rootFingerprint,
+    };
+  }
+  const root = discoveredRoot(cwd);
+  if (!root) {
+    return {
+      id: null,
+      name: "独立工作",
+      aliases: [],
+      matchMethod: "unassigned" as const,
+      rootFingerprint: hash({ scope: "unassigned", cwd: resolve(cwd) }),
+      rootName: undefined,
+    };
+  }
+  const identity = pathIdentity(root);
+  const externalId = `path-sha256:${identity.rootFingerprint}`;
+  const discovered = projects.find((project) =>
+    (project.external_ids ?? []).includes(externalId),
+  );
+  if (discovered) {
+    return {
+      ...discovered,
+      matchMethod:
+        resolve(cwd) === root
+          ? ("exact_root" as const)
+          : ("descendant_path" as const),
+      ...identity,
+    };
+  }
+  return {
+    id: null,
+    name: identity.rootName,
+    aliases: [],
+    matchMethod: "path_discovered" as const,
+    ...identity,
+  };
 }
 
 export async function prepareSessionJobs(
@@ -231,12 +380,19 @@ export async function prepareSessionJobs(
   config: PluginConfig,
   policy: ServerPolicy,
   force = false,
+  run?: {
+    id: string;
+    windowStartsAt: string;
+    windowEndsAt: string;
+    initialLookback: boolean;
+  },
 ) {
   if (!policy.currentPeriod)
     throw new Error("服务端没有开放的 Report Period。");
   const server = new CodexAppServer();
   const stats = {
     discovered: 0,
+    eligible: 0,
     excluded: 0,
     outOfPeriod: 0,
     deferred: 0,
@@ -257,6 +413,13 @@ export async function prepareSessionJobs(
     const threads = await server.listThreads();
     const periodStart = new Date(policy.currentPeriod.starts_at).getTime();
     const periodEnd = new Date(policy.currentPeriod.ends_at).getTime();
+    const windowStart = run
+      ? new Date(run.windowStartsAt).getTime()
+      : periodStart;
+    const windowEnd = run ? new Date(run.windowEndsAt).getTime() : periodEnd;
+    const systemSessionIds = new Set<string>(
+      JSON.parse(getState(db, "system_session_ids") ?? "[]"),
+    );
 
     for (const summary of threads) {
       const sessionId = String(summary.id);
@@ -264,9 +427,15 @@ export async function prepareSessionJobs(
       stats.discovered += 1;
 
       if (
-        config.excludedSessionIds.includes(sessionId) ||
-        sessionId === process.env.CODEX_THREAD_ID
+        (config.excludedSessionIds ?? []).includes(sessionId) ||
+        systemSessionIds.has(sessionId) ||
+        sessionId === process.env.CODEX_THREAD_ID ||
+        isPluginSystemThread(summary)
       ) {
+        db.prepare(
+          `update local_jobs set status = 'CANCELLED', error_code = 'SYSTEM_SESSION_EXCLUDED', updated_at = ?
+           where session_id = ? and status not in ('SYNCED', 'CANCELLED')`,
+        ).run(new Date().toISOString(), sessionId);
         inventory(
           db,
           sessionId,
@@ -278,31 +447,29 @@ export async function prepareSessionJobs(
         stats.excluded += 1;
         continue;
       }
-      if (cwd && config.excludedPaths.some((path) => withinPath(cwd, path))) {
+      if (
+        cwd &&
+        (config.excludedPaths ?? []).some((path) => withinPath(cwd, path))
+      ) {
         inventory(db, sessionId, cwd, null, "excluded", "PATH_EXCLUDED");
         stats.excluded += 1;
         continue;
       }
-      const project = cwd ? mappedProject(cwd, policy.projects) : null;
-      if (!project) {
-        inventory(
-          db,
-          sessionId,
-          cwd || null,
-          null,
-          "excluded",
-          "PATH_NOT_ALLOWED",
-        );
-        stats.excluded += 1;
-        continue;
-      }
+      const resolvedProject = mappedProject(cwd || null, policy.projects);
       const createdAt = timestamp(summary.createdAt);
       const updatedAt = timestamp(summary.updatedAt);
       if (
-        (createdAt && createdAt > periodEnd) ||
-        (updatedAt && updatedAt < periodStart)
+        (createdAt && createdAt > windowEnd) ||
+        (run?.initialLookback && updatedAt && updatedAt < windowStart)
       ) {
-        inventory(db, sessionId, cwd, project.id, "excluded", "OUTSIDE_PERIOD");
+        inventory(
+          db,
+          sessionId,
+          cwd,
+          resolvedProject.id,
+          "excluded",
+          "OUTSIDE_COLLECTION_WINDOW",
+        );
         stats.outOfPeriod += 1;
         continue;
       }
@@ -338,7 +505,7 @@ export async function prepareSessionJobs(
           db,
           sessionId,
           cwd,
-          project.id,
+          resolvedProject.id,
           "pending_extract",
           "LOCAL_JOB_EXISTS",
         );
@@ -354,7 +521,7 @@ export async function prepareSessionJobs(
           db,
           sessionId,
           cwd,
-          project.id,
+          resolvedProject.id,
           "failed_read",
           "THREAD_READ_FAILED",
         );
@@ -364,28 +531,60 @@ export async function prepareSessionJobs(
       const normalized = normalizeProgressTurns(
         Array.isArray(thread.turns) ? thread.turns : [],
       );
+      if (isPluginAdministrationSession(normalized)) {
+        db.prepare(
+          `update local_jobs set status = 'CANCELLED', error_code = 'SYSTEM_SESSION_EXCLUDED', updated_at = ?
+           where session_id = ? and status not in ('SYNCED', 'CANCELLED')`,
+        ).run(new Date().toISOString(), sessionId);
+        inventory(
+          db,
+          sessionId,
+          cwd,
+          resolvedProject.id,
+          "excluded",
+          "SYSTEM_SESSION_EXCLUDED",
+        );
+        stats.excluded += 1;
+        continue;
+      }
       if (normalized.length === 0) {
-        inventory(db, sessionId, cwd, project.id, "excluded", "NO_TURNS");
+        inventory(
+          db,
+          sessionId,
+          cwd,
+          resolvedProject.id,
+          "excluded",
+          "NO_TURNS",
+        );
         stats.excluded += 1;
         continue;
       }
       const cursor = cursorForSession.get(sessionId) as
         { last_turn_id: string; source_revision: number } | undefined;
-      const incremental = selectIncrementalTurns(
+      const incremental = selectTurnsForCollectionRun(
         normalized,
         cursor?.last_turn_id,
-        force,
+        {
+          force,
+          ...(run
+            ? {
+                windowStartsAt: run.windowStartsAt,
+                windowEndsAt: run.windowEndsAt,
+              }
+            : {}),
+          fallbackOccurredAt: new Date(updatedAt || Date.now()).toISOString(),
+        },
       );
       if (cursor && !force && !incremental.cursorMatched)
         stats.warnings.push(`CURSOR_RESET:${sessionId}`);
-      const newTurns = incremental.turns.filter(isCompleteTurn);
+      const newTurns = incremental.turns;
       if (newTurns.length === 0) {
-        const hasIncompleteTurn = incremental.turns.length > 0;
+        const hasIncompleteTurn = incremental.hasIncompleteTurn;
         inventory(
           db,
           sessionId,
           cwd,
-          project.id,
+          resolvedProject.id,
           hasIncompleteTurn ? "awaiting_complete_turn" : "synced",
           hasIncompleteTurn ? "INCOMPLETE_TURN_SKIPPED" : null,
         );
@@ -405,6 +604,10 @@ export async function prepareSessionJobs(
       const fromTurnId = newTurns[0]!.id;
       const toTurnId = newTurns.at(-1)!.id;
       const observedAt = new Date().toISOString();
+      const sourceOccurredAt =
+        newTurns.at(-1)?.occurredAt ??
+        new Date(updatedAt || Date.now()).toISOString();
+      stats.eligible += 1;
       const input = {
         schemaVersion: "1.0",
         task: "EXTRACT_SESSION_FACTS",
@@ -413,17 +616,21 @@ export async function prepareSessionJobs(
           name: thread.name ?? summary.name ?? null,
           cwd,
           project: {
-            id: project.id,
-            name: project.name,
-            aliases: project.aliases,
-            matchMethod: project.matchMethod,
-            rootFingerprint: project.rootFingerprint,
+            id: resolvedProject.id,
+            name: resolvedProject.name,
+            aliases: resolvedProject.aliases,
+            matchMethod: resolvedProject.matchMethod,
+            rootFingerprint: resolvedProject.rootFingerprint,
+            ...(resolvedProject.rootName
+              ? { rootName: resolvedProject.rootName }
+              : {}),
           },
           sourceRevision,
           sourceHash,
           fromTurnId,
           toTurnId,
           observedAt,
+          sourceOccurredAt,
           incremental: {
             mode: incremental.mode,
             previousTurnId: cursor?.last_turn_id ?? null,
@@ -449,9 +656,12 @@ export async function prepareSessionJobs(
         outputRequirements: {
           status: "extracted",
           project: {
-            id: project.id,
-            matchMethod: project.matchMethod,
-            rootFingerprint: project.rootFingerprint,
+            id: resolvedProject.id,
+            matchMethod: resolvedProject.matchMethod,
+            rootFingerprint: resolvedProject.rootFingerprint,
+            ...(resolvedProject.rootName
+              ? { rootName: resolvedProject.rootName }
+              : {}),
           },
           factOrigin: "ai_extracted",
           production: {
@@ -467,8 +677,8 @@ export async function prepareSessionJobs(
         `
         insert into local_jobs (
           id, type, status, session_id, source_revision, from_turn_id, to_turn_id,
-          source_hash, input_json, created_at, updated_at
-        ) values (?, 'EXTRACT_SESSION_FACTS', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?)
+          source_hash, input_json, created_at, updated_at, run_id
+        ) values (?, 'EXTRACT_SESSION_FACTS', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         jobId,
@@ -480,11 +690,19 @@ export async function prepareSessionJobs(
         JSON.stringify(input),
         observedAt,
         observedAt,
+        run?.id ?? null,
       );
       db.prepare(
         "update session_activity set latest_turn_id = ?, processing_state = 'PENDING_EXTRACT', updated_at = ? where session_id = ?",
       ).run(toTurnId, observedAt, sessionId);
-      inventory(db, sessionId, cwd, project.id, "pending_extract", null);
+      inventory(
+        db,
+        sessionId,
+        cwd,
+        resolvedProject.id,
+        "pending_extract",
+        null,
+      );
       stats.queued += 1;
     }
     setState(db, "hook_missed_at_scan", String(stats.hookMissed));

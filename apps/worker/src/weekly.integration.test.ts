@@ -31,11 +31,13 @@ suite("weekly report scheduling", () => {
       `;
       await tx`
         insert into report_periods (
-          id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, timezone
+          id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+          submission_deadline_at, timezone
         ) values (
           ${fixture.period}, ${fixture.tenant}, ${fixture.team}, '2026-W31',
-          '2026-07-31T05:00:00.000Z', '2026-08-07T05:00:00.000Z',
-          '2026-08-07T05:00:00.000Z', 'Asia/Shanghai'
+          '2026-07-31T06:00:00.000Z', '2026-08-07T06:00:00.000Z',
+          '2026-08-07T06:00:00.000Z', '2026-08-10T02:00:00.000Z',
+          'Asia/Shanghai'
         )
       `;
       await tx`
@@ -55,6 +57,7 @@ suite("weekly report scheduling", () => {
     await sql.begin(async (tx) => {
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
       await tx`delete from reviews where tenant_id = ${fixture.tenant}`;
+      await tx`delete from fact_snapshots where tenant_id = ${fixture.tenant}`;
       await tx`delete from session_facts where id = ${fixture.fact}`;
       await tx`delete from report_periods where team_id = ${fixture.team}`;
       await tx`delete from partners where id = ${fixture.partner}`;
@@ -65,22 +68,34 @@ suite("weekly report scheduling", () => {
 
   it("waits until cutoff and then enqueues one aggregation exactly once", async () => {
     const before = await scheduleDueWeeklyReports(
-      new Date("2026-08-07T04:59:00.000Z"),
+      new Date("2026-08-07T05:59:00.000Z"),
       fixture.period,
     );
-    expect(before).toEqual({ closedPeriods: 0, aggregationJobs: 0 });
+    expect(before).toEqual({
+      closedPeriods: 0,
+      aggregationJobs: 0,
+      teamReportJobs: 0,
+    });
 
     const first = await scheduleDueWeeklyReports(
-      new Date("2026-08-07T05:00:00.000Z"),
+      new Date("2026-08-07T06:00:00.000Z"),
       fixture.period,
     );
-    expect(first).toEqual({ closedPeriods: 1, aggregationJobs: 1 });
+    expect(first).toEqual({
+      closedPeriods: 1,
+      aggregationJobs: 1,
+      teamReportJobs: 0,
+    });
 
     const repeated = await scheduleDueWeeklyReports(
-      new Date("2026-08-07T05:01:00.000Z"),
+      new Date("2026-08-07T06:01:00.000Z"),
       fixture.period,
     );
-    expect(repeated).toEqual({ closedPeriods: 0, aggregationJobs: 0 });
+    expect(repeated).toEqual({
+      closedPeriods: 0,
+      aggregationJobs: 0,
+      teamReportJobs: 0,
+    });
 
     const [periods, reviews, jobs] = await Promise.all([
       sql<any[]>`
@@ -94,7 +109,7 @@ suite("weekly report scheduling", () => {
       `,
     ]);
     expect(periods).toEqual([
-      { period_key: "2026-W31", status: "closed" },
+      { period_key: "2026-W31", status: "facts_frozen" },
       { period_key: "2026-W32", status: "open" },
     ]);
     expect(reviews).toEqual([{ state: "PENDING" }]);

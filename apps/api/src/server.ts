@@ -12,6 +12,7 @@ import { factRoutes } from "./routes/facts.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { pluginRoutes } from "./routes/plugin.js";
 import { reportRoutes } from "./routes/reports.js";
+import { teamReportRoutes } from "./routes/team-reports.js";
 import { reviewRoutes } from "./routes/reviews.js";
 
 export async function buildApp(options: { logger?: boolean } = {}) {
@@ -102,6 +103,7 @@ export async function buildApp(options: { logger?: boolean } = {}) {
   await app.register(jobRoutes);
   await app.register(reviewRoutes);
   await app.register(reportRoutes);
+  await app.register(teamReportRoutes);
   return app;
 }
 

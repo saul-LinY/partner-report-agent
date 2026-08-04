@@ -4,6 +4,7 @@ import {
   Activity,
   Ban,
   BrainCircuit,
+  CalendarClock,
   Check,
   ClipboardCheck,
   Copy,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { api } from "./api.js";
+import { selectCurrentOpenPeriod } from "./period-selection.js";
 import {
   Badge,
   Button,
@@ -44,13 +46,30 @@ type Overview = {
   };
 };
 
-const healthTone: Record<string, "success" | "warning" | "danger" | "neutral"> =
+const statusTone: Record<string, "success" | "warning" | "danger" | "neutral"> =
   {
     healthy: "success",
-    delayed: "warning",
+    verified: "success",
+    pending: "warning",
+    waiting_first_run: "warning",
+    abnormal: "danger",
+    failed: "danger",
     offline: "danger",
     blocked: "neutral",
+    expired: "neutral",
   };
+
+const statusLabel: Record<string, string> = {
+  verified: "连接正常",
+  pending: "待验证",
+  failed: "连接失败",
+  expired: "连接过期",
+  waiting_first_run: "等待首次采集",
+  healthy: "采集健康",
+  abnormal: "采集异常",
+  offline: "采集离线",
+  blocked: "已阻断",
+};
 
 export function AdminConsole({ section }: { section: Section }) {
   const query = useQuery({
@@ -90,7 +109,7 @@ function Operations({ data }: { data: Overview }) {
   const modelFailures = data.jobs
     .filter((job) => job.status === "FAILED" || job.status === "RETRY_WAIT")
     .reduce((sum, job) => sum + job.count, 0);
-  const openPeriod = data.periods.find((period) => period.status === "open");
+  const openPeriod = selectCurrentOpenPeriod(data.periods);
   const openReview = (item: any, kind: "review" | "report") => {
     window.localStorage.setItem(
       "partner-report-simulated-partner",
@@ -111,7 +130,7 @@ function Operations({ data }: { data: Overview }) {
           <h1>本周运行总览</h1>
           <p>
             {openPeriod
-              ? `${openPeriod.period_key} · 周五 13:00 截止`
+              ? `${openPeriod.period_key} · ${formatFullTime(openPeriod.cutoff_at)} Fact 截止`
               : "暂无开放周期"}
           </p>
         </div>
@@ -119,18 +138,18 @@ function Operations({ data }: { data: Overview }) {
       <div className="ops-metrics">
         <Metric
           icon={<Server size={18} />}
-          label="正常插件"
-          value={`${activePlugins.filter((p) => p.health === "healthy").length}/${activePlugins.length}`}
+          label="连接正常"
+          value={`${activePlugins.filter((p) => p.connectivityStatus === "verified").length}/${activePlugins.length}`}
+        />
+        <Metric
+          icon={<Activity size={18} />}
+          label="采集健康"
+          value={`${activePlugins.filter((p) => p.runStatus === "healthy").length}/${activePlugins.length}`}
         />
         <Metric
           icon={<ClipboardCheck size={18} />}
           label="待人工审核"
           value={actionable.length}
-        />
-        <Metric
-          icon={<Users size={18} />}
-          label="Partner"
-          value={data.partners.filter((p) => p.status === "active").length}
         />
         <Metric
           icon={<TriangleAlert size={18} />}
@@ -141,6 +160,7 @@ function Operations({ data }: { data: Overview }) {
       </div>
 
       <ModelSettings config={data.modelConfig} />
+      <ScheduleSettings team={data.team} openPeriod={openPeriod} />
 
       <section className="section-block workflow-band">
         <div className="section-heading">
@@ -150,7 +170,11 @@ function Operations({ data }: { data: Overview }) {
           </div>
         </div>
         <div className="workflow-steps">
-          <FlowStep index="1" title="周五采集" detail="完整 Turn 上传 Fact" />
+          <FlowStep
+            index="1"
+            title="增量采集"
+            detail="每次 Run 清空完整 Turn"
+          />
           <FlowStep
             index="2"
             title="中台聚合"
@@ -162,7 +186,8 @@ function Operations({ data }: { data: Overview }) {
             detail="Admin 模拟 Partner 确认"
           />
           <FlowStep index="4" title="生成 Report" detail="中台按确认快照生成" />
-          <FlowStep index="5" title="第二次审核" detail="确认并锁定版本" />
+          <FlowStep index="5" title="个人归档" detail="确认并锁定个人版本" />
+          <FlowStep index="6" title="Team Report" detail="团队审核后锁定归档" />
         </div>
       </section>
 
@@ -242,7 +267,7 @@ function Operations({ data }: { data: Overview }) {
         <div className="section-heading">
           <div>
             <h2>Plugin 状态</h2>
-            <p>按每周采集结果判断，不依赖高频心跳</p>
+            <p>连接验证与真实采集结果独立判断</p>
           </div>
         </div>
         {data.plugins.length === 0 ? (
@@ -251,14 +276,21 @@ function Operations({ data }: { data: Overview }) {
           <div className="plugin-table">
             {data.plugins.map((plugin) => (
               <div className="plugin-status-row" key={plugin.id}>
-                <span className={`health-dot health-${plugin.health}`} />
+                <span className={`health-dot health-${plugin.runStatus}`} />
                 <div>
                   <strong>{plugin.partner_name}</strong>
                   <span>
                     {plugin.device_name} · v{plugin.version}
                   </span>
                 </div>
-                <Badge tone={healthTone[plugin.health]}>{plugin.health}</Badge>
+                <div className="plugin-state-badges">
+                  <Badge tone={statusTone[plugin.connectivityStatus]}>
+                    {statusLabel[plugin.connectivityStatus]}
+                  </Badge>
+                  <Badge tone={statusTone[plugin.runStatus]}>
+                    {statusLabel[plugin.runStatus]}
+                  </Badge>
+                </div>
                 <div>
                   <span className="cell-label">最近采集</span>
                   <strong>
@@ -273,8 +305,27 @@ function Operations({ data }: { data: Overview }) {
                   </strong>
                 </div>
                 <div>
-                  <span className="cell-label">周期</span>
-                  <strong>{plugin.last_collection_period_key ?? "--"}</strong>
+                  <span className="cell-label">当前 Run / 待处理</span>
+                  <strong>
+                    {collectionRunLabel(plugin.current_run_status)} /{" "}
+                    {plugin.current_run_pending_local_jobs ?? 0}
+                  </strong>
+                  <span>
+                    已同步 {plugin.current_run_synced_session_count ?? 0}{" "}
+                    Session
+                  </span>
+                </div>
+                <div>
+                  <span className="cell-label">最近诊断</span>
+                  <strong>
+                    {plugin.last_diagnostic_error_code ??
+                      plugin.last_connectivity_error_code ??
+                      "--"}
+                  </strong>
+                  <span>
+                    {plugin.last_diagnostic_message ??
+                      formatTime(plugin.connectivity_verified_at)}
+                  </span>
                 </div>
               </div>
             ))}
@@ -282,6 +333,198 @@ function Operations({ data }: { data: Overview }) {
         )}
       </section>
     </div>
+  );
+}
+
+function ScheduleSettings({
+  team,
+  openPeriod,
+}: {
+  team: any;
+  openPeriod: any;
+}) {
+  const queryClient = useQueryClient();
+  const defaults = team.period_rule ?? {};
+  const [timezone, setTimezone] = useState(team.timezone ?? "Asia/Shanghai");
+  const [cutoffDay, setCutoffDay] = useState(
+    String(defaults.factCutoffWeekday ?? 5),
+  );
+  const [cutoffTime, setCutoffTime] = useState(
+    defaults.factCutoffTime ?? "14:00",
+  );
+  const [deadlineDay, setDeadlineDay] = useState(
+    String(defaults.reportDeadlineWeekday ?? 1),
+  );
+  const [deadlineTime, setDeadlineTime] = useState(
+    defaults.reportDeadlineTime ?? "10:00",
+  );
+  const [grace, setGrace] = useState(
+    String(team.collection_grace_minutes ?? 120),
+  );
+  const [currentCutoff, setCurrentCutoff] = useState(
+    toLocalInput(openPeriod?.cutoff_at),
+  );
+  const [currentDeadline, setCurrentDeadline] = useState(
+    toLocalInput(openPeriod?.submission_deadline_at),
+  );
+  const saveDefaults = useMutation({
+    mutationFn: () =>
+      api("/v1/admin/team", {
+        method: "PATCH",
+        body: JSON.stringify({
+          timezone,
+          collectionGraceMinutes: Number(grace),
+          periodRule: {
+            frequency: "weekly",
+            weekStartsOn: 1,
+            factCutoffWeekday: Number(cutoffDay),
+            factCutoffTime: cutoffTime,
+            reportDeadlineWeekday: Number(deadlineDay),
+            reportDeadlineTime: deadlineTime,
+          },
+        }),
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
+  });
+  const saveCurrent = useMutation({
+    mutationFn: () =>
+      api(`/v1/admin/report-periods/${openPeriod.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: openPeriod.status,
+          cutoffAt: new Date(currentCutoff).toISOString(),
+          submissionDeadlineAt: new Date(currentDeadline).toISOString(),
+        }),
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
+  });
+  return (
+    <section className="schedule-settings-band">
+      <div className="section-heading">
+        <div>
+          <h2>周期与截止时间</h2>
+          <p>默认规则用于新周期；当前周期可单独覆盖</p>
+        </div>
+        <CalendarClock size={19} />
+      </div>
+      <div className="schedule-settings-grid">
+        <Field label="Team 时区">
+          <input
+            value={timezone}
+            onChange={(event) => setTimezone(event.target.value)}
+          />
+        </Field>
+        <Field label="Fact 截止星期">
+          <select
+            value={cutoffDay}
+            onChange={(event) => setCutoffDay(event.target.value)}
+          >
+            {weekdayOptions()}
+          </select>
+        </Field>
+        <Field label="Fact 截止时间">
+          <input
+            type="time"
+            value={cutoffTime}
+            onChange={(event) => setCutoffTime(event.target.value)}
+          />
+        </Field>
+        <Field label="采集宽限（分钟）">
+          <input
+            type="number"
+            min="0"
+            max="1440"
+            value={grace}
+            onChange={(event) => setGrace(event.target.value)}
+          />
+        </Field>
+        <Field label="个人报告截止星期">
+          <select
+            value={deadlineDay}
+            onChange={(event) => setDeadlineDay(event.target.value)}
+          >
+            {weekdayOptions()}
+          </select>
+        </Field>
+        <Field label="个人报告截止时间">
+          <input
+            type="time"
+            value={deadlineTime}
+            onChange={(event) => setDeadlineTime(event.target.value)}
+          />
+        </Field>
+        <Button
+          variant="secondary"
+          icon={<Save size={16} />}
+          loading={saveDefaults.isPending}
+          onClick={() => saveDefaults.mutate()}
+        >
+          保存默认规则
+        </Button>
+      </div>
+      {openPeriod && (
+        <div className="current-period-override">
+          <strong>{openPeriod.period_key} 当前周期覆盖</strong>
+          <Field label="Fact 截止">
+            <input
+              type="datetime-local"
+              value={currentCutoff}
+              onChange={(event) => setCurrentCutoff(event.target.value)}
+            />
+          </Field>
+          <Field label="个人报告截止">
+            <input
+              type="datetime-local"
+              value={currentDeadline}
+              onChange={(event) => setCurrentDeadline(event.target.value)}
+            />
+          </Field>
+          <Button
+            variant="secondary"
+            icon={<Save size={16} />}
+            loading={saveCurrent.isPending}
+            disabled={!currentCutoff || !currentDeadline}
+            onClick={() => saveCurrent.mutate()}
+          >
+            保存本期覆盖
+          </Button>
+        </div>
+      )}
+      <ErrorBanner error={saveDefaults.error ?? saveCurrent.error} />
+    </section>
+  );
+}
+
+function weekdayOptions() {
+  return ["周一", "周二", "周三", "周四", "周五", "周六", "周日"].map(
+    (label, index) => (
+      <option value={index + 1} key={label}>
+        {label}
+      </option>
+    ),
+  );
+}
+
+function toLocalInput(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function collectionRunLabel(value: string | null) {
+  return (
+    (
+      {
+        started: "已开始",
+        running: "进行中",
+        continuation_pending: "续跑中",
+        completed: "已完成",
+        failed: "失败",
+      } as Record<string, string>
+    )[value?.toLowerCase() ?? ""] ?? "无"
   );
 }
 
@@ -607,6 +850,18 @@ function formatTime(value: string | null) {
         minute: "2-digit",
       })
     : "从未";
+}
+
+function formatFullTime(value: string | null) {
+  return value
+    ? new Date(value).toLocaleString("zh-CN", {
+        weekday: "short",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "未设置";
 }
 
 function CreatePartnerModal({

@@ -49,7 +49,14 @@ export const teams = pgTable(
     name: text("name").notNull(),
     timezone: text("timezone").notNull().default("Asia/Shanghai"),
     reportType: text("report_type").notNull().default("weekly"),
-    periodRule: jsonb("period_rule").notNull().default({ weekStartsOn: 1 }),
+    periodRule: jsonb("period_rule").notNull().default({
+      frequency: "weekly",
+      weekStartsOn: 1,
+      factCutoffWeekday: 5,
+      factCutoffTime: "14:00",
+      reportDeadlineWeekday: 1,
+      reportDeadlineTime: "10:00",
+    }),
     evidenceExcerptEnabled: boolean("evidence_excerpt_enabled")
       .notNull()
       .default(false),
@@ -253,6 +260,10 @@ export const reportPeriods = pgTable(
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     cutoffAt: timestamp("cutoff_at", { withTimezone: true }).notNull(),
+    submissionDeadlineAt: timestamp("submission_deadline_at", {
+      withTimezone: true,
+    }).notNull(),
+    factsFrozenAt: timestamp("facts_frozen_at", { withTimezone: true }),
     timezone: text("timezone").notNull(),
     status: text("status").notNull().default("open"),
     templateId: uuid("template_id").references(() => reportTemplates.id),
@@ -338,10 +349,72 @@ export const pluginInstances = pgTable(
     lastCollectionFactCount: integer("last_collection_fact_count")
       .notNull()
       .default(0),
+    connectivityStatus: text("connectivity_status")
+      .notNull()
+      .default("pending"),
+    connectivityVerifiedAt: timestamp("connectivity_verified_at", {
+      withTimezone: true,
+    }),
+    lastConnectivityAttemptAt: timestamp("last_connectivity_attempt_at", {
+      withTimezone: true,
+    }),
+    lastConnectivityErrorCode: text("last_connectivity_error_code"),
+    lastConnectivityErrorAt: timestamp("last_connectivity_error_at", {
+      withTimezone: true,
+    }),
+    lastConnectivityRequestId: text("last_connectivity_request_id"),
+    connectivityChallengeHash: text("connectivity_challenge_hash"),
+    connectivityChallengeExpiresAt: timestamp(
+      "connectivity_challenge_expires_at",
+      { withTimezone: true },
+    ),
+    connectivityChallengeConsumedAt: timestamp(
+      "connectivity_challenge_consumed_at",
+      { withTimezone: true },
+    ),
     ...timestamps(),
   },
   (table) => [
     index("plugin_instances_partner_idx").on(table.tenantId, table.partnerId),
+  ],
+);
+
+export const pluginDiagnosticEvents = pgTable(
+  "plugin_diagnostic_events",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id),
+    stage: text("stage").notNull(),
+    errorCode: text("error_code").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    retryable: boolean("retryable").notNull(),
+    requestId: text("request_id"),
+    safeMessage: text("safe_message").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("plugin_diagnostic_events_instance_event_unique").on(
+      table.pluginInstanceId,
+      table.id,
+    ),
+    index("plugin_diagnostic_events_recent_idx").on(
+      table.tenantId,
+      table.pluginInstanceId,
+      table.occurredAt,
+    ),
   ],
 );
 
@@ -382,6 +455,60 @@ export const pluginBindingCodes = pgTable(
   ],
 );
 
+export const collectionRuns = pgTable(
+  "collection_runs",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id),
+    periodId: uuid("period_id").references(() => reportPeriods.id),
+    externalRunId: uuid("external_run_id").notNull(),
+    status: text("status").notNull().default("STARTED"),
+    windowStartsAt: timestamp("window_starts_at", {
+      withTimezone: true,
+    }).notNull(),
+    windowEndsAt: timestamp("window_ends_at", {
+      withTimezone: true,
+    }).notNull(),
+    initialLookback: boolean("initial_lookback").notNull().default(false),
+    discoveredCount: integer("discovered_count").notNull().default(0),
+    eligibleCount: integer("eligible_count").notNull().default(0),
+    deferredCount: integer("deferred_count").notNull().default(0),
+    excludedCount: integer("excluded_count").notNull().default(0),
+    syncedSessionCount: integer("synced_session_count").notNull().default(0),
+    syncedFactCount: integer("synced_fact_count").notNull().default(0),
+    pendingLocalJobs: integer("pending_local_jobs").notNull().default(0),
+    continuationCount: integer("continuation_count").notNull().default(0),
+    errorCode: text("error_code"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("collection_runs_instance_external_unique").on(
+      table.pluginInstanceId,
+      table.externalRunId,
+    ),
+    index("collection_runs_period_status_idx").on(
+      table.tenantId,
+      table.periodId,
+      table.status,
+    ),
+  ],
+);
+
 export const syncBatches = pgTable(
   "sync_batches",
   {
@@ -398,6 +525,9 @@ export const syncBatches = pgTable(
     pluginInstanceId: uuid("plugin_instance_id")
       .notNull()
       .references(() => pluginInstances.id),
+    collectionRunId: uuid("collection_run_id").references(
+      () => collectionRuns.id,
+    ),
     externalBatchId: text("external_batch_id").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     payloadHash: text("payload_hash").notNull(),
@@ -431,11 +561,16 @@ export const sessionRecords = pgTable(
       .notNull()
       .references(() => partners.id),
     periodId: uuid("period_id").references(() => reportPeriods.id),
+    collectionRunId: uuid("collection_run_id").references(
+      () => collectionRuns.id,
+    ),
     sessionId: text("session_id").notNull(),
     latestSourceRevision: integer("latest_source_revision").notNull(),
     sourceHash: text("source_hash").notNull(),
     status: text("status").notNull(),
     observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    sourceOccurredAt: timestamp("source_occurred_at", { withTimezone: true }),
+    lateFromPeriodKey: text("late_from_period_key"),
     ...timestamps(),
   },
   (table) => [
@@ -467,10 +602,15 @@ export const sessionFacts = pgTable(
       .notNull()
       .references(() => partners.id),
     periodId: uuid("period_id").references(() => reportPeriods.id),
+    collectionRunId: uuid("collection_run_id").references(
+      () => collectionRuns.id,
+    ),
     sessionId: text("session_id").notNull(),
     externalFactId: text("external_fact_id").notNull(),
     sourceRevision: integer("source_revision").notNull(),
     sourceHash: text("source_hash").notNull(),
+    sourceOccurredAt: timestamp("source_occurred_at", { withTimezone: true }),
+    lateFromPeriodKey: text("late_from_period_key"),
     payload: jsonb("payload").notNull(),
     current: boolean("current").notNull().default(true),
     excluded: boolean("excluded").notNull().default(false),
@@ -512,6 +652,38 @@ export const coverageSnapshots = pgTable("coverage_snapshots", {
     .notNull()
     .defaultNow(),
 });
+
+export const factSnapshots = pgTable(
+  "fact_snapshots",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    periodId: uuid("period_id")
+      .notNull()
+      .references(() => reportPeriods.id),
+    factIds: jsonb("fact_ids").notNull().$type<string[]>(),
+    checksum: text("checksum").notNull(),
+    coverage: jsonb("coverage").notNull().default({}),
+    frozenAt: timestamp("frozen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("fact_snapshots_partner_period_unique").on(
+      table.tenantId,
+      table.partnerId,
+      table.periodId,
+    ),
+  ],
+);
 
 export const reviews = pgTable(
   "reviews",
@@ -661,9 +833,7 @@ export const agentJobs = pgTable(
     teamId: uuid("team_id")
       .notNull()
       .references(() => teams.id),
-    partnerId: uuid("partner_id")
-      .notNull()
-      .references(() => partners.id),
+    partnerId: uuid("partner_id").references(() => partners.id),
     pluginInstanceId: uuid("plugin_instance_id").references(
       () => pluginInstances.id,
     ),
@@ -752,6 +922,66 @@ export const individualReportVersions = pgTable(
   },
   (table) => [
     uniqueIndex("report_version_unique").on(table.reportId, table.version),
+  ],
+);
+
+export const teamReports = pgTable(
+  "team_reports",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    periodId: uuid("period_id")
+      .notNull()
+      .references(() => reportPeriods.id),
+    status: text("status").notNull().default("WAITING_SUBMISSIONS"),
+    currentVersion: integer("current_version").notNull().default(0),
+    missingPartnerIds: jsonb("missing_partner_ids")
+      .notNull()
+      .$type<string[]>()
+      .default([]),
+    generatedAt: timestamp("generated_at", { withTimezone: true }),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lockedBy: uuid("locked_by").references(() => users.id),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("team_reports_team_period_unique").on(
+      table.tenantId,
+      table.teamId,
+      table.periodId,
+    ),
+  ],
+);
+
+export const teamReportVersions = pgTable(
+  "team_report_versions",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    reportId: uuid("report_id")
+      .notNull()
+      .references(() => teamReports.id),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    markdown: text("markdown").notNull(),
+    payload: jsonb("payload").notNull(),
+    sourceChecksum: text("source_checksum").notNull(),
+    generatorVersion: text("generator_version").notNull(),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("team_report_version_unique").on(table.reportId, table.version),
   ],
 );
 

@@ -2,10 +2,59 @@ import { describe, expect, it } from "vitest";
 import {
   assertFactSemantics,
   assertReportSemantics,
+  assertTeamReportSemantics,
   containsSensitiveValue,
+  connectivityTestSchema,
   individualReportResultSchema,
+  pluginDiagnosticBatchSchema,
   sessionFactUploadSchema,
 } from "./index.js";
+
+describe("plugin connectivity contract", () => {
+  const valid = {
+    challenge: "connectivity-challenge-value-123456",
+    pluginVersion: "0.2.0",
+    clientTime: "2026-08-04T01:45:36.384Z",
+    capabilityVersion: "1.0",
+  };
+
+  it("accepts only the bounded authentication test payload", () => {
+    expect(connectivityTestSchema.safeParse(valid).success).toBe(true);
+    expect(
+      connectivityTestSchema.safeParse({
+        ...valid,
+        sessionId: "must-not-be-sent",
+      }).success,
+    ).toBe(false);
+    expect(
+      connectivityTestSchema.safeParse({
+        ...valid,
+        facts: [],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("plugin diagnostic contract", () => {
+  const event = {
+    eventId: "11111111-1111-4111-8111-111111111111",
+    stage: "sync",
+    errorCode: "SYNC_FAILED",
+    occurredAt: "2026-08-04T01:45:36.384Z",
+    retryable: true,
+  };
+
+  it("accepts bounded fields and rejects client-authored error messages", () => {
+    expect(
+      pluginDiagnosticBatchSchema.safeParse({ events: [event] }).success,
+    ).toBe(true);
+    expect(
+      pluginDiagnosticBatchSchema.safeParse({
+        events: [{ ...event, safeMessage: "raw local exception" }],
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("session upload project identity", () => {
   it("requires the server project identity and folder match metadata", () => {
@@ -30,6 +79,27 @@ describe("session upload project identity", () => {
         },
       }).success,
     ).toBe(true);
+    expect(
+      sessionFactUploadSchema.safeParse({
+        ...base,
+        project: {
+          id: null,
+          matchMethod: "path_discovered",
+          rootFingerprint: "c".repeat(64),
+          rootName: "automatic-project",
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      sessionFactUploadSchema.safeParse({
+        ...base,
+        project: {
+          id: null,
+          matchMethod: "path_discovered",
+          rootFingerprint: "c".repeat(64),
+        },
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -67,6 +137,22 @@ describe("fact and report semantic guards", () => {
     ).toThrow(/each required section/i);
   });
 
+  it("rejects an individual report without current Work Item claims", () => {
+    expect(() =>
+      assertReportSemantics({
+        sections: [
+          "summary",
+          "achievements",
+          "project_progress",
+          "risks",
+          "next_priorities",
+          "coordination",
+          "coverage",
+        ].map((key) => ({ key, claims: [] })),
+      }),
+    ).toThrow(/cite at least one/i);
+  });
+
   it("accepts a fully traceable seven-section report", () => {
     const workItemId = "11111111-1111-4111-8111-111111111111";
     const sections = [
@@ -101,6 +187,20 @@ describe("fact and report semantic guards", () => {
       },
     });
     expect(() => assertReportSemantics(report)).not.toThrow();
+  });
+
+  it("requires every Team Report section exactly once", () => {
+    expect(() =>
+      assertTeamReportSemantics({
+        sections: [
+          { key: "summary" },
+          { key: "summary" },
+          { key: "risks" },
+          { key: "next_priorities" },
+          { key: "coverage" },
+        ],
+      }),
+    ).toThrow(/each required section/i);
   });
 });
 

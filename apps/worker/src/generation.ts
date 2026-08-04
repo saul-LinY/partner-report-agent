@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import {
   aggregationResultSchema,
   assertReportSemantics,
+  assertTeamReportSemantics,
   individualReportResultSchema,
+  teamReportResultSchema,
 } from "@partner-report/contracts";
 import { centralModelIdSchema } from "@partner-report/contracts/models";
 import { sqlClient as sql } from "@partner-report/db";
@@ -12,7 +14,7 @@ type Job = {
   id: string;
   tenant_id: string;
   team_id: string;
-  partner_id: string;
+  partner_id: string | null;
   type: string;
   input_payload: any;
   attempt_count: number;
@@ -23,7 +25,10 @@ const aggregationInstructions = (model: string) =>
   `You aggregate structured Partner work facts across Sessions into reviewable Work Items. Account for every Fact ID exactly once in a group or unassignedFactIds. Prefer explicit project IDs and configured aliases; never invent an ID. Merge only facts that clearly describe the same work thread and keep low-confidence work independent. Preserve uncertainty and completion evidence. Return production metadata {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-03.central.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const reportInstructions = (model: string) =>
-  `You generate an individual Partner report from an approved immutable Work Item Snapshot. Include each of the seven required sections exactly once. Every factual claim must cite one or more allowed Work Item IDs. Preferences may change presentation but never facts. State coverage limits plainly and do not invent percentages. Return production metadata {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-03.central.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+  `You generate an individual Partner report from an approved immutable Work Item Snapshot. Use previousReport only to compare prior state with current approved Work Items. Include each of the seven required sections exactly once. Every current factual claim must cite one or more allowed Work Item IDs. Preferences may change presentation but never facts. State coverage limits plainly and do not invent percentages. Return production metadata {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-04.individual.v2","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+
+const teamReportInstructions = (model: string) =>
+  `Generate a Team Report only from locked individual report versions supplied in individualReports. Never infer missing Partner work and never read or request Session Facts. Account for missingPartnerIds explicitly. Use previousTeamReport only for sourced status comparisons. Include exactly five sections: summary, project_progress, risks, next_priorities, coverage. Every factual claim must cite one or more supplied individual report version IDs. Return production metadata {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-04.team.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 async function selectedModelFor(job: Job) {
   const rows = await sql<{ central_model: string }[]>`
@@ -35,12 +40,17 @@ async function selectedModelFor(job: Job) {
   return centralModelIdSchema.parse(rows[0].central_model);
 }
 
-async function leaseNextJob() {
+async function leaseNextJob(onlyTenantId?: string) {
   return sql.begin(async (tx) => {
     const rows = await tx<Job[]>`
       select * from agent_jobs
       where status in ('PENDING', 'RETRY_WAIT')
-        and type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_INDIVIDUAL_REPORT', 'REGENERATE_INDIVIDUAL_REPORT')
+        and (${onlyTenantId ?? null}::uuid is null or tenant_id = ${onlyTenantId ?? null})
+        and type in (
+          'AGGREGATE_WORK_ITEMS', 'GENERATE_INDIVIDUAL_REPORT',
+          'REGENERATE_INDIVIDUAL_REPORT', 'GENERATE_TEAM_REPORT',
+          'REGENERATE_TEAM_REPORT'
+        )
         and attempt_count < max_attempts
         and (status = 'PENDING' or updated_at < now() - interval '1 minute')
       order by created_at asc
@@ -179,21 +189,80 @@ async function applyReport(job: Job, output: unknown, model: string) {
   return result;
 }
 
+async function applyTeamReport(job: Job, output: unknown, model: string) {
+  const result = teamReportResultSchema.parse(output);
+  assertTeamReportSemantics(result);
+  const allowed = new Set<string>(
+    job.input_payload.individualReports.map((report: any) => report.versionId),
+  );
+  for (const section of result.sections)
+    for (const claim of section.claims)
+      for (const id of claim.individualReportVersionIds)
+        if (!allowed.has(id))
+          throw new Error(`UNKNOWN_INDIVIDUAL_REPORT_REFERENCE:${id}`);
+  const expectedMissing = [...job.input_payload.missingPartnerIds].sort();
+  if (
+    JSON.stringify([...result.missingPartnerIds].sort()) !==
+    JSON.stringify(expectedMissing)
+  )
+    throw new Error("TEAM_REPORT_MISSING_PARTNERS_MISMATCH");
+  const reports = await sql<any[]>`
+    select * from team_reports where id = ${job.input_payload.reportId}
+      and tenant_id = ${job.tenant_id} limit 1
+  `;
+  const report = reports[0];
+  if (!report || report.status === "LOCKED")
+    throw new Error("TEAM_REPORT_NOT_EDITABLE");
+  const version = report.current_version + 1;
+  await sql.begin(async (tx) => {
+    await tx`
+      insert into team_report_versions (
+        id, tenant_id, report_id, version, title, summary, markdown, payload,
+        source_checksum, generator_version
+      ) values (
+        ${randomUUID()}, ${job.tenant_id}, ${report.id}, ${version},
+        ${result.title}, ${result.summary}, ${result.markdown},
+        ${JSON.stringify(result)}::jsonb, ${job.input_payload.sourceChecksum},
+        ${`partner-report-platform/0.2.0 (${model})`}
+      )
+    `;
+    await tx`
+      update team_reports set status = 'TEAM_DRAFT', current_version = ${version},
+        missing_partner_ids = ${JSON.stringify(result.missingPartnerIds)}::jsonb,
+        generated_at = now(), updated_at = now()
+      where id = ${report.id} and tenant_id = ${job.tenant_id}
+    `;
+  });
+  return result;
+}
+
 function safeError(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, 900);
 }
 
-export async function processNextGenerationJob() {
-  const job = await leaseNextJob();
+export async function processNextGenerationJob(onlyTenantId?: string) {
+  const job = await leaseNextJob(onlyTenantId);
   if (!job) return { processed: false };
   try {
     const model = await selectedModelFor(job);
-    const output =
-      job.type === "AGGREGATE_WORK_ITEMS"
+    const isAggregation = job.type === "AGGREGATE_WORK_ITEMS";
+    const isTeamReport = [
+      "GENERATE_TEAM_REPORT",
+      "REGENERATE_TEAM_REPORT",
+    ].includes(job.type);
+    const output = isAggregation
+      ? await generateStructured({
+          name: "partner_work_item_aggregation",
+          schema: aggregationResultSchema,
+          instructions: aggregationInstructions(model),
+          input: job.input_payload,
+          model,
+        })
+      : isTeamReport
         ? await generateStructured({
-            name: "partner_work_item_aggregation",
-            schema: aggregationResultSchema,
-            instructions: aggregationInstructions(model),
+            name: "partner_team_report",
+            schema: teamReportResultSchema,
+            instructions: teamReportInstructions(model),
             input: job.input_payload,
             model,
           })
@@ -204,9 +273,10 @@ export async function processNextGenerationJob() {
             input: job.input_payload,
             model,
           });
-    const applied =
-      job.type === "AGGREGATE_WORK_ITEMS"
-        ? await applyAggregation(job, output)
+    const applied = isAggregation
+      ? await applyAggregation(job, output)
+      : isTeamReport
+        ? await applyTeamReport(job, output, model)
         : await applyReport(job, output, model);
     await sql`
       update agent_jobs set status = 'COMPLETED', output_payload = ${JSON.stringify(applied)}::jsonb,

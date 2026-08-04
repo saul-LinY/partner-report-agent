@@ -12,19 +12,33 @@
           "type": "object",
           "properties": {
             "id": {
-              "type": "string",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "matchMethod": {
               "type": "string",
               "enum": [
                 "exact_root",
-                "descendant_path"
+                "descendant_path",
+                "path_discovered",
+                "unassigned"
               ]
             },
             "rootFingerprint": {
               "type": "string",
               "pattern": "^[a-f0-9]{64}$"
+            },
+            "rootName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
             }
           },
           "required": [
@@ -53,6 +67,9 @@
         "observedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "sourceOccurredAt": {
+          "$ref": "#/definitions/SessionFactUploadV1/properties/observedAt"
         },
         "status": {
           "type": "string",

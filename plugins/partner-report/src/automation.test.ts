@@ -11,6 +11,7 @@ import {
   DEFAULT_COLLECTION_REASONING_EFFORT,
   SCHEDULED_COLLECTION_PROMPT,
   SCHEDULED_COLLECTION_TASK,
+  SCHEDULED_CONTINUATION_TASK,
 } from "./collection-config.js";
 
 describe("scheduled collection", () => {
@@ -20,7 +21,7 @@ describe("scheduled collection", () => {
       destination: "new_chat",
       project: null,
       schedule: {
-        rrule: "RRULE:FREQ=DAILY;BYHOUR=13;BYMINUTE=0",
+        rrule: "RRULE:FREQ=DAILY;BYHOUR=13;BYMINUTE=30",
         timezone: "Asia/Shanghai",
       },
       model: DEFAULT_COLLECTION_MODEL,
@@ -39,6 +40,19 @@ describe("scheduled collection", () => {
       "never store Session content, Facts, evidence",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("consent");
+  });
+
+  it("defines an isolated two-minute continuation task", () => {
+    expect(SCHEDULED_CONTINUATION_TASK).toMatchObject({
+      destination: "new_chat",
+      project: null,
+      schedule: {
+        rrule: "RRULE:FREQ=MINUTELY;INTERVAL=2",
+        timezone: "Asia/Shanghai",
+      },
+      notifications: "failures_only",
+    });
+    expect(SCHEDULED_CONTINUATION_TASK.prompt).toContain("continuation");
   });
 
   it("does not launch a nested Codex model", () => {

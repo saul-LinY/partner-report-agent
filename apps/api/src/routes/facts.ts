@@ -1,17 +1,21 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import {
   assertFactSemantics,
   containsSensitiveValue,
   factBatchSchema,
+  projectDiscoveryBatchSchema,
 } from "@partner-report/contracts";
 import { sqlClient as sql } from "@partner-report/db";
 import {
   ApiError,
   audit,
   requirePluginActor,
+  requireWebActor,
   stableJsonHash,
 } from "../common.js";
+import { resolveProjectIdentity } from "../project-discovery.js";
 
 export async function factRoutes(app: FastifyInstance) {
   app.post("/v1/session-facts/batch", async (request) => {
@@ -60,19 +64,55 @@ export async function factRoutes(app: FastifyInstance) {
       return existing.response;
     }
 
-    const periodRows = await sql<any[]>`
+    const requestedPeriodKey =
+      input.periodKey ?? input.periodCandidates[0] ?? null;
+    const requestedPeriods = requestedPeriodKey
+      ? await sql<any[]>`
+          select * from report_periods
+          where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+            and period_key = ${requestedPeriodKey}
+          limit 1
+        `
+      : [];
+    const currentPeriods = await sql<any[]>`
       select * from report_periods
-      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId} and status = 'open'
-        and starts_at <= now() and ends_at >= now()
-      order by starts_at desc limit 1
+      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        and status in ('open', 'closing')
+      order by case when status = 'open' then 0 else 1 end, starts_at desc
+      limit 1
     `;
-    const period = periodRows[0];
+    const requestedPeriod = requestedPeriods[0];
+    const requestedAccepting =
+      requestedPeriod && ["open", "closing"].includes(requestedPeriod.status);
+    const period = requestedAccepting ? requestedPeriod : currentPeriods[0];
+    const lateFromPeriodKey =
+      requestedPeriodKey && period?.period_key !== requestedPeriodKey
+        ? requestedPeriodKey
+        : null;
     if (!period)
       throw new ApiError(
         409,
         "REPORT_PERIOD_MISSING",
         "当前 Team 没有开放的 Report Period。",
       );
+    let collectionRun: { id: string } | undefined;
+    if (input.collectionRunId) {
+      const runRows = await sql<{ id: string }[]>`
+        select id from collection_runs
+        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and partner_id = ${actor.partnerId}
+          and plugin_instance_id = ${actor.pluginInstanceId}
+          and external_run_id = ${input.collectionRunId}
+        limit 1
+      `;
+      collectionRun = runRows[0];
+      if (!collectionRun)
+        throw new ApiError(
+          409,
+          "COLLECTION_RUN_NOT_FOUND",
+          "Fact 批次不属于已登记的采集 Run。",
+        );
+    }
 
     const results: Array<{
       sessionId: string;
@@ -86,20 +126,29 @@ export async function factRoutes(app: FastifyInstance) {
     for (const session of input.sessions) {
       try {
         await sql.begin(async (tx) => {
+          const resolvedProject = await resolveProjectIdentity(
+            tx,
+            actor,
+            session.project,
+          );
           await tx`
             insert into session_records (
-              id, tenant_id, team_id, partner_id, period_id, session_id,
-              latest_source_revision, source_hash, status, observed_at
+              id, tenant_id, team_id, partner_id, period_id, collection_run_id,
+              session_id, latest_source_revision, source_hash, status, observed_at,
+              source_occurred_at, late_from_period_key
             ) values (
-              ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
+              ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id}, ${collectionRun?.id ?? null},
               ${session.sessionId}, ${session.sourceRevision}, ${session.sourceHash}, ${session.status},
-              ${session.observedAt}
+              ${session.observedAt}, ${session.sourceOccurredAt ?? session.observedAt}, ${lateFromPeriodKey}
             ) on conflict (tenant_id, partner_id, session_id) do update set
               period_id = excluded.period_id,
+              collection_run_id = excluded.collection_run_id,
               latest_source_revision = excluded.latest_source_revision,
               source_hash = excluded.source_hash,
               status = excluded.status,
               observed_at = excluded.observed_at,
+              source_occurred_at = excluded.source_occurred_at,
+              late_from_period_key = excluded.late_from_period_key,
               updated_at = now()
             where session_records.latest_source_revision <= excluded.latest_source_revision
           `;
@@ -112,19 +161,28 @@ export async function factRoutes(app: FastifyInstance) {
             `;
             await tx`
               insert into session_facts (
-                id, tenant_id, team_id, partner_id, period_id, session_id, external_fact_id,
-                source_revision, source_hash, payload, current
+                id, tenant_id, team_id, partner_id, period_id, collection_run_id,
+                session_id, external_fact_id, source_revision, source_hash,
+                source_occurred_at, late_from_period_key, payload, current
               ) values (
-                ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
+                ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id}, ${collectionRun?.id ?? null},
                 ${session.sessionId}, ${fact.factId}, ${session.sourceRevision}, ${session.sourceHash},
+                ${session.sourceOccurredAt ?? session.observedAt}, ${lateFromPeriodKey},
                 ${JSON.stringify({
                   ...fact,
-                  projectId: session.project.id,
-                  projectMatchMethod: session.project.matchMethod,
-                  projectRootFingerprint: session.project.rootFingerprint,
+                  projectId: resolvedProject?.id ?? null,
+                  projectMatchMethod:
+                    resolvedProject?.matchMethod ?? "unassigned",
+                  projectRootFingerprint:
+                    resolvedProject?.rootFingerprint ??
+                    session.project.rootFingerprint,
                 })}::jsonb, true
               ) on conflict (tenant_id, partner_id, session_id, source_revision, external_fact_id)
-                do update set payload = excluded.payload, source_hash = excluded.source_hash, current = true, updated_at = now()
+                do update set payload = excluded.payload, source_hash = excluded.source_hash,
+                  period_id = excluded.period_id, collection_run_id = excluded.collection_run_id,
+                  source_occurred_at = excluded.source_occurred_at,
+                  late_from_period_key = excluded.late_from_period_key,
+                  current = true, updated_at = now()
             `;
           }
         });
@@ -188,12 +246,26 @@ export async function factRoutes(app: FastifyInstance) {
     await sql`
       insert into sync_batches (
         id, tenant_id, team_id, partner_id, plugin_instance_id, external_batch_id,
-        idempotency_key, payload_hash, accepted, rejected, response
+        collection_run_id, idempotency_key, payload_hash, accepted, rejected, response
       ) values (
         ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${actor.pluginInstanceId},
-        ${input.batchId}, ${idempotencyKey}, ${payloadHash}, ${accepted}, ${rejected}, ${JSON.stringify(response)}::jsonb
+        ${input.batchId}, ${collectionRun?.id ?? null}, ${idempotencyKey}, ${payloadHash}, ${accepted}, ${rejected}, ${JSON.stringify(response)}::jsonb
       )
     `;
+
+    if (collectionRun) {
+      await sql`
+        update collection_runs set
+          synced_session_count = synced_session_count + ${accepted},
+          synced_fact_count = synced_fact_count + ${input.sessions.reduce(
+            (sum: number, session: { facts: unknown[] }) =>
+              sum + session.facts.length,
+            0,
+          )},
+          updated_at = now()
+        where id = ${collectionRun.id}
+      `;
+    }
 
     await sql`
       update plugin_instances set last_sync_at = now(), last_heartbeat_at = now(), updated_at = now()
@@ -208,11 +280,72 @@ export async function factRoutes(app: FastifyInstance) {
       {
         accepted,
         rejected,
+        lateFromPeriodKey,
         weeklyAggregationDeferredUntil: period.cutoff_at,
       },
     );
     return response;
   });
+
+  app.post(
+    "/v1/plugin-instances/me/project-discoveries",
+    async (request) => {
+      const actor = await requirePluginActor(request);
+      const input = projectDiscoveryBatchSchema.parse(request.body);
+      const mappings = await sql.begin(async (tx) => {
+        const resolved = [] as Array<{
+          sessionId: string;
+          projectId: string;
+          projectName: string;
+        }>;
+        for (const discovery of input.discoveries) {
+          const project = await resolveProjectIdentity(tx, actor, {
+            id: null,
+            matchMethod: "path_discovered",
+            rootFingerprint: discovery.rootFingerprint,
+            rootName: discovery.rootName,
+          });
+          if (!project) continue;
+          const projectPayload = JSON.stringify({
+            projectId: project.id,
+            projectMatchMethod: "path_discovered",
+            projectRootFingerprint: project.rootFingerprint,
+          });
+          await tx`
+            update session_facts set
+              payload = payload || ${projectPayload}::jsonb,
+              updated_at = now()
+            where tenant_id = ${actor.tenantId}
+              and team_id = ${actor.teamId}
+              and partner_id = ${actor.partnerId}
+              and session_id = ${discovery.sessionId}
+              and current = true and excluded = false
+              and period_id in (
+                select id from report_periods
+                where tenant_id = ${actor.tenantId}
+                  and team_id = ${actor.teamId}
+                  and status in ('open', 'closing')
+              )
+          `;
+          resolved.push({
+            sessionId: discovery.sessionId,
+            projectId: project.id,
+            projectName: project.name,
+          });
+        }
+        return resolved;
+      });
+      await audit(
+        request,
+        actor,
+        "plugin.projects.discovered",
+        "plugin_instance",
+        actor.pluginInstanceId,
+        { discovered: input.discoveries.length, mapped: mappings.length },
+      );
+      return { submitted: input.discoveries.length, mappings };
+    },
+  );
 
   app.get("/v1/coverage/:periodId", async (request) => {
     const actor = await requirePluginActor(request);
@@ -223,5 +356,61 @@ export async function factRoutes(app: FastifyInstance) {
       order by created_at desc limit 1
     `;
     return rows[0] ?? { payload: null };
+  });
+
+  app.get("/v1/admin/session-facts", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const query = z
+      .object({
+        partnerId: z.string().uuid().optional(),
+        periodId: z.string().uuid().optional(),
+        projectId: z
+          .union([z.string().uuid(), z.literal("unassigned")])
+          .optional(),
+        sessionId: z.string().max(200).optional(),
+        page: z.coerce.number().int().min(1).default(1),
+        pageSize: z.coerce.number().int().min(1).max(100).default(25),
+      })
+      .parse(request.query);
+    const offset = (query.page - 1) * query.pageSize;
+    const rows = await sql<any[]>`
+      select sf.id, sf.partner_id, p.display_name as partner_name,
+        sf.period_id, rp.period_key, sf.session_id, sf.external_fact_id,
+        sf.source_revision, sf.source_hash, sf.source_occurred_at,
+        sf.late_from_period_key, sf.payload, sf.created_at, sf.updated_at,
+        count(*) over()::int as total
+      from session_facts sf
+      join partners p on p.id = sf.partner_id and p.tenant_id = sf.tenant_id
+      left join report_periods rp on rp.id = sf.period_id
+      where sf.tenant_id = ${actor.tenantId} and sf.team_id = ${actor.teamId}
+        and sf.current = true and sf.excluded = false
+        and (${query.partnerId ?? null}::uuid is null or sf.partner_id = ${query.partnerId ?? null})
+        and (${query.periodId ?? null}::uuid is null or sf.period_id = ${query.periodId ?? null})
+        and (
+          ${query.projectId ?? null}::text is null
+          or (${query.projectId ?? null} = 'unassigned' and sf.payload->>'projectId' is null)
+          or sf.payload->>'projectId' = ${query.projectId ?? null}
+        )
+        and (${query.sessionId ?? null}::text is null or sf.session_id = ${query.sessionId ?? null})
+      order by sf.source_occurred_at desc nulls last, sf.created_at desc
+      limit ${query.pageSize} offset ${offset}
+    `;
+    return {
+      items: rows.map(({ total: _total, ...row }) => ({
+        ...row,
+        payload: {
+          ...row.payload,
+          evidence: Array.isArray(row.payload?.evidence)
+            ? row.payload.evidence.map(
+                ({ excerpt: _excerpt, ...safe }: Record<string, unknown>) =>
+                  safe,
+              )
+            : [],
+        },
+      })),
+      page: query.page,
+      pageSize: query.pageSize,
+      total: rows[0]?.total ?? 0,
+    };
   });
 }

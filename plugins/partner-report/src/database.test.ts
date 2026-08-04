@@ -10,6 +10,8 @@ describe("local data retention", () => {
       create table local_jobs (id text primary key, status text, updated_at text);
       create table pending_batches (id text primary key, status text, updated_at text);
       create table remote_leases (job_id text primary key, status text, updated_at text);
+      create table diagnostic_outbox (id text primary key, status text, updated_at text);
+      create table collection_runs (id text primary key, status text, updated_at text);
     `);
     const old = "2026-06-01T00:00:00.000Z";
     const recent = "2026-08-02T00:00:00.000Z";
@@ -23,6 +25,12 @@ describe("local data retention", () => {
     db.prepare(
       "insert into remote_leases values ('lease-old', 'COMPLETED', ?), ('lease-active', 'LEASED', ?)",
     ).run(old, old);
+    db.prepare(
+      "insert into diagnostic_outbox values ('diagnostic-old', 'UPLOADED', ?), ('diagnostic-pending', 'PENDING', ?)",
+    ).run(old, old);
+    db.prepare(
+      "insert into collection_runs values ('run-old', 'COMPLETED', ?), ('run-active', 'CONTINUATION_PENDING', ?)",
+    ).run(old, old);
 
     const result = cleanupLocalData(
       db,
@@ -35,6 +43,8 @@ describe("local data retention", () => {
       localJobs: 1,
       batches: 1,
       leases: 1,
+      diagnostics: 1,
+      collectionRuns: 1,
     });
     expect(db.prepare("select id from local_jobs order by id").all()).toEqual([
       { id: "retry-old" },
@@ -45,6 +55,12 @@ describe("local data retention", () => {
     ]);
     expect(db.prepare("select job_id from remote_leases").all()).toEqual([
       { job_id: "lease-active" },
+    ]);
+    expect(db.prepare("select id from diagnostic_outbox").all()).toEqual([
+      { id: "diagnostic-pending" },
+    ]);
+    expect(db.prepare("select id from collection_runs").all()).toEqual([
+      { id: "run-active" },
     ]);
     db.close();
   });

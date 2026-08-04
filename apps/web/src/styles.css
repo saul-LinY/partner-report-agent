@@ -585,9 +585,10 @@ td {
 .health-healthy {
   background: #29926d;
 }
-.health-delayed {
+.health-waiting_first_run {
   background: #d39a2a;
 }
+.health-abnormal,
 .health-offline {
   background: #c34f48;
 }
@@ -1520,6 +1521,37 @@ select:focus {
 .model-config-band > .error-banner {
   grid-column: 1 / -1;
 }
+.schedule-settings-band {
+  margin-bottom: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.schedule-settings-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 1.3fr) repeat(5, minmax(120px, 0.8fr))
+    auto;
+  align-items: end;
+  gap: 10px;
+}
+.current-period-override {
+  margin-top: 15px;
+  padding-top: 15px;
+  display: grid;
+  grid-template-columns:
+    minmax(170px, 1fr) minmax(200px, 1fr) minmax(200px, 1fr)
+    auto;
+  align-items: end;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+}
+.current-period-override > strong {
+  align-self: center;
+  font-size: 12px;
+}
+.schedule-settings-band > .error-banner {
+  margin-top: 12px;
+}
 .admin-page > .section-block {
   margin-bottom: 18px;
   padding-right: 0;
@@ -1530,7 +1562,7 @@ select:focus {
 }
 .workflow-steps {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -1622,12 +1654,17 @@ select:focus {
   min-height: 66px;
   display: grid;
   grid-template-columns: 10px minmax(180px, 1fr) auto repeat(
-      3,
+      4,
       minmax(110px, 0.55fr)
     );
   align-items: center;
   gap: 16px;
   border-bottom: 1px solid var(--line);
+}
+.plugin-state-badges {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
 }
 .plugin-status-row > div strong,
 .plugin-status-row > div span {
@@ -1742,6 +1779,190 @@ select:focus {
   white-space: nowrap;
 }
 
+.fact-filter-band {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: auto repeat(4, minmax(150px, 1fr));
+  align-items: end;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.fact-filter-band > svg {
+  align-self: center;
+  color: var(--muted);
+}
+.fact-list {
+  border-top: 1px solid var(--line);
+}
+.fact-row {
+  padding: 19px 0;
+  border-bottom: 1px solid var(--line);
+}
+.fact-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.fact-row-head strong,
+.fact-row-head span {
+  display: block;
+}
+.fact-row-head strong {
+  font-size: 14px;
+}
+.fact-row-head div > span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.fact-badges {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.fact-columns {
+  margin: 14px 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+.fact-columns > div > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.fact-columns ul {
+  margin: 6px 0 0;
+  padding-left: 17px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.fact-columns small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.fact-lineage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.fact-lineage code {
+  color: #394851;
+}
+.pagination {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pagination span {
+  margin-right: 8px;
+}
+
+.team-report-list {
+  border-top: 1px solid var(--line);
+}
+.team-report-list > button {
+  width: 100%;
+  min-height: 72px;
+  padding: 0 4px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 45px;
+  align-items: center;
+  gap: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  cursor: pointer;
+}
+.team-report-list > button:hover {
+  background: var(--surface-alt);
+}
+.team-report-list strong,
+.team-report-list div > span {
+  display: block;
+}
+.team-report-list div > span {
+  max-width: 850px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-report-list > button > span:last-child {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+.team-report-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.team-report-versions {
+  padding: 18px 12px;
+  border-right: 1px solid var(--line);
+}
+.team-report-versions > strong {
+  display: block;
+  margin: 0 7px 12px;
+  font-size: 12px;
+}
+.team-report-versions button {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 9px;
+  display: grid;
+  border: 0;
+  border-radius: 4px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.team-report-versions button.active {
+  background: #eaf2ef;
+}
+.team-report-versions small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+.team-report-editor {
+  min-width: 0;
+  padding: 25px;
+}
+.team-report-editor > .field {
+  margin-bottom: 16px;
+}
+.markdown-editor {
+  min-height: 480px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  line-height: 1.55;
+}
+.team-report-meta {
+  padding-top: 14px;
+  display: flex;
+  gap: 18px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+}
+
 @media (max-width: 1050px) {
   .ops-metrics {
     grid-template-columns: 1fr 1fr;
@@ -1760,6 +1981,12 @@ select:focus {
   }
   .model-config-controls {
     grid-column: 1 / -1;
+  }
+  .schedule-settings-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .current-period-override {
+    grid-template-columns: 1fr 1fr;
   }
   .flow-step {
     border-bottom: 1px solid var(--line);
@@ -1814,6 +2041,35 @@ select:focus {
   .model-config-controls label {
     min-width: 0;
     flex: 1;
+  }
+  .schedule-settings-grid,
+  .current-period-override,
+  .fact-filter-band,
+  .fact-columns,
+  .team-report-layout {
+    grid-template-columns: 1fr;
+  }
+  .fact-filter-band > svg {
+    display: none;
+  }
+  .fact-row-head {
+    display: block;
+  }
+  .fact-badges {
+    margin-top: 10px;
+  }
+  .team-report-versions {
+    display: flex;
+    gap: 5px;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .team-report-versions > strong {
+    display: none;
+  }
+  .team-report-versions button {
+    min-width: 125px;
   }
   .sidebar {
     position: static;
@@ -1884,7 +2140,7 @@ select:focus {
     padding: 12px 0;
     grid-template-columns: 10px 1fr auto;
   }
-  .plugin-status-row > div:not(:first-of-type) {
+  .plugin-status-row > div:not(:first-of-type):not(.plugin-state-badges) {
     display: none;
   }
   .project-grid {

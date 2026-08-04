@@ -68,16 +68,33 @@ export const sessionWorkFactSchema: z.ZodTypeAny = z.object({
 
 export const sessionFactUploadSchema: z.ZodTypeAny = z.object({
   sessionId: z.string().min(1),
-  project: z.object({
-    id: idSchema,
-    matchMethod: z.enum(["exact_root", "descendant_path"]),
-    rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  }),
+  project: z
+    .object({
+      id: idSchema.nullable(),
+      matchMethod: z.enum([
+        "exact_root",
+        "descendant_path",
+        "path_discovered",
+        "unassigned",
+      ]),
+      rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      rootName: z.string().min(1).max(120).optional(),
+    })
+    .superRefine((project, context) => {
+      if (project.matchMethod === "path_discovered" && !project.rootName) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rootName"],
+          message: "path_discovered project requires rootName",
+        });
+      }
+    }),
   sourceRevision: z.number().int().positive(),
   sourceHash: z.string().min(16),
   fromTurnId: z.string().min(1),
   toTurnId: z.string().min(1),
   observedAt: isoDateTimeSchema,
+  sourceOccurredAt: isoDateTimeSchema.optional(),
   status: z.enum(["extracted", "failed_read", "failed_extract", "excluded"]),
   facts: z.array(sessionWorkFactSchema),
 });
@@ -87,14 +104,42 @@ export const factBatchSchema: z.ZodTypeAny = z.object({
   producerVersion: z.string().min(1),
   batchId: z.string().min(1),
   pluginInstanceId: idSchema,
+  collectionRunId: idSchema.optional(),
+  periodKey: z.string().min(1).max(80).optional(),
+  collectionWindow: z
+    .object({
+      startsAt: isoDateTimeSchema,
+      endsAt: isoDateTimeSchema,
+      initialLookback: z.boolean(),
+    })
+    .optional(),
   periodCandidates: z.array(z.string()).default([]),
   sessions: z.array(sessionFactUploadSchema).min(1).max(50),
 });
 
+export const projectDiscoveryBatchSchema: z.ZodTypeAny = z
+  .object({
+    discoveries: z
+      .array(
+        z
+          .object({
+            sessionId: z.string().min(1).max(200),
+            rootName: z.string().min(1).max(120),
+            rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+
 export const coverageSchema: z.ZodTypeAny = z.object({
   discovered: z.number().int().nonnegative(),
+  eligible: z.number().int().nonnegative().default(0),
   readable: z.number().int().nonnegative(),
   extracted: z.number().int().nonnegative(),
+  deferred: z.number().int().nonnegative().default(0),
   failedRead: z.number().int().nonnegative(),
   failedExtract: z.number().int().nonnegative(),
   excluded: z.number().int().nonnegative(),
@@ -177,10 +222,41 @@ export const individualReportResultSchema: z.ZodTypeAny = z.object({
   production: productionMetadataSchema,
 });
 
+export const teamReportClaimSchema: z.ZodTypeAny = z.object({
+  claim: z.string().min(1).max(1000),
+  individualReportVersionIds: z.array(idSchema).min(1),
+});
+
+export const teamReportSectionSchema: z.ZodTypeAny = z.object({
+  key: z.enum([
+    "summary",
+    "project_progress",
+    "risks",
+    "next_priorities",
+    "coverage",
+  ]),
+  title: z.string().min(1).max(100),
+  markdown: z.string().max(16000),
+  claims: z.array(teamReportClaimSchema).default([]),
+});
+
+export const teamReportResultSchema: z.ZodTypeAny = z.object({
+  schemaVersion: z.literal("1.0"),
+  title: z.string().min(1).max(200),
+  summary: z.string().min(1).max(1600),
+  sections: z.array(teamReportSectionSchema).length(5),
+  markdown: z.string().min(1).max(80000),
+  missingPartnerIds: z.array(idSchema).default([]),
+  qualityWarnings: z.array(z.string()).default([]),
+  production: productionMetadataSchema,
+});
+
 export const agentJobTypeSchema: z.ZodTypeAny = z.enum([
   "AGGREGATE_WORK_ITEMS",
   "GENERATE_INDIVIDUAL_REPORT",
   "REGENERATE_INDIVIDUAL_REPORT",
+  "GENERATE_TEAM_REPORT",
+  "REGENERATE_TEAM_REPORT",
   "REANALYZE_SESSIONS",
   "RESCAN_SESSIONS",
 ]);
@@ -229,16 +305,88 @@ export const heartbeatSchema: z.ZodTypeAny = z.object({
 export const collectionStatusSchema: z.ZodTypeAny = z.object({
   pluginVersion: z.string().min(1),
   deviceName: z.string().min(1).max(120),
-  phase: z.enum(["started", "completed", "failed"]),
+  phase: z.enum([
+    "started",
+    "running",
+    "continuation_pending",
+    "completed",
+    "failed",
+  ]),
+  collectionRunId: idSchema.optional(),
   periodKey: z.string().min(1).max(80),
+  windowStartsAt: isoDateTimeSchema.optional(),
+  windowEndsAt: isoDateTimeSchema.optional(),
+  initialLookback: z.boolean().optional(),
   sessionCount: z.number().int().nonnegative().default(0),
   factCount: z.number().int().nonnegative().default(0),
   pendingLocalJobs: z.number().int().nonnegative().default(0),
+  discoveredCount: z.number().int().nonnegative().default(0),
+  eligibleCount: z.number().int().nonnegative().default(0),
+  deferredCount: z.number().int().nonnegative().default(0),
+  excludedCount: z.number().int().nonnegative().default(0),
   lastScanAt: isoDateTimeSchema.optional(),
   lastSyncAt: isoDateTimeSchema.optional(),
   errorCode: z.string().max(120).optional(),
   coverage: coverageSchema.optional(),
 });
+
+export const connectivityCapabilityVersionSchema: z.ZodTypeAny =
+  z.literal("1.0");
+
+export const connectivityTestSchema: z.ZodTypeAny = z
+  .object({
+    challenge: z.string().min(20).max(200),
+    pluginVersion: z.string().min(1).max(40),
+    clientTime: isoDateTimeSchema,
+    capabilityVersion: connectivityCapabilityVersionSchema,
+  })
+  .strict();
+
+export const diagnosticStageSchema: z.ZodTypeAny = z.enum([
+  "binding",
+  "connectivity",
+  "task_setup",
+  "scan",
+  "extract",
+  "sync",
+]);
+
+export const diagnosticErrorCodeSchema: z.ZodTypeAny = z.enum([
+  "DNS_FAILED",
+  "TLS_FAILED",
+  "CONNECTION_REFUSED",
+  "CONNECTIVITY_TIMEOUT",
+  "AUTH_FAILED",
+  "VERSION_BLOCKED",
+  "CHALLENGE_INVALID",
+  "CHALLENGE_EXPIRED",
+  "CLIENT_CLOCK_SKEW",
+  "REQUEST_INVALID",
+  "TASK_SETUP_FAILED",
+  "SCAN_FAILED",
+  "EXTRACT_FAILED",
+  "SYNC_FAILED",
+  "LOCAL_STORAGE_FAILED",
+  "LOCAL_AGENT_FAILED",
+  "SENSITIVE_EGRESS_REJECTED",
+]);
+
+export const pluginDiagnosticEventSchema: z.ZodTypeAny = z
+  .object({
+    eventId: z.string().uuid(),
+    stage: diagnosticStageSchema,
+    errorCode: diagnosticErrorCodeSchema,
+    occurredAt: isoDateTimeSchema,
+    retryable: z.boolean(),
+    requestId: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+
+export const pluginDiagnosticBatchSchema: z.ZodTypeAny = z
+  .object({
+    events: z.array(pluginDiagnosticEventSchema).min(1).max(20),
+  })
+  .strict();
 
 const sensitivePatterns = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/g,
@@ -269,7 +417,7 @@ export function assertFactSemantics(fact: {
 }
 
 export function assertReportSemantics(report: {
-  sections: Array<{ key: string }>;
+  sections: Array<{ key: string; claims?: unknown[] }>;
 }) {
   const required = [
     "summary",
@@ -286,5 +434,29 @@ export function assertReportSemantics(report: {
     required.some((key) => !actual.has(key))
   ) {
     throw new Error("Report must contain each required section exactly once.");
+  }
+  if (!report.sections.some((section) => (section.claims?.length ?? 0) > 0)) {
+    throw new Error("Report must cite at least one current Work Item claim.");
+  }
+}
+
+export function assertTeamReportSemantics(report: {
+  sections: Array<{ key: string }>;
+}) {
+  const required = [
+    "summary",
+    "project_progress",
+    "risks",
+    "next_priorities",
+    "coverage",
+  ];
+  const actual = new Set(report.sections.map((section) => section.key));
+  if (
+    actual.size !== required.length ||
+    required.some((key) => !actual.has(key))
+  ) {
+    throw new Error(
+      "Team Report must contain each required section exactly once.",
+    );
   }
 }

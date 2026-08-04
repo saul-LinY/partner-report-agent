@@ -20,6 +20,35 @@
           "type": "string",
           "format": "uuid"
         },
+        "collectionRunId": {
+          "$ref": "#/definitions/FactBatchV1/properties/pluginInstanceId"
+        },
+        "periodKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "collectionWindow": {
+          "type": "object",
+          "properties": {
+            "startsAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "endsAt": {
+              "$ref": "#/definitions/FactBatchV1/properties/collectionWindow/properties/startsAt"
+            },
+            "initialLookback": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "startsAt",
+            "endsAt",
+            "initialLookback"
+          ],
+          "additionalProperties": false
+        },
         "periodCandidates": {
           "type": "array",
           "items": {
@@ -40,18 +69,32 @@
                 "type": "object",
                 "properties": {
                   "id": {
-                    "$ref": "#/definitions/FactBatchV1/properties/pluginInstanceId"
+                    "anyOf": [
+                      {
+                        "$ref": "#/definitions/FactBatchV1/properties/pluginInstanceId"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "matchMethod": {
                     "type": "string",
                     "enum": [
                       "exact_root",
-                      "descendant_path"
+                      "descendant_path",
+                      "path_discovered",
+                      "unassigned"
                     ]
                   },
                   "rootFingerprint": {
                     "type": "string",
                     "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "rootName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
                   }
                 },
                 "required": [
@@ -78,8 +121,10 @@
                 "minLength": 1
               },
               "observedAt": {
-                "type": "string",
-                "format": "date-time"
+                "$ref": "#/definitions/FactBatchV1/properties/collectionWindow/properties/startsAt"
+              },
+              "sourceOccurredAt": {
+                "$ref": "#/definitions/FactBatchV1/properties/collectionWindow/properties/startsAt"
               },
               "status": {
                 "type": "string",
@@ -201,7 +246,7 @@
                             "$ref": "#/definitions/FactBatchV1/properties/sessions/items/properties/facts/items/properties/status"
                           },
                           "occurredAt": {
-                            "$ref": "#/definitions/FactBatchV1/properties/sessions/items/properties/observedAt"
+                            "$ref": "#/definitions/FactBatchV1/properties/collectionWindow/properties/startsAt"
                           },
                           "summary": {
                             "type": "string",
@@ -235,7 +280,7 @@
                             "minLength": 1
                           },
                           "occurredAt": {
-                            "$ref": "#/definitions/FactBatchV1/properties/sessions/items/properties/observedAt"
+                            "$ref": "#/definitions/FactBatchV1/properties/collectionWindow/properties/startsAt"
                           },
                           "excerpt": {
                             "type": "string",

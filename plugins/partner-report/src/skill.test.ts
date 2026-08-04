@@ -13,7 +13,7 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("source.path");
     expect(skill).toContain('node "<PLUGIN_PATH>/dist/cli.mjs"');
     expect(skill).toContain("daily-collect");
-    expect(skill).toContain("RRULE:FREQ=DAILY;BYHOUR=13;BYMINUTE=0");
+    expect(skill).toContain("RRULE:FREQ=DAILY;BYHOUR=13;BYMINUTE=30");
     expect(skill).toContain("Asia/Shanghai");
     expect(skill).toContain("Project: none");
     expect(skill).toContain("Model: `gpt-5.6-sol`");
@@ -33,6 +33,13 @@ describe("partner report skill packaging", () => {
     );
     expect(skill).toContain("Never launch `codex exec`");
     expect(skill).toContain("daily-finish");
+    expect(skill).toContain("continuation-task-config");
+    expect(skill).toContain("continuation_required");
+    expect(skill).toContain("pendingLocalJobs` is zero");
+    expect(skill).toContain("rolling 24 hours");
+    expect(skill).toContain("project.id=null");
+    expect(skill).toContain("exclude-session");
+    expect(skill).toContain("sourceOccurredAt");
     expect(skill).toContain("at most three total extraction attempts");
     expect(skill).toContain("must never hardcode or guess it");
     expect(skill).toContain("Do not create or update automation memory");

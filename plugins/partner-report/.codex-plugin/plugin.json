@@ -1,7 +1,7 @@
 {
   "name": "partner-report",
-  "version": "0.2.0+codex.20260803162445",
-  "description": "Collect complete Codex project-session turns and sync validated structured facts on a configurable Scheduled task.",
+  "version": "0.2.0+codex.20260804062839",
+  "description": "Drain complete Codex session turns into validated structured facts through configurable Scheduled runs.",
   "author": {
     "name": "\u6797\u6797\u52c7's team",
     "url": "https://github.com/saul615"
@@ -17,13 +17,14 @@
   "interface": {
     "displayName": "Partner Report",
     "shortDescription": "Build a reviewed weekly Partner report",
-    "longDescription": "Use a configurable Codex Scheduled task and its active model to extract validated structured facts from complete project-session turns after binding. Raw transcripts and sensitive automation memory are prohibited. Users can change the schedule, model, reasoning effort, and notifications in Codex.",
+    "longDescription": "Use configurable Codex Scheduled tasks and their active model to drain complete session turns into server-acknowledged structured facts after binding. Logical runs resume until pending work is zero, while unmatched projects remain independent work. Raw transcripts and sensitive automation memory are prohibited.",
     "developerName": "\u6797\u6797\u52c7's team",
     "category": "Productivity",
     "capabilities": [
       "Complete-turn session extraction",
       "Project-root and subfolder mapping",
-      "Daily structured-fact sync",
+      "Resumable structured-fact collection runs",
+      "Independent-work collection",
       "Binding-code data isolation"
     ],
     "defaultPrompt": [

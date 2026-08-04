@@ -16,6 +16,12 @@ export type PluginConfig = {
   pluginInstanceId: string;
   deviceName: string;
   accessExpiresAt: string;
+  connectivityStatus?: "pending" | "verified" | "failed" | "expired";
+  connectivityVerifiedAt?: string;
+  pendingConnectivityChallenge?: {
+    value: string;
+    expiresAt: string;
+  };
   excludedSessionIds: string[];
   excludedPaths: string[];
 };

@@ -652,6 +652,21 @@ export async function reviewRoutes(app: FastifyInstance) {
     const partners = await sql<
       any[]
     >`select preferences from partners where id = ${actor.partnerId} and tenant_id = ${actor.tenantId}`;
+    const previousReports = await sql<any[]>`
+      select previous_version.id as version_id, previous_version.payload
+      from report_periods current_period
+      join report_periods previous_period on previous_period.tenant_id = current_period.tenant_id
+        and previous_period.team_id = current_period.team_id
+        and previous_period.starts_at < current_period.starts_at
+      join individual_reports previous_report on previous_report.period_id = previous_period.id
+        and previous_report.tenant_id = current_period.tenant_id
+        and previous_report.partner_id = ${actor.partnerId}
+        and previous_report.status = 'LOCKED'
+      join individual_report_versions previous_version on previous_version.report_id = previous_report.id
+        and previous_version.version = previous_report.current_version
+      where current_period.id = ${review.period_id}
+      order by previous_period.starts_at desc limit 1
+    `;
 
     await sql.begin(async (tx) => {
       await tx`update coverage_snapshots set immutable = true where id = ${coverage.id}`;
@@ -686,6 +701,7 @@ export async function reviewRoutes(app: FastifyInstance) {
             coverage: coverage.payload,
             template: templates[0] ?? null,
             preferences: partners[0]?.preferences ?? {},
+            previousReport: previousReports[0] ?? null,
             constraints: {
               claimsRequireWorkItemIds: true,
               noUnsupportedPercentages: true,

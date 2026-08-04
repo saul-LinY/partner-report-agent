@@ -9,6 +9,8 @@ import {
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { dataDirectory, loadConfig } from "./config.js";
+import { SCHEDULED_CONTINUATION_TASK } from "./collection-config.js";
+import { queueDiagnosticSafely } from "./diagnostics.js";
 import {
   cleanupLocalData,
   getState,
@@ -68,10 +70,14 @@ async function runCli(cliPath: string, args: string[]) {
 }
 
 export function maximumCollectionJobs() {
-  const configured = Number(process.env.PARTNER_REPORT_MAX_JOBS ?? 20);
+  const configured = Number(
+    process.env.PARTNER_REPORT_MAX_JOBS_PER_INVOCATION ??
+      process.env.PARTNER_REPORT_MAX_JOBS ??
+      50,
+  );
   return Number.isFinite(configured)
     ? Math.max(1, Math.min(Math.floor(configured), 100))
-    : 20;
+    : 50;
 }
 
 export function collectionWorkDirectory() {
@@ -83,7 +89,10 @@ export function collectionWorkDirectory() {
   return path;
 }
 
-function markRunner(state: "idle" | "working" | "error", errorCode?: string) {
+function markRunner(
+  state: "idle" | "working" | "delayed" | "error",
+  errorCode?: string,
+) {
   const db = openDatabase();
   try {
     setState(db, "runner_state", state);
@@ -177,6 +186,13 @@ export async function beginCollectionCycle(cliPath: string, force = false) {
       "--phase",
       "started",
     ]);
+    if (started.status === "already_running") {
+      return {
+        status: "already_running",
+        collectionRunId: started.collectionRunId ?? null,
+        leaseExpiresAt: started.leaseExpiresAt ?? null,
+      };
+    }
     const recoveredLocalJobs = recoverStaleLocalJobs();
     const cleanup = cleanupOldLocalState();
     const prepared = await runCli(
@@ -192,6 +208,8 @@ export async function beginCollectionCycle(cliPath: string, force = false) {
     return {
       status: "ready_for_agent",
       periodKey: started.periodKey ?? null,
+      collectionRunId: started.collectionRunId ?? null,
+      invocationDeadlineAt: started.invocationDeadlineAt ?? null,
       recoveredLocalJobs,
       cleanup,
       pendingLocalJobs: prepared.pendingLocalJobs ?? 0,
@@ -199,6 +217,7 @@ export async function beginCollectionCycle(cliPath: string, force = false) {
       nextCommand: "next-local",
     };
   } catch (error) {
+    queueDiagnosticSafely("scan", "SCAN_FAILED");
     await reportFailure(cliPath, "DAILY_COLLECTION_FAILED");
     throw new Error(`Daily collection failed: ${safeError(error)}`);
   }
@@ -207,12 +226,42 @@ export async function beginCollectionCycle(cliPath: string, force = false) {
 export async function finishCollectionCycle(cliPath: string) {
   try {
     const batchIds: string[] = [];
-    const maxBatches = Math.max(1, Math.ceil(maximumCollectionJobs() / 50));
-    for (let index = 0; index < maxBatches; index += 1) {
+    for (let index = 0; index < 100; index += 1) {
       const result = await runCli(cliPath, ["sync"]);
       if (result.status === "empty") break;
       if (typeof result.batchId === "string") batchIds.push(result.batchId);
       if (result.status === "partial") break;
+    }
+    const db = openDatabase();
+    let pendingLocalJobs = 0;
+    try {
+      pendingLocalJobs = Number(
+        (
+          db
+            .prepare(
+              "select count(*) as count from local_jobs where status not in ('SYNCED', 'CANCELLED')",
+            )
+            .get() as { count: number }
+        ).count,
+      );
+    } finally {
+      db.close();
+    }
+    if (pendingLocalJobs > 0) {
+      markRunner("delayed");
+      const continuation = await runCli(cliPath, [
+        "collection-status",
+        "--phase",
+        "continuation_pending",
+      ]);
+      return {
+        status: "continuation_required",
+        collectionRunId: continuation.collectionRunId ?? null,
+        periodKey: continuation.periodKey ?? null,
+        pendingLocalJobs,
+        batchIds,
+        continuationTask: SCHEDULED_CONTINUATION_TASK,
+      };
     }
     markRunner("idle");
     const completed = await runCli(cliPath, [
@@ -230,6 +279,7 @@ export async function finishCollectionCycle(cliPath: string) {
       coverage: completed.coverage ?? null,
     };
   } catch (error) {
+    queueDiagnosticSafely("sync", "SYNC_FAILED");
     await reportFailure(cliPath, "DAILY_COLLECTION_FAILED");
     throw new Error(`Daily collection failed: ${safeError(error)}`);
   }
@@ -239,6 +289,13 @@ export async function failCollectionCycle(
   cliPath: string,
   errorCode = "LOCAL_AGENT_FAILED",
 ) {
+  queueDiagnosticSafely(
+    "extract",
+    errorCode === "SENSITIVE_EGRESS_REJECTED"
+      ? "SENSITIVE_EGRESS_REJECTED"
+      : "LOCAL_AGENT_FAILED",
+    errorCode !== "SENSITIVE_EGRESS_REJECTED",
+  );
   await reportFailure(cliPath, errorCode);
   return { status: "failed", errorCode };
 }

@@ -40,6 +40,22 @@ const teamUpdateSchema = z.object({
     .optional(),
   minimumPluginVersion: z.string().min(1).max(40).optional(),
   centralModel: centralModelIdSchema.optional(),
+  collectionGraceMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(24 * 60)
+    .optional(),
+  periodRule: z
+    .object({
+      frequency: z.literal("weekly").default("weekly"),
+      weekStartsOn: z.number().int().min(1).max(7).default(1),
+      factCutoffWeekday: z.number().int().min(1).max(7),
+      factCutoffTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+      reportDeadlineWeekday: z.number().int().min(1).max(7),
+      reportDeadlineTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    })
+    .optional(),
 });
 
 const partnerUpdateSchema = z.object({
@@ -69,9 +85,12 @@ const periodSchema = z
     startsAt: z.string().datetime({ offset: true }),
     endsAt: z.string().datetime({ offset: true }),
     cutoffAt: z.string().datetime({ offset: true }),
+    submissionDeadlineAt: z.string().datetime({ offset: true }),
     timezone: z.string().min(1).max(100),
     templateId: z.string().uuid().optional(),
-    status: z.enum(["open", "closed"]).default("open"),
+    status: z
+      .enum(["open", "closing", "facts_frozen", "closed", "completed"])
+      .default("open"),
   })
   .superRefine((value, context) => {
     if (new Date(value.startsAt) >= new Date(value.endsAt)) {
@@ -79,6 +98,13 @@ const periodSchema = z
         code: z.ZodIssueCode.custom,
         path: ["endsAt"],
         message: "endsAt 必须晚于 startsAt",
+      });
+    }
+    if (new Date(value.cutoffAt) >= new Date(value.submissionDeadlineAt)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["submissionDeadlineAt"],
+        message: "个人报告截止必须晚于 Fact 截止",
       });
     }
     try {
@@ -92,7 +118,22 @@ const periodSchema = z
     }
   });
 
-export function pluginHealth(row: {
+export function pluginConnectivityStatus(row: {
+  status: string;
+  connectivityStatus: string | null;
+  connectivityChallengeExpiresAt: Date | string | null;
+}) {
+  if (row.status !== "active") return "expired";
+  if (row.connectivityStatus === "verified") return "verified";
+  if (row.connectivityStatus === "failed") return "failed";
+  const challengeExpiresAt = row.connectivityChallengeExpiresAt
+    ? new Date(row.connectivityChallengeExpiresAt).getTime()
+    : 0;
+  if (challengeExpiresAt && challengeExpiresAt <= Date.now()) return "expired";
+  return "pending";
+}
+
+export function pluginRunStatus(row: {
   status: string;
   version: string;
   minimumPluginVersion: string;
@@ -100,6 +141,7 @@ export function pluginHealth(row: {
   retryCount: number;
   lastErrorCode: string | null;
   runnerState?: string | null;
+  pendingLocalJobs?: number;
 }) {
   if (row.status !== "active") return "blocked";
   if (
@@ -110,17 +152,25 @@ export function pluginHealth(row: {
   const completedAt = row.lastCollectionCompletedAt
     ? new Date(row.lastCollectionCompletedAt).getTime()
     : 0;
+  if (!completedAt) {
+    if (row.runnerState === "error" || row.retryCount > 0 || row.lastErrorCode)
+      return "abnormal";
+    return "waiting_first_run";
+  }
   const ageDays = (Date.now() - completedAt) / 86_400_000;
-  if (!completedAt || ageDays > 8) return "offline";
+  if (ageDays > 8) return "offline";
   if (
     ageDays > 7 ||
-    row.runnerState === "error" ||
+    ["error", "delayed", "working"].includes(row.runnerState ?? "") ||
+    (row.pendingLocalJobs ?? 0) > 0 ||
     row.retryCount > 0 ||
     row.lastErrorCode
   )
-    return "delayed";
+    return "abnormal";
   return "healthy";
 }
+
+export const pluginHealth = pluginRunStatus;
 
 export async function adminRoutes(app: FastifyInstance) {
   app.get("/v1/admin/overview", async (request) => {
@@ -167,9 +217,28 @@ export async function adminRoutes(app: FastifyInstance) {
           pi.extracting_sessions, pi.pending_local_jobs, pi.retry_count, pi.last_error_code,
           pi.last_collection_started_at, pi.last_collection_completed_at,
           pi.last_collection_period_key, pi.last_collection_session_count, pi.last_collection_fact_count,
+          pi.connectivity_status, pi.connectivity_verified_at, pi.last_connectivity_attempt_at,
+          pi.last_connectivity_error_code, pi.last_connectivity_error_at,
+          pi.last_connectivity_request_id, pi.connectivity_challenge_expires_at,
           pi.created_at, pi.updated_at,
           p.display_name as partner_name, t.minimum_plugin_version, coverage.payload as coverage,
-          coalesce(pending_jobs.count, 0)::int as pending_agent_jobs
+          coalesce(pending_jobs.count, 0)::int as pending_agent_jobs,
+          diagnostic.stage as last_diagnostic_stage,
+          diagnostic.error_code as last_diagnostic_error_code,
+          diagnostic.occurred_at as last_diagnostic_at,
+          diagnostic.retryable as last_diagnostic_retryable,
+          diagnostic.request_id as last_diagnostic_request_id,
+          diagnostic.safe_message as last_diagnostic_message,
+          current_run.id as current_run_id,
+          current_run.status as current_run_status,
+          current_run.discovered_count as current_run_discovered_count,
+          current_run.eligible_count as current_run_eligible_count,
+          current_run.deferred_count as current_run_deferred_count,
+          current_run.excluded_count as current_run_excluded_count,
+          current_run.synced_session_count as current_run_synced_session_count,
+          current_run.synced_fact_count as current_run_synced_fact_count,
+          current_run.pending_local_jobs as current_run_pending_local_jobs,
+          current_run.continuation_count as current_run_continuation_count
         from plugin_instances pi
         join partners p on p.id = pi.partner_id and p.tenant_id = pi.tenant_id
         join teams t on t.id = pi.team_id and t.tenant_id = pi.tenant_id
@@ -183,6 +252,18 @@ export async function adminRoutes(app: FastifyInstance) {
           where aj.tenant_id = pi.tenant_id and aj.plugin_instance_id = pi.id
             and aj.status in ('PENDING', 'LEASED', 'RETRY_WAIT')
         ) pending_jobs on true
+        left join lateral (
+          select pde.stage, pde.error_code, pde.occurred_at, pde.retryable,
+            pde.request_id, pde.safe_message
+          from plugin_diagnostic_events pde
+          where pde.tenant_id = pi.tenant_id and pde.plugin_instance_id = pi.id
+          order by pde.occurred_at desc limit 1
+        ) diagnostic on true
+        left join lateral (
+          select cr.* from collection_runs cr
+          where cr.tenant_id = pi.tenant_id and cr.plugin_instance_id = pi.id
+          order by cr.created_at desc limit 1
+        ) current_run on true
         where pi.team_id = ${actor.teamId} and pi.tenant_id = ${actor.tenantId}
         order by pi.created_at desc
       `,
@@ -226,7 +307,12 @@ export async function adminRoutes(app: FastifyInstance) {
       periods: periodRows,
       plugins: pluginRows.map((row) => ({
         ...row,
-        health: pluginHealth({
+        connectivityStatus: pluginConnectivityStatus({
+          status: row.status,
+          connectivityStatus: row.connectivity_status,
+          connectivityChallengeExpiresAt: row.connectivity_challenge_expires_at,
+        }),
+        runStatus: pluginRunStatus({
           status: row.status,
           version: row.version,
           minimumPluginVersion: row.minimum_plugin_version,
@@ -234,6 +320,7 @@ export async function adminRoutes(app: FastifyInstance) {
           retryCount: row.retry_count,
           lastErrorCode: row.last_error_code,
           runnerState: row.runner_state,
+          pendingLocalJobs: row.pending_local_jobs,
         }),
       })),
       jobs: jobRows,
@@ -346,6 +433,8 @@ export async function adminRoutes(app: FastifyInstance) {
         timezone = coalesce(${input.timezone ?? null}, timezone),
         evidence_excerpt_enabled = coalesce(${input.evidenceExcerptEnabled ?? null}, evidence_excerpt_enabled),
         session_quiet_period_minutes = coalesce(${input.sessionQuietPeriodMinutes ?? null}, session_quiet_period_minutes),
+        collection_grace_minutes = coalesce(${input.collectionGraceMinutes ?? null}, collection_grace_minutes),
+        period_rule = coalesce(${input.periodRule ? JSON.stringify(input.periodRule) : null}::jsonb, period_rule),
         minimum_plugin_version = coalesce(${input.minimumPluginVersion ?? null}, minimum_plugin_version),
         central_model = coalesce(${input.centralModel ?? null}, central_model),
         updated_at = now()
@@ -478,10 +567,13 @@ export async function adminRoutes(app: FastifyInstance) {
     }
     const id = randomUUID();
     const rows = await sql<any[]>`
-      insert into report_periods (id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, timezone, status, template_id)
+      insert into report_periods (
+        id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+        submission_deadline_at, timezone, status, template_id
+      )
       values (
         ${id}, ${actor.tenantId}, ${actor.teamId}, ${input.periodKey}, ${input.startsAt}, ${input.endsAt},
-        ${input.cutoffAt}, ${input.timezone}, ${input.status}, ${input.templateId ?? null}
+        ${input.cutoffAt}, ${input.submissionDeadlineAt}, ${input.timezone}, ${input.status}, ${input.templateId ?? null}
       ) returning *
     `;
     await audit(request, actor, "report_period.created", "report_period", id, {
@@ -495,8 +587,16 @@ export async function adminRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const input = z
       .object({
-        status: z.enum(["open", "closed"]),
+        status: z.enum([
+          "open",
+          "closing",
+          "facts_frozen",
+          "closed",
+          "completed",
+        ]),
         templateId: z.string().uuid().nullable().optional(),
+        cutoffAt: z.string().datetime({ offset: true }).optional(),
+        submissionDeadlineAt: z.string().datetime({ offset: true }).optional(),
       })
       .parse(request.body);
     if (input.templateId) {
@@ -511,6 +611,8 @@ export async function adminRoutes(app: FastifyInstance) {
     }
     const rows = await sql<any[]>`
       update report_periods set status = ${input.status},
+        cutoff_at = coalesce(${input.cutoffAt ?? null}, cutoff_at),
+        submission_deadline_at = coalesce(${input.submissionDeadlineAt ?? null}, submission_deadline_at),
         template_id = case when ${input.templateId === undefined} then template_id else ${input.templateId ?? null} end,
         updated_at = now()
       where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}

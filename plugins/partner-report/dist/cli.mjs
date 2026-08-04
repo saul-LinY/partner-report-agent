@@ -6,7 +6,7 @@ var __export = (target, all) => {
 };
 
 // src/cli.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { hostname } from "node:os";
 import {
   chmodSync as chmodSync3,
@@ -4121,15 +4121,30 @@ var sessionWorkFactSchema = external_exports.object({
 var sessionFactUploadSchema = external_exports.object({
   sessionId: external_exports.string().min(1),
   project: external_exports.object({
-    id: idSchema,
-    matchMethod: external_exports.enum(["exact_root", "descendant_path"]),
-    rootFingerprint: external_exports.string().regex(/^[a-f0-9]{64}$/)
+    id: idSchema.nullable(),
+    matchMethod: external_exports.enum([
+      "exact_root",
+      "descendant_path",
+      "path_discovered",
+      "unassigned"
+    ]),
+    rootFingerprint: external_exports.string().regex(/^[a-f0-9]{64}$/),
+    rootName: external_exports.string().min(1).max(120).optional()
+  }).superRefine((project, context) => {
+    if (project.matchMethod === "path_discovered" && !project.rootName) {
+      context.addIssue({
+        code: external_exports.ZodIssueCode.custom,
+        path: ["rootName"],
+        message: "path_discovered project requires rootName"
+      });
+    }
   }),
   sourceRevision: external_exports.number().int().positive(),
   sourceHash: external_exports.string().min(16),
   fromTurnId: external_exports.string().min(1),
   toTurnId: external_exports.string().min(1),
   observedAt: isoDateTimeSchema,
+  sourceOccurredAt: isoDateTimeSchema.optional(),
   status: external_exports.enum(["extracted", "failed_read", "failed_extract", "excluded"]),
   facts: external_exports.array(sessionWorkFactSchema)
 });
@@ -4138,13 +4153,31 @@ var factBatchSchema = external_exports.object({
   producerVersion: external_exports.string().min(1),
   batchId: external_exports.string().min(1),
   pluginInstanceId: idSchema,
+  collectionRunId: idSchema.optional(),
+  periodKey: external_exports.string().min(1).max(80).optional(),
+  collectionWindow: external_exports.object({
+    startsAt: isoDateTimeSchema,
+    endsAt: isoDateTimeSchema,
+    initialLookback: external_exports.boolean()
+  }).optional(),
   periodCandidates: external_exports.array(external_exports.string()).default([]),
   sessions: external_exports.array(sessionFactUploadSchema).min(1).max(50)
 });
+var projectDiscoveryBatchSchema = external_exports.object({
+  discoveries: external_exports.array(
+    external_exports.object({
+      sessionId: external_exports.string().min(1).max(200),
+      rootName: external_exports.string().min(1).max(120),
+      rootFingerprint: external_exports.string().regex(/^[a-f0-9]{64}$/)
+    }).strict()
+  ).min(1).max(100)
+}).strict();
 var coverageSchema = external_exports.object({
   discovered: external_exports.number().int().nonnegative(),
+  eligible: external_exports.number().int().nonnegative().default(0),
   readable: external_exports.number().int().nonnegative(),
   extracted: external_exports.number().int().nonnegative(),
+  deferred: external_exports.number().int().nonnegative().default(0),
   failedRead: external_exports.number().int().nonnegative(),
   failedExtract: external_exports.number().int().nonnegative(),
   excluded: external_exports.number().int().nonnegative(),
@@ -4220,10 +4253,38 @@ var individualReportResultSchema = external_exports.object({
   qualityWarnings: external_exports.array(external_exports.string()).default([]),
   production: productionMetadataSchema
 });
+var teamReportClaimSchema = external_exports.object({
+  claim: external_exports.string().min(1).max(1e3),
+  individualReportVersionIds: external_exports.array(idSchema).min(1)
+});
+var teamReportSectionSchema = external_exports.object({
+  key: external_exports.enum([
+    "summary",
+    "project_progress",
+    "risks",
+    "next_priorities",
+    "coverage"
+  ]),
+  title: external_exports.string().min(1).max(100),
+  markdown: external_exports.string().max(16e3),
+  claims: external_exports.array(teamReportClaimSchema).default([])
+});
+var teamReportResultSchema = external_exports.object({
+  schemaVersion: external_exports.literal("1.0"),
+  title: external_exports.string().min(1).max(200),
+  summary: external_exports.string().min(1).max(1600),
+  sections: external_exports.array(teamReportSectionSchema).length(5),
+  markdown: external_exports.string().min(1).max(8e4),
+  missingPartnerIds: external_exports.array(idSchema).default([]),
+  qualityWarnings: external_exports.array(external_exports.string()).default([]),
+  production: productionMetadataSchema
+});
 var agentJobTypeSchema = external_exports.enum([
   "AGGREGATE_WORK_ITEMS",
   "GENERATE_INDIVIDUAL_REPORT",
   "REGENERATE_INDIVIDUAL_REPORT",
+  "GENERATE_TEAM_REPORT",
+  "REGENERATE_TEAM_REPORT",
   "REANALYZE_SESSIONS",
   "RESCAN_SESSIONS"
 ]);
@@ -4266,16 +4327,75 @@ var heartbeatSchema = external_exports.object({
 var collectionStatusSchema = external_exports.object({
   pluginVersion: external_exports.string().min(1),
   deviceName: external_exports.string().min(1).max(120),
-  phase: external_exports.enum(["started", "completed", "failed"]),
+  phase: external_exports.enum([
+    "started",
+    "running",
+    "continuation_pending",
+    "completed",
+    "failed"
+  ]),
+  collectionRunId: idSchema.optional(),
   periodKey: external_exports.string().min(1).max(80),
+  windowStartsAt: isoDateTimeSchema.optional(),
+  windowEndsAt: isoDateTimeSchema.optional(),
+  initialLookback: external_exports.boolean().optional(),
   sessionCount: external_exports.number().int().nonnegative().default(0),
   factCount: external_exports.number().int().nonnegative().default(0),
   pendingLocalJobs: external_exports.number().int().nonnegative().default(0),
+  discoveredCount: external_exports.number().int().nonnegative().default(0),
+  eligibleCount: external_exports.number().int().nonnegative().default(0),
+  deferredCount: external_exports.number().int().nonnegative().default(0),
+  excludedCount: external_exports.number().int().nonnegative().default(0),
   lastScanAt: isoDateTimeSchema.optional(),
   lastSyncAt: isoDateTimeSchema.optional(),
   errorCode: external_exports.string().max(120).optional(),
   coverage: coverageSchema.optional()
 });
+var connectivityCapabilityVersionSchema = external_exports.literal("1.0");
+var connectivityTestSchema = external_exports.object({
+  challenge: external_exports.string().min(20).max(200),
+  pluginVersion: external_exports.string().min(1).max(40),
+  clientTime: isoDateTimeSchema,
+  capabilityVersion: connectivityCapabilityVersionSchema
+}).strict();
+var diagnosticStageSchema = external_exports.enum([
+  "binding",
+  "connectivity",
+  "task_setup",
+  "scan",
+  "extract",
+  "sync"
+]);
+var diagnosticErrorCodeSchema = external_exports.enum([
+  "DNS_FAILED",
+  "TLS_FAILED",
+  "CONNECTION_REFUSED",
+  "CONNECTIVITY_TIMEOUT",
+  "AUTH_FAILED",
+  "VERSION_BLOCKED",
+  "CHALLENGE_INVALID",
+  "CHALLENGE_EXPIRED",
+  "CLIENT_CLOCK_SKEW",
+  "REQUEST_INVALID",
+  "TASK_SETUP_FAILED",
+  "SCAN_FAILED",
+  "EXTRACT_FAILED",
+  "SYNC_FAILED",
+  "LOCAL_STORAGE_FAILED",
+  "LOCAL_AGENT_FAILED",
+  "SENSITIVE_EGRESS_REJECTED"
+]);
+var pluginDiagnosticEventSchema = external_exports.object({
+  eventId: external_exports.string().uuid(),
+  stage: diagnosticStageSchema,
+  errorCode: diagnosticErrorCodeSchema,
+  occurredAt: isoDateTimeSchema,
+  retryable: external_exports.boolean(),
+  requestId: external_exports.string().min(1).max(120).optional()
+}).strict();
+var pluginDiagnosticBatchSchema = external_exports.object({
+  events: external_exports.array(pluginDiagnosticEventSchema).min(1).max(20)
+}).strict();
 function assertFactSemantics(fact) {
   if (fact.status === "completed" && (fact.completionSupport !== "evidence" || fact.evidence.length === 0)) {
     throw new Error("Completed facts require explicit evidence.");
@@ -8619,10 +8739,82 @@ function openDatabase() {
       created_at text not null,
       updated_at text not null
     );
-    pragma user_version = 2;
+    create table if not exists diagnostic_outbox (
+      id text primary key,
+      stage text not null,
+      error_code text not null,
+      occurred_at text not null,
+      retryable integer not null,
+      request_id text,
+      safe_message text not null,
+      status text not null default 'PENDING',
+      created_at text not null,
+      updated_at text not null
+    );
+    create index if not exists diagnostic_outbox_status_idx on diagnostic_outbox(status, occurred_at);
+    create table if not exists collection_runs (
+      id text primary key,
+      period_key text not null,
+      status text not null,
+      window_starts_at text not null,
+      window_ends_at text not null,
+      initial_lookback integer not null default 0,
+      invocation_deadline_at text not null,
+      continuation_count integer not null default 0,
+      discovered_count integer not null default 0,
+      eligible_count integer not null default 0,
+      deferred_count integer not null default 0,
+      excluded_count integer not null default 0,
+      completed_at text,
+      error_code text,
+      created_at text not null,
+      updated_at text not null
+    );
+    create index if not exists collection_runs_status_idx on collection_runs(status, created_at);
+    pragma user_version = 4;
   `);
+  ensureColumn(db, "local_jobs", "run_id", "text");
+  ensureColumn(db, "pending_batches", "run_id", "text");
+  ensureColumn(db, "collection_runs", "lease_owner", "text");
+  ensureColumn(db, "collection_runs", "lease_expires_at", "text");
+  ensureColumn(
+    db,
+    "collection_runs",
+    "discovered_count",
+    "integer not null default 0"
+  );
+  ensureColumn(
+    db,
+    "collection_runs",
+    "eligible_count",
+    "integer not null default 0"
+  );
+  ensureColumn(
+    db,
+    "collection_runs",
+    "deferred_count",
+    "integer not null default 0"
+  );
+  ensureColumn(
+    db,
+    "collection_runs",
+    "excluded_count",
+    "integer not null default 0"
+  );
+  ensureColumn(db, "collection_runs", "completed_at", "text");
   chmodSync2(path, 384);
   return db;
+}
+function ensureColumn(db, table, column, definition) {
+  const columns = db.prepare(`pragma table_info(${table})`).all();
+  if (!columns.some((entry) => entry.name === column)) {
+    db.exec(`alter table ${table} add column ${column} ${definition}`);
+  }
+}
+function activeCollectionRun(db) {
+  return db.prepare(
+    "select * from collection_runs where status in ('STARTED', 'RUNNING', 'CONTINUATION_PENDING') order by created_at asc limit 1"
+  ).get();
 }
 function setState(db, key, value) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -8693,12 +8885,20 @@ function cleanupLocalData(db, now = Date.now(), retentionDays = 30) {
   const leases = db.prepare(
     "delete from remote_leases where status in ('COMPLETED', 'FAILED', 'EXPIRED') and updated_at < ?"
   ).run(historyCutoff);
+  const diagnostics = db.prepare(
+    "delete from diagnostic_outbox where status = 'UPLOADED' and updated_at < ?"
+  ).run(historyCutoff);
+  const collectionRuns = db.prepare(
+    "delete from collection_runs where status in ('COMPLETED', 'FAILED') and updated_at < ?"
+  ).run(historyCutoff);
   db.exec("pragma optimize;");
   return {
     hooks: Number(hooks.changes),
     localJobs: Number(localJobs.changes),
     batches: Number(batches.changes),
     leases: Number(leases.changes),
+    diagnostics: Number(diagnostics.changes),
+    collectionRuns: Number(collectionRuns.changes),
     historyCutoff
   };
 }
@@ -8744,22 +8944,37 @@ function localCoverage(db) {
   };
 }
 
+// src/diagnostics.ts
+import { randomUUID } from "node:crypto";
+
 // src/http.ts
 var HttpError = class extends Error {
-  constructor(status2, code, message, details) {
+  constructor(status2, code, message, details, requestId) {
     super(message);
     this.status = status2;
     this.code = code;
     this.details = details;
+    this.requestId = requestId;
   }
 };
 async function rawRequest(serverUrl, path, init = {}, accessToken) {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if (init.body && !headers.has("content-type"))
+    headers.set("content-type", "application/json");
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
-  const response = await fetch(`${serverUrl.replace(/\/$/, "")}${path}`, { ...init, headers });
+  const response = await fetch(`${serverUrl.replace(/\/$/, "")}${path}`, {
+    ...init,
+    headers
+  });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new HttpError(response.status, body?.code ?? "HTTP_ERROR", body?.message ?? response.statusText, body?.details);
+  if (!response.ok)
+    throw new HttpError(
+      response.status,
+      body?.code ?? "HTTP_ERROR",
+      body?.message ?? response.statusText,
+      body?.details,
+      body?.requestId
+    );
   return body;
 }
 async function publicRequest(serverUrl, path, init = {}) {
@@ -8771,7 +8986,8 @@ async function refresh(config) {
     method: "POST",
     body: JSON.stringify({ refreshToken })
   });
-  if (tokens.pluginInstanceId !== config.pluginInstanceId) throw new Error("\u5237\u65B0\u54CD\u5E94\u7684 Plugin Instance \u4E0D\u5339\u914D\u3002");
+  if (tokens.pluginInstanceId !== config.pluginInstanceId)
+    throw new Error("\u5237\u65B0\u54CD\u5E94\u7684 Plugin Instance \u4E0D\u5339\u914D\u3002");
   saveSecret(config.pluginInstanceId, "access", tokens.accessToken);
   saveSecret(config.pluginInstanceId, "refresh", tokens.refreshToken);
   const next = { ...config, accessExpiresAt: tokens.expiresAt };
@@ -8780,19 +8996,157 @@ async function refresh(config) {
 }
 async function authenticatedRequest(path, init = {}) {
   let config = loadConfig();
-  if (new Date(config.accessExpiresAt).getTime() < Date.now() + 6e4) config = await refresh(config);
+  if (new Date(config.accessExpiresAt).getTime() < Date.now() + 6e4)
+    config = await refresh(config);
   try {
-    return await rawRequest(config.serverUrl, path, init, loadSecret(config.pluginInstanceId, "access"));
+    return await rawRequest(
+      config.serverUrl,
+      path,
+      init,
+      loadSecret(config.pluginInstanceId, "access")
+    );
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 401) throw error;
     config = await refresh(config);
-    return rawRequest(config.serverUrl, path, init, loadSecret(config.pluginInstanceId, "access"));
+    return rawRequest(
+      config.serverUrl,
+      path,
+      init,
+      loadSecret(config.pluginInstanceId, "access")
+    );
   }
 }
 
+// src/diagnostics.ts
+var safeMessages = {
+  DNS_FAILED: "\u65E0\u6CD5\u89E3\u6790\u6570\u636E\u4E2D\u53F0\u5730\u5740\u3002",
+  TLS_FAILED: "\u65E0\u6CD5\u5EFA\u7ACB\u53D7\u4FE1\u4EFB\u7684 TLS \u8FDE\u63A5\u3002",
+  CONNECTION_REFUSED: "\u6570\u636E\u4E2D\u53F0\u62D2\u7EDD\u8FDE\u63A5\u3002",
+  CONNECTIVITY_TIMEOUT: "\u8FDE\u63A5\u6570\u636E\u4E2D\u53F0\u8D85\u65F6\u3002",
+  AUTH_FAILED: "\u63D2\u4EF6\u51ED\u8BC1\u672A\u901A\u8FC7\u8BA4\u8BC1\u3002",
+  VERSION_BLOCKED: "\u63D2\u4EF6\u7248\u672C\u6216\u80FD\u529B\u7248\u672C\u4E0D\u53D7\u652F\u6301\u3002",
+  CHALLENGE_INVALID: "\u8FDE\u63A5\u9A8C\u8BC1\u6311\u6218\u65E0\u6548\u3002",
+  CHALLENGE_EXPIRED: "\u8FDE\u63A5\u9A8C\u8BC1\u6311\u6218\u5DF2\u8FC7\u671F\u3002",
+  CLIENT_CLOCK_SKEW: "\u5BA2\u6237\u7AEF\u65F6\u95F4\u4E0E\u670D\u52A1\u5668\u65F6\u95F4\u504F\u5DEE\u8FC7\u5927\u3002",
+  REQUEST_INVALID: "\u8BF7\u6C42\u4E0D\u7B26\u5408\u8FDE\u63A5\u534F\u8BAE\u3002",
+  TASK_SETUP_FAILED: "Codex \u5B9A\u65F6\u4EFB\u52A1\u914D\u7F6E\u5931\u8D25\u3002",
+  SCAN_FAILED: "\u672C\u5730\u4F1A\u8BDD\u626B\u63CF\u5931\u8D25\u3002",
+  EXTRACT_FAILED: "\u672C\u5730\u7ED3\u6784\u5316\u63D0\u53D6\u5931\u8D25\u3002",
+  SYNC_FAILED: "\u7ED3\u6784\u5316 Fact \u540C\u6B65\u5931\u8D25\u3002",
+  LOCAL_STORAGE_FAILED: "\u63D2\u4EF6\u672C\u5730\u72B6\u6001\u4E0D\u53EF\u7528\u3002",
+  LOCAL_AGENT_FAILED: "Codex \u672C\u5730\u63D0\u53D6\u4EFB\u52A1\u5931\u8D25\u3002",
+  SENSITIVE_EGRESS_REJECTED: "\u672C\u5730\u5185\u5BB9\u89E6\u53D1\u654F\u611F\u51FA\u7AD9\u62E6\u622A\uFF0C\u672A\u4E0A\u4F20\u8BE5\u5185\u5BB9\u3002"
+};
+function diagnosticMessage(code) {
+  return safeMessages[code];
+}
+function isTerminalExtractionError(errorCode) {
+  return ["SENSITIVE_EGRESS_REJECTED", "SYSTEM_SESSION_EXCLUDED"].includes(
+    errorCode
+  );
+}
+function classifyDiagnosticError(error, fallback) {
+  if (error instanceof HttpError) {
+    const mapped = {
+      UNAUTHENTICATED: "AUTH_FAILED",
+      PLUGIN_BINDING_INVALID: "AUTH_FAILED",
+      REFRESH_TOKEN_INVALID: "AUTH_FAILED",
+      VERSION_BLOCKED: "VERSION_BLOCKED",
+      CHALLENGE_INVALID: "CHALLENGE_INVALID",
+      CHALLENGE_EXPIRED: "CHALLENGE_EXPIRED",
+      CLIENT_CLOCK_SKEW: "CLIENT_CLOCK_SKEW",
+      REQUEST_INVALID: "REQUEST_INVALID",
+      VALIDATION_ERROR: "REQUEST_INVALID"
+    };
+    return {
+      code: mapped[error.code] ?? fallback,
+      ...error.requestId ? { requestId: error.requestId } : {}
+    };
+  }
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String(error.code);
+    if (code in safeMessages) return { code };
+  }
+  const cause = error && typeof error === "object" && "cause" in error ? error.cause : void 0;
+  const causeCode = cause?.code ?? "";
+  if (["ENOTFOUND", "EAI_AGAIN"].includes(causeCode))
+    return { code: "DNS_FAILED" };
+  if (causeCode === "ECONNREFUSED") return { code: "CONNECTION_REFUSED" };
+  if (["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"].includes(causeCode))
+    return { code: "CONNECTIVITY_TIMEOUT" };
+  if (/CERT|TLS|SSL/.test(causeCode)) return { code: "TLS_FAILED" };
+  return { code: fallback };
+}
+function queueDiagnostic(db, stage, errorCode, retryable = true, requestId) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  db.prepare(
+    `insert into diagnostic_outbox (
+      id, stage, error_code, occurred_at, retryable, request_id,
+      safe_message, status, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`
+  ).run(
+    randomUUID(),
+    stage,
+    errorCode,
+    now,
+    retryable ? 1 : 0,
+    requestId ?? null,
+    diagnosticMessage(errorCode),
+    now,
+    now
+  );
+}
+function queueDiagnosticSafely(stage, errorCode, retryable = true, requestId) {
+  let db;
+  try {
+    db = openDatabase();
+    queueDiagnostic(db, stage, errorCode, retryable, requestId);
+  } catch {
+  } finally {
+    db?.close();
+  }
+}
+async function flushDiagnostics(db) {
+  const events = db.prepare(
+    `select id, stage, error_code, occurred_at, retryable, request_id, safe_message
+       from diagnostic_outbox where status = 'PENDING'
+       order by occurred_at asc limit 20`
+  ).all();
+  if (events.length === 0) return { submitted: 0, accepted: 0 };
+  const response = await authenticatedRequest("/v1/plugin-instances/me/diagnostics", {
+    method: "POST",
+    body: JSON.stringify({
+      events: events.map((event) => ({
+        eventId: event.id,
+        stage: event.stage,
+        errorCode: event.error_code,
+        occurredAt: event.occurred_at,
+        retryable: Boolean(event.retryable),
+        ...event.request_id ? { requestId: event.request_id } : {}
+      }))
+    })
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const mark = db.prepare(
+    "update diagnostic_outbox set status = 'UPLOADED', updated_at = ? where id = ?"
+  );
+  for (const event of events) mark.run(now, event.id);
+  return response;
+}
+
 // src/scan.ts
-import { createHash, randomUUID } from "node:crypto";
-import { isAbsolute, relative, resolve as resolve3, sep } from "node:path";
+import { createHash, randomUUID as randomUUID2 } from "node:crypto";
+import { existsSync as existsSync2 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve as resolve3,
+  sep
+} from "node:path";
 
 // src/app-server.ts
 import { spawn } from "node:child_process";
@@ -8935,6 +9289,22 @@ function containsSensitive(value) {
     return pattern.test(text);
   });
 }
+function isPluginSystemThread(summary) {
+  const name = [summary.name, summary.title].find((value) => typeof value === "string")?.trim().toLowerCase();
+  if (!name) return false;
+  return name === "partner report daily collection" || name === "partner report collection continuation" || name === "\u914D\u7F6E\u63D2\u4EF6\u5B9A\u65F6\u4EFB\u52A1" || name === "\u8FDE\u63A5\u6570\u636E\u4E2D\u53F0\u4E0E\u7ED1\u5B9A\u7801" || name === "\u8FDE\u63A5\u8BBE\u5907\u5230\u672C\u5730\u670D\u52A1" || name === "connect partner report" || name.startsWith("\u67E5\u770B\u5DF2\u5B89\u88C5\u63D2\u4EF6") || name.startsWith("\u8FDE\u63A5\u6570\u636E\u4E2D\u53F0\u4E0E partner-report");
+}
+function isPluginAdministrationSession(turns) {
+  const prompts = turns.map((turn) => turn.userPrompt?.trim()).filter((value) => Boolean(value));
+  if (prompts.length === 0) return false;
+  const allText = prompts.join("\n").toLowerCase();
+  const mentionsPartnerReport = /partner[ -]report/.test(allText);
+  const onlyDirectSkillInvocations = prompts.every(
+    (prompt) => prompt.replace(/[`\s]/g, "").toLowerCase() === "$partner-report-sync"
+  );
+  const administration = /(安装|卸载|启用|禁用|绑定|连接|配置|定时任务|验证码|授权码|换绑|已安装|有哪些插件|查看.*插件|install|uninstall|enable|disable|bind|connect|configure|scheduled task)/i;
+  return onlyDirectSkillInvocations || mentionsPartnerReport && prompts.every((prompt) => administration.test(prompt));
+}
 function withinPath(candidate, root) {
   const normalizedCandidate = resolve3(candidate);
   const normalizedRoot = resolve3(root);
@@ -8971,6 +9341,9 @@ function normalizeProgressTurns(turns) {
     return {
       id: String(turn.id),
       status: typeof turn.status === "string" ? turn.status : null,
+      occurredAt: turn.completedAt ?? turn.updatedAt ?? turn.createdAt ? new Date(
+        timestamp(turn.completedAt ?? turn.updatedAt ?? turn.createdAt)
+      ).toISOString() : null,
       userPrompt: userPrompt || null,
       assistantFinal: assistantFinal || null
     };
@@ -9000,8 +9373,41 @@ function selectIncrementalTurns(turns, lastTurnId, force = false) {
     cursorMatched: cursorIndex >= 0
   };
 }
+function selectTurnsForCollectionRun(turns, lastTurnId, options = {}) {
+  const incremental = selectIncrementalTurns(turns, lastTurnId, options.force);
+  const candidates = !lastTurnId && options.windowStartsAt && options.windowEndsAt ? incremental.turns.filter((turn) => {
+    const occurredAt = new Date(
+      turn.occurredAt ?? options.fallbackOccurredAt ?? 0
+    ).getTime();
+    return Number.isFinite(occurredAt) && occurredAt >= new Date(options.windowStartsAt).getTime() && occurredAt <= new Date(options.windowEndsAt).getTime();
+  }) : incremental.turns;
+  return {
+    ...incremental,
+    turns: candidates.filter(isCompleteTurn),
+    hasIncompleteTurn: candidates.some((turn) => !isCompleteTurn(turn))
+  };
+}
 function hash(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+function discoveredRoot(cwd) {
+  let current = resolve3(cwd);
+  if (current === resolve3(homedir2()) || current === dirname(current))
+    return null;
+  if (!existsSync2(current)) return current;
+  while (current !== dirname(current)) {
+    if (existsSync2(join(current, ".git"))) return current;
+    current = dirname(current);
+    if (current === resolve3(homedir2())) break;
+  }
+  return resolve3(cwd);
+}
+function pathIdentity(root) {
+  const normalizedRoot = resolve3(root);
+  return {
+    rootName: basename(normalizedRoot).slice(0, 120),
+    rootFingerprint: hash({ scope: "project-root", root: normalizedRoot })
+  };
 }
 function inventory(db, sessionId, cwd, projectId, status2, reasonCode) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -9015,34 +9421,75 @@ function inventory(db, sessionId, cwd, projectId, status2, reasonCode) {
   ).run(sessionId, cwd, projectId, status2, reasonCode, now, now);
 }
 function mappedProject(cwd, projects) {
+  if (!cwd) {
+    return {
+      id: null,
+      name: "\u72EC\u7ACB\u5DE5\u4F5C",
+      aliases: [],
+      matchMethod: "unassigned",
+      rootFingerprint: hash({ scope: "unassigned", cwd: null }),
+      rootName: void 0
+    };
+  }
   const matches = projects.flatMap(
-    (project) => project.allowed_paths.filter((root) => isAbsolute(root) && withinPath(cwd, root)).map((root) => {
-      const normalizedRoot = resolve3(root);
+    (project) => project.allowed_paths.filter((root2) => isAbsolute(root2) && withinPath(cwd, root2)).map((root2) => {
+      const normalizedRoot = resolve3(root2);
       return {
         project,
         rootLength: normalizedRoot.length,
         matchMethod: resolve3(cwd) === normalizedRoot ? "exact_root" : "descendant_path",
-        rootFingerprint: hash({
-          projectId: project.id,
-          root: normalizedRoot
-        })
+        ...pathIdentity(normalizedRoot)
       };
     })
   );
   matches.sort((left, right) => right.rootLength - left.rootLength);
   const match = matches[0];
-  return match ? {
-    ...match.project,
-    matchMethod: match.matchMethod,
-    rootFingerprint: match.rootFingerprint
-  } : null;
+  if (match) {
+    return {
+      ...match.project,
+      matchMethod: match.matchMethod,
+      rootName: match.rootName,
+      rootFingerprint: match.rootFingerprint
+    };
+  }
+  const root = discoveredRoot(cwd);
+  if (!root) {
+    return {
+      id: null,
+      name: "\u72EC\u7ACB\u5DE5\u4F5C",
+      aliases: [],
+      matchMethod: "unassigned",
+      rootFingerprint: hash({ scope: "unassigned", cwd: resolve3(cwd) }),
+      rootName: void 0
+    };
+  }
+  const identity = pathIdentity(root);
+  const externalId = `path-sha256:${identity.rootFingerprint}`;
+  const discovered = projects.find(
+    (project) => (project.external_ids ?? []).includes(externalId)
+  );
+  if (discovered) {
+    return {
+      ...discovered,
+      matchMethod: resolve3(cwd) === root ? "exact_root" : "descendant_path",
+      ...identity
+    };
+  }
+  return {
+    id: null,
+    name: identity.rootName,
+    aliases: [],
+    matchMethod: "path_discovered",
+    ...identity
+  };
 }
-async function prepareSessionJobs(db, config, policy, force = false) {
+async function prepareSessionJobs(db, config, policy, force = false, run) {
   if (!policy.currentPeriod)
     throw new Error("\u670D\u52A1\u7AEF\u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002");
   const server = new CodexAppServer();
   const stats = {
     discovered: 0,
+    eligible: 0,
     excluded: 0,
     outOfPeriod: 0,
     deferred: 0,
@@ -9063,11 +9510,20 @@ async function prepareSessionJobs(db, config, policy, force = false) {
     const threads = await server.listThreads();
     const periodStart = new Date(policy.currentPeriod.starts_at).getTime();
     const periodEnd = new Date(policy.currentPeriod.ends_at).getTime();
+    const windowStart = run ? new Date(run.windowStartsAt).getTime() : periodStart;
+    const windowEnd = run ? new Date(run.windowEndsAt).getTime() : periodEnd;
+    const systemSessionIds = new Set(
+      JSON.parse(getState(db, "system_session_ids") ?? "[]")
+    );
     for (const summary of threads) {
       const sessionId = String(summary.id);
       const cwd = typeof summary.cwd === "string" ? summary.cwd : "";
       stats.discovered += 1;
-      if (config.excludedSessionIds.includes(sessionId) || sessionId === process.env.CODEX_THREAD_ID) {
+      if ((config.excludedSessionIds ?? []).includes(sessionId) || systemSessionIds.has(sessionId) || sessionId === process.env.CODEX_THREAD_ID || isPluginSystemThread(summary)) {
+        db.prepare(
+          `update local_jobs set status = 'CANCELLED', error_code = 'SYSTEM_SESSION_EXCLUDED', updated_at = ?
+           where session_id = ? and status not in ('SYNCED', 'CANCELLED')`
+        ).run((/* @__PURE__ */ new Date()).toISOString(), sessionId);
         inventory(
           db,
           sessionId,
@@ -9079,28 +9535,23 @@ async function prepareSessionJobs(db, config, policy, force = false) {
         stats.excluded += 1;
         continue;
       }
-      if (cwd && config.excludedPaths.some((path) => withinPath(cwd, path))) {
+      if (cwd && (config.excludedPaths ?? []).some((path) => withinPath(cwd, path))) {
         inventory(db, sessionId, cwd, null, "excluded", "PATH_EXCLUDED");
         stats.excluded += 1;
         continue;
       }
-      const project = cwd ? mappedProject(cwd, policy.projects) : null;
-      if (!project) {
+      const resolvedProject = mappedProject(cwd || null, policy.projects);
+      const createdAt = timestamp(summary.createdAt);
+      const updatedAt = timestamp(summary.updatedAt);
+      if (createdAt && createdAt > windowEnd || run?.initialLookback && updatedAt && updatedAt < windowStart) {
         inventory(
           db,
           sessionId,
-          cwd || null,
-          null,
+          cwd,
+          resolvedProject.id,
           "excluded",
-          "PATH_NOT_ALLOWED"
+          "OUTSIDE_COLLECTION_WINDOW"
         );
-        stats.excluded += 1;
-        continue;
-      }
-      const createdAt = timestamp(summary.createdAt);
-      const updatedAt = timestamp(summary.updatedAt);
-      if (createdAt && createdAt > periodEnd || updatedAt && updatedAt < periodStart) {
-        inventory(db, sessionId, cwd, project.id, "excluded", "OUTSIDE_PERIOD");
         stats.outOfPeriod += 1;
         continue;
       }
@@ -9136,7 +9587,7 @@ async function prepareSessionJobs(db, config, policy, force = false) {
           db,
           sessionId,
           cwd,
-          project.id,
+          resolvedProject.id,
           "pending_extract",
           "LOCAL_JOB_EXISTS"
         );
@@ -9151,7 +9602,7 @@ async function prepareSessionJobs(db, config, policy, force = false) {
           db,
           sessionId,
           cwd,
-          project.id,
+          resolvedProject.id,
           "failed_read",
           "THREAD_READ_FAILED"
         );
@@ -9161,27 +9612,57 @@ async function prepareSessionJobs(db, config, policy, force = false) {
       const normalized = normalizeProgressTurns(
         Array.isArray(thread.turns) ? thread.turns : []
       );
-      if (normalized.length === 0) {
-        inventory(db, sessionId, cwd, project.id, "excluded", "NO_TURNS");
-        stats.excluded += 1;
-        continue;
-      }
-      const cursor = cursorForSession.get(sessionId);
-      const incremental = selectIncrementalTurns(
-        normalized,
-        cursor?.last_turn_id,
-        force
-      );
-      if (cursor && !force && !incremental.cursorMatched)
-        stats.warnings.push(`CURSOR_RESET:${sessionId}`);
-      const newTurns = incremental.turns.filter(isCompleteTurn);
-      if (newTurns.length === 0) {
-        const hasIncompleteTurn = incremental.turns.length > 0;
+      if (isPluginAdministrationSession(normalized)) {
+        db.prepare(
+          `update local_jobs set status = 'CANCELLED', error_code = 'SYSTEM_SESSION_EXCLUDED', updated_at = ?
+           where session_id = ? and status not in ('SYNCED', 'CANCELLED')`
+        ).run((/* @__PURE__ */ new Date()).toISOString(), sessionId);
         inventory(
           db,
           sessionId,
           cwd,
-          project.id,
+          resolvedProject.id,
+          "excluded",
+          "SYSTEM_SESSION_EXCLUDED"
+        );
+        stats.excluded += 1;
+        continue;
+      }
+      if (normalized.length === 0) {
+        inventory(
+          db,
+          sessionId,
+          cwd,
+          resolvedProject.id,
+          "excluded",
+          "NO_TURNS"
+        );
+        stats.excluded += 1;
+        continue;
+      }
+      const cursor = cursorForSession.get(sessionId);
+      const incremental = selectTurnsForCollectionRun(
+        normalized,
+        cursor?.last_turn_id,
+        {
+          force,
+          ...run ? {
+            windowStartsAt: run.windowStartsAt,
+            windowEndsAt: run.windowEndsAt
+          } : {},
+          fallbackOccurredAt: new Date(updatedAt || Date.now()).toISOString()
+        }
+      );
+      if (cursor && !force && !incremental.cursorMatched)
+        stats.warnings.push(`CURSOR_RESET:${sessionId}`);
+      const newTurns = incremental.turns;
+      if (newTurns.length === 0) {
+        const hasIncompleteTurn = incremental.hasIncompleteTurn;
+        inventory(
+          db,
+          sessionId,
+          cwd,
+          resolvedProject.id,
           hasIncompleteTurn ? "awaiting_complete_turn" : "synced",
           hasIncompleteTurn ? "INCOMPLETE_TURN_SKIPPED" : null
         );
@@ -9201,6 +9682,8 @@ async function prepareSessionJobs(db, config, policy, force = false) {
       const fromTurnId = newTurns[0].id;
       const toTurnId = newTurns.at(-1).id;
       const observedAt = (/* @__PURE__ */ new Date()).toISOString();
+      const sourceOccurredAt = newTurns.at(-1)?.occurredAt ?? new Date(updatedAt || Date.now()).toISOString();
+      stats.eligible += 1;
       const input = {
         schemaVersion: "1.0",
         task: "EXTRACT_SESSION_FACTS",
@@ -9209,17 +9692,19 @@ async function prepareSessionJobs(db, config, policy, force = false) {
           name: thread.name ?? summary.name ?? null,
           cwd,
           project: {
-            id: project.id,
-            name: project.name,
-            aliases: project.aliases,
-            matchMethod: project.matchMethod,
-            rootFingerprint: project.rootFingerprint
+            id: resolvedProject.id,
+            name: resolvedProject.name,
+            aliases: resolvedProject.aliases,
+            matchMethod: resolvedProject.matchMethod,
+            rootFingerprint: resolvedProject.rootFingerprint,
+            ...resolvedProject.rootName ? { rootName: resolvedProject.rootName } : {}
           },
           sourceRevision,
           sourceHash,
           fromTurnId,
           toTurnId,
           observedAt,
+          sourceOccurredAt,
           incremental: {
             mode: incremental.mode,
             previousTurnId: cursor?.last_turn_id ?? null,
@@ -9245,9 +9730,10 @@ async function prepareSessionJobs(db, config, policy, force = false) {
         outputRequirements: {
           status: "extracted",
           project: {
-            id: project.id,
-            matchMethod: project.matchMethod,
-            rootFingerprint: project.rootFingerprint
+            id: resolvedProject.id,
+            matchMethod: resolvedProject.matchMethod,
+            rootFingerprint: resolvedProject.rootFingerprint,
+            ...resolvedProject.rootName ? { rootName: resolvedProject.rootName } : {}
           },
           factOrigin: "ai_extracted",
           production: {
@@ -9258,13 +9744,13 @@ async function prepareSessionJobs(db, config, policy, force = false) {
           }
         }
       };
-      const jobId = randomUUID();
+      const jobId = randomUUID2();
       db.prepare(
         `
         insert into local_jobs (
           id, type, status, session_id, source_revision, from_turn_id, to_turn_id,
-          source_hash, input_json, created_at, updated_at
-        ) values (?, 'EXTRACT_SESSION_FACTS', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?)
+          source_hash, input_json, created_at, updated_at, run_id
+        ) values (?, 'EXTRACT_SESSION_FACTS', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
       ).run(
         jobId,
@@ -9275,12 +9761,20 @@ async function prepareSessionJobs(db, config, policy, force = false) {
         sourceHash,
         JSON.stringify(input),
         observedAt,
-        observedAt
+        observedAt,
+        run?.id ?? null
       );
       db.prepare(
         "update session_activity set latest_turn_id = ?, processing_state = 'PENDING_EXTRACT', updated_at = ? where session_id = ?"
       ).run(toTurnId, observedAt, sessionId);
-      inventory(db, sessionId, cwd, project.id, "pending_extract", null);
+      inventory(
+        db,
+        sessionId,
+        cwd,
+        resolvedProject.id,
+        "pending_extract",
+        null
+      );
       stats.queued += 1;
     }
     setState(db, "hook_missed_at_scan", String(stats.hookMissed));
@@ -9298,7 +9792,7 @@ async function prepareSessionJobs(db, config, policy, force = false) {
 // src/automation.ts
 import { spawn as spawn2 } from "node:child_process";
 import {
-  existsSync as existsSync2,
+  existsSync as existsSync3,
   mkdirSync as mkdirSync2,
   readdirSync,
   statSync,
@@ -9306,6 +9800,50 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as resolve4 } from "node:path";
+
+// src/collection-config.ts
+var DEFAULT_COLLECTION_MODEL = "gpt-5.6-sol";
+var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
+var SCHEDULED_COLLECTION_PROMPT = [
+  "Collect only eligible local Codex sessions, use only complete user prompts and final answers, extract validated structured facts, and upload only those facts to the configured Partner Report endpoint.",
+  "A completed Plugin binding is the user's standing authorization for this bounded structured-Fact upload; stop if the CLI reports that the binding is missing or revoked.",
+  "Never upload raw transcripts, reasoning, credentials, commands, tool calls, file changes, or incomplete turns.",
+  "Process one Session at a time until the CLI reports empty or the invocation deadline is reached. A logical collection run is successful only after every queued Session is uploaded and pendingLocalJobs is zero.",
+  "If one local job is blocked as SENSITIVE_EGRESS_REJECTED, exclude that job with the Skill's fail-local procedure and continue the logical run; never bypass the block.",
+  "Do not create or update automation memory for this run. If the runtime requires a memory update, store only the run timestamp, completed or failed status, aggregate counts, and a safe error code; never store Session content, Facts, evidence, endpoint details, or identifiers.",
+  "Use $partner-report-sync to run daily-collect and return only the safe collection summary."
+].join(" ");
+var SCHEDULED_COLLECTION_TASK = {
+  name: "Partner Report daily collection",
+  destination: "new_chat",
+  project: null,
+  schedule: {
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=13;BYMINUTE=30",
+    timezone: "Asia/Shanghai"
+  },
+  model: DEFAULT_COLLECTION_MODEL,
+  reasoningEffort: DEFAULT_COLLECTION_REASONING_EFFORT,
+  notifications: "failures_only",
+  prompt: SCHEDULED_COLLECTION_PROMPT
+};
+var SCHEDULED_CONTINUATION_TASK = {
+  name: "Partner Report collection continuation",
+  destination: "new_chat",
+  project: null,
+  schedule: {
+    rrule: "RRULE:FREQ=MINUTELY;INTERVAL=2",
+    timezone: "Asia/Shanghai"
+  },
+  model: DEFAULT_COLLECTION_MODEL,
+  reasoningEffort: DEFAULT_COLLECTION_REASONING_EFFORT,
+  notifications: "failures_only",
+  prompt: [
+    SCHEDULED_COLLECTION_PROMPT,
+    "Continue the existing logical collection run. If another invocation holds the run lease, exit safely. When daily-finish reports completed, pause this continuation task."
+  ].join(" ")
+};
+
+// src/automation.ts
 function safeError(error) {
   if (error instanceof Error) return error.message.slice(0, 500);
   return String(error).slice(0, 500);
@@ -9352,8 +9890,10 @@ async function runCli(cliPath, args) {
   }
 }
 function maximumCollectionJobs() {
-  const configured = Number(process.env.PARTNER_REPORT_MAX_JOBS ?? 20);
-  return Number.isFinite(configured) ? Math.max(1, Math.min(Math.floor(configured), 100)) : 20;
+  const configured = Number(
+    process.env.PARTNER_REPORT_MAX_JOBS_PER_INVOCATION ?? process.env.PARTNER_REPORT_MAX_JOBS ?? 50
+  );
+  return Number.isFinite(configured) ? Math.max(1, Math.min(Math.floor(configured), 100)) : 50;
 }
 function collectionWorkDirectory() {
   const instance = loadConfig(false)?.pluginInstanceId.replace(/[^a-zA-Z0-9._-]/g, "_") ?? "unbound";
@@ -9412,7 +9952,7 @@ function cleanupOldLocalState() {
     resolve4(dataDirectory(), "work")
   ];
   for (const workDirectory of workDirectories) {
-    if (!existsSync2(workDirectory)) continue;
+    if (!existsSync3(workDirectory)) continue;
     for (const name of readdirSync(workDirectory)) {
       if (!/^(local|remote)-.+-(input|result)\.json$/.test(name)) continue;
       const path = resolve4(workDirectory, name);
@@ -9445,6 +9985,13 @@ async function beginCollectionCycle(cliPath, force = false) {
       "--phase",
       "started"
     ]);
+    if (started.status === "already_running") {
+      return {
+        status: "already_running",
+        collectionRunId: started.collectionRunId ?? null,
+        leaseExpiresAt: started.leaseExpiresAt ?? null
+      };
+    }
     const recoveredLocalJobs = recoverStaleLocalJobs();
     const cleanup = cleanupOldLocalState();
     const prepared = await runCli(
@@ -9460,6 +10007,8 @@ async function beginCollectionCycle(cliPath, force = false) {
     return {
       status: "ready_for_agent",
       periodKey: started.periodKey ?? null,
+      collectionRunId: started.collectionRunId ?? null,
+      invocationDeadlineAt: started.invocationDeadlineAt ?? null,
       recoveredLocalJobs,
       cleanup,
       pendingLocalJobs: prepared.pendingLocalJobs ?? 0,
@@ -9467,6 +10016,7 @@ async function beginCollectionCycle(cliPath, force = false) {
       nextCommand: "next-local"
     };
   } catch (error) {
+    queueDiagnosticSafely("scan", "SCAN_FAILED");
     await reportFailure(cliPath, "DAILY_COLLECTION_FAILED");
     throw new Error(`Daily collection failed: ${safeError(error)}`);
   }
@@ -9474,12 +10024,38 @@ async function beginCollectionCycle(cliPath, force = false) {
 async function finishCollectionCycle(cliPath) {
   try {
     const batchIds = [];
-    const maxBatches = Math.max(1, Math.ceil(maximumCollectionJobs() / 50));
-    for (let index = 0; index < maxBatches; index += 1) {
+    for (let index = 0; index < 100; index += 1) {
       const result = await runCli(cliPath, ["sync"]);
       if (result.status === "empty") break;
       if (typeof result.batchId === "string") batchIds.push(result.batchId);
       if (result.status === "partial") break;
+    }
+    const db = openDatabase();
+    let pendingLocalJobs = 0;
+    try {
+      pendingLocalJobs = Number(
+        db.prepare(
+          "select count(*) as count from local_jobs where status not in ('SYNCED', 'CANCELLED')"
+        ).get().count
+      );
+    } finally {
+      db.close();
+    }
+    if (pendingLocalJobs > 0) {
+      markRunner("delayed");
+      const continuation = await runCli(cliPath, [
+        "collection-status",
+        "--phase",
+        "continuation_pending"
+      ]);
+      return {
+        status: "continuation_required",
+        collectionRunId: continuation.collectionRunId ?? null,
+        periodKey: continuation.periodKey ?? null,
+        pendingLocalJobs,
+        batchIds,
+        continuationTask: SCHEDULED_CONTINUATION_TASK
+      };
     }
     markRunner("idle");
     const completed = await runCli(cliPath, [
@@ -9497,37 +10073,101 @@ async function finishCollectionCycle(cliPath) {
       coverage: completed.coverage ?? null
     };
   } catch (error) {
+    queueDiagnosticSafely("sync", "SYNC_FAILED");
     await reportFailure(cliPath, "DAILY_COLLECTION_FAILED");
     throw new Error(`Daily collection failed: ${safeError(error)}`);
   }
 }
 async function failCollectionCycle(cliPath, errorCode = "LOCAL_AGENT_FAILED") {
+  queueDiagnosticSafely(
+    "extract",
+    errorCode === "SENSITIVE_EGRESS_REJECTED" ? "SENSITIVE_EGRESS_REJECTED" : "LOCAL_AGENT_FAILED",
+    errorCode !== "SENSITIVE_EGRESS_REJECTED"
+  );
   await reportFailure(cliPath, errorCode);
   return { status: "failed", errorCode };
 }
 
-// src/collection-config.ts
-var DEFAULT_COLLECTION_MODEL = "gpt-5.6-sol";
-var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
-var SCHEDULED_COLLECTION_PROMPT = [
-  "Collect only eligible local Codex sessions, use only complete user prompts and final answers, extract validated structured facts, and upload only those facts to the configured Partner Report endpoint.",
-  "Never upload raw transcripts, reasoning, credentials, commands, tool calls, file changes, or incomplete turns.",
-  "Do not create or update automation memory for this run. If the runtime requires a memory update, store only the run timestamp, completed or failed status, aggregate counts, and a safe error code; never store Session content, Facts, evidence, endpoint details, or identifiers.",
-  "Use $partner-report-sync to run daily-collect and return only the safe collection summary."
-].join(" ");
-var SCHEDULED_COLLECTION_TASK = {
-  name: "Partner Report daily collection",
-  destination: "new_chat",
-  project: null,
-  schedule: {
-    rrule: "RRULE:FREQ=DAILY;BYHOUR=13;BYMINUTE=0",
-    timezone: "Asia/Shanghai"
-  },
-  model: DEFAULT_COLLECTION_MODEL,
-  reasoningEffort: DEFAULT_COLLECTION_REASONING_EFFORT,
-  notifications: "failures_only",
-  prompt: SCHEDULED_COLLECTION_PROMPT
-};
+// src/collection-run.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+var INITIAL_LOOKBACK_MS = 24 * 60 * 6e4;
+var INVOCATION_SOFT_LIMIT_MS = 10 * 6e4;
+var LEASE_GRACE_MS = 2 * 6e4;
+function collectionRunnerOwner() {
+  return process.env.CODEX_THREAD_ID ?? process.env.PARTNER_REPORT_RUNNER_ID ?? `manual-${process.ppid}`;
+}
+function claimCollectionRun(db, periodKey, options = {}) {
+  const now = options.now ?? /* @__PURE__ */ new Date();
+  const owner = options.owner ?? collectionRunnerOwner();
+  const current = activeCollectionRun(db);
+  if (current?.lease_owner && current.lease_owner !== owner && current.lease_expires_at && new Date(current.lease_expires_at).getTime() > now.getTime()) {
+    return { status: "already_running", run: current };
+  }
+  const deadline = new Date(now.getTime() + INVOCATION_SOFT_LIMIT_MS);
+  const leaseExpiresAt = new Date(deadline.getTime() + LEASE_GRACE_MS);
+  if (current) {
+    db.prepare(
+      `update collection_runs set status = 'RUNNING', invocation_deadline_at = ?,
+        lease_owner = ?, lease_expires_at = ?, updated_at = ? where id = ?`
+    ).run(
+      deadline.toISOString(),
+      owner,
+      leaseExpiresAt.toISOString(),
+      now.toISOString(),
+      current.id
+    );
+    db.prepare(
+      "update local_jobs set run_id = ? where run_id is null and status not in ('SYNCED', 'CANCELLED')"
+    ).run(current.id);
+    return {
+      status: "running",
+      run: db.prepare("select * from collection_runs where id = ?").get(current.id)
+    };
+  }
+  const previousWindowEnd = getState(db, "last_collection_window_end");
+  const startsAt = previousWindowEnd ? new Date(previousWindowEnd) : new Date(now.getTime() - INITIAL_LOOKBACK_MS);
+  const id = randomUUID3();
+  db.prepare(
+    `insert into collection_runs (
+      id, period_key, status, window_starts_at, window_ends_at, initial_lookback,
+      invocation_deadline_at, continuation_count, lease_owner, lease_expires_at,
+      created_at, updated_at
+    ) values (?, ?, 'RUNNING', ?, ?, ?, ?, 0, ?, ?, ?, ?)`
+  ).run(
+    id,
+    periodKey,
+    startsAt.toISOString(),
+    now.toISOString(),
+    previousWindowEnd ? 0 : 1,
+    deadline.toISOString(),
+    owner,
+    leaseExpiresAt.toISOString(),
+    now.toISOString(),
+    now.toISOString()
+  );
+  setState(db, "active_collection_run_id", id);
+  return {
+    status: "running",
+    run: db.prepare("select * from collection_runs where id = ?").get(id)
+  };
+}
+function collectionDrainState(db) {
+  const pendingLocalJobs = Number(
+    db.prepare(
+      "select count(*) as count from local_jobs where status not in ('SYNCED', 'CANCELLED')"
+    ).get().count
+  );
+  const pendingBatches = Number(
+    db.prepare(
+      "select count(*) as count from pending_batches where status != 'COMPLETED'"
+    ).get().count
+  );
+  return {
+    pendingLocalJobs,
+    pendingBatches,
+    drained: pendingLocalJobs === 0 && pendingBatches === 0
+  };
+}
 
 // src/cli.ts
 function option(name, fallback) {
@@ -9542,11 +10182,31 @@ function output(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}
 `);
 }
+function rememberCurrentSystemSession() {
+  if (!process.env.CODEX_THREAD_ID) return;
+  const db = openDatabase();
+  try {
+    const systemSessions = new Set(
+      JSON.parse(getState(db, "system_session_ids") ?? "[]")
+    );
+    systemSessions.add(process.env.CODEX_THREAD_ID);
+    setState(db, "system_session_ids", JSON.stringify([...systemSessions]));
+  } finally {
+    db.close();
+  }
+}
 function scheduledTaskConfig() {
   output({
     status: "scheduled_task_config",
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     setupMode: "create_if_missing_or_repair_prompt_only"
+  });
+}
+function continuationTaskConfig() {
+  output({
+    status: "continuation_task_config",
+    scheduledTask: SCHEDULED_CONTINUATION_TASK,
+    setupMode: "create_or_resume_until_run_completed"
   });
 }
 function compareVersions(left, right) {
@@ -9588,14 +10248,18 @@ async function connect() {
       "connect \u9700\u8981 Admin \u5728\u6570\u636E\u4E2D\u53F0\u751F\u6210\u7684 --binding-code <code>\u3002"
     );
   }
-  const tokens = await publicRequest(serverUrl, "/v1/plugin-bindings/claim", {
-    method: "POST",
-    body: JSON.stringify({
-      bindingCode,
-      deviceName,
-      pluginVersion: PLUGIN_VERSION
-    })
-  });
+  const tokens = await publicRequest(
+    serverUrl,
+    "/v1/plugin-bindings/claim",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        bindingCode,
+        deviceName,
+        pluginVersion: PLUGIN_VERSION
+      })
+    }
+  );
   const existing = loadConfig(false);
   if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
     removeSecrets(existing.pluginInstanceId);
@@ -9606,14 +10270,29 @@ async function connect() {
     pluginInstanceId: tokens.pluginInstanceId,
     deviceName,
     accessExpiresAt: tokens.expiresAt,
+    connectivityStatus: "pending",
+    pendingConnectivityChallenge: {
+      value: tokens.challenge,
+      expiresAt: tokens.challengeExpiresAt
+    },
     excludedSessionIds: existing?.excludedSessionIds ?? [],
     excludedPaths: existing?.excludedPaths ?? []
   });
+  const connectivity = await performConnectivityTest({
+    challenge: tokens.challenge,
+    challengeExpiresAt: tokens.challengeExpiresAt,
+    capabilityVersion: tokens.capabilityVersion
+  });
+  outputConnected(tokens.partnerId, deviceName, connectivity);
+}
+function outputConnected(partnerId, deviceName, connectivity) {
+  const config = loadConfig();
   output({
     status: "connected",
-    pluginInstanceId: tokens.pluginInstanceId,
-    partnerId: tokens.partnerId,
+    pluginInstanceId: config.pluginInstanceId,
+    partnerId,
     deviceName,
+    connectivity,
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     taskSetupMode: "create_if_missing",
     existingTaskPolicy: {
@@ -9631,18 +10310,192 @@ async function connect() {
     nextStep: "\u7531 $partner-report-sync \u5728\u540C\u540D\u4EFB\u52A1\u4E0D\u5B58\u5728\u65F6\u521B\u5EFA\u4E0A\u9762\u7684\u9ED8\u8BA4 Codex Scheduled task\uFF1B\u5DF2\u6709\u4EFB\u52A1\u4FDD\u7559\u7528\u6237\u914D\u7F6E\u3002"
   });
 }
+async function performConnectivityTest(supplied) {
+  let config = loadConfig();
+  try {
+    let connectivity = supplied;
+    if (!connectivity || new Date(connectivity.challengeExpiresAt).getTime() <= Date.now()) {
+      connectivity = await authenticatedRequest(
+        "/v1/plugin-instances/me/connectivity-challenge",
+        { method: "POST", body: "{}" }
+      );
+      config = loadConfig();
+      saveConfig({
+        ...config,
+        connectivityStatus: "pending",
+        pendingConnectivityChallenge: {
+          value: connectivity.challenge,
+          expiresAt: connectivity.challengeExpiresAt
+        }
+      });
+    }
+    if (connectivity.capabilityVersion !== "1.0")
+      throw Object.assign(new Error("\u8FDE\u63A5\u80FD\u529B\u7248\u672C\u4E0D\u53D7\u652F\u6301\u3002"), {
+        code: "VERSION_BLOCKED"
+      });
+    const response = await authenticatedRequest(
+      "/v1/plugin-instances/me/connectivity-test",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          challenge: connectivity.challenge,
+          pluginVersion: PLUGIN_VERSION,
+          clientTime: (/* @__PURE__ */ new Date()).toISOString(),
+          capabilityVersion: "1.0"
+        })
+      }
+    );
+    config = loadConfig();
+    const { pendingConnectivityChallenge: _pending, ...stableConfig } = config;
+    saveConfig({
+      ...stableConfig,
+      connectivityStatus: "verified",
+      connectivityVerifiedAt: typeof response.verifiedAt === "string" ? response.verifiedAt : (/* @__PURE__ */ new Date()).toISOString()
+    });
+    const db = openDatabase();
+    try {
+      setState(db, "connectivity_status", "verified");
+      setState(
+        db,
+        "connectivity_verified_at",
+        String(response.verifiedAt ?? (/* @__PURE__ */ new Date()).toISOString())
+      );
+      await flushDiagnostics(db).catch(() => void 0);
+    } finally {
+      db.close();
+    }
+    return response;
+  } catch (error) {
+    const classified = classifyDiagnosticError(error, "CONNECTIVITY_TIMEOUT");
+    queueDiagnosticSafely(
+      "connectivity",
+      classified.code,
+      true,
+      classified.requestId
+    );
+    config = loadConfig();
+    saveConfig({ ...config, connectivityStatus: "failed" });
+    const wrapped = Object.assign(
+      new Error(
+        `${diagnosticMessage(classified.code)} \u7ED1\u5B9A\u548C\u51ED\u8BC1\u5DF2\u4FDD\u7559\uFF1B\u8FD0\u884C connectivity-test \u53EF\u76F4\u63A5\u91CD\u8BD5\u3002`
+      ),
+      { code: classified.code }
+    );
+    throw wrapped;
+  }
+}
+async function connectivityTest() {
+  const config = loadConfig();
+  const pending = config.pendingConnectivityChallenge;
+  const connectivity = await performConnectivityTest(
+    pending ? {
+      challenge: pending.value,
+      challengeExpiresAt: pending.expiresAt,
+      capabilityVersion: "1.0"
+    } : void 0
+  );
+  const policy = await authenticatedRequest(
+    "/v1/plugin-bindings/me"
+  );
+  outputConnected(policy.partnerId, config.deviceName, connectivity);
+}
 async function prepare() {
   const config = loadConfig();
   const db = openDatabase();
   try {
     const policy = await fetchPolicy(db);
-    const stats = await prepareSessionJobs(db, config, policy, flag("force"));
+    const run = activeCollectionRun(db);
+    if (!run) throw new Error("\u6CA1\u6709\u6D3B\u52A8\u91C7\u96C6 Run\uFF0C\u8BF7\u5148\u8FD0\u884C daily-collect\u3002");
+    if (process.env.CODEX_THREAD_ID) {
+      const systemSessions = new Set(
+        JSON.parse(getState(db, "system_session_ids") ?? "[]")
+      );
+      systemSessions.add(process.env.CODEX_THREAD_ID);
+      setState(db, "system_session_ids", JSON.stringify([...systemSessions]));
+    }
+    const stats = await prepareSessionJobs(db, config, policy, flag("force"), {
+      id: run.id,
+      windowStartsAt: run.window_starts_at,
+      windowEndsAt: run.window_ends_at,
+      initialLookback: Boolean(run.initial_lookback)
+    });
+    const projectSync = await syncProjectDiscoveries(db, policy);
+    db.prepare(
+      `update collection_runs set status = 'RUNNING', discovered_count = ?,
+        eligible_count = ?, deferred_count = ?, excluded_count = ?, updated_at = ?
+       where id = ?`
+    ).run(
+      stats.discovered,
+      stats.eligible,
+      stats.deferred,
+      stats.excluded,
+      (/* @__PURE__ */ new Date()).toISOString(),
+      run.id
+    );
     await heartbeat(db);
     output({
       status: "prepared",
       stats,
+      projectSync,
       pendingLocalJobs: pendingLocalCount(db),
+      activeCollectionRun: db.prepare(
+        "select id, period_key, status, window_starts_at, window_ends_at, invocation_deadline_at, continuation_count from collection_runs where status in ('STARTED', 'RUNNING', 'CONTINUATION_PENDING') order by created_at asc limit 1"
+      ).get() ?? null,
       nextCommand: "next-local"
+    });
+  } finally {
+    db.close();
+  }
+}
+async function syncProjectDiscoveries(db, policy) {
+  const inventory2 = db.prepare(
+    `select session_id, cwd from session_inventory
+       where cwd is not null and status != 'excluded'
+       order by session_id`
+  ).all();
+  const discoveries = inventory2.flatMap((session) => {
+    const project = mappedProject(session.cwd, policy.projects);
+    return project.matchMethod === "path_discovered" && project.rootName ? [
+      {
+        sessionId: session.session_id,
+        rootName: project.rootName,
+        rootFingerprint: project.rootFingerprint
+      }
+    ] : [];
+  });
+  let mapped = 0;
+  const projectIds = /* @__PURE__ */ new Set();
+  for (let index = 0; index < discoveries.length; index += 100) {
+    const chunk = discoveries.slice(index, index + 100);
+    const response = await authenticatedRequest("/v1/plugin-instances/me/project-discoveries", {
+      method: "POST",
+      body: JSON.stringify({ discoveries: chunk })
+    });
+    mapped += response.mappings.length;
+    for (const mapping of response.mappings) {
+      projectIds.add(mapping.projectId);
+      db.prepare(
+        "update session_inventory set project_id = ?, updated_at = ? where session_id = ?"
+      ).run(
+        mapping.projectId,
+        (/* @__PURE__ */ new Date()).toISOString(),
+        mapping.sessionId
+      );
+    }
+  }
+  return {
+    discoveredSessions: discoveries.length,
+    mappedSessions: mapped,
+    projectCount: projectIds.size
+  };
+}
+async function syncProjects() {
+  const db = openDatabase();
+  try {
+    const policy = await fetchPolicy(db);
+    output({
+      status: "projects_synced",
+      ...await syncProjectDiscoveries(db, policy)
     });
   } finally {
     db.close();
@@ -9711,7 +10564,7 @@ function completeLocal() {
       const raw = JSON.parse(readFileSync2(resultPath, "utf8"));
       const result = sessionFactUploadSchema.parse(raw);
       for (const fact of result.facts) assertFactSemantics(fact);
-      if (result.sessionId !== job.session_id || result.project.id !== input.session.project.id || result.project.matchMethod !== input.session.project.matchMethod || result.project.rootFingerprint !== input.session.project.rootFingerprint || result.sourceRevision !== job.source_revision || result.sourceHash !== job.source_hash || result.fromTurnId !== job.from_turn_id || result.toTurnId !== job.to_turn_id || result.observedAt !== input.session.observedAt || result.status !== input.outputRequirements.status) {
+      if (result.sessionId !== job.session_id || result.project.id !== input.session.project.id || result.project.matchMethod !== input.session.project.matchMethod || result.project.rootFingerprint !== input.session.project.rootFingerprint || result.project.rootName !== input.session.project.rootName || result.sourceRevision !== job.source_revision || result.sourceHash !== job.source_hash || result.fromTurnId !== job.from_turn_id || result.toTurnId !== job.to_turn_id || result.observedAt !== input.session.observedAt || result.sourceOccurredAt !== input.session.sourceOccurredAt || result.status !== input.outputRequirements.status) {
         throw new Error("\u63D0\u53D6\u7ED3\u679C\u7684 Session \u6765\u6E90\u8FB9\u754C\u4E0E\u672C\u5730\u4EFB\u52A1\u4E0D\u4E00\u81F4\u3002");
       }
       const invalidFactBoundary = result.facts.some(
@@ -9783,6 +10636,26 @@ function failLocal() {
     if (!job) throw new Error("\u672C\u5730\u4EFB\u52A1\u4E0D\u5B58\u5728\u6216\u72B6\u6001\u4E0D\u662F IN_PROGRESS\u3002");
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const errorCode = option("error-code", "LOCAL_AGENT_FAILED");
+    if (isTerminalExtractionError(errorCode)) {
+      db.prepare(
+        "update local_jobs set status = 'CANCELLED', error_code = ?, updated_at = ? where id = ?"
+      ).run(errorCode, now, jobId);
+      db.prepare(
+        "update session_inventory set status = 'excluded', reason_code = ?, updated_at = ? where session_id = ?"
+      ).run(errorCode, now, job.session_id);
+      db.prepare(
+        "update session_activity set processing_state = 'CLEAN', updated_at = ? where session_id = ?"
+      ).run(now, job.session_id);
+      if (errorCode === "SENSITIVE_EGRESS_REJECTED") {
+        queueDiagnostic(db, "extract", "SENSITIVE_EGRESS_REJECTED", false);
+      }
+      return output({
+        status: "excluded",
+        jobId,
+        errorCode,
+        retryable: false
+      });
+    }
     db.prepare(
       "update local_jobs set status = 'PENDING', error_code = ?, updated_at = ? where id = ?"
     ).run(errorCode, now, jobId);
@@ -9799,19 +10672,30 @@ function failLocal() {
 }
 function buildBatch(db, jobs, policy) {
   const config = loadConfig();
-  const batchId = randomUUID2();
+  const batchId = randomUUID4();
+  const runId = jobs[0]?.run_id ?? getState(db, "active_collection_run_id");
+  const run = runId ? db.prepare("select * from collection_runs where id = ?").get(runId) : void 0;
   const payload = factBatchSchema.parse({
     schemaVersion: "1.0",
     producerVersion: `partner-report-sync/${PLUGIN_VERSION}`,
     batchId,
     pluginInstanceId: config.pluginInstanceId,
+    ...run ? {
+      collectionRunId: run.id,
+      periodKey: run.period_key,
+      collectionWindow: {
+        startsAt: run.window_starts_at,
+        endsAt: run.window_ends_at,
+        initialLookback: Boolean(run.initial_lookback)
+      }
+    } : {},
     periodCandidates: policy.currentPeriod ? [policy.currentPeriod.period_key] : [],
     sessions: jobs.map((job) => JSON.parse(job.result_json))
   });
   const now = (/* @__PURE__ */ new Date()).toISOString();
   db.prepare(
-    "insert into pending_batches (id, payload_json, status, created_at, updated_at) values (?, ?, 'PENDING', ?, ?)"
-  ).run(batchId, JSON.stringify(payload), now, now);
+    "insert into pending_batches (id, payload_json, status, created_at, updated_at, run_id) values (?, ?, 'PENDING', ?, ?, ?)"
+  ).run(batchId, JSON.stringify(payload), now, now, run?.id ?? null);
   return { batchId, payload };
 }
 async function sync() {
@@ -9932,6 +10816,7 @@ async function heartbeat(existingDb) {
       method: "POST",
       body: JSON.stringify(body)
     });
+    await flushDiagnostics(db).catch(() => void 0);
     setState(db, "last_heartbeat_at", (/* @__PURE__ */ new Date()).toISOString());
     if (!existingDb) output({ status: "heartbeat_sent", ...body });
   } finally {
@@ -9939,22 +10824,39 @@ async function heartbeat(existingDb) {
   }
 }
 async function collectionStatus() {
-  const phase = external_exports2.enum(["started", "completed", "failed"]).parse(option("phase"));
+  const phase = external_exports2.enum(["started", "running", "continuation_pending", "completed", "failed"]).parse(option("phase"));
   const config = loadConfig();
   const db = openDatabase();
   try {
     const policy = await fetchPolicy(db);
     if (!policy.currentPeriod)
       throw new Error("\u670D\u52A1\u7AEF\u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002");
+    const ensured = phase === "started" ? claimCollectionRun(db, policy.currentPeriod.period_key) : null;
+    if (ensured?.status === "already_running") {
+      return output({
+        status: "already_running",
+        collectionRunId: ensured.run.id,
+        leaseExpiresAt: ensured.run.lease_expires_at
+      });
+    }
+    const run = ensured?.run ?? activeCollectionRun(db);
+    if (!run) throw new Error("\u6CA1\u6709\u6D3B\u52A8\u91C7\u96C6 Run\u3002");
     const health = localCoverage(db);
+    const drain = collectionDrainState(db);
+    const pending = drain.pendingLocalJobs;
+    if (phase === "completed" && !drain.drained) {
+      throw new Error(
+        `COLLECTION_NOT_DRAINED: pendingLocalJobs=${pending}, pendingBatches=${drain.pendingBatches}`
+      );
+    }
     const sessionCount = Number(
       db.prepare(
-        "select count(*) as count from session_inventory where status = 'synced'"
-      ).get().count
+        "select count(distinct session_id) as count from local_jobs where run_id = ? and status = 'SYNCED'"
+      ).get(run.id).count
     );
     const rows = db.prepare(
-      "select result_json from local_jobs where status = 'SYNCED' and result_json is not null"
-    ).all();
+      "select result_json from local_jobs where run_id = ? and status = 'SYNCED' and result_json is not null"
+    ).all(run.id);
     const factCount = rows.reduce((total, row) => {
       try {
         return total + (JSON.parse(row.result_json).facts?.length ?? 0);
@@ -9962,14 +10864,23 @@ async function collectionStatus() {
         return total;
       }
     }, 0);
+    const scanStats = JSON.parse(getState(db, "last_scan_stats") ?? "{}");
     const body = {
       pluginVersion: PLUGIN_VERSION,
       deviceName: config.deviceName,
       phase,
-      periodKey: policy.currentPeriod.period_key,
+      collectionRunId: run.id,
+      periodKey: run.period_key,
+      windowStartsAt: run.window_starts_at,
+      windowEndsAt: run.window_ends_at,
+      initialLookback: Boolean(run.initial_lookback),
       sessionCount,
       factCount,
-      pendingLocalJobs: pendingLocalCount(db),
+      pendingLocalJobs: pending,
+      discoveredCount: Number(scanStats.discovered ?? 0),
+      eligibleCount: Number(scanStats.eligible ?? scanStats.queued ?? 0),
+      deferredCount: Number(scanStats.deferred ?? 0),
+      excludedCount: Number(scanStats.excluded ?? 0),
       ...getState(db, "last_scan_at") ? { lastScanAt: getState(db, "last_scan_at") } : {},
       ...getState(db, "last_sync_at") ? { lastSyncAt: getState(db, "last_sync_at") } : {},
       ...option("error-code") ? { errorCode: option("error-code") } : {},
@@ -9979,8 +10890,34 @@ async function collectionStatus() {
       method: "POST",
       body: JSON.stringify(body)
     });
-    setState(db, `last_collection_${phase}_at`, (/* @__PURE__ */ new Date()).toISOString());
-    output({ status: `collection_${phase}`, ...body });
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    if (phase === "completed") {
+      db.prepare(
+        `update collection_runs set status = 'COMPLETED', completed_at = ?,
+          lease_owner = null, lease_expires_at = null, updated_at = ? where id = ?`
+      ).run(now, now, run.id);
+      setState(db, "last_collection_window_end", run.window_ends_at);
+      setState(db, "active_collection_run_id", "");
+    } else if (phase === "continuation_pending") {
+      db.prepare(
+        `update collection_runs set status = 'CONTINUATION_PENDING',
+          continuation_count = continuation_count + 1, lease_owner = null,
+          lease_expires_at = null, updated_at = ? where id = ?`
+      ).run(now, run.id);
+    } else if (phase === "failed") {
+      db.prepare(
+        `update collection_runs set status = 'FAILED', error_code = ?,
+          lease_owner = null, lease_expires_at = null, updated_at = ? where id = ?`
+      ).run(option("error-code") ?? "LOCAL_AGENT_FAILED", now, run.id);
+    }
+    await flushDiagnostics(db).catch(() => void 0);
+    setState(db, `last_collection_${phase}_at`, now);
+    output({
+      status: `collection_${phase}`,
+      invocationDeadlineAt: run.invocation_deadline_at,
+      continuationCount: run.continuation_count,
+      ...body
+    });
   } finally {
     db.close();
   }
@@ -9995,6 +10932,8 @@ async function status() {
       pluginVersion: PLUGIN_VERSION,
       pluginInstanceId: config?.pluginInstanceId ?? null,
       serverUrl: config?.serverUrl ?? null,
+      connectivityStatus: config?.connectivityStatus ?? getState(db, "connectivity_status") ?? "pending",
+      connectivityVerifiedAt: config?.connectivityVerifiedAt ?? getState(db, "connectivity_verified_at"),
       lastScanAt: getState(db, "last_scan_at"),
       lastSyncAt: getState(db, "last_sync_at"),
       lastHeartbeatAt: getState(db, "last_heartbeat_at"),
@@ -10002,6 +10941,14 @@ async function status() {
       runnerState: getState(db, "runner_state") ?? "idle",
       lastErrorCode: health.lastErrorCode ?? getState(db, "last_error_code"),
       pendingLocalJobs: pendingLocalCount(db),
+      activeCollectionRun: db.prepare(
+        "select id, period_key, status, window_starts_at, window_ends_at, invocation_deadline_at, continuation_count from collection_runs where status in ('STARTED', 'RUNNING', 'CONTINUATION_PENDING') order by created_at asc limit 1"
+      ).get() ?? null,
+      pendingDiagnostics: Number(
+        db.prepare(
+          "select count(*) as count from diagnostic_outbox where status = 'PENDING'"
+        ).get().count
+      ),
       coverage: health.coverage,
       activeRemoteLease: db.prepare(
         "select job_id, type, created_at from remote_leases where status = 'LEASED' order by created_at asc limit 1"
@@ -10011,11 +10958,67 @@ async function status() {
     db.close();
   }
 }
+async function diagnostic() {
+  const stage = external_exports2.enum(["binding", "connectivity", "task_setup", "scan", "extract", "sync"]).parse(option("stage"));
+  const errorCode = external_exports2.enum([
+    "DNS_FAILED",
+    "TLS_FAILED",
+    "CONNECTION_REFUSED",
+    "CONNECTIVITY_TIMEOUT",
+    "AUTH_FAILED",
+    "VERSION_BLOCKED",
+    "CHALLENGE_INVALID",
+    "CHALLENGE_EXPIRED",
+    "CLIENT_CLOCK_SKEW",
+    "REQUEST_INVALID",
+    "TASK_SETUP_FAILED",
+    "SCAN_FAILED",
+    "EXTRACT_FAILED",
+    "SYNC_FAILED",
+    "LOCAL_STORAGE_FAILED",
+    "LOCAL_AGENT_FAILED",
+    "SENSITIVE_EGRESS_REJECTED"
+  ]).parse(option("error-code"));
+  const db = openDatabase();
+  try {
+    queueDiagnostic(db, stage, errorCode, !flag("terminal"));
+    const synced = await flushDiagnostics(db).catch(() => ({
+      submitted: 0,
+      accepted: 0
+    }));
+    output({ status: "diagnostic_recorded", stage, errorCode, synced });
+  } finally {
+    db.close();
+  }
+}
+function configureExclusion(kind, remove = false) {
+  const config = loadConfig();
+  const raw = option(kind === "session" ? "session-id" : "path");
+  if (!raw)
+    throw new Error(
+      kind === "session" ? "\u9700\u8981 --session-id <id>\u3002" : "\u9700\u8981 --path <absolute-path>\u3002"
+    );
+  const value = kind === "path" ? resolve5(raw) : raw.trim();
+  const key = kind === "session" ? "excludedSessionIds" : "excludedPaths";
+  const current = new Set(config[key] ?? []);
+  if (remove) current.delete(value);
+  else current.add(value);
+  saveConfig({ ...config, [key]: [...current].sort() });
+  output({
+    status: remove ? "exclusion_removed" : "excluded",
+    kind,
+    value,
+    excludedSessionCount: kind === "session" ? current.size : config.excludedSessionIds.length,
+    excludedPathCount: kind === "path" ? current.size : config.excludedPaths.length
+  });
+}
 function help() {
   output({
     commands: [
       "connect --server <url> --binding-code <code> [--device-name <name>]",
+      "connectivity-test",
       "scheduled-task-config",
+      "continuation-task-config",
       "daily-collect [--force]",
       "weekly-collect [--force] (deprecated alias)",
       "run-once [--force]",
@@ -10026,14 +11029,35 @@ function help() {
       "complete-local --job-id <id> --result <path>",
       "fail-local --job-id <id> [--error-code <code>]",
       "sync",
-      "status"
+      "status",
+      "sync-projects",
+      "diagnostic --stage <stage> --error-code <code> [--terminal]",
+      "exclude-session --session-id <id>",
+      "include-session --session-id <id>",
+      "exclude-path --path <absolute-path>",
+      "include-path --path <absolute-path>"
     ]
   });
 }
 var command = process.argv[2] ?? "help";
 try {
+  if ([
+    "connect",
+    "connectivity-test",
+    "scheduled-task-config",
+    "continuation-task-config",
+    "daily-collect",
+    "weekly-collect",
+    "run-once",
+    "daily-finish",
+    "daily-fail"
+  ].includes(command)) {
+    rememberCurrentSystemSession();
+  }
   if (command === "connect") await connect();
+  else if (command === "connectivity-test") await connectivityTest();
   else if (command === "scheduled-task-config") scheduledTaskConfig();
+  else if (command === "continuation-task-config") continuationTaskConfig();
   else if (command === "run-once" || command === "daily-collect" || command === "weekly-collect") {
     output(
       await beginCollectionCycle(resolve5(process.argv[1]), flag("force"))
@@ -10056,9 +11080,15 @@ try {
   else if (command === "heartbeat") await heartbeat();
   else if (command === "collection-status") await collectionStatus();
   else if (command === "status") await status();
+  else if (command === "sync-projects") await syncProjects();
+  else if (command === "diagnostic") await diagnostic();
+  else if (command === "exclude-session") configureExclusion("session");
+  else if (command === "include-session") configureExclusion("session", true);
+  else if (command === "exclude-path") configureExclusion("path");
+  else if (command === "include-path") configureExclusion("path", true);
   else help();
 } catch (error) {
-  const code = error instanceof HttpError ? error.code : "PLUGIN_COMMAND_FAILED";
+  const code = error instanceof HttpError ? error.code : error && typeof error === "object" && "code" in error ? String(error.code) : "PLUGIN_COMMAND_FAILED";
   process.stderr.write(
     `${JSON.stringify({ status: "error", code, message: error instanceof Error ? error.message : String(error) })}
 `

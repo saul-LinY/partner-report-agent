@@ -1,0 +1,154 @@
+{
+  "$ref": "#/definitions/TeamReportResultV1",
+  "definitions": {
+    "TeamReportResultV1": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1600
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "summary",
+                  "project_progress",
+                  "risks",
+                  "next_priorities",
+                  "coverage"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "markdown": {
+                "type": "string",
+                "maxLength": 16000
+              },
+              "claims": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "claim": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    },
+                    "individualReportVersionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "claim",
+                    "individualReportVersionIds"
+                  ],
+                  "additionalProperties": false
+                },
+                "default": []
+              }
+            },
+            "required": [
+              "key",
+              "title",
+              "markdown"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "markdown": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80000
+        },
+        "missingPartnerIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TeamReportResultV1/properties/sections/items/properties/claims/items/properties/individualReportVersionIds/items"
+          },
+          "default": []
+        },
+        "qualityWarnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "production": {
+          "type": "object",
+          "properties": {
+            "skillVersion": {
+              "type": "string",
+              "enum": [
+                "partner-report-sync/0.2.0",
+                "partner-report-platform/0.2.0"
+              ]
+            },
+            "promptVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "schemaVersion": {
+              "type": "string",
+              "const": "1.0"
+            },
+            "producer": {
+              "type": "string",
+              "enum": [
+                "codex-skill",
+                "data-platform"
+              ]
+            },
+            "modelVersion": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "skillVersion",
+            "promptVersion",
+            "schemaVersion",
+            "producer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "title",
+        "summary",
+        "sections",
+        "markdown",
+        "production"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
