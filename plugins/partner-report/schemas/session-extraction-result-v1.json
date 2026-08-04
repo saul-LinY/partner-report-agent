@@ -1,0 +1,262 @@
+{
+  "$ref": "#/definitions/SessionExtractionResultV1",
+  "definitions": {
+    "SessionExtractionResultV1": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "string",
+              "const": "1.0"
+            },
+            "decision": {
+              "type": "string",
+              "const": "ignore"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "casual_conversation",
+                "unrelated_to_project",
+                "no_meaningful_contribution",
+                "insufficient_context"
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "decision",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "string",
+              "const": "1.0"
+            },
+            "decision": {
+              "type": "string",
+              "const": "include"
+            },
+            "contribution": {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "string",
+                  "const": "1.0"
+                },
+                "periodKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "sessionKey": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "contentHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "project": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "matchMethod": {
+                      "type": "string",
+                      "enum": [
+                        "exact_root",
+                        "descendant_path",
+                        "path_discovered",
+                        "unassigned"
+                      ]
+                    },
+                    "rootFingerprint": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "rootName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "matchMethod",
+                    "rootFingerprint"
+                  ],
+                  "additionalProperties": false
+                },
+                "activity": {
+                  "type": "object",
+                  "properties": {
+                    "startedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "endedAt": {
+                      "$ref": "#/definitions/SessionExtractionResultV1/anyOf/1/properties/contribution/properties/activity/properties/startedAt"
+                    }
+                  },
+                  "required": [
+                    "startedAt",
+                    "endedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1600
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "discussion",
+                    "planned",
+                    "in_progress",
+                    "awaiting_validation",
+                    "completed",
+                    "blocked",
+                    "cancelled"
+                  ]
+                },
+                "contributions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "outcome",
+                          "progress",
+                          "decision",
+                          "blocker",
+                          "next_step"
+                        ]
+                      },
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 600
+                      },
+                      "confidence": {
+                        "type": "string",
+                        "enum": [
+                          "high",
+                          "medium",
+                          "low"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "text",
+                      "confidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 40
+                },
+                "observedAt": {
+                  "$ref": "#/definitions/SessionExtractionResultV1/anyOf/1/properties/contribution/properties/activity/properties/startedAt"
+                },
+                "production": {
+                  "type": "object",
+                  "properties": {
+                    "skillVersion": {
+                      "type": "string",
+                      "enum": [
+                        "partner-report-sync/0.2.0",
+                        "partner-report-sync/0.3.0",
+                        "partner-report-platform/0.2.0",
+                        "partner-report-platform/0.3.0"
+                      ]
+                    },
+                    "promptVersion": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "schemaVersion": {
+                      "type": "string",
+                      "const": "1.0"
+                    },
+                    "producer": {
+                      "type": "string",
+                      "enum": [
+                        "codex-skill",
+                        "data-platform"
+                      ]
+                    },
+                    "modelVersion": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "skillVersion",
+                    "promptVersion",
+                    "schemaVersion",
+                    "producer"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "periodKey",
+                "sessionKey",
+                "contentHash",
+                "project",
+                "activity",
+                "title",
+                "summary",
+                "status",
+                "contributions",
+                "observedAt",
+                "production"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "decision",
+            "contribution"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

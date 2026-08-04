@@ -1,38 +1,36 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
-import type { DatabaseSync } from "node:sqlite";
-import type { PluginConfig } from "./config.js";
-import { CodexAppServer } from "./app-server.js";
-import { getState, setState } from "./database.js";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
-type ProjectPolicy = {
+export type ProjectPolicy = {
   id: string;
   name: string;
-  aliases: string[];
+  aliases?: string[];
   allowed_paths: string[];
   external_ids?: string[];
 };
-type ServerPolicy = {
-  team: {
-    evidence_excerpt_enabled: boolean;
-  };
-  projects: ProjectPolicy[];
-  currentPeriod: {
-    id: string;
-    period_key: string;
-    starts_at: string;
-    ends_at: string;
-  } | null;
+
+export type ProjectIdentity = {
+  id: string | null;
+  name: string;
+  matchMethod:
+    "exact_root" | "descendant_path" | "path_discovered" | "unassigned";
+  rootFingerprint: string;
+  rootName?: string;
+};
+
+export type ProgressTurn = {
+  id: string;
+  status: string | null;
+  occurredAt: string | null;
+  userPrompt: string | null;
+  assistantFinal: string | null;
+};
+
+export type CollectionPeriod = {
+  period_key: string;
+  starts_at: string;
+  ends_at: string;
 };
 
 const secretPatterns = [
@@ -42,10 +40,15 @@ const secretPatterns = [
   /\b(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[^\s,;]{8,}/gi,
 ];
 
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 export function redactSensitive(value: string) {
   let text = value;
   let replacements = 0;
   for (const pattern of secretPatterns) {
+    pattern.lastIndex = 0;
     text = text.replace(pattern, () => {
       replacements += 1;
       return "[REDACTED_SECRET]";
@@ -62,6 +65,102 @@ export function containsSensitive(value: unknown): boolean {
   });
 }
 
+function safeText(value: string, maxLength = 16_000) {
+  return redactSensitive(value).text.slice(0, maxLength);
+}
+
+function timestamp(value: unknown) {
+  if (typeof value === "string") return new Date(value).getTime();
+  if (typeof value !== "number") return Number.NaN;
+  return value > 10_000_000_000 ? value : value * 1_000;
+}
+
+function toIso(value: unknown) {
+  const time = timestamp(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
+function textContent(content: unknown) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const item = entry as Record<string, unknown>;
+      return item.type === "text" && typeof item.text === "string"
+        ? [item.text]
+        : [];
+    })
+    .join("\n");
+}
+
+export function normalizeProgressTurns(turns: any[]): ProgressTurn[] {
+  return turns
+    .filter((turn) => turn?.id != null)
+    .map((turn) => {
+      const items = Array.isArray(turn.items) ? turn.items : [];
+      const userPrompt = safeText(
+        items
+          .filter((item: any) => item?.type === "userMessage")
+          .map((item: any) => textContent(item.content))
+          .filter(Boolean)
+          .join("\n\n"),
+      );
+      const assistantFinal = safeText(
+        items
+          .filter(
+            (item: any) =>
+              item?.type === "agentMessage" && item.phase === "final_answer",
+          )
+          .map((item: any) => (typeof item.text === "string" ? item.text : ""))
+          .filter(Boolean)
+          .at(-1) ?? "",
+      );
+      return {
+        id: String(turn.id),
+        status: typeof turn.status === "string" ? turn.status : null,
+        occurredAt: toIso(turn.completedAt ?? turn.updatedAt ?? turn.createdAt),
+        userPrompt: userPrompt || null,
+        assistantFinal: assistantFinal || null,
+      };
+    });
+}
+
+export function isCompleteTurn(turn: ProgressTurn) {
+  const incomplete = new Set([
+    "cancelled",
+    "canceled",
+    "failed",
+    "interrupted",
+    "in_progress",
+  ]);
+  return Boolean(
+    turn.userPrompt?.trim() &&
+    turn.assistantFinal?.trim() &&
+    !incomplete.has(turn.status?.toLowerCase() ?? ""),
+  );
+}
+
+export function selectPeriodTurns(
+  turns: ProgressTurn[],
+  period: CollectionPeriod,
+  fallbackOccurredAt?: string,
+) {
+  const startsAt = new Date(period.starts_at).getTime();
+  const endsAt = new Date(period.ends_at).getTime();
+  return turns.filter((turn) => {
+    if (!isCompleteTurn(turn)) return false;
+    const occurredAt = new Date(
+      turn.occurredAt ?? fallbackOccurredAt ?? "",
+    ).getTime();
+    return (
+      Number.isFinite(occurredAt) &&
+      occurredAt >= startsAt &&
+      occurredAt <= endsAt
+    );
+  });
+}
+
 export function isPluginSystemThread(summary: Record<string, unknown>) {
   const name = [summary.name, summary.title]
     .find((value) => typeof value === "string")
@@ -70,7 +169,6 @@ export function isPluginSystemThread(summary: Record<string, unknown>) {
   if (!name) return false;
   return (
     name === "partner report daily collection" ||
-    name === "partner report collection continuation" ||
     name === "配置插件定时任务" ||
     name === "连接数据中台与绑定码" ||
     name === "连接设备到本地服务" ||
@@ -101,618 +199,219 @@ export function isPluginAdministrationSession(turns: ProgressTurn[]) {
 }
 
 function withinPath(candidate: string, root: string) {
-  const normalizedCandidate = resolve(candidate);
-  const normalizedRoot = resolve(root);
-  return (
-    normalizedCandidate === normalizedRoot ||
-    (!relative(normalizedRoot, normalizedCandidate).startsWith(`..${sep}`) &&
-      relative(normalizedRoot, normalizedCandidate) !== "..")
-  );
+  const path = relative(resolve(root), resolve(candidate));
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
-function timestamp(value: unknown) {
-  if (typeof value === "string") return new Date(value).getTime();
-  if (typeof value !== "number") return 0;
-  return value > 10_000_000_000 ? value : value * 1_000;
-}
-
-export function quietUntil(
-  lastActivityAt: string | number,
-  quietPeriodMinutes = 120,
-) {
-  return new Date(
-    timestamp(lastActivityAt) + quietPeriodMinutes * 60_000,
-  ).toISOString();
-}
-
-export function isSessionQuiet(
-  lastActivityAt: string | number,
-  quietPeriodMinutes = 120,
-  now = Date.now(),
-) {
-  return timestamp(lastActivityAt) + quietPeriodMinutes * 60_000 <= now;
-}
-
-function textContent(content: unknown) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((entry) => {
-      if (!entry || typeof entry !== "object") return [];
-      const item = entry as Record<string, unknown>;
-      return item.type === "text" && typeof item.text === "string"
-        ? [item.text]
-        : [];
-    })
-    .join("\n");
-}
-
-function safeText(value: string, maxLength = 16_000) {
-  return redactSensitive(value).text.slice(0, maxLength);
-}
-
-export type ProgressTurn = {
-  id: string;
-  status: string | null;
-  occurredAt: string | null;
-  userPrompt: string | null;
-  assistantFinal: string | null;
-};
-
-export function normalizeProgressTurns(turns: any[]): ProgressTurn[] {
-  return turns
-    .filter((turn) => turn?.id != null)
-    .map((turn) => {
-      const items = Array.isArray(turn.items) ? turn.items : [];
-      const userPrompt = safeText(
-        items
-          .filter((item: any) => item?.type === "userMessage")
-          .map((item: any) => textContent(item.content))
-          .filter(Boolean)
-          .join("\n\n"),
-      );
-      const assistantFinal = safeText(
-        items
-          .filter(
-            (item: any) =>
-              item?.type === "agentMessage" && item.phase === "final_answer",
-          )
-          .map((item: any) => (typeof item.text === "string" ? item.text : ""))
-          .filter(Boolean)
-          .at(-1) ?? "",
-      );
-      return {
-        id: String(turn.id),
-        status: typeof turn.status === "string" ? turn.status : null,
-        occurredAt:
-          (turn.completedAt ?? turn.updatedAt ?? turn.createdAt)
-            ? new Date(
-                timestamp(turn.completedAt ?? turn.updatedAt ?? turn.createdAt),
-              ).toISOString()
-            : null,
-        userPrompt: userPrompt || null,
-        assistantFinal: assistantFinal || null,
-      };
-    });
-}
-
-export function isCompleteTurn(turn: ProgressTurn) {
-  const interrupted = new Set([
-    "cancelled",
-    "canceled",
-    "failed",
-    "interrupted",
-    "in_progress",
-  ]);
-  return Boolean(
-    turn.userPrompt?.trim() &&
-    turn.assistantFinal?.trim() &&
-    !interrupted.has(turn.status?.toLowerCase() ?? ""),
-  );
-}
-
-export function selectIncrementalTurns(
-  turns: ProgressTurn[],
-  lastTurnId?: string | null,
-  force = false,
-) {
-  if (force)
-    return { turns, mode: "full_rescan" as const, cursorMatched: true };
-  if (!lastTurnId)
-    return { turns, mode: "new_session" as const, cursorMatched: true };
-  const cursorIndex = turns.findIndex((turn) => turn.id === lastTurnId);
-  return {
-    turns: cursorIndex >= 0 ? turns.slice(cursorIndex + 1) : turns,
-    mode: "historical_session" as const,
-    cursorMatched: cursorIndex >= 0,
-  };
-}
-
-export function selectTurnsForCollectionRun(
-  turns: ProgressTurn[],
-  lastTurnId: string | null | undefined,
-  options: {
-    force?: boolean;
-    windowStartsAt?: string;
-    windowEndsAt?: string;
-    fallbackOccurredAt?: string;
-  } = {},
-) {
-  const incremental = selectIncrementalTurns(turns, lastTurnId, options.force);
-  const candidates =
-    !lastTurnId && options.windowStartsAt && options.windowEndsAt
-      ? incremental.turns.filter((turn) => {
-          const occurredAt = new Date(
-            turn.occurredAt ?? options.fallbackOccurredAt ?? 0,
-          ).getTime();
-          return (
-            Number.isFinite(occurredAt) &&
-            occurredAt >= new Date(options.windowStartsAt!).getTime() &&
-            occurredAt <= new Date(options.windowEndsAt!).getTime()
-          );
-        })
-      : incremental.turns;
-  return {
-    ...incremental,
-    turns: candidates.filter(isCompleteTurn),
-    hasIncompleteTurn: candidates.some((turn) => !isCompleteTurn(turn)),
-  };
-}
-
-function hash(value: unknown) {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-function discoveredRoot(cwd: string) {
+function nearestGitRoot(cwd: string) {
   let current = resolve(cwd);
-  if (current === resolve(homedir()) || current === dirname(current))
-    return null;
-  if (!existsSync(current)) return current;
-  while (current !== dirname(current)) {
-    if (existsSync(join(current, ".git"))) return current;
-    current = dirname(current);
-    if (current === resolve(homedir())) break;
+  for (;;) {
+    if (existsSync(resolve(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
   }
-  return resolve(cwd);
 }
 
-function pathIdentity(root: string) {
-  const normalizedRoot = resolve(root);
-  return {
-    rootName: basename(normalizedRoot).slice(0, 120),
-    rootFingerprint: hash({ scope: "project-root", root: normalizedRoot }),
-  };
-}
-
-function inventory(
-  db: DatabaseSync,
-  sessionId: string,
-  cwd: string | null,
-  projectId: string | null,
-  status: string,
-  reasonCode: string | null,
-) {
-  const now = new Date().toISOString();
-  db.prepare(
-    `
-    insert into session_inventory (session_id, cwd, project_id, status, reason_code, observed_at, updated_at)
-    values (?, ?, ?, ?, ?, ?, ?)
-    on conflict (session_id) do update set cwd = excluded.cwd, project_id = excluded.project_id,
-      status = excluded.status, reason_code = excluded.reason_code, observed_at = excluded.observed_at, updated_at = excluded.updated_at
-  `,
-  ).run(sessionId, cwd, projectId, status, reasonCode, now, now);
-}
-
-export function mappedProject(cwd: string | null, projects: ProjectPolicy[]) {
+export function mappedProject(
+  cwd: string | null | undefined,
+  projects: ProjectPolicy[],
+): ProjectIdentity {
   if (!cwd) {
     return {
       id: null,
-      name: "独立工作",
-      aliases: [],
-      matchMethod: "unassigned" as const,
-      rootFingerprint: hash({ scope: "unassigned", cwd: null }),
-      rootName: undefined,
+      name: "Independent work",
+      matchMethod: "unassigned",
+      rootFingerprint: sha256("unassigned"),
     };
   }
-  const matches = projects.flatMap((project) =>
-    project.allowed_paths
-      .filter((root) => isAbsolute(root) && withinPath(cwd, root))
-      .map((root) => {
-        const normalizedRoot = resolve(root);
-        return {
-          project,
-          rootLength: normalizedRoot.length,
-          matchMethod:
-            resolve(cwd) === normalizedRoot
-              ? ("exact_root" as const)
-              : ("descendant_path" as const),
-          ...pathIdentity(normalizedRoot),
-        };
-      }),
-  );
-  matches.sort((left, right) => right.rootLength - left.rootLength);
-  const match = matches[0];
-  if (match) {
+
+  const absoluteCwd = resolve(cwd);
+  const configuredMatches = projects
+    .flatMap((project) =>
+      (project.allowed_paths ?? [])
+        .filter((root) => withinPath(absoluteCwd, root))
+        .map((root) => ({ project, root: resolve(root) })),
+    )
+    .sort((left, right) => right.root.length - left.root.length);
+  const configured = configuredMatches[0];
+  if (configured) {
     return {
-      ...match.project,
-      matchMethod: match.matchMethod,
-      rootName: match.rootName,
-      rootFingerprint: match.rootFingerprint,
-    };
-  }
-  const root = discoveredRoot(cwd);
-  if (!root) {
-    return {
-      id: null,
-      name: "独立工作",
-      aliases: [],
-      matchMethod: "unassigned" as const,
-      rootFingerprint: hash({ scope: "unassigned", cwd: resolve(cwd) }),
-      rootName: undefined,
-    };
-  }
-  const identity = pathIdentity(root);
-  const externalId = `path-sha256:${identity.rootFingerprint}`;
-  const discovered = projects.find((project) =>
-    (project.external_ids ?? []).includes(externalId),
-  );
-  if (discovered) {
-    return {
-      ...discovered,
+      id: configured.project.id,
+      name: configured.project.name,
       matchMethod:
-        resolve(cwd) === root
-          ? ("exact_root" as const)
-          : ("descendant_path" as const),
-      ...identity,
+        configured.root === absoluteCwd ? "exact_root" : "descendant_path",
+      rootFingerprint: sha256(configured.root),
     };
   }
+
+  const discoveredRoot = nearestGitRoot(absoluteCwd) ?? absoluteCwd;
+  const rootFingerprint = sha256(discoveredRoot);
+  const known = projects.find((project) =>
+    (project.external_ids ?? []).includes(`path-sha256:${rootFingerprint}`),
+  );
+  if (known) {
+    return {
+      id: known.id,
+      name: known.name,
+      matchMethod:
+        discoveredRoot === absoluteCwd ? "exact_root" : "descendant_path",
+      rootFingerprint,
+    };
+  }
+  const rootName = basename(discoveredRoot) || "Project";
   return {
     id: null,
-    name: identity.rootName,
-    aliases: [],
-    matchMethod: "path_discovered" as const,
-    ...identity,
+    name: rootName,
+    matchMethod: "path_discovered",
+    rootFingerprint,
+    rootName,
   };
 }
 
-export async function prepareSessionJobs(
-  db: DatabaseSync,
-  config: PluginConfig,
-  policy: ServerPolicy,
-  force = false,
-  run?: {
-    id: string;
-    windowStartsAt: string;
-    windowEndsAt: string;
-    initialLookback: boolean;
-  },
+export function pathIsExcluded(
+  cwd: string | null | undefined,
+  excludedPaths: string[],
 ) {
-  if (!policy.currentPeriod)
-    throw new Error("服务端没有开放的 Report Period。");
-  const server = new CodexAppServer();
-  const stats = {
-    discovered: 0,
-    eligible: 0,
-    excluded: 0,
-    outOfPeriod: 0,
-    deferred: 0,
-    unchanged: 0,
-    queued: 0,
-    failedRead: 0,
-    hookMissed: 0,
-    warnings: [] as string[],
+  return Boolean(cwd && excludedPaths.some((root) => withinPath(cwd, root)));
+}
+
+export function anonymousSessionKey(
+  pluginInstanceId: string,
+  sessionId: string,
+) {
+  return sha256(`partner-report/session/v1:${pluginInstanceId}:${sessionId}`);
+}
+
+export function buildSessionJob(input: {
+  pluginInstanceId: string;
+  sessionId: string;
+  title?: string | null;
+  cwd?: string | null;
+  updatedAt?: string | number | null;
+  turns: any[];
+  projects: ProjectPolicy[];
+  period: CollectionPeriod;
+  observedAt?: string;
+}) {
+  const normalized = normalizeProgressTurns(input.turns);
+  if (isPluginAdministrationSession(normalized)) return null;
+  const fallbackOccurredAt =
+    toIso(input.updatedAt) ?? new Date(input.period.ends_at).toISOString();
+  const selected = selectPeriodTurns(
+    normalized,
+    input.period,
+    fallbackOccurredAt,
+  );
+  if (selected.length === 0) return null;
+
+  const project = mappedProject(input.cwd, input.projects);
+  const activity = {
+    startedAt: selected[0]!.occurredAt ?? fallbackOccurredAt,
+    endedAt: selected.at(-1)!.occurredAt ?? fallbackOccurredAt,
   };
-  const activeForSession = db.prepare(
-    "select 1 from local_jobs where session_id = ? and status not in ('SYNCED', 'CANCELLED') limit 1",
+  const turns = selected.map((turn) => ({
+    occurredAt: turn.occurredAt ?? fallbackOccurredAt,
+    userPrompt: turn.userPrompt,
+    assistantFinal: turn.assistantFinal,
+  }));
+  const title = safeText(input.title?.trim() || "Codex Session", 200);
+  const sessionKey = anonymousSessionKey(
+    input.pluginInstanceId,
+    input.sessionId,
   );
-  const cursorForSession = db.prepare(
-    "select * from session_cursors where session_id = ?",
+  const contentHash = sha256(
+    JSON.stringify({
+      periodKey: input.period.period_key,
+      title,
+      project,
+      activity,
+      turns,
+    }),
   );
-  try {
-    await server.connect();
-    const threads = await server.listThreads();
-    const periodStart = new Date(policy.currentPeriod.starts_at).getTime();
-    const periodEnd = new Date(policy.currentPeriod.ends_at).getTime();
-    const windowStart = run
-      ? new Date(run.windowStartsAt).getTime()
-      : periodStart;
-    const windowEnd = run ? new Date(run.windowEndsAt).getTime() : periodEnd;
-    const systemSessionIds = new Set<string>(
-      JSON.parse(getState(db, "system_session_ids") ?? "[]"),
-    );
+  const observedAt = input.observedAt ?? new Date().toISOString();
+  const production = {
+    skillVersion: "partner-report-sync/0.3.0" as const,
+    promptVersion: "2026-08-04.session-value.v1",
+    schemaVersion: "1.0" as const,
+    producer: "codex-skill" as const,
+  };
 
-    for (const summary of threads) {
-      const sessionId = String(summary.id);
-      const cwd = typeof summary.cwd === "string" ? summary.cwd : "";
-      stats.discovered += 1;
-
-      if (
-        (config.excludedSessionIds ?? []).includes(sessionId) ||
-        systemSessionIds.has(sessionId) ||
-        sessionId === process.env.CODEX_THREAD_ID ||
-        isPluginSystemThread(summary)
-      ) {
-        db.prepare(
-          `update local_jobs set status = 'CANCELLED', error_code = 'SYSTEM_SESSION_EXCLUDED', updated_at = ?
-           where session_id = ? and status not in ('SYNCED', 'CANCELLED')`,
-        ).run(new Date().toISOString(), sessionId);
-        inventory(
-          db,
-          sessionId,
-          cwd || null,
-          null,
-          "excluded",
-          "SESSION_EXCLUDED",
-        );
-        stats.excluded += 1;
-        continue;
-      }
-      if (
-        cwd &&
-        (config.excludedPaths ?? []).some((path) => withinPath(cwd, path))
-      ) {
-        inventory(db, sessionId, cwd, null, "excluded", "PATH_EXCLUDED");
-        stats.excluded += 1;
-        continue;
-      }
-      const resolvedProject = mappedProject(cwd || null, policy.projects);
-      const createdAt = timestamp(summary.createdAt);
-      const updatedAt = timestamp(summary.updatedAt);
-      if (
-        (createdAt && createdAt > windowEnd) ||
-        (run?.initialLookback && updatedAt && updatedAt < windowStart)
-      ) {
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          resolvedProject.id,
-          "excluded",
-          "OUTSIDE_COLLECTION_WINDOW",
-        );
-        stats.outOfPeriod += 1;
-        continue;
-      }
-      const lastActivityAt = updatedAt;
-      const observedActivityAt = new Date(
-        lastActivityAt || Date.now(),
-      ).toISOString();
-      db.prepare(
-        `
-        insert into session_activity (
-          session_id, latest_turn_id, cwd, model, last_event_name, last_activity_at,
-          quiet_until, processing_state, generation, updated_at
-        ) values (?, null, ?, null, 'WEEKLY_DISCOVERY', ?, ?, 'DIRTY', 1, ?)
-        on conflict(session_id) do update set
-          cwd = excluded.cwd,
-          last_activity_at = excluded.last_activity_at,
-          quiet_until = excluded.quiet_until,
-          processing_state = case
-            when session_activity.processing_state in ('CLEAN', 'DIRTY', 'QUIET_WAIT') then 'DIRTY'
-            else session_activity.processing_state
-          end,
-          updated_at = excluded.updated_at
-      `,
-      ).run(
-        sessionId,
-        cwd || null,
-        observedActivityAt,
-        observedActivityAt,
-        new Date().toISOString(),
-      );
-      if (activeForSession.get(sessionId)) {
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          resolvedProject.id,
-          "pending_extract",
-          "LOCAL_JOB_EXISTS",
-        );
-        stats.unchanged += 1;
-        continue;
-      }
-
-      let thread: any;
-      try {
-        thread = await server.readThread(sessionId);
-      } catch {
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          resolvedProject.id,
-          "failed_read",
-          "THREAD_READ_FAILED",
-        );
-        stats.failedRead += 1;
-        continue;
-      }
-      const normalized = normalizeProgressTurns(
-        Array.isArray(thread.turns) ? thread.turns : [],
-      );
-      if (isPluginAdministrationSession(normalized)) {
-        db.prepare(
-          `update local_jobs set status = 'CANCELLED', error_code = 'SYSTEM_SESSION_EXCLUDED', updated_at = ?
-           where session_id = ? and status not in ('SYNCED', 'CANCELLED')`,
-        ).run(new Date().toISOString(), sessionId);
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          resolvedProject.id,
-          "excluded",
-          "SYSTEM_SESSION_EXCLUDED",
-        );
-        stats.excluded += 1;
-        continue;
-      }
-      if (normalized.length === 0) {
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          resolvedProject.id,
-          "excluded",
-          "NO_TURNS",
-        );
-        stats.excluded += 1;
-        continue;
-      }
-      const cursor = cursorForSession.get(sessionId) as
-        { last_turn_id: string; source_revision: number } | undefined;
-      const incremental = selectTurnsForCollectionRun(
-        normalized,
-        cursor?.last_turn_id,
-        {
-          force,
-          ...(run
-            ? {
-                windowStartsAt: run.windowStartsAt,
-                windowEndsAt: run.windowEndsAt,
-              }
-            : {}),
-          fallbackOccurredAt: new Date(updatedAt || Date.now()).toISOString(),
+  return {
+    sessionKey,
+    contentHash,
+    expected: {
+      schemaVersion: "1.0" as const,
+      periodKey: input.period.period_key,
+      sessionKey,
+      contentHash,
+      project,
+      activity,
+      observedAt,
+      production,
+    },
+    modelInput: {
+      schemaVersion: "1.0",
+      task: "SCREEN_AND_SUMMARIZE_SESSION",
+      period: {
+        key: input.period.period_key,
+        startsAt: input.period.starts_at,
+        endsAt: input.period.ends_at,
+      },
+      session: { title, project, activity, turns },
+      screeningPolicy: {
+        includeOnlyWhenSessionContainsMeaningfulProjectContribution: true,
+        qualifyingKinds: [
+          "outcome",
+          "progress",
+          "decision",
+          "blocker",
+          "next_step",
+        ],
+        ignoreWhen: [
+          "casual_conversation",
+          "unrelated_to_project",
+          "no_meaningful_contribution",
+          "insufficient_context",
+        ],
+        projectDirectoryAloneIsNotEvidenceOfRelevance: true,
+      },
+      outputRequirements: {
+        ignore: {
+          schemaVersion: "1.0",
+          decision: "ignore",
+          reason:
+            "casual_conversation | unrelated_to_project | no_meaningful_contribution | insufficient_context",
         },
-      );
-      if (cursor && !force && !incremental.cursorMatched)
-        stats.warnings.push(`CURSOR_RESET:${sessionId}`);
-      const newTurns = incremental.turns;
-      if (newTurns.length === 0) {
-        const hasIncompleteTurn = incremental.hasIncompleteTurn;
-        inventory(
-          db,
-          sessionId,
-          cwd,
-          resolvedProject.id,
-          hasIncompleteTurn ? "awaiting_complete_turn" : "synced",
-          hasIncompleteTurn ? "INCOMPLETE_TURN_SKIPPED" : null,
-        );
-        db.prepare(
-          "update session_activity set processing_state = ?, updated_at = ? where session_id = ?",
-        ).run(
-          hasIncompleteTurn ? "DIRTY" : "CLEAN",
-          new Date().toISOString(),
-          sessionId,
-        );
-        if (hasIncompleteTurn) stats.deferred += 1;
-        else stats.unchanged += 1;
-        continue;
-      }
-      const sourceRevision = (cursor?.source_revision ?? 0) + 1;
-      const sourceHash = hash({ sessionId, sourceRevision, turns: newTurns });
-      const fromTurnId = newTurns[0]!.id;
-      const toTurnId = newTurns.at(-1)!.id;
-      const observedAt = new Date().toISOString();
-      const sourceOccurredAt =
-        newTurns.at(-1)?.occurredAt ??
-        new Date(updatedAt || Date.now()).toISOString();
-      stats.eligible += 1;
-      const input = {
-        schemaVersion: "1.0",
-        task: "EXTRACT_SESSION_FACTS",
-        session: {
-          id: sessionId,
-          name: thread.name ?? summary.name ?? null,
-          cwd,
-          project: {
-            id: resolvedProject.id,
-            name: resolvedProject.name,
-            aliases: resolvedProject.aliases,
-            matchMethod: resolvedProject.matchMethod,
-            rootFingerprint: resolvedProject.rootFingerprint,
-            ...(resolvedProject.rootName
-              ? { rootName: resolvedProject.rootName }
-              : {}),
-          },
-          sourceRevision,
-          sourceHash,
-          fromTurnId,
-          toTurnId,
-          observedAt,
-          sourceOccurredAt,
-          incremental: {
-            mode: incremental.mode,
-            previousTurnId: cursor?.last_turn_id ?? null,
-            cursorMatched: incremental.cursorMatched,
-          },
-          turns: newTurns,
-        },
-        period: policy.currentPeriod,
-        extractionPolicy: {
-          evidenceExcerptEnabled: Boolean(policy.team.evidence_excerpt_enabled),
-          evidenceExcerptMaxLength: 240,
-          completedRequiresEvidence: true,
-          fullTranscriptMustNotBeReturned: true,
-          inputContent: ["user_prompt", "assistant_final"],
-          ignoredContent: [
-            "reasoning",
-            "commentary",
-            "commands",
-            "tool_calls",
-            "file_changes",
-          ],
-        },
-        outputRequirements: {
-          status: "extracted",
-          project: {
-            id: resolvedProject.id,
-            matchMethod: resolvedProject.matchMethod,
-            rootFingerprint: resolvedProject.rootFingerprint,
-            ...(resolvedProject.rootName
-              ? { rootName: resolvedProject.rootName }
-              : {}),
-          },
-          factOrigin: "ai_extracted",
-          production: {
-            skillVersion: "partner-report-sync/0.2.0",
-            promptVersion: "2026-08-03.v3",
-            schemaVersion: "1.0",
-            producer: "codex-skill",
+        include: {
+          schemaVersion: "1.0",
+          decision: "include",
+          contribution: {
+            ...{
+              schemaVersion: "1.0",
+              periodKey: input.period.period_key,
+              sessionKey,
+              contentHash,
+              project,
+              activity,
+              observedAt,
+              production,
+            },
+            title: "Concise work title",
+            summary: "Concise project contribution summary",
+            status:
+              "discussion | planned | in_progress | awaiting_validation | completed | blocked | cancelled",
+            contributions: [
+              {
+                kind: "outcome | progress | decision | blocker | next_step",
+                text: "One grounded contribution",
+                confidence: "high | medium | low",
+              },
+            ],
           },
         },
-      };
-      const jobId = randomUUID();
-      db.prepare(
-        `
-        insert into local_jobs (
-          id, type, status, session_id, source_revision, from_turn_id, to_turn_id,
-          source_hash, input_json, created_at, updated_at, run_id
-        ) values (?, 'EXTRACT_SESSION_FACTS', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      ).run(
-        jobId,
-        sessionId,
-        sourceRevision,
-        fromTurnId,
-        toTurnId,
-        sourceHash,
-        JSON.stringify(input),
-        observedAt,
-        observedAt,
-        run?.id ?? null,
-      );
-      db.prepare(
-        "update session_activity set latest_turn_id = ?, processing_state = 'PENDING_EXTRACT', updated_at = ? where session_id = ?",
-      ).run(toTurnId, observedAt, sessionId);
-      inventory(
-        db,
-        sessionId,
-        cwd,
-        resolvedProject.id,
-        "pending_extract",
-        null,
-      );
-      stats.queued += 1;
-    }
-    setState(db, "hook_missed_at_scan", String(stats.hookMissed));
-    db.prepare(
-      "update hook_outbox set processed_at = ? where processed_at is null",
-    ).run(new Date().toISOString());
-    setState(db, "last_scan_at", new Date().toISOString());
-    setState(db, "last_scan_stats", JSON.stringify(stats));
-    return stats;
-  } finally {
-    server.close();
-  }
+        neverReturnRawTranscriptOrPaths: true,
+      },
+    },
+  };
 }

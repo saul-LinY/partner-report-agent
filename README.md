@@ -1,6 +1,6 @@
 # Partner Report Agent
 
-Partner Report 是一个 Codex Plugin + 数据中台 MVP：Plugin 默认每天北京时间 13:00 从配置的项目目录中读取本地 Codex Session，只处理完整的一问一答，并上传结构化 Fact；数据中台再按 Partner 跨 Session 聚合工作卡片、完成第一次 Web 模拟审核、生成个人 Report，并完成第二次 Web 模拟审核。Partner 可以在 Codex Scheduled 面板修改实际运行时间、模型、推理强度和通知策略。
+Partner Report 是一个 Codex Plugin + 数据中台 MVP：官方 Codex Scheduled Task 读取本地 Session，先舍弃闲聊、无价值和项目无关内容，再把有意义的工作整理为 Session Contribution 并立即上传。数据中台按 Partner 跨 Session 聚合工作卡片、完成 Web 审核并生成 Report。Partner 可以在 Codex Scheduled 面板修改运行时间、模型、推理强度和通知策略。
 
 当前不接入飞书和 Monitor。Web 审核使用真实 Fact、Work Item、Snapshot 和 Report Version，不生成演示假数据。
 
@@ -11,15 +11,15 @@ Plugin：
 - 使用 Admin 为 Partner 工作邮箱生成的绑定码连接中台。
 - 通过 Codex App Server 读取 `thread/list` 与 `thread/read(includeTurns)`。
 - 用最长项目根目录匹配 Session；根目录下任意层级子目录都属于同一项目。
-- 只保留非空用户问题和正常 `final_answer`。正在回答、中断、取消或失败的 Turn 不处理、不推进游标。
-- 由当前 Codex Scheduled task 会话一次处理一个 Session，将其提取成结构化 Fact，并做脱敏、Schema 校验和幂等上传。
+- 只把完整的用户问题和正常 `final_answer` 作为 Session 摘要输入，不维护 Turn 游标。
+- 由当前 Codex Scheduled Task 一次处理一个 Session；无项目价值的 Session 本地舍弃，有价值的 Session 经脱敏和 Schema 校验后立即上传。
 - 不做跨 Session 聚合，不生成工作卡片或 Report，不安装生命周期 Hook，不运行常驻 Runner。
 
 数据中台：
 
 - 以标准化工作邮箱创建 Partner；一个 Partner 可以拥有多个绑定码和 Plugin Instance。
-- 在同一 `partner_id` 下合并多个 Plugin 上传的 Fact，并保持 Tenant/Team/Partner 数据隔离。
-- 周期结束且采集完成或宽限期结束后，调用 OpenAI Responses API 做跨 Session 聚合。
+- 在同一 `partner_id` 下合并多个 Plugin 上传的 Session Contribution，并保持 Tenant/Team/Partner 数据隔离。
+- 周期到达截止时间后直接冻结当前贡献并进行跨 Session 聚合，不等待额外采集宽限期。
 - 保存真实 Work Item，供 Admin 在 Web 中模拟 Partner 完成第一轮确认和修改。
 - 基于确认后的不可变 Snapshot 调用模型生成 Report，供第二轮确认、重新生成和锁定。
 

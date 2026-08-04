@@ -5,7 +5,6 @@ import { generateStructured } from "./model.js";
 const result = {
   schemaVersion: "1.0",
   groups: [],
-  unassignedFactIds: [],
   qualityWarnings: [],
   production: {
     skillVersion: "partner-report-platform/0.2.0",

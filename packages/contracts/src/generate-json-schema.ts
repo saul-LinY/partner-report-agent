@@ -4,10 +4,9 @@ import { fileURLToPath } from "node:url";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   aggregationResultSchema,
-  factBatchSchema,
   individualReportResultSchema,
-  sessionFactUploadSchema,
-  sessionWorkFactSchema,
+  sessionContributionSchema,
+  sessionExtractionResultSchema,
   teamReportResultSchema,
 } from "./index.js";
 
@@ -21,15 +20,14 @@ const toJsonSchema = zodToJsonSchema as (
 await mkdir(outputDir, { recursive: true });
 
 const schemas = {
-  "session-work-fact-v1.json": toJsonSchema(
-    sessionWorkFactSchema,
-    "SessionWorkFactV1",
+  "session-contribution-v1.json": toJsonSchema(
+    sessionContributionSchema,
+    "SessionContributionV1",
   ),
-  "session-fact-upload-v1.json": toJsonSchema(
-    sessionFactUploadSchema,
-    "SessionFactUploadV1",
+  "session-extraction-result-v1.json": toJsonSchema(
+    sessionExtractionResultSchema,
+    "SessionExtractionResultV1",
   ),
-  "fact-batch-v1.json": toJsonSchema(factBatchSchema, "FactBatchV1"),
   "aggregation-result-v1.json": toJsonSchema(
     aggregationResultSchema,
     "AggregationResultV1",

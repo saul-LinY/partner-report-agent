@@ -84,8 +84,17 @@ suite("synthetic report generation pipeline", () => {
             schemaVersion: "1.0",
             period: { id: fixture.period, key: "synthetic-period" },
             reviewId: fixture.review,
-            facts: [{ id: fixture.fact, payload: { title: "完成合成链路" } }],
-            projects: [],
+            projectBuckets: [
+              {
+                projectKey: "unassigned",
+                projectId: null,
+                projectName: "未识别项目",
+                factIds: [fixture.fact],
+                facts: [
+                  { id: fixture.fact, payload: { title: "完成合成链路" } },
+                ],
+              },
+            ],
           })}::jsonb
         )
       `;
@@ -121,31 +130,14 @@ suite("synthetic report generation pipeline", () => {
       schemaVersion: "1.0",
       groups: [
         {
-          clientKey: "independent-work",
-          title: "完成合成链路",
-          factIds: [fixture.fact],
-          projectConfidence: 1,
-          assignmentMethod: "independent",
+          projectKey: "unassigned",
           status: "in_progress",
-          summary: "完成本地非敏感链路验证。",
-          outcomes: ["聚合任务完成"],
-          blockers: [],
-          nextSteps: ["生成个人报告"],
-          importance: {
-            outcome: 3,
-            impact: 2,
-            statusChange: 2,
-            decision: 0,
-            blocker: 0,
-            monitorAction: 2,
-            partnerEmphasis: 3,
-            repetitionPenalty: 0,
-          },
-          mergeConfidence: 1,
-          rationaleCodes: ["SINGLE_FACT"],
+          overview: "完成本地非敏感链路验证。",
+          dailyProgress: [
+            { date: "2026-08-04", summary: "完成聚合任务验证。" },
+          ],
         },
       ],
-      unassignedFactIds: [],
       qualityWarnings: [],
       production: production("2026-08-03.central.v1"),
     };
@@ -158,6 +150,10 @@ suite("synthetic report generation pipeline", () => {
     `;
     expect(workItems).toHaveLength(1);
     expect(workItems[0]).toMatchObject({ project_id: null });
+    expect(workItems[0].payload).toMatchObject({
+      projectKey: "unassigned",
+      overview: "完成本地非敏感链路验证。",
+    });
 
     const snapshotId = randomUUID();
     const reportId = randomUUID();

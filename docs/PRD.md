@@ -216,7 +216,7 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 7. 如果计划时间设备或 Codex 不可用，下一次 Scheduled Task 运行时继续增量采集；服务端在此期间显示该 Binding Code 最近一次采集未完成。
 8. Daily Collection Run 开始和结束时各发送一次状态，Admin 通过最后计划时间、最后成功时间、Session/Fact 数量和错误查看 Plugin 是否正常，不维持高频心跳。
 9. 同一 Binding Code、报告窗口和输入快照使用稳定幂等键，重复启动不得重复创建 Fact。
-10. 数据中台等待本周期所有活动 Binding Code 完成上报，或等待配置的收集宽限期结束后，再冻结 Partner Fact Snapshot；未按期上报的实例进入 Coverage Warning，但不阻塞其他 Partner。
+10. Session Contribution 提取完成后立即上传；数据中台在本周期截止时间直接冻结 Partner Fact Snapshot，不设置采集宽限期。
 
 每个 Session 保存增量处理游标：
 
@@ -391,7 +391,7 @@ tenant_id
 
 ### 9.3 工作事项审核
 
-1. 周报周期截止且收集宽限期结束后，Report Service 按 `tenant_id + partner_id + period_id` 冻结 Session Work Fact Snapshot；来自同一 Partner 多个 Binding Code 的数据进入同一快照，未按期同步的实例记录 Coverage Warning。
+1. 周报周期截止时，Report Service 按 `tenant_id + partner_id + period_id` 直接冻结 Session Contribution Snapshot；来自同一 Partner 多个 Binding Code 的数据进入同一快照。
 2. 中台优先按明确 `project_id` 分组，再调用中台大模型按工作事项、项目和时间进行跨 Session 聚类、去重和状态重建。
 3. 中台生成 Work Item Draft，并按重要性排序；每个结论必须保留源 `fact_id`。
 4. 飞书机器人发送审核总览卡。
@@ -544,7 +544,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 扫描时正在回答的 Turn 必须跳过且不推进完成游标；同一 Session 中更早的 Complete Turn 仍应正常提取。
 - 计划运行错过时，下一次 Scheduled Task 按完成游标增量采集；不得恢复每 5 分钟或每 6 小时的常驻扫描。
 - 每次 Daily Collection Run 必须向中台上报计划时间、开始时间、完成时间、扫描数、Complete Turn 数、等待中 Turn 数、上传数和错误。
-- 数据中台必须等待活动 Binding Code 全部完成或收集宽限期结束后再冻结 Fact Snapshot；单个 Plugin 未按期运行不得阻塞其他 Partner。
+- Session Contribution 必须在提取并校验通过后立即上传；数据中台在周期截止时直接冻结 Snapshot，不设置额外宽限期。
 - 同一 Session 恢复后必须使用处理游标增量读取，不能重复分析全部历史。
 - 只有同时包含用户问题和正常完成 Assistant `final_answer` 的 Turn 才能进入提取；中断、取消、失败或只有过程输出的 Turn 不得进入事实提取，保留等待状态供后续扫描重新判断。
 - 支持幂等同步，不能重复创建同一 Session 事实。

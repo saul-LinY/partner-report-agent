@@ -2,11 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ClipboardCheck,
   FileStack,
-  FolderKanban,
   LayoutDashboard,
   LogOut,
   TableProperties,
-  Users,
 } from "lucide-react";
 import { Link, Redirect, Route, Switch, useLocation } from "wouter";
 import { api } from "./api.js";
@@ -17,6 +15,8 @@ import { ReviewPage } from "./review.js";
 import { ReportPage } from "./report.js";
 import { FactPreviewPage } from "./facts.js";
 import { TeamReportPage } from "./team-reports.js";
+import { ReviewQueuePage } from "./review-queue.js";
+import { ReportArchivePage } from "./report-archive.js";
 
 export type Me = {
   userId: string;
@@ -60,6 +60,7 @@ function AuthenticatedApp({ me }: { me: Me }) {
     },
   });
   const reviewing =
+    location === "/admin/reviews" ||
     location.startsWith("/partner/review") ||
     location.startsWith("/partner/report");
 
@@ -78,39 +79,28 @@ function AuthenticatedApp({ me }: { me: Me }) {
             <LayoutDashboard size={18} />
             运行总览
           </Link>
-          <Link className={reviewing ? "active" : ""} href="/admin">
+          <Link className={reviewing ? "active" : ""} href="/admin/reviews">
             <ClipboardCheck size={18} />
             审核队列
-          </Link>
-          <Link
-            className={location === "/admin/partners" ? "active" : ""}
-            href="/admin/partners"
-          >
-            <Users size={18} />
-            Partner 与绑定
-          </Link>
-          <Link
-            className={location === "/admin/projects" ? "active" : ""}
-            href="/admin/projects"
-          >
-            <FolderKanban size={18} />
-            项目目录
           </Link>
           <Link
             className={location === "/admin/facts" ? "active" : ""}
             href="/admin/facts"
           >
             <TableProperties size={18} />
-            Fact 预览
+            贡献预览
           </Link>
           <Link
             className={
-              location.startsWith("/admin/team-reports") ? "active" : ""
+              location.startsWith("/admin/reports") ||
+              location.startsWith("/admin/team-reports")
+                ? "active"
+                : ""
             }
-            href="/admin/team-reports"
+            href="/admin/reports"
           >
             <FileStack size={18} />
-            Team Report
+            报告归档
           </Link>
         </nav>
         <div className="sidebar-user">
@@ -136,11 +126,8 @@ function AuthenticatedApp({ me }: { me: Me }) {
           <Route path="/partner/report/:reportId">
             <ReportPage />
           </Route>
-          <Route path="/admin/partners">
-            <AdminConsole section="partners" />
-          </Route>
-          <Route path="/admin/projects">
-            <AdminConsole section="projects" />
+          <Route path="/admin/reviews">
+            <ReviewQueuePage />
           </Route>
           <Route path="/admin/facts">
             <FactPreviewPage />
@@ -148,11 +135,14 @@ function AuthenticatedApp({ me }: { me: Me }) {
           <Route path="/admin/team-reports/:id">
             <TeamReportPage />
           </Route>
-          <Route path="/admin/team-reports">
-            <TeamReportPage />
+          <Route path="/admin/reports/individual/:id">
+            <ReportArchivePage />
+          </Route>
+          <Route path="/admin/reports">
+            <ReportArchivePage />
           </Route>
           <Route path="/admin">
-            <AdminConsole section="overview" />
+            <AdminConsole />
           </Route>
           <Route>
             <Redirect to="/admin" replace />

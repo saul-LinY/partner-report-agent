@@ -44,7 +44,7 @@ export function FactPreviewPage() {
   const [partnerId, setPartnerId] = useState("");
   const [periodId, setPeriodId] = useState("");
   const [projectId, setProjectId] = useState("");
-  const [sessionId, setSessionId] = useState("");
+  const [sessionKey, setSessionKey] = useState("");
   const [page, setPage] = useState(1);
   const overview = useQuery({
     queryKey: ["admin-overview"],
@@ -54,9 +54,9 @@ export function FactPreviewPage() {
   if (partnerId) params.set("partnerId", partnerId);
   if (periodId) params.set("periodId", periodId);
   if (projectId) params.set("projectId", projectId);
-  if (sessionId.trim()) params.set("sessionId", sessionId.trim());
+  if (sessionKey.trim()) params.set("sessionId", sessionKey.trim());
   const facts = useQuery({
-    queryKey: ["admin-facts", partnerId, periodId, projectId, sessionId, page],
+    queryKey: ["admin-facts", partnerId, periodId, projectId, sessionKey, page],
     queryFn: () => api<FactPage>(`/v1/admin/session-facts?${params}`),
   });
   const data = overview.data;
@@ -71,8 +71,8 @@ export function FactPreviewPage() {
       <header className="page-header">
         <div>
           <span className="eyebrow">STRUCTURED INGESTION</span>
-          <h1>Fact 预览</h1>
-          <p>仅展示中台确认的结构化 Fact、版本和安全 lineage</p>
+          <h1>Session 贡献预览</h1>
+          <p>仅展示中台已接收的结构化项目贡献和版本</p>
         </div>
         <Button
           variant="secondary"
@@ -84,7 +84,7 @@ export function FactPreviewPage() {
         </Button>
       </header>
 
-      <section className="fact-filter-band" aria-label="Fact 筛选">
+      <section className="fact-filter-band" aria-label="Session 贡献筛选">
         <Filter size={18} />
         <Field label="用户">
           <select
@@ -94,7 +94,7 @@ export function FactPreviewPage() {
             }
           >
             <option value="">全部用户</option>
-            {data?.partners.map((partner) => (
+            {data?.partners?.map((partner) => (
               <option key={partner.id} value={partner.id}>
                 {partner.display_name}
               </option>
@@ -109,7 +109,7 @@ export function FactPreviewPage() {
             }
           >
             <option value="">全部周期</option>
-            {data?.periods.map((period) => (
+            {data?.periods?.map((period) => (
               <option key={period.id} value={period.id}>
                 {period.period_key}
               </option>
@@ -125,18 +125,18 @@ export function FactPreviewPage() {
           >
             <option value="">全部项目</option>
             <option value="unassigned">独立工作</option>
-            {data?.projects.map((project) => (
+            {data?.projects?.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
               </option>
             ))}
           </select>
         </Field>
-        <Field label="Session ID">
+        <Field label="匿名 Session Key">
           <input
-            value={sessionId}
+            value={sessionKey}
             onChange={(event) =>
-              resetPage(() => setSessionId(event.target.value))
+              resetPage(() => setSessionKey(event.target.value))
             }
             placeholder="精确匹配"
           />
@@ -147,25 +147,29 @@ export function FactPreviewPage() {
       {facts.isLoading ? (
         <div className="page-loading">
           <RefreshCw className="spin" />
-          加载 Fact
+          加载 Session 贡献
         </div>
       ) : facts.data?.items.length === 0 ? (
-        <EmptyState title="当前筛选条件下没有 Fact" />
+        <EmptyState title="当前筛选条件下没有 Session 贡献" />
       ) : (
         <section className="fact-list" aria-label="Fact 列表">
           {facts.data?.items.map((row) => {
             const fact = row.payload;
-            const project = data?.projects.find(
+            const project = data?.projects?.find(
               (item) => item.id === fact.projectId,
             );
+            const projectName =
+              fact.project?.name ??
+              project?.name ??
+              fact.projectHint ??
+              "独立工作";
             return (
               <article className="fact-row" key={row.id}>
                 <div className="fact-row-head">
                   <div>
                     <strong>{fact.title}</strong>
                     <span>
-                      {row.partner_name} · {row.period_key} ·{" "}
-                      {project?.name ?? "独立工作"}
+                      {row.partner_name} · {row.period_key} · {projectName}
                     </span>
                   </div>
                   <div className="fact-badges">
@@ -187,27 +191,38 @@ export function FactPreviewPage() {
                     )}
                   </div>
                 </div>
+                <p className="fact-summary">{factSummary(fact)}</p>
                 <div className="fact-columns">
-                  <FactList title="行动" values={fact.actions} />
-                  <FactList title="结果" values={fact.outcomes} />
-                  <FactList title="下一步" values={fact.nextSteps} />
-                  <FactList title="阻塞" values={fact.blockers} />
+                  <FactList
+                    title="成果"
+                    values={contributionValues(fact, "outcome")}
+                  />
+                  <FactList
+                    title="进展"
+                    values={contributionValues(fact, "progress")}
+                  />
+                  <FactList
+                    title="决策"
+                    values={contributionValues(fact, "decision")}
+                  />
+                  <FactList
+                    title="阻塞"
+                    values={contributionValues(fact, "blocker")}
+                  />
+                  <FactList
+                    title="下一步"
+                    values={contributionValues(fact, "next_step")}
+                  />
                 </div>
                 <div className="fact-lineage">
                   <span>
-                    Session <code>{shortId(row.session_id)}</code>
-                  </span>
-                  <span>
-                    Turn{" "}
-                    <code>
-                      {shortId(fact.fromTurnId)} → {shortId(fact.toTurnId)}
-                    </code>
+                    Session Key <code>{shortId(row.session_id)}</code>
                   </span>
                   <span>
                     Revision <code>{row.source_revision}</code>
                   </span>
                   <span>
-                    Fact <code>{shortId(row.external_fact_id)}</code>
+                    Contribution <code>{shortId(row.external_fact_id)}</code>
                   </span>
                   <span>{formatTime(row.source_occurred_at)}</span>
                 </div>
@@ -239,6 +254,41 @@ export function FactPreviewPage() {
       </div>
     </div>
   );
+}
+
+function contributionValues(fact: Record<string, any>, kind: string) {
+  if (Array.isArray(fact.contributions)) {
+    return fact.contributions
+      .filter((item: Record<string, unknown>) => item.kind === kind)
+      .map((item: Record<string, unknown>) => String(item.text));
+  }
+  const legacyFields: Record<string, string> = {
+    outcome: "outcomes",
+    progress: "actions",
+    decision: "decisions",
+    blocker: "blockers",
+    next_step: "nextSteps",
+  };
+  const field = legacyFields[kind];
+  const values = field ? fact[field] : undefined;
+  return Array.isArray(values) ? values.map(String) : [];
+}
+
+function factSummary(fact: Record<string, any>) {
+  if (typeof fact.summary === "string" && fact.summary.trim())
+    return fact.summary;
+  if (Array.isArray(fact.timeline)) {
+    const summary = fact.timeline
+      .map((item: Record<string, unknown>) => item.summary)
+      .filter((value: unknown): value is string =>
+        Boolean(typeof value === "string" && value.trim()),
+      )
+      .at(-1);
+    if (summary) return summary;
+  }
+  if (Array.isArray(fact.impact) && fact.impact.length)
+    return fact.impact.map(String).join("；");
+  return "未提供摘要";
 }
 
 function FactList({ title, values }: { title: string; values?: string[] }) {

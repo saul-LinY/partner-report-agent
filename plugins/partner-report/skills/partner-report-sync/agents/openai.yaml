@@ -1,4 +1,4 @@
 interface:
   display_name: "Partner Report Sync"
-  short_description: "Connect and schedule daily session collection"
-  default_prompt: "Use $partner-report-sync to connect Partner Report or run daily-collect and return the safe collection summary."
+  short_description: "Screen and sync meaningful Codex Session work"
+  default_prompt: "Use $partner-report-sync to collect meaningful project contributions from my Codex Sessions."

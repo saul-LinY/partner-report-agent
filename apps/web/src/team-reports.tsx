@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, FileStack, RefreshCw, Save } from "lucide-react";
+import { Archive, RefreshCw, Save } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { Link, useLocation, useRoute } from "wouter";
+import { Link, useRoute } from "wouter";
 import { api } from "./api.js";
 import { Badge, Button, EmptyState, ErrorBanner, Field } from "./components.js";
 
@@ -34,63 +34,7 @@ type Detail = {
 
 export function TeamReportPage() {
   const [, params] = useRoute("/admin/team-reports/:id");
-  const [, navigate] = useLocation();
-  const list = useQuery({
-    queryKey: ["team-reports"],
-    queryFn: () => api<TeamReportSummary[]>("/v1/admin/team-reports"),
-  });
-  if (params?.id) return <TeamReportDetail id={params.id} />;
-  return (
-    <div className="page admin-page">
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">TEAM ARCHIVE</span>
-          <h1>Team Report</h1>
-          <p>仅基于已归档的个人报告生成，不读取原始 Session 或 Fact</p>
-        </div>
-      </header>
-      <ErrorBanner error={list.error} />
-      {list.isLoading ? (
-        <div className="page-loading">
-          <RefreshCw className="spin" />
-          加载 Team Report
-        </div>
-      ) : list.data?.length ? (
-        <section className="team-report-list">
-          {list.data.map((report) => (
-            <button
-              key={report.id}
-              onClick={() => navigate(`/admin/team-reports/${report.id}`)}
-            >
-              <FileStack size={20} />
-              <div>
-                <strong>
-                  {report.title ?? `${report.period_key} Team Report`}
-                </strong>
-                <span>
-                  {report.period_key} · {report.summary ?? "等待生成内容"}
-                </span>
-              </div>
-              <Badge
-                tone={
-                  report.status === "LOCKED"
-                    ? "success"
-                    : report.status === "TEAM_DRAFT"
-                      ? "warning"
-                      : "neutral"
-                }
-              >
-                {statusLabel(report.status)}
-              </Badge>
-              <span>v{report.current_version}</span>
-            </button>
-          ))}
-        </section>
-      ) : (
-        <EmptyState title="还没有生成 Team Report" />
-      )}
-    </div>
-  );
+  return params?.id ? <TeamReportDetail id={params.id} /> : null;
 }
 
 function TeamReportDetail({ id }: { id: string }) {
@@ -167,8 +111,8 @@ function TeamReportDetail({ id }: { id: string }) {
           </p>
         </div>
         <div className="header-actions">
-          <Link className="button button-ghost" href="/admin/team-reports">
-            返回列表
+          <Link className="button button-ghost" href="/admin/reports">
+            返回归档
           </Link>
           {editable && (
             <>

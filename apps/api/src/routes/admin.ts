@@ -2,11 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import semver from "semver";
 import { z } from "zod";
-import {
-  centralModelIdSchema,
-  centralModelIds,
-} from "@partner-report/contracts/models";
-import { sqlClient as sql } from "@partner-report/db";
+import { centralModelIdSchema } from "@partner-report/contracts/models";
+import { sqlClient as sql, weeklyPeriodAt } from "@partner-report/db";
 import {
   ApiError,
   audit,
@@ -30,7 +27,6 @@ const projectSchema = z.object({
 
 const teamUpdateSchema = z.object({
   name: z.string().min(1).max(120).optional(),
-  timezone: z.string().min(1).max(100).optional(),
   evidenceExcerptEnabled: z.boolean().optional(),
   sessionQuietPeriodMinutes: z
     .number()
@@ -40,12 +36,6 @@ const teamUpdateSchema = z.object({
     .optional(),
   minimumPluginVersion: z.string().min(1).max(40).optional(),
   centralModel: centralModelIdSchema.optional(),
-  collectionGraceMinutes: z
-    .number()
-    .int()
-    .min(0)
-    .max(24 * 60)
-    .optional(),
   periodRule: z
     .object({
       frequency: z.literal("weekly").default("weekly"),
@@ -177,22 +167,17 @@ export async function adminRoutes(app: FastifyInstance) {
     const actor = await requireWebActor(request, "admin");
     const [
       teamRows,
-      projectRows,
       partnerRows,
-      templateRows,
       periodRows,
+      projectRows,
       pluginRows,
       jobRows,
-      auditRows,
       bindingRows,
       queueRows,
     ] = await Promise.all([
       sql<
         any[]
       >`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
-      sql<
-        any[]
-      >`select * from projects where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId} order by name`,
       sql<any[]>`
         select p.id, p.display_name, p.email, p.status, p.preferences, p.user_id, p.created_at
         from partners p
@@ -200,14 +185,16 @@ export async function adminRoutes(app: FastifyInstance) {
         order by p.display_name
       `,
       sql<any[]>`
-        select * from report_templates
-        where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId}
-        order by is_default desc, version desc, name
-      `,
-      sql<any[]>`
         select * from report_periods
         where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId}
         order by starts_at desc limit 8
+      `,
+      sql<any[]>`
+        select id, name
+        from projects
+        where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId}
+          and status = 'active'
+        order by name
       `,
       sql<any[]>`
         select
@@ -273,11 +260,6 @@ export async function adminRoutes(app: FastifyInstance) {
         group by status, type
       `,
       sql<any[]>`
-        select * from audit_events
-        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        order by created_at desc limit 20
-      `,
-      sql<any[]>`
         select id, partner_id, code_value, code_prefix, label, status, plugin_instance_id,
           claimed_at, last_used_at, created_at
         from plugin_binding_codes
@@ -295,45 +277,69 @@ export async function adminRoutes(app: FastifyInstance) {
         left join individual_reports ir on ir.partner_id = r.partner_id and ir.period_id = r.period_id
           and ir.tenant_id = r.tenant_id
         where r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
+          and (
+            r.state in ('PENDING', 'IN_PROGRESS')
+            or ir.status in ('REPORT_DRAFT', 'REPORT_REVIEW')
+          )
         order by r.updated_at desc limit 100
       `,
     ]);
 
+    const plugins = pluginRows.map((row) => ({
+      ...row,
+      connectivityStatus: pluginConnectivityStatus({
+        status: row.status,
+        connectivityStatus: row.connectivity_status,
+        connectivityChallengeExpiresAt: row.connectivity_challenge_expires_at,
+      }),
+      runStatus: pluginRunStatus({
+        status: row.status,
+        version: row.version,
+        minimumPluginVersion: row.minimum_plugin_version,
+        lastCollectionCompletedAt: row.last_collection_completed_at,
+        retryCount: row.retry_count,
+        lastErrorCode: row.last_error_code,
+        runnerState: row.runner_state,
+        pendingLocalJobs: row.pending_local_jobs,
+      }),
+    }));
+    const connections = partnerRows.map((partner) => {
+      const plugin =
+        plugins.find(
+          (candidate) =>
+            candidate.partner_id === partner.id &&
+            candidate.status === "active",
+        ) ?? plugins.find((candidate) => candidate.partner_id === partner.id);
+      const connectionState = !plugin
+        ? "not_connected"
+        : plugin.status !== "active"
+          ? "expired"
+          : plugin.connectivityStatus !== "verified"
+            ? plugin.connectivityStatus
+            : plugin.last_sync_at
+              ? "active"
+              : "connected";
+      return {
+        partnerId: partner.id,
+        partnerName: partner.display_name,
+        partnerEmail: partner.email,
+        connectionState,
+        verifiedAt: plugin?.connectivity_verified_at ?? null,
+        lastUploadAt: plugin?.last_sync_at ?? null,
+        deviceName: plugin?.device_name ?? null,
+        version: plugin?.version ?? null,
+      };
+    });
+
     return {
       team: teamRows[0],
-      projects: projectRows,
       partners: partnerRows,
-      templates: templateRows,
       periods: periodRows,
-      plugins: pluginRows.map((row) => ({
-        ...row,
-        connectivityStatus: pluginConnectivityStatus({
-          status: row.status,
-          connectivityStatus: row.connectivity_status,
-          connectivityChallengeExpiresAt: row.connectivity_challenge_expires_at,
-        }),
-        runStatus: pluginRunStatus({
-          status: row.status,
-          version: row.version,
-          minimumPluginVersion: row.minimum_plugin_version,
-          lastCollectionCompletedAt: row.last_collection_completed_at,
-          retryCount: row.retry_count,
-          lastErrorCode: row.last_error_code,
-          runnerState: row.runner_state,
-          pendingLocalJobs: row.pending_local_jobs,
-        }),
-      })),
+      projects: projectRows,
+      connections,
       jobs: jobRows,
-      auditEvents: auditRows,
       bindingCodes: bindingRows,
       reviewQueue: queueRows,
-      modelConfig: {
-        selectedModel: teamRows[0]?.central_model,
-        availableModels: centralModelIds,
-        gatewayConfigured: Boolean(
-          process.env.MODEL_API_KEY ?? process.env.OPENAI_API_KEY,
-        ),
-      },
     };
   });
 
@@ -430,10 +436,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const rows = await sql<any[]>`
       update teams set
         name = coalesce(${input.name ?? null}, name),
-        timezone = coalesce(${input.timezone ?? null}, timezone),
+        timezone = 'Asia/Shanghai',
         evidence_excerpt_enabled = coalesce(${input.evidenceExcerptEnabled ?? null}, evidence_excerpt_enabled),
         session_quiet_period_minutes = coalesce(${input.sessionQuietPeriodMinutes ?? null}, session_quiet_period_minutes),
-        collection_grace_minutes = coalesce(${input.collectionGraceMinutes ?? null}, collection_grace_minutes),
         period_rule = coalesce(${input.periodRule ? JSON.stringify(input.periodRule) : null}::jsonb, period_rule),
         minimum_plugin_version = coalesce(${input.minimumPluginVersion ?? null}, minimum_plugin_version),
         central_model = coalesce(${input.centralModel ?? null}, central_model),
@@ -441,6 +446,23 @@ export async function adminRoutes(app: FastifyInstance) {
       where id = ${actor.teamId} and tenant_id = ${actor.tenantId}
       returning *
     `;
+    if (rows[0] && input.periodRule) {
+      const period = weeklyPeriodAt(
+        new Date(),
+        "Asia/Shanghai",
+        rows[0].period_rule,
+      );
+      await sql`
+        update report_periods set
+          starts_at = ${period.startsAt.toISOString()},
+          ends_at = ${period.endsAt.toISOString()},
+          cutoff_at = ${period.cutoffAt.toISOString()},
+          submission_deadline_at = ${period.submissionDeadlineAt.toISOString()},
+          timezone = 'Asia/Shanghai', updated_at = now()
+        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and status = 'open' and period_key = ${period.periodKey}
+      `;
+    }
     await audit(request, actor, "team.updated", "team", actor.teamId, input);
     return rows[0];
   });

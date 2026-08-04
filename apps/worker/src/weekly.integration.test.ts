@@ -66,7 +66,7 @@ suite("weekly report scheduling", () => {
     });
   });
 
-  it("waits until cutoff and then enqueues one aggregation exactly once", async () => {
+  it("enqueues one aggregation at cutoff exactly once", async () => {
     const before = await scheduleDueWeeklyReports(
       new Date("2026-08-07T05:59:00.000Z"),
       fixture.period,
@@ -121,7 +121,13 @@ suite("weekly report scheduling", () => {
       input_payload: {
         aggregationMode: "weekly_report",
         reviewId: expect.any(String),
-        facts: [{ id: fixture.fact }],
+        projectBuckets: [
+          {
+            projectKey: "unassigned",
+            projectName: "未识别项目",
+            factIds: [fixture.fact],
+          },
+        ],
       },
     });
   });

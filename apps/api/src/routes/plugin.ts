@@ -554,42 +554,6 @@ export async function pluginRoutes(app: FastifyInstance) {
       select id from report_periods where tenant_id = ${actor.tenantId}
         and team_id = ${actor.teamId} and period_key = ${input.periodKey} limit 1
     `;
-    const periodId = periods[0]?.id ?? null;
-    if (input.collectionRunId && input.windowStartsAt && input.windowEndsAt) {
-      const status = input.phase.toUpperCase();
-      await sql`
-        insert into collection_runs (
-          id, tenant_id, team_id, partner_id, plugin_instance_id, period_id,
-          external_run_id, status, window_starts_at, window_ends_at,
-          initial_lookback, discovered_count, eligible_count, deferred_count,
-          excluded_count, synced_session_count, synced_fact_count,
-          pending_local_jobs, continuation_count, error_code, completed_at
-        ) values (
-          ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
-          ${actor.pluginInstanceId}, ${periodId}, ${input.collectionRunId}, ${status},
-          ${input.windowStartsAt}, ${input.windowEndsAt},
-          ${input.initialLookback ?? false},
-          ${input.discoveredCount}, ${input.eligibleCount}, ${input.deferredCount},
-          ${input.excludedCount}, ${input.sessionCount}, ${input.factCount},
-          ${input.pendingLocalJobs}, ${input.phase === "continuation_pending" ? 1 : 0},
-          ${input.errorCode ?? null}, ${completed ? new Date().toISOString() : null}
-        ) on conflict (plugin_instance_id, external_run_id) do update set
-          period_id = coalesce(excluded.period_id, collection_runs.period_id),
-          status = excluded.status,
-          discovered_count = excluded.discovered_count,
-          eligible_count = excluded.eligible_count,
-          deferred_count = excluded.deferred_count,
-          excluded_count = excluded.excluded_count,
-          synced_session_count = excluded.synced_session_count,
-          synced_fact_count = excluded.synced_fact_count,
-          pending_local_jobs = excluded.pending_local_jobs,
-          continuation_count = case when ${input.phase} = 'continuation_pending'
-            then collection_runs.continuation_count + 1 else collection_runs.continuation_count end,
-          error_code = excluded.error_code,
-          completed_at = coalesce(excluded.completed_at, collection_runs.completed_at),
-          updated_at = now()
-      `;
-    }
     await sql`
       update plugin_instances set
         version = ${input.pluginVersion}, device_name = ${input.deviceName},
@@ -602,8 +566,7 @@ export async function pluginRoutes(app: FastifyInstance) {
         last_collection_fact_count = case when ${completed} then ${input.factCount} else last_collection_fact_count end,
         pending_local_jobs = ${input.pendingLocalJobs},
         runner_state = case
-          when ${input.phase} in ('started', 'running') then 'working'
-          when ${input.phase} = 'continuation_pending' then 'delayed'
+          when ${input.phase} = 'started' then 'working'
           when ${input.phase} = 'completed' then 'idle'
           else 'error' end,
         last_error_code = ${input.errorCode ?? null}, updated_at = now()

@@ -13,40 +13,10 @@
           "items": {
             "type": "object",
             "properties": {
-              "clientKey": {
-                "type": "string",
-                "minLength": 1
-              },
-              "title": {
+              "projectKey": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 200
-              },
-              "factIds": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "minItems": 1
-              },
-              "projectId": {
-                "type": "string",
-                "format": "uuid"
-              },
-              "projectConfidence": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 1
-              },
-              "assignmentMethod": {
-                "type": "string",
-                "enum": [
-                  "explicit",
-                  "external_id",
-                  "alias",
-                  "semantic",
-                  "independent"
-                ]
+                "maxLength": 160
               },
               "status": {
                 "type": "string",
@@ -60,124 +30,43 @@
                   "cancelled"
                 ]
               },
-              "summary": {
+              "overview": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 1200
+                "maxLength": 1600
               },
-              "outcomes": {
+              "dailyProgress": {
                 "type": "array",
                 "items": {
-                  "type": "string",
-                  "maxLength": 500
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "summary": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1200
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "summary"
+                  ],
+                  "additionalProperties": false
                 },
-                "default": []
-              },
-              "blockers": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "maxLength": 500
-                },
-                "default": []
-              },
-              "nextSteps": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "maxLength": 500
-                },
-                "default": []
-              },
-              "importance": {
-                "type": "object",
-                "properties": {
-                  "outcome": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  },
-                  "impact": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  },
-                  "statusChange": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  },
-                  "decision": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  },
-                  "blocker": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  },
-                  "monitorAction": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  },
-                  "partnerEmphasis": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  },
-                  "repetitionPenalty": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 5
-                  }
-                },
-                "required": [
-                  "outcome",
-                  "impact",
-                  "statusChange",
-                  "decision",
-                  "blocker",
-                  "monitorAction",
-                  "partnerEmphasis",
-                  "repetitionPenalty"
-                ],
-                "additionalProperties": false
-              },
-              "mergeConfidence": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 1
-              },
-              "rationaleCodes": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "default": []
+                "minItems": 1
               }
             },
             "required": [
-              "clientKey",
-              "title",
-              "factIds",
-              "projectConfidence",
-              "assignmentMethod",
+              "projectKey",
               "status",
-              "summary",
-              "importance",
-              "mergeConfidence"
+              "overview",
+              "dailyProgress"
             ],
             "additionalProperties": false
           }
-        },
-        "unassignedFactIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": []
         },
         "qualityWarnings": {
           "type": "array",
@@ -193,7 +82,9 @@
               "type": "string",
               "enum": [
                 "partner-report-sync/0.2.0",
-                "partner-report-platform/0.2.0"
+                "partner-report-sync/0.3.0",
+                "partner-report-platform/0.2.0",
+                "partner-report-platform/0.3.0"
               ]
             },
             "promptVersion": {

@@ -1,13 +1,13 @@
 {
   "name": "partner-report",
-  "version": "0.2.0+codex.20260804062839",
-  "description": "Drain complete Codex session turns into validated structured facts through configurable Scheduled runs.",
+  "version": "0.3.0+codex.20260804090514",
+  "description": "Screen Codex Sessions and sync only meaningful project contributions.",
   "author": {
     "name": "\u6797\u6797\u52c7's team",
-    "url": "https://github.com/saul615"
+    "url": "https://github.com/saul-LinY"
   },
-  "homepage": "https://github.com/saul615/partner-report-agent#readme",
-  "repository": "https://github.com/saul615/partner-report-agent",
+  "homepage": "https://github.com/saul-LinY/partner-report-agent#readme",
+  "repository": "https://github.com/saul-LinY/partner-report-agent",
   "keywords": [
     "codex",
     "weekly-report",
@@ -16,21 +16,21 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Partner Report",
-    "shortDescription": "Build a reviewed weekly Partner report",
-    "longDescription": "Use configurable Codex Scheduled tasks and their active model to drain complete session turns into server-acknowledged structured facts after binding. Logical runs resume until pending work is zero, while unmatched projects remain independent work. Raw transcripts and sensitive automation memory are prohibited.",
+    "shortDescription": "Sync meaningful Session-level project work",
+    "longDescription": "Use an official Codex Scheduled Task to read local Sessions, discard casual or unrelated conversations, and upload only validated Session-level project contributions. Raw transcripts, absolute paths, and Codex Session IDs remain local.",
     "developerName": "\u6797\u6797\u52c7's team",
     "category": "Productivity",
     "capabilities": [
-      "Complete-turn session extraction",
+      "Session-level contribution screening",
       "Project-root and subfolder mapping",
-      "Resumable structured-fact collection runs",
-      "Independent-work collection",
+      "Private one-Session-at-a-time extraction",
+      "Idempotent contribution revisions",
       "Binding-code data isolation"
     ],
     "defaultPrompt": [
       "Use $partner-report-sync to connect this Codex installation with an Admin binding code.",
-      "Use $partner-report-sync to run daily-collect and return the safe summary."
+      "Use $partner-report-sync to collect meaningful Session contributions and return the safe summary."
     ],
-    "websiteURL": "https://github.com/saul615/partner-report-agent"
+    "websiteURL": "https://github.com/saul-LinY/partner-report-agent"
   }
 }

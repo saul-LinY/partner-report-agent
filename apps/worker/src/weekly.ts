@@ -17,8 +17,6 @@ type DuePeriod = {
   submission_deadline_at: Date;
   timezone: string;
   template_id: string | null;
-  collection_grace_minutes: number;
-  period_rule: WeeklyPeriodRule;
 };
 
 export type WeeklyScheduleResult = {
@@ -29,6 +27,64 @@ export type WeeklyScheduleResult = {
 
 function checksum(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+type AggregationFact = {
+  id: string;
+  payload: Record<string, any>;
+  source_occurred_at?: Date | string | null;
+};
+
+export function buildProjectBuckets(
+  facts: AggregationFact[],
+  projects: Array<{ id: string; name: string }>,
+) {
+  const projectNames = new Map(
+    projects.map((project) => [project.id, project.name]),
+  );
+  const buckets = new Map<
+    string,
+    {
+      projectKey: string;
+      projectId: string | null;
+      projectName: string;
+      factIds: string[];
+      facts: AggregationFact[];
+    }
+  >();
+
+  for (const fact of facts) {
+    const projectId =
+      fact.payload.projectId ?? fact.payload.project?.id ?? null;
+    const fingerprint =
+      fact.payload.projectRootFingerprint ??
+      fact.payload.project?.rootFingerprint ??
+      null;
+    const projectKey = projectId
+      ? `project:${projectId}`
+      : fingerprint
+        ? `root:${fingerprint}`
+        : "unassigned";
+    const projectName =
+      (projectId ? projectNames.get(projectId) : null) ??
+      fact.payload.project?.name ??
+      fact.payload.projectHint ??
+      "未识别项目";
+    const bucket = buckets.get(projectKey) ?? {
+      projectKey,
+      projectId,
+      projectName,
+      factIds: [] as string[],
+      facts: [] as AggregationFact[],
+    };
+    bucket.factIds.push(fact.id);
+    bucket.facts.push(fact);
+    buckets.set(projectKey, bucket);
+  }
+
+  return [...buckets.values()].sort((left, right) =>
+    left.projectName.localeCompare(right.projectName, "zh-CN"),
+  );
 }
 
 export async function ensureCurrentWeeklyPeriods(
@@ -92,33 +148,12 @@ export async function scheduleDueWeeklyReports(
   await ensureCurrentWeeklyPeriods(now);
   await beginDueClosures(now, onlyPeriodId);
   const candidates = await sql<DuePeriod[]>`
-    select rp.*, t.collection_grace_minutes, t.period_rule
+    select rp.*
     from report_periods rp
     join teams t on t.id = rp.team_id and t.tenant_id = rp.tenant_id
     where rp.status = 'closing' and t.report_type = 'weekly'
       and (${onlyPeriodId ?? null}::uuid is null or rp.id = ${onlyPeriodId ?? null})
-      and (
-        rp.cutoff_at + make_interval(mins => t.collection_grace_minutes) <= ${now.toISOString()}
-        or (
-          not exists (
-            select 1 from collection_runs active_run
-            where active_run.period_id = rp.id
-              and active_run.status in ('STARTED', 'RUNNING', 'CONTINUATION_PENDING')
-          )
-          and not exists (
-            select 1 from plugin_instances pi
-            where pi.tenant_id = rp.tenant_id and pi.team_id = rp.team_id
-              and pi.status = 'active'
-              and not exists (
-                select 1 from collection_runs completed_run
-                where completed_run.plugin_instance_id = pi.id
-                  and completed_run.period_id = rp.id
-                  and completed_run.status = 'COMPLETED'
-                  and completed_run.window_ends_at >= rp.cutoff_at - interval '24 hours'
-              )
-          )
-        )
-      )
+      and rp.cutoff_at <= ${now.toISOString()}
     order by rp.cutoff_at
   `;
   let closedPeriods = 0;
@@ -126,7 +161,7 @@ export async function scheduleDueWeeklyReports(
   for (const candidate of candidates) {
     const result = await sql.begin(async (tx) => {
       const locked = await tx<DuePeriod[]>`
-        select rp.*, t.collection_grace_minutes, t.period_rule
+        select rp.*
         from report_periods rp
         join teams t on t.id = rp.team_id and t.tenant_id = rp.tenant_id
         where rp.id = ${candidate.id} and rp.status = 'closing'
@@ -148,11 +183,12 @@ export async function scheduleDueWeeklyReports(
       let jobs = 0;
       for (const { partner_id: partnerId } of partners) {
         const facts = await tx<any[]>`
-          select id, payload from session_facts
+          select id, payload, source_occurred_at from session_facts
           where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}
             and period_id = ${period.id} and current = true and excluded = false
           order by source_occurred_at nulls last, created_at, id
         `;
+        const projectBuckets = buildProjectBuckets(facts, projects);
         const coverageRows = await tx<any[]>`
           select payload from coverage_snapshots
           where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}
@@ -197,8 +233,7 @@ export async function scheduleDueWeeklyReports(
                 cutoffAt: period.cutoff_at,
               },
               reviewId: reviewRows[0]!.id,
-              facts,
-              projects,
+              projectBuckets,
             })}::jsonb
           ) on conflict (tenant_id, idempotency_key) do nothing returning id
         `;

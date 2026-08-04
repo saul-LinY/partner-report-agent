@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertFactSemantics,
   assertReportSemantics,
   assertTeamReportSemantics,
+  aggregationResultSchema,
   containsSensitiveValue,
   connectivityTestSchema,
   individualReportResultSchema,
   pluginDiagnosticBatchSchema,
-  sessionFactUploadSchema,
+  sessionContributionSchema,
+  sessionExtractionResultSchema,
 } from "./index.js";
 
 describe("plugin connectivity contract", () => {
@@ -56,71 +57,186 @@ describe("plugin diagnostic contract", () => {
   });
 });
 
-describe("session upload project identity", () => {
-  it("requires the server project identity and folder match metadata", () => {
+describe("session contribution contract", () => {
+  it("accepts an anonymous session-level contribution", () => {
     const base = {
-      sessionId: "session-1",
-      sourceRevision: 1,
-      sourceHash: "a".repeat(64),
-      fromTurnId: "turn-1",
-      toTurnId: "turn-1",
+      schemaVersion: "1.0",
+      periodKey: "2026-W32",
+      sessionKey: "a".repeat(64),
+      contentHash: "b".repeat(64),
       observedAt: "2026-08-03T05:00:00.000Z",
-      status: "extracted",
-      facts: [],
+      activity: {
+        startedAt: "2026-08-03T03:00:00.000Z",
+        endedAt: "2026-08-03T04:00:00.000Z",
+      },
+      title: "重构采集插件",
+      summary: "把采集粒度调整为 Session。",
+      status: "in_progress",
+      contributions: [
+        { kind: "decision", text: "使用 Session 级摘要。", confidence: "high" },
+      ],
+      production: {
+        skillVersion: "partner-report-sync/0.3.0",
+        promptVersion: "2026-08-04.session.v1",
+        schemaVersion: "1.0",
+        producer: "codex-skill",
+      },
     };
-    expect(sessionFactUploadSchema.safeParse(base).success).toBe(false);
     expect(
-      sessionFactUploadSchema.safeParse({
+      sessionContributionSchema.safeParse({
         ...base,
         project: {
           id: "11111111-1111-4111-8111-111111111111",
+          name: "partner-report-agent",
           matchMethod: "descendant_path",
-          rootFingerprint: "b".repeat(64),
+          rootFingerprint: "c".repeat(64),
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("requires safe project discovery metadata and ordered activity", () => {
+    const base = {
+      schemaVersion: "1.0",
+      periodKey: "2026-W32",
+      sessionKey: "a".repeat(64),
+      contentHash: "b".repeat(64),
+      observedAt: "2026-08-03T05:00:00.000Z",
+      activity: {
+        startedAt: "2026-08-03T05:00:00.000Z",
+        endedAt: "2026-08-03T04:00:00.000Z",
+      },
+      title: "重构采集插件",
+      summary: "Session 摘要。",
+      status: "in_progress",
+      contributions: [],
+      production: {
+        skillVersion: "partner-report-sync/0.3.0",
+        promptVersion: "2026-08-04.session.v1",
+        schemaVersion: "1.0",
+        producer: "codex-skill",
+      },
+    };
     expect(
-      sessionFactUploadSchema.safeParse({
+      sessionContributionSchema.safeParse({
         ...base,
         project: {
           id: null,
+          name: "automatic-project",
           matchMethod: "path_discovered",
           rootFingerprint: "c".repeat(64),
           rootName: "automatic-project",
         },
       }).success,
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      sessionFactUploadSchema.safeParse({
+      sessionContributionSchema.safeParse({
         ...base,
+        activity: {
+          startedAt: "2026-08-03T03:00:00.000Z",
+          endedAt: "2026-08-03T04:00:00.000Z",
+        },
         project: {
           id: null,
+          name: "automatic-project",
           matchMethod: "path_discovered",
           rootFingerprint: "c".repeat(64),
         },
       }).success,
     ).toBe(false);
   });
+
+  it("rejects an upload without a meaningful contribution item", () => {
+    const parsed = sessionContributionSchema.safeParse({
+      schemaVersion: "1.0",
+      periodKey: "2026-W32",
+      sessionKey: "a".repeat(64),
+      contentHash: "b".repeat(64),
+      project: {
+        id: null,
+        name: "Independent work",
+        matchMethod: "unassigned",
+        rootFingerprint: "c".repeat(64),
+      },
+      activity: {
+        startedAt: "2026-08-03T03:00:00.000Z",
+        endedAt: "2026-08-03T04:00:00.000Z",
+      },
+      title: "闲聊",
+      summary: "没有项目贡献。",
+      status: "discussion",
+      contributions: [],
+      observedAt: "2026-08-03T05:00:00.000Z",
+      production: {
+        skillVersion: "partner-report-sync/0.3.0",
+        promptVersion: "2026-08-04.session-value.v1",
+        schemaVersion: "1.0",
+        producer: "codex-skill",
+      },
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe("session value screening contract", () => {
+  it("allows an unrelated session to be discarded without a contribution", () => {
+    expect(
+      sessionExtractionResultSchema.safeParse({
+        schemaVersion: "1.0",
+        decision: "ignore",
+        reason: "unrelated_to_project",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects free-form ignored content that could leak session text", () => {
+    expect(
+      sessionExtractionResultSchema.safeParse({
+        schemaVersion: "1.0",
+        decision: "ignore",
+        reason: "unrelated_to_project",
+        details: "raw session content",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("project card aggregation contract", () => {
+  it("accepts only overview and ordered daily progress for each project", () => {
+    const result = {
+      schemaVersion: "1.0",
+      groups: [
+        {
+          projectKey: "project:11111111-1111-4111-8111-111111111111",
+          status: "in_progress",
+          overview: "本周完成插件主链路收敛。",
+          dailyProgress: [
+            { date: "2026-08-03", summary: "完成项目分桶。" },
+            { date: "2026-08-04", summary: "完成审核界面。" },
+          ],
+        },
+      ],
+      qualityWarnings: [],
+      production: {
+        skillVersion: "partner-report-platform/0.3.0",
+        promptVersion: "2026-08-04.project-card.v1",
+        schemaVersion: "1.0",
+        producer: "data-platform",
+      },
+    };
+    expect(aggregationResultSchema.safeParse(result).success).toBe(true);
+    expect(
+      aggregationResultSchema.safeParse({
+        ...result,
+        groups: [
+          { ...result.groups[0], factIds: ["model-must-not-assign-facts"] },
+        ],
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("fact and report semantic guards", () => {
-  it("requires explicit evidence for completed facts", () => {
-    expect(() =>
-      assertFactSemantics({
-        status: "completed",
-        completionSupport: "uncertain",
-        evidence: [],
-      }),
-    ).toThrow(/explicit evidence/i);
-    expect(() =>
-      assertFactSemantics({
-        status: "completed",
-        completionSupport: "evidence",
-        evidence: [{}],
-      }),
-    ).not.toThrow();
-  });
-
   it("requires every report section exactly once", () => {
     expect(() =>
       assertReportSemantics({

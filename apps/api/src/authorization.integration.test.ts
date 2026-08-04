@@ -65,6 +65,7 @@ suite("tenant and role authorization", () => {
     await sql.begin(async (tx) => {
       await tx`delete from web_sessions where id = ${fixture.sessionA}`;
       await tx`delete from audit_events where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from outbox_events where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from agent_jobs where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from team_report_versions where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from team_reports where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
@@ -198,13 +199,12 @@ suite("tenant and role authorization", () => {
       headers,
     });
     expect(overview.statusCode).toBe(200);
-    expect(overview.json().plugins).toContainEqual(
+    expect(overview.json().connections).toContainEqual(
       expect.objectContaining({
-        id: claim.json().pluginInstanceId,
-        connectivityStatus: "verified",
-        runStatus: "waiting_first_run",
-        last_diagnostic_error_code: "SYNC_FAILED",
-        last_diagnostic_message: "结构化 Fact 同步失败。",
+        partnerId: fixture.partnerA,
+        connectionState: "connected",
+        deviceName: "Fixture Laptop",
+        version: "0.2.0",
       }),
     );
     expect(overview.json().bindingCodes).toContainEqual(
@@ -213,6 +213,10 @@ suite("tenant and role authorization", () => {
         code_value: bindingCode,
       }),
     );
+    expect(overview.json().projects).toContainEqual({
+      id: fixture.projectA,
+      name: "Fixture Project A",
+    });
     const reused = await app.inject({
       method: "POST",
       url: "/v1/plugin-bindings/claim",
@@ -281,22 +285,17 @@ suite("tenant and role authorization", () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it("ingests a drained collection run idempotently and exposes safe Fact lineage", async () => {
-    const runId = randomUUID();
+  it("ingests one Session Contribution idempotently and versions changed content", async () => {
     const pluginHeaders = { authorization: `Bearer ${pluginToken}` };
     const baseStatus = {
-      pluginVersion: "0.2.0",
+      pluginVersion: "0.3.0",
       deviceName: "fixture-device",
-      collectionRunId: runId,
       periodKey: "fixture-current-a",
-      windowStartsAt: "2026-08-03T00:00:00.000Z",
-      windowEndsAt: "2026-08-04T00:00:00.000Z",
-      initialLookback: true,
       sessionCount: 0,
       factCount: 0,
       pendingLocalJobs: 0,
-      discoveredCount: 2,
-      eligibleCount: 2,
+      discoveredCount: 1,
+      eligibleCount: 1,
       deferredCount: 0,
       excludedCount: 0,
     };
@@ -317,121 +316,105 @@ suite("tenant and role authorization", () => {
     expect(rejectedCompletion.statusCode).toBe(409);
     expect(rejectedCompletion.json().code).toBe("COLLECTION_NOT_DRAINED");
 
-    const sourceHash = "a".repeat(64);
-    const factId = "fixture-fact-late";
-    const upload = {
+    const sessionKey = "d".repeat(64);
+    const contribution = {
       schemaVersion: "1.0",
-      producerVersion: "partner-report-sync/0.2.0",
-      batchId: "fixture-batch-run",
-      pluginInstanceId: fixture.pluginA,
-      collectionRunId: runId,
       periodKey: "fixture-period-a",
-      collectionWindow: {
-        startsAt: baseStatus.windowStartsAt,
-        endsAt: baseStatus.windowEndsAt,
-        initialLookback: true,
+      sessionKey,
+      contentHash: "a".repeat(64),
+      project: {
+        id: null,
+        name: "automatic-project",
+        matchMethod: "path_discovered",
+        rootFingerprint: "c".repeat(64),
+        rootName: "automatic-project",
       },
-      periodCandidates: ["fixture-period-a"],
-      sessions: [
+      activity: {
+        startedAt: "2026-08-03T08:00:00.000Z",
+        endedAt: "2026-08-03T08:55:00.000Z",
+      },
+      title: "完成结构化采集验证",
+      summary: "完成 Session Contribution 上传链路验证。",
+      status: "in_progress",
+      contributions: [
         {
-          sessionId: "fixture-zero-fact-session",
-          project: {
-            id: null,
-            matchMethod: "unassigned",
-            rootFingerprint: "b".repeat(64),
-          },
-          sourceRevision: 1,
-          sourceHash,
-          fromTurnId: "turn-zero",
-          toTurnId: "turn-zero",
-          observedAt: "2026-08-03T08:00:00.000Z",
-          sourceOccurredAt: "2026-08-03T07:55:00.000Z",
-          status: "extracted",
-          facts: [],
-        },
-        {
-          sessionId: "fixture-one-fact-session",
-          project: {
-            id: null,
-            matchMethod: "path_discovered",
-            rootFingerprint: "c".repeat(64),
-            rootName: "automatic-project",
-          },
-          sourceRevision: 1,
-          sourceHash,
-          fromTurnId: "turn-one",
-          toTurnId: "turn-one",
-          observedAt: "2026-08-03T09:00:00.000Z",
-          sourceOccurredAt: "2026-08-03T08:55:00.000Z",
-          status: "extracted",
-          facts: [
-            {
-              schemaVersion: "1.0",
-              factId,
-              sessionId: "fixture-one-fact-session",
-              sourceRevision: 1,
-              sourceHash,
-              fromTurnId: "turn-one",
-              toTurnId: "turn-one",
-              title: "完成结构化采集验证",
-              status: "in_progress",
-              actions: ["验证上传链路"],
-              outcomes: ["中台确认批次"],
-              impact: [],
-              decisions: [],
-              blockers: [],
-              nextSteps: ["完成端到端验收"],
-              timeline: [
-                {
-                  status: "in_progress",
-                  occurredAt: "2026-08-03T08:55:00.000Z",
-                  summary: "已上传结构化测试 Fact",
-                  evidenceTurnIds: ["turn-one"],
-                },
-              ],
-              evidence: [],
-              completionSupport: "uncertain",
-              factOrigin: "ai_extracted",
-              redactionSummary: {},
-              production: {
-                skillVersion: "partner-report-sync/0.2.0",
-                promptVersion: "2026-08-03.v3",
-                schemaVersion: "1.0",
-                producer: "codex-skill",
-              },
-            },
-          ],
+          kind: "outcome",
+          text: "中台已接收结构化 Session Contribution。",
+          confidence: "high",
         },
       ],
+      observedAt: "2026-08-03T09:00:00.000Z",
+      production: {
+        skillVersion: "partner-report-sync/0.3.0",
+        promptVersion: "2026-08-04.session-value.v1",
+        schemaVersion: "1.0",
+        producer: "codex-skill",
+      },
     };
-    const batchHeaders = {
+    const contributionHeaders = {
       ...pluginHeaders,
-      "idempotency-key": "fixture-batch-run-key",
+      "idempotency-key": "fixture-contribution-key",
     };
     const first = await app.inject({
       method: "POST",
-      url: "/v1/session-facts/batch",
-      headers: batchHeaders,
-      payload: upload,
+      url: "/v1/session-contributions",
+      headers: contributionHeaders,
+      payload: contribution,
     });
     expect(first.statusCode).toBe(200);
-    expect(first.json()).toMatchObject({ accepted: 2, rejected: 0 });
+    expect(first.json()).toMatchObject({
+      status: "accepted",
+      sessionKey,
+      contentHash: contribution.contentHash,
+      revision: 1,
+    });
     const repeated = await app.inject({
       method: "POST",
-      url: "/v1/session-facts/batch",
-      headers: batchHeaders,
-      payload: upload,
+      url: "/v1/session-contributions",
+      headers: contributionHeaders,
+      payload: contribution,
     });
     expect(repeated.statusCode).toBe(200);
     expect(repeated.json()).toEqual(first.json());
     const conflict = await app.inject({
       method: "POST",
-      url: "/v1/session-facts/batch",
-      headers: batchHeaders,
-      payload: { ...upload, batchId: "changed-batch" },
+      url: "/v1/session-contributions",
+      headers: contributionHeaders,
+      payload: { ...contribution, summary: "不同的 Payload" },
     });
     expect(conflict.statusCode).toBe(409);
     expect(conflict.json().code).toBe("IDEMPOTENCY_CONFLICT");
+
+    const changed = await app.inject({
+      method: "POST",
+      url: "/v1/session-contributions",
+      headers: {
+        ...pluginHeaders,
+        "idempotency-key": "fixture-contribution-revision-two",
+      },
+      payload: {
+        ...contribution,
+        contentHash: "b".repeat(64),
+        summary: "Session 内容变化后重新生成完整贡献。",
+      },
+    });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.json()).toMatchObject({
+      status: "accepted",
+      sessionKey,
+      revision: 2,
+    });
+
+    const state = await app.inject({
+      method: "GET",
+      url: "/v1/session-contributions/state?periodKey=fixture-current-a",
+      headers: pluginHeaders,
+    });
+    expect(state.statusCode).toBe(200);
+    expect(state.json()).toMatchObject({
+      periodKey: "fixture-current-a",
+      sessions: [{ sessionKey, contentHash: "b".repeat(64) }],
+    });
 
     const discoveredProjects = await sql<any[]>`
       select id, name, allowed_paths, external_ids from projects
@@ -444,36 +427,6 @@ suite("tenant and role authorization", () => {
       allowed_paths: [],
       external_ids: [`path-sha256:${"c".repeat(64)}`],
     });
-    await sql`
-      update session_facts set payload = payload ||
-        '{"projectId":null,"projectMatchMethod":"unassigned"}'::jsonb
-      where tenant_id = ${fixture.tenantA} and external_fact_id = ${factId}
-    `;
-    const discovery = await app.inject({
-      method: "POST",
-      url: "/v1/plugin-instances/me/project-discoveries",
-      headers: pluginHeaders,
-      payload: {
-        discoveries: [
-          {
-            sessionId: "fixture-one-fact-session",
-            rootName: "automatic-project",
-            rootFingerprint: "c".repeat(64),
-          },
-        ],
-      },
-    });
-    expect(discovery.statusCode).toBe(200);
-    expect(discovery.json()).toMatchObject({
-      submitted: 1,
-      mappings: [
-        {
-          sessionId: "fixture-one-fact-session",
-          projectId: discoveredProjects[0].id,
-          projectName: "automatic-project",
-        },
-      ],
-    });
 
     const factPreview = await app.inject({
       method: "GET",
@@ -485,10 +438,13 @@ suite("tenant and role authorization", () => {
       total: 1,
       items: [
         {
-          external_fact_id: factId,
+          external_fact_id: `${sessionKey}:contribution`,
+          source_revision: 2,
           period_id: fixture.currentPeriodA,
           late_from_period_key: "fixture-period-a",
           payload: {
+            recordType: "session_contribution",
+            contentHash: "b".repeat(64),
             projectId: discoveredProjects[0].id,
             projectMatchMethod: "path_discovered",
           },
@@ -497,13 +453,15 @@ suite("tenant and role authorization", () => {
     });
     expect(JSON.stringify(factPreview.json())).not.toContain("userPrompt");
     const records = await sql<any[]>`
-      select session_id from session_records
-      where tenant_id = ${fixture.tenantA} and collection_run_id is not null
-      order by session_id
+      select session_id, latest_source_revision, collection_run_id
+      from session_records where tenant_id = ${fixture.tenantA}
     `;
-    expect(records.map((record) => record.session_id)).toEqual([
-      "fixture-one-fact-session",
-      "fixture-zero-fact-session",
+    expect(records).toEqual([
+      {
+        session_id: sessionKey,
+        latest_source_revision: 2,
+        collection_run_id: null,
+      },
     ]);
 
     const completed = await app.inject({
@@ -513,23 +471,15 @@ suite("tenant and role authorization", () => {
       payload: {
         ...baseStatus,
         phase: "completed",
-        sessionCount: 2,
+        sessionCount: 1,
         factCount: 1,
       },
     });
     expect(completed.statusCode).toBe(200);
     const runs = await sql<any[]>`
-      select status, synced_session_count, synced_fact_count, pending_local_jobs
-      from collection_runs where external_run_id = ${runId}
+      select id from collection_runs where tenant_id = ${fixture.tenantA}
     `;
-    expect(runs).toEqual([
-      {
-        status: "COMPLETED",
-        synced_session_count: 2,
-        synced_fact_count: 1,
-        pending_local_jobs: 0,
-      },
-    ]);
+    expect(runs).toEqual([]);
   });
 
   it("versions and atomically locks an Admin-reviewed Team Report", async () => {
@@ -595,6 +545,109 @@ suite("tenant and role authorization", () => {
     ]);
     expect(reports).toEqual([{ status: "LOCKED", current_version: 2 }]);
     expect(periods).toEqual([{ status: "completed" }]);
+  });
+
+  it("regenerates a personal Report from natural-language review and archives the accepted version", async () => {
+    const snapshotId = randomUUID();
+    const reportId = randomUUID();
+    const versionId = randomUUID();
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into work_item_snapshots (
+          id, tenant_id, team_id, partner_id, period_id, review_id,
+          review_version, checksum, payload, approved_by, approved_at
+        ) values (
+          ${snapshotId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.periodA}, ${fixture.reviewA}, 1, 'fixture-personal-source',
+          ${JSON.stringify({
+            workItems: [
+              {
+                id: fixture.workItemA,
+                title: "Fixture Project A",
+                payload: { overview: "完成项目进展。" },
+              },
+            ],
+            coverage: { discovered: 1, extracted: 1 },
+          })}::jsonb,
+          ${fixture.userA}, now()
+        )
+      `;
+      await tx`
+        insert into individual_reports (
+          id, tenant_id, team_id, partner_id, period_id, snapshot_id,
+          status, current_version
+        ) values (
+          ${reportId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.periodA}, ${snapshotId}, 'REPORT_REVIEW', 1
+        )
+      `;
+      await tx`
+        insert into individual_report_versions (
+          id, tenant_id, report_id, version, title, summary, markdown, payload,
+          preferences, source_checksum, generator_version
+        ) values (
+          ${versionId}, ${fixture.tenantA}, ${reportId}, 1, '个人周报',
+          '初始摘要', '# 个人周报\n\n初始内容。',
+          ${JSON.stringify({ sections: [] })}::jsonb, '{}'::jsonb,
+          'fixture-personal-source', 'synthetic-test/1.0'
+        )
+      `;
+    });
+
+    try {
+      const regenerate = await app.inject({
+        method: "POST",
+        url: `/v1/individual-reports/${reportId}/regenerate`,
+        headers,
+        payload: { instruction: "突出项目结果，减少过程描述。" },
+      });
+      expect(regenerate.statusCode).toBe(200);
+      const jobs = await sql<any[]>`
+        select input_payload from agent_jobs
+        where tenant_id = ${fixture.tenantA}
+          and input_payload->>'reportId' = ${reportId}
+          and type = 'REGENERATE_INDIVIDUAL_REPORT'
+      `;
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].input_payload).toMatchObject({
+        reviewInstruction: "突出项目结果，减少过程描述。",
+        currentReport: { version: 1, title: "个人周报" },
+        workItems: [{ id: fixture.workItemA }],
+      });
+
+      await sql`
+        update individual_reports set status = 'REPORT_REVIEW' where id = ${reportId}
+      `;
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/v1/individual-reports/${reportId}/submit`,
+        headers,
+        payload: { baseVersion: 1 },
+      });
+      expect(accepted.statusCode).toBe(200);
+
+      const archive = await app.inject({
+        method: "GET",
+        url: "/v1/admin/individual-reports",
+        headers,
+      });
+      expect(archive.statusCode).toBe(200);
+      expect(archive.json()).toContainEqual(
+        expect.objectContaining({
+          id: reportId,
+          status: "LOCKED",
+          partner_name: "Fixture A",
+          title: "个人周报",
+        }),
+      );
+    } finally {
+      await sql.begin(async (tx) => {
+        await tx`delete from agent_jobs where tenant_id = ${fixture.tenantA} and input_payload->>'reportId' = ${reportId}`;
+        await tx`delete from individual_report_versions where report_id = ${reportId}`;
+        await tx`delete from individual_reports where id = ${reportId}`;
+        await tx`delete from work_item_snapshots where id = ${snapshotId}`;
+      });
+    }
   });
 
   it("rejects writes after a Review leaves IN_PROGRESS", async () => {

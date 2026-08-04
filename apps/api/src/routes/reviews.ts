@@ -212,41 +212,187 @@ export async function reviewRoutes(app: FastifyInstance) {
     const actor = await requireWebActor(request, "partner");
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const review = await loadReview(actor, id);
-    const [items, changes, coverage, snapshot, projects] = await Promise.all([
+    const [items, regenerationJobs] = await Promise.all([
       sql<any[]>`
         select wi.*, p.name as project_name
         from work_items wi left join projects p on p.id = wi.project_id
         where wi.review_id = ${id} and wi.tenant_id = ${actor.tenantId}
-        order by ((wi.payload->'importance'->>'partnerEmphasis')::numeric) desc nulls last, wi.created_at
+        order by lower(coalesce(p.name, wi.title)), wi.created_at
       `,
       sql<any[]>`
-        select * from review_changes where review_id = ${id} and tenant_id = ${actor.tenantId}
+        select id, status, error_code, error_message, input_payload->>'targetWorkItemId' as work_item_id
+        from agent_jobs
+        where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
+          and type = 'AGGREGATE_WORK_ITEMS'
+          and input_payload->>'reviewId' = ${id}
+          and input_payload ? 'targetWorkItemId'
         order by created_at desc limit 30
-      `,
-      sql<any[]>`
-        select payload, immutable, created_at from coverage_snapshots
-        where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId} and period_id = ${review.period_id}
-        order by created_at desc limit 1
-      `,
-      sql<any[]>`
-        select id, checksum, approved_at from work_item_snapshots
-        where review_id = ${id} and tenant_id = ${actor.tenantId}
-        order by created_at desc limit 1
-      `,
-      sql<any[]>`
-        select id, name from projects
-        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId} and status = 'active'
-        order by name
       `,
     ]);
     return {
       review,
       items,
-      changes,
-      coverage: coverage[0] ?? null,
-      snapshot: snapshot[0] ?? null,
-      projects,
+      regenerationJobs,
     };
+  });
+
+  app.post("/v1/reviews/:id/items/:workItemId/regenerate", async (request) => {
+    const actor = await requireWebActor(request, "partner");
+    const { id, workItemId } = z
+      .object({ id: z.string().uuid(), workItemId: z.string().uuid() })
+      .parse(request.params);
+    const input = z
+      .object({
+        instruction: z.string().trim().min(2).max(1200),
+        baseVersion: z.number().int().positive(),
+      })
+      .strict()
+      .parse(request.body);
+    const review = await loadReview(actor, id);
+    if (review.state !== "IN_PROGRESS")
+      throw new ApiError(409, "REVIEW_NOT_EDITABLE", "当前审核不能修改。");
+    if (review.version !== input.baseVersion)
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "审核内容已更新，请刷新后重试。",
+      );
+
+    const itemRows = await sql<any[]>`
+      select wi.*, p.name as project_name
+      from work_items wi left join projects p on p.id = wi.project_id
+      where wi.id = ${workItemId} and wi.review_id = ${id}
+        and wi.tenant_id = ${actor.tenantId}
+      limit 1
+    `;
+    const item = itemRows[0];
+    if (!item)
+      throw new ApiError(404, "WORK_ITEM_NOT_FOUND", "工作卡片不存在。");
+    const pendingJobs = await sql<any[]>`
+      select id from agent_jobs
+      where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
+        and type = 'AGGREGATE_WORK_ITEMS'
+        and input_payload->>'targetWorkItemId' = ${workItemId}
+        and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
+      limit 1
+    `;
+    if (pendingJobs[0])
+      throw new ApiError(409, "REGENERATION_PENDING", "这张卡片正在重新生成。");
+
+    const facts = await sql<any[]>`
+      select sf.id, sf.payload, sf.source_occurred_at
+      from work_item_facts wf
+      join session_facts sf on sf.id = wf.fact_id and sf.tenant_id = ${actor.tenantId}
+      where wf.work_item_id = ${workItemId}
+      order by sf.source_occurred_at nulls last, sf.created_at, sf.id
+    `;
+    if (facts.length === 0)
+      throw new ApiError(
+        409,
+        "PROJECT_CARD_EMPTY",
+        "这张卡片没有可用于重新生成的贡献。",
+      );
+
+    const projectKey =
+      item.payload.projectKey ??
+      (item.project_id ? `project:${item.project_id}` : `work-item:${item.id}`);
+    const jobId = randomUUID();
+    const projectBucket = {
+      projectKey,
+      projectId: item.project_id,
+      projectName: item.project_name ?? item.title,
+      factIds: facts.map((fact) => fact.id),
+      facts,
+    };
+    await sql.begin(async (tx) => {
+      await tx`
+        update work_items set review_status = 'pending', updated_at = now()
+        where id = ${workItemId} and tenant_id = ${actor.tenantId}
+      `;
+      await recalculateReview(tx, id);
+      await tx`
+        insert into agent_jobs (
+          id, tenant_id, team_id, partner_id, plugin_instance_id,
+          type, idempotency_key, input_payload
+        ) values (
+          ${jobId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
+          'AGGREGATE_WORK_ITEMS',
+          ${`project-card-regeneration:${workItemId}:${review.version}:${stableJsonHash(input.instruction)}`},
+          ${JSON.stringify({
+            schemaVersion: "1.0",
+            aggregationMode: "project_card_regeneration",
+            reviewId: id,
+            targetWorkItemId: workItemId,
+            period: { id: review.period_id },
+            projectBuckets: [projectBucket],
+            reviewInstruction: input.instruction,
+          })}::jsonb
+        )
+      `;
+    });
+    await audit(
+      request,
+      actor,
+      "project_card.regeneration_requested",
+      "work_item",
+      workItemId,
+      {
+        jobId,
+      },
+    );
+    return { jobId, status: "PENDING" };
+  });
+
+  app.post("/v1/reviews/:id/items/:workItemId/decision", async (request) => {
+    const actor = await requireWebActor(request, "partner");
+    const { id, workItemId } = z
+      .object({ id: z.string().uuid(), workItemId: z.string().uuid() })
+      .parse(request.params);
+    const input = z
+      .object({
+        decision: z.enum(["approve", "exclude"]),
+        baseVersion: z.number().int().positive(),
+      })
+      .strict()
+      .parse(request.body);
+    const review = await loadReview(actor, id);
+    if (review.state !== "IN_PROGRESS")
+      throw new ApiError(409, "REVIEW_NOT_EDITABLE", "当前审核不能修改。");
+    if (review.version !== input.baseVersion)
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "审核内容已更新，请刷新后重试。",
+      );
+
+    await sql.begin(async (tx) => {
+      const rows = await tx<{ id: string }[]>`
+        update work_items set
+          review_status = ${input.decision === "approve" ? "approved" : "excluded"},
+          version = version + 1, updated_at = now()
+        where id = ${workItemId} and review_id = ${id}
+          and tenant_id = ${actor.tenantId} and review_status = 'pending'
+        returning id
+      `;
+      if (!rows[0])
+        throw new ApiError(
+          409,
+          "WORK_ITEM_NOT_PENDING",
+          "这张工作卡片已经处理。",
+        );
+      await recalculateReview(tx, id);
+    });
+    const versions = await sql<{ version: number }[]>`
+      select version from reviews where id = ${id} and tenant_id = ${actor.tenantId}
+    `;
+    await audit(
+      request,
+      actor,
+      `project_card.${input.decision}d`,
+      "work_item",
+      workItemId,
+    );
+    return { version: versions[0]!.version };
   });
 
   app.post("/v1/reviews/:id/changes/preview", async (request) => {
@@ -593,6 +739,27 @@ export async function reviewRoutes(app: FastifyInstance) {
         "仍有待处理的聚合或重新分析任务。",
       );
 
+    const approvedItems = items.filter(
+      (item) => item.review_status === "approved",
+    );
+    if (approvedItems.length === 0) {
+      await sql.begin(async (tx) => {
+        await tx`
+          update reviews set state = 'ITEMS_DISMISSED', updated_at = now()
+          where id = ${id} and tenant_id = ${actor.tenantId}
+        `;
+        await tx`
+          insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+          values (
+            ${randomUUID()}, ${actor.tenantId}, 'work_items.all_dismissed', 'review', ${id},
+            ${JSON.stringify({ excludedWorkItemIds: items.map((item) => item.id) })}::jsonb
+          )
+        `;
+      });
+      await audit(request, actor, "work_items.all_dismissed", "review", id);
+      return { ignored: true };
+    }
+
     const completedItems = items.filter(
       (item) =>
         item.review_status === "approved" && item.status === "completed",
@@ -606,13 +773,21 @@ export async function reviewRoutes(app: FastifyInstance) {
         facts.some(
           (fact) =>
             fact.payload.completionSupport === "evidence" ||
-            fact.payload.factOrigin === "partner_supplied",
+            fact.payload.factOrigin === "partner_supplied" ||
+            (fact.payload.recordType === "session_contribution" &&
+              fact.payload.status === "completed" &&
+              Array.isArray(fact.payload.contributions) &&
+              fact.payload.contributions.some(
+                (contribution: Record<string, unknown>) =>
+                  contribution.kind === "outcome" &&
+                  contribution.confidence !== "low",
+              )),
         ) || (item.payload.partnerFacts ?? []).length > 0;
       if (!hasSupport)
         throw new ApiError(
           409,
           "COMPLETION_EVIDENCE_REQUIRED",
-          `完成事项“${item.title}”缺少 Evidence 或 Partner 补充。`,
+          `完成事项“${item.title}”缺少可信 Outcome 或 Partner 补充。`,
         );
     }
 

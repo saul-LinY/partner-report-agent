@@ -18,7 +18,9 @@ export const workStatusSchema: z.ZodTypeAny = z.enum([
 export const productionMetadataSchema: z.ZodTypeAny = z.object({
   skillVersion: z.enum([
     "partner-report-sync/0.2.0",
+    "partner-report-sync/0.3.0",
     "partner-report-platform/0.2.0",
+    "partner-report-platform/0.3.0",
   ]),
   promptVersion: z.string().min(1).max(80),
   schemaVersion: z.literal("1.0"),
@@ -26,111 +28,108 @@ export const productionMetadataSchema: z.ZodTypeAny = z.object({
   modelVersion: z.string().min(1).optional(),
 });
 
-export const evidenceSchema: z.ZodTypeAny = z.object({
-  turnId: z.string().min(1),
-  occurredAt: isoDateTimeSchema,
-  excerpt: z.string().max(240).optional(),
-  excerptHash: z.string().min(16),
-  redacted: z.boolean().default(false),
-});
-
-export const timelineEventSchema: z.ZodTypeAny = z.object({
-  status: workStatusSchema,
-  occurredAt: isoDateTimeSchema,
-  summary: z.string().min(1).max(600),
-  evidenceTurnIds: z.array(z.string()).default([]),
-});
-
-export const sessionWorkFactSchema: z.ZodTypeAny = z.object({
-  schemaVersion: z.literal("1.0"),
-  factId: z.string().min(1),
-  sessionId: z.string().min(1),
-  sourceRevision: z.number().int().positive(),
-  sourceHash: z.string().min(16),
-  fromTurnId: z.string().min(1),
-  toTurnId: z.string().min(1),
-  title: z.string().min(1).max(200),
-  projectHint: z.string().max(120).optional(),
-  status: workStatusSchema,
-  actions: z.array(z.string().max(500)).default([]),
-  outcomes: z.array(z.string().max(500)).default([]),
-  impact: z.array(z.string().max(500)).default([]),
-  decisions: z.array(z.string().max(500)).default([]),
-  blockers: z.array(z.string().max(500)).default([]),
-  nextSteps: z.array(z.string().max(500)).default([]),
-  timeline: z.array(timelineEventSchema).min(1),
-  evidence: z.array(evidenceSchema).default([]),
-  completionSupport: z.enum(["evidence", "uncertain"]),
-  factOrigin: z.enum(["ai_extracted", "partner_supplied"]),
-  redactionSummary: z.record(z.number().int().nonnegative()).default({}),
-  production: productionMetadataSchema,
-});
-
-export const sessionFactUploadSchema: z.ZodTypeAny = z.object({
-  sessionId: z.string().min(1),
-  project: z
-    .object({
-      id: idSchema.nullable(),
-      matchMethod: z.enum([
-        "exact_root",
-        "descendant_path",
-        "path_discovered",
-        "unassigned",
-      ]),
-      rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-      rootName: z.string().min(1).max(120).optional(),
-    })
-    .superRefine((project, context) => {
-      if (project.matchMethod === "path_discovered" && !project.rootName) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["rootName"],
-          message: "path_discovered project requires rootName",
-        });
-      }
-    }),
-  sourceRevision: z.number().int().positive(),
-  sourceHash: z.string().min(16),
-  fromTurnId: z.string().min(1),
-  toTurnId: z.string().min(1),
-  observedAt: isoDateTimeSchema,
-  sourceOccurredAt: isoDateTimeSchema.optional(),
-  status: z.enum(["extracted", "failed_read", "failed_extract", "excluded"]),
-  facts: z.array(sessionWorkFactSchema),
-});
-
-export const factBatchSchema: z.ZodTypeAny = z.object({
-  schemaVersion: z.literal("1.0"),
-  producerVersion: z.string().min(1),
-  batchId: z.string().min(1),
-  pluginInstanceId: idSchema,
-  collectionRunId: idSchema.optional(),
-  periodKey: z.string().min(1).max(80).optional(),
-  collectionWindow: z
-    .object({
-      startsAt: isoDateTimeSchema,
-      endsAt: isoDateTimeSchema,
-      initialLookback: z.boolean(),
-    })
-    .optional(),
-  periodCandidates: z.array(z.string()).default([]),
-  sessions: z.array(sessionFactUploadSchema).min(1).max(50),
-});
-
-export const projectDiscoveryBatchSchema: z.ZodTypeAny = z
+export const projectIdentitySchema: z.ZodTypeAny = z
   .object({
-    discoveries: z
-      .array(
-        z
-          .object({
-            sessionId: z.string().min(1).max(200),
-            rootName: z.string().min(1).max(120),
-            rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(100),
+    id: idSchema.nullable(),
+    name: z.string().min(1).max(120),
+    matchMethod: z.enum([
+      "exact_root",
+      "descendant_path",
+      "path_discovered",
+      "unassigned",
+    ]),
+    rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    rootName: z.string().min(1).max(120).optional(),
+  })
+  .strict()
+  .superRefine((project, context) => {
+    if (project.matchMethod === "path_discovered" && !project.rootName) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rootName"],
+        message: "path_discovered project requires rootName",
+      });
+    }
+  });
+
+export const contributionKindSchema: z.ZodTypeAny = z.enum([
+  "outcome",
+  "progress",
+  "decision",
+  "blocker",
+  "next_step",
+]);
+
+export const contributionItemSchema: z.ZodTypeAny = z
+  .object({
+    kind: contributionKindSchema,
+    text: z.string().min(1).max(600),
+    confidence: z.enum(["high", "medium", "low"]),
+  })
+  .strict();
+
+export const sessionContributionSchema: z.ZodTypeAny = z
+  .object({
+    schemaVersion: z.literal("1.0"),
+    periodKey: z.string().min(1).max(80),
+    sessionKey: z.string().regex(/^[a-f0-9]{64}$/),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    project: projectIdentitySchema,
+    activity: z
+      .object({
+        startedAt: isoDateTimeSchema,
+        endedAt: isoDateTimeSchema,
+      })
+      .strict(),
+    title: z.string().min(1).max(200),
+    summary: z.string().min(1).max(1600),
+    status: workStatusSchema,
+    contributions: z.array(contributionItemSchema).min(1).max(40),
+    observedAt: isoDateTimeSchema,
+    production: productionMetadataSchema,
+  })
+  .strict()
+  .superRefine((contribution, context) => {
+    if (
+      new Date(contribution.activity.startedAt).getTime() >
+      new Date(contribution.activity.endedAt).getTime()
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["activity", "endedAt"],
+        message: "activity.endedAt must not precede activity.startedAt",
+      });
+    }
+  });
+
+export const sessionExtractionResultSchema: z.ZodTypeAny = z.discriminatedUnion(
+  "decision",
+  [
+    z
+      .object({
+        schemaVersion: z.literal("1.0"),
+        decision: z.literal("ignore"),
+        reason: z.enum([
+          "casual_conversation",
+          "unrelated_to_project",
+          "no_meaningful_contribution",
+          "insufficient_context",
+        ]),
+      })
+      .strict(),
+    z
+      .object({
+        schemaVersion: z.literal("1.0"),
+        decision: z.literal("include"),
+        contribution: sessionContributionSchema,
+      })
+      .strict(),
+  ],
+);
+
+export const sessionContributionStateQuerySchema: z.ZodTypeAny = z
+  .object({
+    periodKey: z.string().min(1).max(80),
   })
   .strict();
 
@@ -150,44 +149,27 @@ export const coverageSchema: z.ZodTypeAny = z.object({
   lastSyncAt: isoDateTimeSchema.optional(),
 });
 
-export const importanceSchema: z.ZodTypeAny = z.object({
-  outcome: z.number().min(0).max(5),
-  impact: z.number().min(0).max(5),
-  statusChange: z.number().min(0).max(5),
-  decision: z.number().min(0).max(5),
-  blocker: z.number().min(0).max(5),
-  monitorAction: z.number().min(0).max(5),
-  partnerEmphasis: z.number().min(0).max(5),
-  repetitionPenalty: z.number().min(0).max(5),
-});
-
-export const aggregationGroupSchema: z.ZodTypeAny = z.object({
-  clientKey: z.string().min(1),
-  title: z.string().min(1).max(200),
-  factIds: z.array(z.string()).min(1),
-  projectId: idSchema.optional(),
-  projectConfidence: z.number().min(0).max(1),
-  assignmentMethod: z.enum([
-    "explicit",
-    "external_id",
-    "alias",
-    "semantic",
-    "independent",
-  ]),
-  status: workStatusSchema,
-  summary: z.string().min(1).max(1200),
-  outcomes: z.array(z.string().max(500)).default([]),
-  blockers: z.array(z.string().max(500)).default([]),
-  nextSteps: z.array(z.string().max(500)).default([]),
-  importance: importanceSchema,
-  mergeConfidence: z.number().min(0).max(1),
-  rationaleCodes: z.array(z.string()).default([]),
-});
+export const aggregationGroupSchema: z.ZodTypeAny = z
+  .object({
+    projectKey: z.string().min(1).max(160),
+    status: workStatusSchema,
+    overview: z.string().min(1).max(1600),
+    dailyProgress: z
+      .array(
+        z
+          .object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            summary: z.string().min(1).max(1200),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
 
 export const aggregationResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
   groups: z.array(aggregationGroupSchema),
-  unassignedFactIds: z.array(z.string()).default([]),
   qualityWarnings: z.array(z.string()).default([]),
   production: productionMetadataSchema,
 });
@@ -305,18 +287,8 @@ export const heartbeatSchema: z.ZodTypeAny = z.object({
 export const collectionStatusSchema: z.ZodTypeAny = z.object({
   pluginVersion: z.string().min(1),
   deviceName: z.string().min(1).max(120),
-  phase: z.enum([
-    "started",
-    "running",
-    "continuation_pending",
-    "completed",
-    "failed",
-  ]),
-  collectionRunId: idSchema.optional(),
+  phase: z.enum(["started", "completed", "failed"]),
   periodKey: z.string().min(1).max(80),
-  windowStartsAt: isoDateTimeSchema.optional(),
-  windowEndsAt: isoDateTimeSchema.optional(),
-  initialLookback: z.boolean().optional(),
   sessionCount: z.number().int().nonnegative().default(0),
   factCount: z.number().int().nonnegative().default(0),
   pendingLocalJobs: z.number().int().nonnegative().default(0),
@@ -401,19 +373,6 @@ export function containsSensitiveValue(value: unknown) {
     pattern.lastIndex = 0;
     return pattern.test(text);
   });
-}
-
-export function assertFactSemantics(fact: {
-  status: string;
-  completionSupport: string;
-  evidence: unknown[];
-}) {
-  if (
-    fact.status === "completed" &&
-    (fact.completionSupport !== "evidence" || fact.evidence.length === 0)
-  ) {
-    throw new Error("Completed facts require explicit evidence.");
-  }
 }
 
 export function assertReportSemantics(report: {

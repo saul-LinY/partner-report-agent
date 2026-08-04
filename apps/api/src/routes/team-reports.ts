@@ -7,6 +7,56 @@ import { ApiError, audit, requireWebActor, stableJsonHash } from "../common.js";
 const paramsSchema = z.object({ id: z.string().uuid() });
 
 export async function teamReportRoutes(app: FastifyInstance) {
+  app.get("/v1/admin/individual-reports", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    return sql<any[]>`
+      select ir.id, ir.status, ir.current_version, ir.locked_at,
+        p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
+        rp.period_key, rp.starts_at, rp.ends_at, current.title, current.summary
+      from individual_reports ir
+      join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
+      join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
+      join individual_report_versions current on current.report_id = ir.id
+        and current.version = ir.current_version
+      where ir.tenant_id = ${actor.tenantId} and ir.team_id = ${actor.teamId}
+        and ir.status = 'LOCKED'
+      order by rp.starts_at desc, p.display_name
+    `;
+  });
+
+  app.get("/v1/admin/individual-reports/:id", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = paramsSchema.parse(request.params);
+    const reports = await sql<any[]>`
+      select ir.id, ir.status, ir.current_version, ir.locked_at,
+        p.display_name as partner_name, p.email as partner_email,
+        rp.period_key, rp.starts_at, rp.ends_at
+      from individual_reports ir
+      join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
+      join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
+      where ir.id = ${id} and ir.tenant_id = ${actor.tenantId}
+        and ir.team_id = ${actor.teamId} and ir.status = 'LOCKED'
+      limit 1
+    `;
+    if (!reports[0])
+      throw new ApiError(404, "NOT_FOUND", "个人 Report 归档不存在。");
+    const versions = await sql<any[]>`
+      select id, version, title, summary, markdown, payload, source_checksum,
+        generator_version, created_at
+      from individual_report_versions
+      where tenant_id = ${actor.tenantId} and report_id = ${id}
+      order by version desc
+    `;
+    return {
+      report: reports[0],
+      current:
+        versions.find(
+          (version) => version.version === reports[0].current_version,
+        ) ?? null,
+      versions,
+    };
+  });
+
   app.get("/v1/admin/team-reports", async (request) => {
     const actor = await requireWebActor(request, "admin");
     return sql<any[]>`
