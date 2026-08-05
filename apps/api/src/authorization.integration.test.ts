@@ -285,6 +285,68 @@ suite("tenant and role authorization", () => {
     expect(reused.json().code).toBe("BINDING_CODE_INVALID");
   });
 
+  it("queues Feishu binding after device authorization token exchange", async () => {
+    const authorizationId = randomUUID();
+    const deviceCode = `device-authorization-${randomUUID()}`;
+    await sql`
+      insert into plugin_device_authorizations (
+        id, device_code_hash, user_code, device_name, plugin_version,
+        tenant_id, team_id, partner_id, status, approved_at, expires_at
+      ) values (
+        ${authorizationId}, ${createHash("sha256").update(deviceCode).digest("hex")},
+        ${`DEVICE-${randomUUID()}`}, 'integration-device', '0.4.0',
+        ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'approved',
+        now(), now() + interval '15 minutes'
+      )
+    `;
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/plugin-bindings/device-authorizations/token",
+        payload: { deviceCode },
+      });
+      expect(response.statusCode).toBe(200);
+      const result = response.json();
+      const events = await sql<any[]>`
+        select event_type, aggregate_type, aggregate_id, payload
+        from outbox_events
+        where tenant_id = ${fixture.tenantA}
+          and event_type = 'plugin.binding.claimed'
+          and payload->>'pluginInstanceId' = ${result.pluginInstanceId}
+      `;
+      expect(events).toEqual([
+        {
+          event_type: "plugin.binding.claimed",
+          aggregate_type: "partner",
+          aggregate_id: fixture.partnerA,
+          payload: {
+            teamId: fixture.teamA,
+            partnerId: fixture.partnerA,
+            pluginInstanceId: result.pluginInstanceId,
+          },
+        },
+      ]);
+    } finally {
+      await sql`
+        delete from outbox_events
+        where tenant_id = ${fixture.tenantA}
+          and payload->>'pluginInstanceId' in (
+            select id::text from plugin_instances
+            where device_name = 'integration-device'
+              and tenant_id = ${fixture.tenantA}
+          )
+      `;
+      await sql`
+        delete from plugin_instances
+        where device_name = 'integration-device'
+          and tenant_id = ${fixture.tenantA}
+      `;
+      await sql`
+        delete from plugin_device_authorizations where id = ${authorizationId}
+      `;
+    }
+  });
+
   it("keeps an unresolved Feishu delivery visible after a newer success", async () => {
     const failedDeliveryId = randomUUID();
     try {

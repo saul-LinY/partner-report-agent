@@ -283,6 +283,19 @@ export async function pluginRoutes(app: FastifyInstance) {
           'plugin.binding.activated', 'plugin_instance', ${pluginInstanceId}, ${request.id}, '{}'::jsonb
         )
       `;
+        await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${authorization.tenant_id}, 'plugin.binding.claimed',
+          'partner', ${authorization.partner_id},
+          ${JSON.stringify({
+            teamId: authorization.team_id,
+            partnerId: authorization.partner_id,
+            pluginInstanceId,
+          })}::jsonb
+        )
+      `;
       });
       return {
         accessToken,
