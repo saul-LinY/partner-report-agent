@@ -271,6 +271,12 @@ function ScheduleSettings({ team }: { team: any }) {
   const [cutoffTime, setCutoffTime] = useState(
     defaults.factCutoffTime ?? "14:00",
   );
+  const [teamReportDay, setTeamReportDay] = useState(
+    String(defaults.reportDeadlineWeekday ?? 1),
+  );
+  const [teamReportTime, setTeamReportTime] = useState(
+    defaults.reportDeadlineTime ?? "10:00",
+  );
   const saveDefaults = useMutation({
     mutationFn: () =>
       api("/v1/admin/team", {
@@ -281,8 +287,8 @@ function ScheduleSettings({ team }: { team: any }) {
             weekStartsOn: 1,
             factCutoffWeekday: Number(cutoffDay),
             factCutoffTime: cutoffTime,
-            reportDeadlineWeekday: defaults.reportDeadlineWeekday ?? 1,
-            reportDeadlineTime: defaults.reportDeadlineTime ?? "10:00",
+            reportDeadlineWeekday: Number(teamReportDay),
+            reportDeadlineTime: teamReportTime,
           },
         }),
       }),
@@ -293,34 +299,61 @@ function ScheduleSettings({ team }: { team: any }) {
     <section className="schedule-settings-band">
       <div className="section-heading">
         <div>
-          <h2>工作卡片聚合时间</h2>
-          <p>中台持续接收数据，到这个时间开始生成本周项目卡片</p>
+          <h2>报告生成时间</h2>
+          <p>分别控制工作卡片聚合与 Team Report 生成，时区为 Asia/Shanghai</p>
         </div>
         <CalendarClock size={19} />
       </div>
       <div className="schedule-settings-grid">
-        <Field label="每周">
-          <select
-            value={cutoffDay}
-            onChange={(event) => setCutoffDay(event.target.value)}
-          >
-            {weekdayOptions()}
-          </select>
-        </Field>
-        <Field label="开始时间">
-          <input
-            type="time"
-            value={cutoffTime}
-            onChange={(event) => setCutoffTime(event.target.value)}
-          />
-        </Field>
+        <div className="schedule-setting">
+          <div className="schedule-setting-title">
+            <strong>工作卡片聚合</strong>
+            <span>冻结本期贡献并生成项目卡片</span>
+          </div>
+          <Field label="每周">
+            <select
+              value={cutoffDay}
+              onChange={(event) => setCutoffDay(event.target.value)}
+            >
+              {weekdayOptions()}
+            </select>
+          </Field>
+          <Field label="开始时间">
+            <input
+              type="time"
+              value={cutoffTime}
+              onChange={(event) => setCutoffTime(event.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="schedule-setting">
+          <div className="schedule-setting-title">
+            <strong>Team Report 生成</strong>
+            <span>按届时已归档的个人 Report 生成团队报告</span>
+          </div>
+          <Field label="每周">
+            <select
+              value={teamReportDay}
+              onChange={(event) => setTeamReportDay(event.target.value)}
+            >
+              {weekdayOptions()}
+            </select>
+          </Field>
+          <Field label="开始时间">
+            <input
+              type="time"
+              value={teamReportTime}
+              onChange={(event) => setTeamReportTime(event.target.value)}
+            />
+          </Field>
+        </div>
         <Button
           variant="secondary"
           icon={<Save size={16} />}
           loading={saveDefaults.isPending}
           onClick={() => saveDefaults.mutate()}
         >
-          保存聚合时间
+          保存生成时间
         </Button>
       </div>
       <ErrorBanner error={saveDefaults.error} />

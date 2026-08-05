@@ -751,6 +751,38 @@ export const workItems = pgTable(
   ],
 );
 
+export const workItemVersions = pgTable(
+  "work_item_versions",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    teamId: uuid("team_id").notNull(),
+    partnerId: uuid("partner_id").notNull(),
+    periodId: uuid("period_id").notNull(),
+    reviewId: uuid("review_id")
+      .notNull()
+      .references(() => reviews.id, { onDelete: "cascade" }),
+    workItemId: uuid("work_item_id").notNull(),
+    projectId: uuid("project_id"),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    status: text("status").notNull(),
+    reviewStatus: text("review_status").notNull(),
+    factIds: jsonb("fact_ids").notNull().$type<string[]>(),
+    payload: jsonb("payload").notNull(),
+    lineage: jsonb("lineage").notNull().default({}),
+    changeType: text("change_type").notNull(),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("work_item_version_unique").on(table.workItemId, table.version),
+    index("work_item_versions_review_idx").on(table.tenantId, table.reviewId),
+  ],
+);
+
 export const workItemFacts = pgTable(
   "work_item_facts",
   {
@@ -922,6 +954,23 @@ export const individualReportVersions = pgTable(
   },
   (table) => [
     uniqueIndex("report_version_unique").on(table.reportId, table.version),
+  ],
+);
+
+export const individualReportVersionWorkItems = pgTable(
+  "individual_report_version_work_items",
+  {
+    reportVersionId: uuid("report_version_id")
+      .notNull()
+      .references(() => individualReportVersions.id, { onDelete: "cascade" }),
+    workItemVersionId: uuid("work_item_version_id")
+      .notNull()
+      .references(() => workItemVersions.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.reportVersionId, table.workItemVersionId],
+    }),
   ],
 );
 

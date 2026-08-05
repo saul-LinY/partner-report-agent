@@ -78,28 +78,17 @@ export function ReviewPage() {
   const decisionMutation = useMutation({
     mutationFn: async (decision: Decision) => {
       const before = query.data!;
-      const applied = await api<{ version: number }>(
-        `/v1/reviews/${reviewId}/items/${selected.id}/decision`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            decision,
-            baseVersion: before.review.version,
-          }),
-        },
-      );
-      if (
-        before.items.filter((item) => item.review_status === "pending")
-          .length !== 1
-      )
-        return { reportId: undefined, ignored: false };
-      return api<{ reportId?: string; ignored?: boolean }>(
-        `/v1/reviews/${reviewId}/complete`,
-        {
-          method: "POST",
-          body: JSON.stringify({ baseVersion: applied.version }),
-        },
-      );
+      return api<{
+        version: number;
+        reportId?: string;
+        ignored?: boolean;
+      }>(`/v1/reviews/${reviewId}/items/${selected.id}/decision`, {
+        method: "POST",
+        body: JSON.stringify({
+          decision,
+          baseVersion: before.review.version,
+        }),
+      });
     },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["review", reviewId] });

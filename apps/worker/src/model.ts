@@ -33,6 +33,24 @@ function responseText(payload: any) {
   return null;
 }
 
+function outputInstructions(
+  instructions: string,
+  jsonSchema: Record<string, unknown>,
+) {
+  return `${instructions}\n\nReturn exactly one valid JSON object matching the JSON Schema below. Do not return Markdown, code fences, headings, commentary, or any text outside the JSON object.\n<output_json_schema>\n${JSON.stringify(jsonSchema)}\n</output_json_schema>`;
+}
+
+function parseStructuredText(text: string) {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const candidate = fenced?.[1]?.trim() ?? trimmed;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    throw new Error("MODEL_OUTPUT_NOT_VALID_JSON");
+  }
+}
+
 export async function generateStructured<T>({
   name,
   schema,
@@ -68,7 +86,12 @@ export async function generateStructured<T>({
         input: [
           {
             role: "developer",
-            content: [{ type: "input_text", text: instructions }],
+            content: [
+              {
+                type: "input_text",
+                text: outputInstructions(instructions, jsonSchema),
+              },
+            ],
           },
           {
             role: "user",
@@ -101,7 +124,7 @@ export async function generateStructured<T>({
       throw new Error(
         `OpenAI response ${payload.id ?? "unknown"} did not contain structured output`,
       );
-    const result = schema.parse(JSON.parse(text)) as any;
+    const result = schema.parse(parseStructuredText(text)) as any;
     if (result?.production) result.production.modelVersion = model;
     return result as T;
   } finally {

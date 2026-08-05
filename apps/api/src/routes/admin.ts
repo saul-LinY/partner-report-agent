@@ -94,7 +94,7 @@ const periodSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["submissionDeadlineAt"],
-        message: "个人报告截止必须晚于 Fact 截止",
+        message: "Team Report 生成时间必须晚于工作卡片聚合时间",
       });
     }
     try {

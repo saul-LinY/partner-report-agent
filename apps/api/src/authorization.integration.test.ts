@@ -441,9 +441,9 @@ suite("tenant and role authorization", () => {
           external_fact_id: `${sessionKey}:contribution`,
           source_revision: 2,
           period_id: fixture.currentPeriodA,
-          late_from_period_key: "fixture-period-a",
           payload: {
             recordType: "session_contribution",
+            periodKey: "fixture-current-a",
             contentHash: "b".repeat(64),
             projectId: discoveredProjects[0].id,
             projectMatchMethod: "path_discovered",
@@ -452,6 +452,26 @@ suite("tenant and role authorization", () => {
       ],
     });
     expect(JSON.stringify(factPreview.json())).not.toContain("userPrompt");
+    const matchingSessionDate = await app.inject({
+      method: "GET",
+      url: `/v1/admin/session-facts?sessionDate=2026-08-03`,
+      headers,
+    });
+    expect(matchingSessionDate.statusCode).toBe(200);
+    expect(matchingSessionDate.json().total).toBe(1);
+    const differentSessionDate = await app.inject({
+      method: "GET",
+      url: `/v1/admin/session-facts?sessionDate=2026-08-04`,
+      headers,
+    });
+    expect(differentSessionDate.statusCode).toBe(200);
+    expect(differentSessionDate.json().total).toBe(0);
+    const invalidSessionDate = await app.inject({
+      method: "GET",
+      url: `/v1/admin/session-facts?sessionDate=2026-02-30`,
+      headers,
+    });
+    expect(invalidSessionDate.statusCode).toBe(400);
     const records = await sql<any[]>`
       select session_id, latest_source_revision, collection_run_id
       from session_records where tenant_id = ${fixture.tenantA}
@@ -545,12 +565,34 @@ suite("tenant and role authorization", () => {
     ]);
     expect(reports).toEqual([{ status: "LOCKED", current_version: 2 }]);
     expect(periods).toEqual([{ status: "completed" }]);
+    const archive = await app.inject({
+      method: "GET",
+      url: "/v1/admin/report-archive",
+      headers,
+    });
+    expect(archive.statusCode).toBe(200);
+    expect(
+      archive
+        .json()
+        .periods.find((period: any) => period.id === fixture.currentPeriodA),
+    ).toMatchObject({
+      periodKey: "fixture-current-a",
+      teamReport: {
+        id: reportId,
+        version: 2,
+        title: "Edited Team Report",
+        summary: "Admin reviewed synthetic summary",
+      },
+    });
   });
 
   it("regenerates a personal Report from natural-language review and archives the accepted version", async () => {
     const snapshotId = randomUUID();
     const reportId = randomUUID();
     const versionId = randomUUID();
+    const workItemVersionId = randomUUID();
+    const secondWorkItemVersionId = randomUUID();
+    const secondWorkItemId = randomUUID();
     await sql.begin(async (tx) => {
       await tx`
         insert into work_item_snapshots (
@@ -591,6 +633,43 @@ suite("tenant and role authorization", () => {
           ${JSON.stringify({ sections: [] })}::jsonb, '{}'::jsonb,
           'fixture-personal-source', 'synthetic-test/1.0'
         )
+      `;
+      await tx`
+        insert into work_item_versions (
+          id, tenant_id, team_id, partner_id, period_id, review_id,
+          work_item_id, project_id, version, title, status, review_status,
+          fact_ids, payload, lineage, change_type, created_by
+        ) values (
+          ${workItemVersionId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${fixture.partnerA}, ${fixture.periodA}, ${fixture.reviewA},
+          ${fixture.workItemA}, ${fixture.projectA}, 1, 'Fixture Project A',
+          'completed', 'approved', '[]'::jsonb,
+          '{"overview":"完成项目进展。"}'::jsonb, '{}'::jsonb,
+          'review_completed', ${fixture.userA}
+        )
+      `;
+      await tx`
+        insert into individual_report_version_work_items (
+          report_version_id, work_item_version_id
+        ) values (${versionId}, ${workItemVersionId})
+      `;
+      await tx`
+        insert into work_item_versions (
+          id, tenant_id, team_id, partner_id, period_id, review_id,
+          work_item_id, project_id, version, title, status, review_status,
+          fact_ids, payload, lineage, change_type, created_by
+        ) values (
+          ${secondWorkItemVersionId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${fixture.partnerA}, ${fixture.periodA}, ${fixture.reviewA},
+          ${secondWorkItemId}, null, 1, 'Independent work', 'completed',
+          'approved', '[]'::jsonb, '{"overview":"完成独立工作。"}'::jsonb,
+          '{}'::jsonb, 'review_completed', ${fixture.userA}
+        )
+      `;
+      await tx`
+        insert into individual_report_version_work_items (
+          report_version_id, work_item_version_id
+        ) values (${versionId}, ${secondWorkItemVersionId})
       `;
     });
 
@@ -640,12 +719,182 @@ suite("tenant and role authorization", () => {
           title: "个人周报",
         }),
       );
+      const workItemArchive = await app.inject({
+        method: "GET",
+        url: "/v1/admin/work-item-archives",
+        headers,
+      });
+      expect(workItemArchive.statusCode).toBe(200);
+      const matchingWorkItemArchives = workItemArchive
+        .json()
+        .filter((item: any) => item.report_id === reportId);
+      expect(matchingWorkItemArchives).toEqual([
+        expect.objectContaining({
+          id: reportId,
+          report_id: reportId,
+          partner_id: fixture.partnerA,
+          period_id: fixture.periodA,
+          work_item_count: 2,
+          work_item_version_count: 2,
+          included_work_item_count: 2,
+        }),
+      ]);
+      const integratedArchive = await app.inject({
+        method: "GET",
+        url: "/v1/admin/report-archive",
+        headers,
+      });
+      expect(integratedArchive.statusCode).toBe(200);
+      const personalPeriod = integratedArchive
+        .json()
+        .periods.find((period: any) => period.id === fixture.periodA);
+      expect(personalPeriod).toMatchObject({
+        periodKey: "fixture-period-a",
+        people: [
+          {
+            id: fixture.partnerA,
+            name: "Fixture A",
+            individualReport: {
+              id: reportId,
+              version: 1,
+              title: "个人周报",
+            },
+          },
+        ],
+      });
+      expect(personalPeriod.people[0].workItems).toHaveLength(2);
+      expect(personalPeriod.people[0].workItems).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: fixture.workItemA,
+            version: 1,
+            title: "Fixture Project A",
+            reviewStatus: "approved",
+            includedInReport: true,
+          }),
+          expect.objectContaining({
+            id: secondWorkItemId,
+            version: 1,
+            title: "Independent work",
+            includedInReport: true,
+          }),
+        ]),
+      );
     } finally {
       await sql.begin(async (tx) => {
         await tx`delete from agent_jobs where tenant_id = ${fixture.tenantA} and input_payload->>'reportId' = ${reportId}`;
         await tx`delete from individual_report_versions where report_id = ${reportId}`;
         await tx`delete from individual_reports where id = ${reportId}`;
         await tx`delete from work_item_snapshots where id = ${snapshotId}`;
+        await tx`delete from work_item_versions where id in (${workItemVersionId}, ${secondWorkItemVersionId})`;
+      });
+    }
+  });
+
+  it("automatically queues an individual Report after the final Work Card decision", async () => {
+    const reviewId = randomUUID();
+    const workItemId = randomUUID();
+    const coverageId = randomUUID();
+    let reportId: string | undefined;
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into reviews (
+          id, tenant_id, team_id, partner_id, period_id, state, pending_count
+        ) values (
+          ${reviewId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.currentPeriodA}, 'IN_PROGRESS', 1
+        )
+      `;
+      await tx`
+        insert into work_items (
+          id, tenant_id, team_id, partner_id, period_id, review_id, project_id,
+          title, status, review_status, fact_ids, payload
+        ) values (
+          ${workItemId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.currentPeriodA}, ${reviewId}, ${fixture.projectA},
+          '自动生成个人报告', 'in_progress', 'pending', '[]'::jsonb,
+          '{"overview":"最后一张工作卡片完成审核。","dailyProgress":[]}'::jsonb
+        )
+      `;
+      await tx`
+        insert into coverage_snapshots (
+          id, tenant_id, team_id, partner_id, period_id, payload
+        ) values (
+          ${coverageId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.currentPeriodA}, '{"discovered":1,"extracted":1}'::jsonb
+        )
+      `;
+    });
+
+    try {
+      const decision = await app.inject({
+        method: "POST",
+        url: `/v1/reviews/${reviewId}/items/${workItemId}/decision`,
+        headers,
+        payload: { decision: "approve", baseVersion: 1 },
+      });
+      expect(decision.statusCode).toBe(200);
+      expect(decision.json()).toMatchObject({
+        version: 2,
+        snapshotId: expect.any(String),
+        reportId: expect.any(String),
+      });
+      const createdReportId = String(decision.json().reportId);
+      reportId = createdReportId;
+      const [reports, jobs, snapshots, workItemVersions] = await Promise.all([
+        sql<any[]>`
+          select id, status, snapshot_id from individual_reports
+          where id = ${createdReportId}
+        `,
+        sql<any[]>`
+          select type, input_payload from agent_jobs
+          where tenant_id = ${fixture.tenantA}
+            and input_payload->>'reportId' = ${createdReportId}
+        `,
+        sql<any[]>`
+          select payload from work_item_snapshots
+          where id = ${decision.json().snapshotId}
+        `,
+        sql<any[]>`
+          select id, version, change_type from work_item_versions
+          where work_item_id = ${workItemId}
+        `,
+      ]);
+      expect(reports).toMatchObject([{ id: reportId, status: "REPORT_DRAFT" }]);
+      expect(jobs).toMatchObject([
+        {
+          type: "GENERATE_INDIVIDUAL_REPORT",
+          input_payload: {
+            workItems: [
+              {
+                id: workItemId,
+                version: 2,
+                versionId: expect.any(String),
+              },
+            ],
+          },
+        },
+      ]);
+      expect(snapshots[0].payload.workItems[0]).toMatchObject({
+        id: workItemId,
+        version: 2,
+        versionId: workItemVersions[0].id,
+      });
+      expect(workItemVersions).toMatchObject([
+        { version: 2, change_type: "approve" },
+      ]);
+    } finally {
+      await sql.begin(async (tx) => {
+        await tx`
+          delete from agent_jobs where tenant_id = ${fixture.tenantA}
+            and input_payload->>'reportId' = ${reportId ?? null}
+        `;
+        await tx`delete from individual_report_versions where report_id = ${reportId ?? null}`;
+        await tx`delete from individual_reports where id = ${reportId ?? null}`;
+        await tx`delete from work_item_snapshots where review_id = ${reviewId}`;
+        await tx`delete from coverage_snapshots where id = ${coverageId}`;
+        await tx`delete from work_items where id = ${workItemId}`;
+        await tx`delete from reviews where id = ${reviewId}`;
       });
     }
   });

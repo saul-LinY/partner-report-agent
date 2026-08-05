@@ -10,7 +10,7 @@ import {
 import { resolve } from "node:path";
 import { dataDirectory } from "./config.js";
 
-export const INITIAL_LOOKBACK_DAYS = 3;
+export const INITIAL_LOOKBACK_DAYS = 1;
 export const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1_000;
 export const COLLECTION_LEASE_MS = 30 * 60 * 1_000;
 

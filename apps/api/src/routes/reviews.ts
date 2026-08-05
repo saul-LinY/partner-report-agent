@@ -115,13 +115,309 @@ async function recalculateReview(tx: any, reviewId: string) {
     from work_items where review_id = ${reviewId}
   `;
   const count = counts[0];
-  await tx`
+  const versions = await tx<{ version: number }[]>`
     update reviews set
       state = 'IN_PROGRESS', version = version + 1,
       approved_count = ${count.approved}, excluded_count = ${count.excluded}, pending_count = ${count.pending},
       updated_at = now()
     where id = ${reviewId}
+    returning version
   `;
+  return { ...count, version: versions[0]!.version };
+}
+
+async function recordReviewWorkItemVersions(
+  tx: any,
+  actor: {
+    tenantId: string;
+    userId: string;
+  },
+  reviewId: string,
+  changeType: string,
+) {
+  await tx`
+    insert into work_item_versions (
+      id, tenant_id, team_id, partner_id, period_id, review_id, work_item_id,
+      project_id, version, title, status, review_status, fact_ids, payload,
+      lineage, change_type, created_by
+    )
+    select gen_random_uuid(), wi.tenant_id, wi.team_id, wi.partner_id,
+      wi.period_id, wi.review_id, wi.id, wi.project_id, wi.version, wi.title,
+      wi.status, wi.review_status, wi.fact_ids, wi.payload, wi.lineage,
+      ${changeType}, ${actor.userId}
+    from work_items wi
+    where wi.tenant_id = ${actor.tenantId} and wi.review_id = ${reviewId}
+    on conflict (work_item_id, version) do nothing
+  `;
+}
+
+type ReviewActor = {
+  tenantId: string;
+  teamId: string;
+  partnerId: string | null;
+  userId: string;
+};
+
+async function finalizeReview(
+  actor: ReviewActor,
+  reviewId: string,
+  baseVersion: number,
+) {
+  const review = await loadReview(actor, reviewId);
+  if (review.state === "ITEMS_DISMISSED") return { ignored: true };
+  if (review.state === "ITEMS_APPROVED") {
+    const existing = await sql<any[]>`
+      select ir.id as report_id, ir.snapshot_id, wis.checksum
+      from individual_reports ir
+      join work_item_snapshots wis on wis.id = ir.snapshot_id
+      where ir.tenant_id = ${actor.tenantId} and wis.review_id = ${reviewId}
+      order by ir.created_at desc limit 1
+    `;
+    if (existing[0])
+      return {
+        snapshotId: existing[0].snapshot_id,
+        reportId: existing[0].report_id,
+        checksum: existing[0].checksum,
+        idempotent: true,
+      };
+  }
+  if (review.state !== "IN_PROGRESS")
+    throw new ApiError(
+      409,
+      "REVIEW_NOT_EDITABLE",
+      "只有进行中的 Review 可以完成审核。",
+    );
+  if (review.version !== baseVersion)
+    throw new ApiError(
+      409,
+      "VERSION_CONFLICT",
+      "Review 已更新，请刷新后重试。",
+    );
+
+  const items = await sql<any[]>`
+    select * from work_items
+    where review_id = ${reviewId} and tenant_id = ${actor.tenantId}
+    order by created_at
+  `;
+  if (
+    items.length === 0 ||
+    items.some((item) => item.review_status === "pending")
+  )
+    throw new ApiError(409, "REVIEW_INCOMPLETE", "仍有未确认的 Work Item。");
+  const activeJobs = await sql`
+    select 1 from agent_jobs where tenant_id = ${actor.tenantId}
+      and partner_id = ${actor.partnerId}
+      and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
+      and type in ('AGGREGATE_WORK_ITEMS', 'REANALYZE_SESSIONS')
+    limit 1
+  `;
+  if (activeJobs.length > 0)
+    throw new ApiError(
+      409,
+      "AGENT_JOB_PENDING",
+      "仍有待处理的聚合或重新分析任务。",
+    );
+
+  const approvedItems = items.filter(
+    (item) => item.review_status === "approved",
+  );
+  if (approvedItems.length === 0) {
+    await sql.begin(async (tx) => {
+      await tx`
+        update reviews set state = 'ITEMS_DISMISSED', updated_at = now()
+        where id = ${reviewId} and tenant_id = ${actor.tenantId}
+      `;
+      await tx`
+        insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+        values (
+          ${randomUUID()}, ${actor.tenantId}, 'work_items.all_dismissed', 'review', ${reviewId},
+          ${JSON.stringify({ excludedWorkItemIds: items.map((item) => item.id) })}::jsonb
+        )
+      `;
+    });
+    return { ignored: true };
+  }
+
+  for (const item of approvedItems.filter(
+    (item) => item.status === "completed",
+  )) {
+    const facts = await sql<any[]>`
+      select sf.payload from work_item_facts wf
+      join session_facts sf on sf.id = wf.fact_id
+      where wf.work_item_id = ${item.id} and sf.tenant_id = ${actor.tenantId}
+    `;
+    const hasSupport =
+      facts.some(
+        (fact) =>
+          fact.payload.completionSupport === "evidence" ||
+          fact.payload.factOrigin === "partner_supplied" ||
+          (fact.payload.recordType === "session_contribution" &&
+            fact.payload.status === "completed" &&
+            Array.isArray(fact.payload.contributions) &&
+            fact.payload.contributions.some(
+              (contribution: Record<string, unknown>) =>
+                contribution.kind === "outcome" &&
+                contribution.confidence !== "low",
+            )),
+      ) || (item.payload.partnerFacts ?? []).length > 0;
+    if (!hasSupport)
+      throw new ApiError(
+        409,
+        "COMPLETION_EVIDENCE_REQUIRED",
+        `完成事项“${item.title}”缺少可信 Outcome 或 Partner 补充。`,
+      );
+  }
+
+  const coverageRows = await sql<any[]>`
+    select * from coverage_snapshots
+    where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
+      and period_id = ${review.period_id}
+    order by created_at desc limit 1
+  `;
+  const coverage = coverageRows[0];
+  if (!coverage)
+    throw new ApiError(409, "COVERAGE_MISSING", "缺少 Coverage Snapshot。");
+
+  await sql.begin((tx) =>
+    recordReviewWorkItemVersions(tx, actor, reviewId, "review_completed"),
+  );
+  const versionRows = await sql<any[]>`
+    select id, work_item_id, version from work_item_versions
+    where tenant_id = ${actor.tenantId} and review_id = ${reviewId}
+  `;
+  const versionIds = new Map(
+    versionRows.map((version) => [
+      `${version.work_item_id}:${version.version}`,
+      version.id,
+    ]),
+  );
+  const snapshotWorkItems = approvedItems.map((item) => {
+    const versionId = versionIds.get(`${item.id}:${item.version}`);
+    if (!versionId)
+      throw new ApiError(
+        409,
+        "WORK_ITEM_VERSION_MISSING",
+        `工作卡片“${item.title}”缺少版本记录。`,
+      );
+    return { ...item, versionId };
+  });
+  const payload = {
+    reviewId,
+    reviewVersion: review.version,
+    periodId: review.period_id,
+    workItems: snapshotWorkItems,
+    excludedWorkItemIds: items
+      .filter((item) => item.review_status === "excluded")
+      .map((item) => item.id),
+    coverage: coverage.payload,
+  };
+  const checksum = stableJsonHash(payload);
+  const snapshotId = randomUUID();
+  const reportId = randomUUID();
+  let templates = await sql<any[]>`
+    select rt.* from report_periods rp
+    join report_templates rt on rt.id = rp.template_id and rt.tenant_id = rp.tenant_id
+    where rp.id = ${review.period_id} and rp.tenant_id = ${actor.tenantId}
+      and rp.team_id = ${actor.teamId}
+    limit 1
+  `;
+  if (!templates[0])
+    templates = await sql<any[]>`
+      select * from report_templates
+      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        and is_default = true
+      order by version desc limit 1
+    `;
+  const partners = await sql<any[]>`
+    select preferences from partners
+    where id = ${actor.partnerId} and tenant_id = ${actor.tenantId}
+  `;
+  const previousReports = await sql<any[]>`
+    select previous_version.id as version_id, previous_version.payload
+    from report_periods current_period
+    join report_periods previous_period
+      on previous_period.tenant_id = current_period.tenant_id
+      and previous_period.team_id = current_period.team_id
+      and previous_period.starts_at < current_period.starts_at
+    join individual_reports previous_report
+      on previous_report.period_id = previous_period.id
+      and previous_report.tenant_id = current_period.tenant_id
+      and previous_report.partner_id = ${actor.partnerId}
+      and previous_report.status = 'LOCKED'
+    join individual_report_versions previous_version
+      on previous_version.report_id = previous_report.id
+      and previous_version.version = previous_report.current_version
+    where current_period.id = ${review.period_id}
+    order by previous_period.starts_at desc limit 1
+  `;
+
+  await sql.begin(async (tx) => {
+    const claimed = await tx<{ id: string }[]>`
+      update reviews set state = 'ITEMS_APPROVED', updated_at = now()
+      where id = ${reviewId} and tenant_id = ${actor.tenantId}
+        and state = 'IN_PROGRESS' and version = ${baseVersion}
+      returning id
+    `;
+    if (!claimed[0])
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "Review 已更新，请刷新后重试。",
+      );
+    await tx`update coverage_snapshots set immutable = true where id = ${coverage.id}`;
+    await tx`
+      insert into work_item_snapshots (
+        id, tenant_id, team_id, partner_id, period_id, review_id, review_version,
+        checksum, payload, approved_by, approved_at
+      ) values (
+        ${snapshotId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
+        ${review.period_id}, ${reviewId}, ${review.version}, ${checksum},
+        ${JSON.stringify(payload)}::jsonb, ${actor.userId}, now()
+      )
+    `;
+    await tx`
+      insert into individual_reports (
+        id, tenant_id, team_id, partner_id, period_id, snapshot_id
+      ) values (
+        ${reportId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
+        ${review.period_id}, ${snapshotId}
+      )
+    `;
+    await tx`
+      insert into agent_jobs (
+        id, tenant_id, team_id, partner_id, plugin_instance_id, type,
+        idempotency_key, input_payload
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
+        'GENERATE_INDIVIDUAL_REPORT', ${`report:${snapshotId}:${checksum}`},
+        ${JSON.stringify({
+          schemaVersion: "1.0",
+          reportId,
+          snapshotId,
+          sourceChecksum: checksum,
+          generatorVersion: "partner-report-platform/0.3.0",
+          workItems: payload.workItems,
+          coverage: coverage.payload,
+          template: templates[0] ?? null,
+          preferences: partners[0]?.preferences ?? {},
+          previousReport: previousReports[0] ?? null,
+          constraints: {
+            claimsRequireWorkItemIds: true,
+            noUnsupportedPercentages: true,
+          },
+        })}::jsonb
+      )
+    `;
+    await tx`
+      insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+      values (
+        ${randomUUID()}, ${actor.tenantId}, 'work_items.snapshot.approved',
+        'work_item_snapshot', ${snapshotId},
+        ${JSON.stringify({ reportId, checksum })}::jsonb
+      )
+    `;
+  });
+  return { snapshotId, reportId, checksum };
 }
 
 export async function reviewRoutes(app: FastifyInstance) {
@@ -306,9 +602,16 @@ export async function reviewRoutes(app: FastifyInstance) {
     };
     await sql.begin(async (tx) => {
       await tx`
-        update work_items set review_status = 'pending', updated_at = now()
+        update work_items set review_status = 'pending', version = version + 1,
+          updated_at = now()
         where id = ${workItemId} and tenant_id = ${actor.tenantId}
       `;
+      await recordReviewWorkItemVersions(
+        tx,
+        actor,
+        id,
+        "regeneration_requested",
+      );
       await recalculateReview(tx, id);
       await tx`
         insert into agent_jobs (
@@ -365,7 +668,7 @@ export async function reviewRoutes(app: FastifyInstance) {
         "审核内容已更新，请刷新后重试。",
       );
 
-    await sql.begin(async (tx) => {
+    const completion = await sql.begin(async (tx) => {
       const rows = await tx<{ id: string }[]>`
         update work_items set
           review_status = ${input.decision === "approve" ? "approved" : "excluded"},
@@ -380,11 +683,9 @@ export async function reviewRoutes(app: FastifyInstance) {
           "WORK_ITEM_NOT_PENDING",
           "这张工作卡片已经处理。",
         );
-      await recalculateReview(tx, id);
+      await recordReviewWorkItemVersions(tx, actor, id, input.decision);
+      return recalculateReview(tx, id);
     });
-    const versions = await sql<{ version: number }[]>`
-      select version from reviews where id = ${id} and tenant_id = ${actor.tenantId}
-    `;
     await audit(
       request,
       actor,
@@ -392,7 +693,28 @@ export async function reviewRoutes(app: FastifyInstance) {
       "work_item",
       workItemId,
     );
-    return { version: versions[0]!.version };
+    const finalized =
+      completion.pending === 0
+        ? await finalizeReview(actor, id, completion.version)
+        : null;
+    if (finalized) {
+      await audit(
+        request,
+        actor,
+        finalized.ignored
+          ? "work_items.all_dismissed"
+          : "work_items.snapshot.approved",
+        finalized.ignored ? "review" : "work_item_snapshot",
+        finalized.ignored ? id : finalized.snapshotId!,
+        finalized.ignored
+          ? undefined
+          : { reportId: finalized.reportId, checksum: finalized.checksum },
+      );
+    }
+    return {
+      version: completion.version,
+      ...finalized,
+    };
   });
 
   app.post("/v1/reviews/:id/changes/preview", async (request) => {
@@ -671,6 +993,12 @@ export async function reviewRoutes(app: FastifyInstance) {
           `不支持的审核操作: ${change.operation}`,
         );
       }
+      await recordReviewWorkItemVersions(
+        tx,
+        actor,
+        id,
+        `review_${change.operation}`,
+      );
       await recalculateReview(tx, id);
       if (change.operation === "change_period") {
         await tx`update reviews set state = 'WAITING_LOCAL_REANALYSIS', updated_at = now() where id = ${id}`;
@@ -685,8 +1013,8 @@ export async function reviewRoutes(app: FastifyInstance) {
       `;
     });
     const versions = await sql<
-      { version: number }[]
-    >`select version from reviews where id = ${id}`;
+      { version: number; pending_count: number }[]
+    >`select version, pending_count from reviews where id = ${id}`;
     await audit(
       request,
       actor,
@@ -695,7 +1023,11 @@ export async function reviewRoutes(app: FastifyInstance) {
       changeId,
       { operation: change.operation },
     );
-    return { ok: true, version: versions[0]?.version };
+    const finalized =
+      versions[0]?.pending_count === 0
+        ? await finalizeReview(actor, id, versions[0].version)
+        : null;
+    return { ok: true, version: versions[0]?.version, ...finalized };
   });
 
   app.post("/v1/reviews/:id/complete", async (request) => {
@@ -704,205 +1036,21 @@ export async function reviewRoutes(app: FastifyInstance) {
     const { baseVersion } = z
       .object({ baseVersion: z.number().int().positive() })
       .parse(request.body);
-    const review = await loadReview(actor, id);
-    if (review.state !== "IN_PROGRESS") {
-      throw new ApiError(
-        409,
-        "REVIEW_NOT_EDITABLE",
-        "只有进行中的 Review 可以完成审核。",
-      );
-    }
-    if (review.version !== baseVersion)
-      throw new ApiError(
-        409,
-        "VERSION_CONFLICT",
-        "Review 已更新，请刷新后重试。",
-      );
-    const items = await sql<
-      any[]
-    >`select * from work_items where review_id = ${id} and tenant_id = ${actor.tenantId} order by created_at`;
-    if (
-      items.length === 0 ||
-      items.some((item) => item.review_status === "pending")
-    ) {
-      throw new ApiError(409, "REVIEW_INCOMPLETE", "仍有未确认的 Work Item。");
-    }
-    const activeJobs = await sql`
-      select 1 from agent_jobs where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
-        and status in ('PENDING', 'LEASED', 'RETRY_WAIT') and type in ('AGGREGATE_WORK_ITEMS', 'REANALYZE_SESSIONS')
-      limit 1
-    `;
-    if (activeJobs.length > 0)
-      throw new ApiError(
-        409,
-        "AGENT_JOB_PENDING",
-        "仍有待处理的聚合或重新分析任务。",
-      );
-
-    const approvedItems = items.filter(
-      (item) => item.review_status === "approved",
-    );
-    if (approvedItems.length === 0) {
-      await sql.begin(async (tx) => {
-        await tx`
-          update reviews set state = 'ITEMS_DISMISSED', updated_at = now()
-          where id = ${id} and tenant_id = ${actor.tenantId}
-        `;
-        await tx`
-          insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-          values (
-            ${randomUUID()}, ${actor.tenantId}, 'work_items.all_dismissed', 'review', ${id},
-            ${JSON.stringify({ excludedWorkItemIds: items.map((item) => item.id) })}::jsonb
-          )
-        `;
-      });
-      await audit(request, actor, "work_items.all_dismissed", "review", id);
-      return { ignored: true };
-    }
-
-    const completedItems = items.filter(
-      (item) =>
-        item.review_status === "approved" && item.status === "completed",
-    );
-    for (const item of completedItems) {
-      const facts = await sql<any[]>`
-        select sf.payload from work_item_facts wf join session_facts sf on sf.id = wf.fact_id
-        where wf.work_item_id = ${item.id} and sf.tenant_id = ${actor.tenantId}
-      `;
-      const hasSupport =
-        facts.some(
-          (fact) =>
-            fact.payload.completionSupport === "evidence" ||
-            fact.payload.factOrigin === "partner_supplied" ||
-            (fact.payload.recordType === "session_contribution" &&
-              fact.payload.status === "completed" &&
-              Array.isArray(fact.payload.contributions) &&
-              fact.payload.contributions.some(
-                (contribution: Record<string, unknown>) =>
-                  contribution.kind === "outcome" &&
-                  contribution.confidence !== "low",
-              )),
-        ) || (item.payload.partnerFacts ?? []).length > 0;
-      if (!hasSupport)
-        throw new ApiError(
-          409,
-          "COMPLETION_EVIDENCE_REQUIRED",
-          `完成事项“${item.title}”缺少可信 Outcome 或 Partner 补充。`,
-        );
-    }
-
-    const coverageRows = await sql<any[]>`
-      select * from coverage_snapshots
-      where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId} and period_id = ${review.period_id}
-      order by created_at desc limit 1
-    `;
-    const coverage = coverageRows[0];
-    if (!coverage)
-      throw new ApiError(409, "COVERAGE_MISSING", "缺少 Coverage Snapshot。");
-    const payload = {
-      reviewId: id,
-      reviewVersion: review.version,
-      periodId: review.period_id,
-      workItems: items.filter((item) => item.review_status === "approved"),
-      excludedWorkItemIds: items
-        .filter((item) => item.review_status === "excluded")
-        .map((item) => item.id),
-      coverage: coverage.payload,
-    };
-    const checksum = stableJsonHash(payload);
-    const snapshotId = randomUUID();
-    const reportId = randomUUID();
-    let templates = await sql<any[]>`
-      select rt.* from report_periods rp
-      join report_templates rt on rt.id = rp.template_id and rt.tenant_id = rp.tenant_id
-      where rp.id = ${review.period_id} and rp.tenant_id = ${actor.tenantId} and rp.team_id = ${actor.teamId}
-      limit 1
-    `;
-    if (!templates[0]) {
-      templates = await sql<any[]>`
-        select * from report_templates where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId} and is_default = true
-        order by version desc limit 1
-      `;
-    }
-    const partners = await sql<
-      any[]
-    >`select preferences from partners where id = ${actor.partnerId} and tenant_id = ${actor.tenantId}`;
-    const previousReports = await sql<any[]>`
-      select previous_version.id as version_id, previous_version.payload
-      from report_periods current_period
-      join report_periods previous_period on previous_period.tenant_id = current_period.tenant_id
-        and previous_period.team_id = current_period.team_id
-        and previous_period.starts_at < current_period.starts_at
-      join individual_reports previous_report on previous_report.period_id = previous_period.id
-        and previous_report.tenant_id = current_period.tenant_id
-        and previous_report.partner_id = ${actor.partnerId}
-        and previous_report.status = 'LOCKED'
-      join individual_report_versions previous_version on previous_version.report_id = previous_report.id
-        and previous_version.version = previous_report.current_version
-      where current_period.id = ${review.period_id}
-      order by previous_period.starts_at desc limit 1
-    `;
-
-    await sql.begin(async (tx) => {
-      await tx`update coverage_snapshots set immutable = true where id = ${coverage.id}`;
-      await tx`
-        insert into work_item_snapshots (
-          id, tenant_id, team_id, partner_id, period_id, review_id, review_version,
-          checksum, payload, approved_by, approved_at
-        ) values (
-          ${snapshotId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${review.period_id},
-          ${id}, ${review.version}, ${checksum}, ${JSON.stringify(payload)}::jsonb, ${actor.userId}, now()
-        )
-      `;
-      await tx`update reviews set state = 'ITEMS_APPROVED', updated_at = now() where id = ${id}`;
-      await tx`
-        insert into individual_reports (
-          id, tenant_id, team_id, partner_id, period_id, snapshot_id
-        ) values (${reportId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${review.period_id}, ${snapshotId})
-      `;
-      await tx`
-        insert into agent_jobs (
-          id, tenant_id, team_id, partner_id, plugin_instance_id, type, idempotency_key, input_payload
-        ) values (
-          ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
-          'GENERATE_INDIVIDUAL_REPORT', ${`report:${snapshotId}:${checksum}`},
-          ${JSON.stringify({
-            schemaVersion: "1.0",
-            reportId,
-            snapshotId,
-            sourceChecksum: checksum,
-            generatorVersion: "partner-report-platform/0.2.0",
-            workItems: payload.workItems,
-            coverage: coverage.payload,
-            template: templates[0] ?? null,
-            preferences: partners[0]?.preferences ?? {},
-            previousReport: previousReports[0] ?? null,
-            constraints: {
-              claimsRequireWorkItemIds: true,
-              noUnsupportedPercentages: true,
-            },
-          })}::jsonb
-        )
-      `;
-      await tx`
-        insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-        values (
-          ${randomUUID()}, ${actor.tenantId}, 'work_items.snapshot.approved', 'work_item_snapshot', ${snapshotId},
-          ${JSON.stringify({ reportId, checksum })}::jsonb
-        )
-      `;
-    });
+    const result = await finalizeReview(actor, id, baseVersion);
     await audit(
       request,
       actor,
-      "work_items.snapshot.approved",
-      "work_item_snapshot",
-      snapshotId,
-      { reportId, checksum },
+      result.ignored
+        ? "work_items.all_dismissed"
+        : "work_items.snapshot.approved",
+      result.ignored ? "review" : "work_item_snapshot",
+      result.ignored ? id : result.snapshotId!,
+      result.ignored
+        ? undefined
+        : { reportId: result.reportId, checksum: result.checksum },
     );
-    return { snapshotId, reportId, checksum };
+    return result;
   });
-
   app.post("/v1/reviews/:id/reopen", async (request) => {
     const actor = await requireWebActor(request, "partner");
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);

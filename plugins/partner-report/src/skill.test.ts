@@ -17,7 +17,7 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("collect-submit --run");
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
-    expect(skill).toContain("第一次运行只采集运行开始前最近 3 天");
+    expect(skill).toContain("第一次运行只采集运行开始前最近 1 天");
     expect(skill).toContain("未变化且曾被判定为 `ignore`");
     expect(skill).toContain("不维护 Turn 游标");
     expect(skill).toContain("官方 Codex Scheduled Task");

@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 describe("collection state", () => {
-  it("limits the first collection to the latest three days", () => {
+  it("limits the first collection to the latest day", () => {
     const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
     initializeCollectionFloor(
       state,
@@ -51,8 +51,8 @@ describe("collection state", () => {
         "2026-08-05T02:00:00.000Z",
       ),
     ).toMatchObject({
-      extractionStartsAt: "2026-08-02T02:00:00.000Z",
-      scanStartsAt: "2026-08-02T02:00:00.000Z",
+      extractionStartsAt: "2026-08-04T02:00:00.000Z",
+      scanStartsAt: "2026-08-04T02:00:00.000Z",
     });
   });
 

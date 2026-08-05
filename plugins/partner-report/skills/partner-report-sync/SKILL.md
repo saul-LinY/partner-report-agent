@@ -49,7 +49,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-start
 
 CLI 的本地持久化状态同时服务自动和手动运行：
 
-- 第一次运行只采集运行开始前最近 3 天，并且不早于当前 Report Period 开始时间。
+- 第一次运行只采集运行开始前最近 1 天，并且不早于当前 Report Period 开始时间。
 - 后续运行使用上次完整成功运行的开始时间作为增量游标，并保留 24 小时重叠窗口。
 - 未变化的已接收 Session 通过中台 `contentHash` 跳过。
 - 未变化且曾被判定为 `ignore` 的 Session 通过本地匿名 `contentHash` 跳过。

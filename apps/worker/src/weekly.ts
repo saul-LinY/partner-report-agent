@@ -258,7 +258,7 @@ export async function scheduleDueWeeklyReports(
   return { closedPeriods, aggregationJobs, teamReportJobs };
 }
 
-/** Generate or refresh a Team Draft when everyone submits or the deadline passes. */
+/** Generate or refresh a Team Draft at the team's configured generation time. */
 export async function scheduleDueTeamReports(
   now = new Date(),
   onlyPeriodId?: string,
@@ -267,18 +267,7 @@ export async function scheduleDueTeamReports(
     select rp.* from report_periods rp
     where rp.status in ('facts_frozen', 'closed')
       and (${onlyPeriodId ?? null}::uuid is null or rp.id = ${onlyPeriodId ?? null})
-      and (
-        rp.submission_deadline_at <= ${now.toISOString()}
-        or not exists (
-          select 1 from partners p
-          where p.tenant_id = rp.tenant_id and p.team_id = rp.team_id and p.status = 'active'
-            and not exists (
-              select 1 from individual_reports ir
-              where ir.tenant_id = rp.tenant_id and ir.partner_id = p.id
-                and ir.period_id = rp.id and ir.status = 'LOCKED'
-            )
-        )
-      )
+      and rp.submission_deadline_at <= ${now.toISOString()}
     order by rp.submission_deadline_at
   `;
   let queued = 0;
@@ -336,10 +325,9 @@ export async function scheduleDueTeamReports(
           ${randomUUID()}, ${period.tenant_id}, ${period.team_id}, ${period.id},
           'AGGREGATING', ${JSON.stringify(missingPartnerIds)}::jsonb
         ) on conflict (tenant_id, team_id, period_id) do update set
-          status = case when team_reports.status = 'LOCKED' then 'LOCKED' else 'AGGREGATING' end,
-          missing_partner_ids = case when team_reports.status = 'LOCKED'
-            then team_reports.missing_partner_ids else excluded.missing_partner_ids end,
-          updated_at = now()
+          status = team_reports.status,
+          missing_partner_ids = team_reports.missing_partner_ids,
+          updated_at = team_reports.updated_at
         returning id, status
       `;
       if (teamReportRows[0]?.status === "LOCKED") return 0;
@@ -363,6 +351,14 @@ export async function scheduleDueTeamReports(
           })}::jsonb
         ) on conflict (tenant_id, idempotency_key) do nothing returning id
       `;
+      if (inserted[0]) {
+        await tx`
+          update team_reports set status = 'AGGREGATING',
+            missing_partner_ids = ${JSON.stringify(missingPartnerIds)}::jsonb,
+            updated_at = now()
+          where id = ${teamReportRows[0]!.id}
+        `;
+      }
       return inserted.length;
     });
     queued += result;

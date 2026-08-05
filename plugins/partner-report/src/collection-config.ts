@@ -4,7 +4,7 @@ export const DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
 export const SCHEDULED_COLLECTION_PROMPT = [
   "使用 $partner-report-sync 采集当前 Partner Report 周期内符合条件的 Codex Session。",
   "严格按照 Skill 调用插件 CLI，每次只读取和处理一个 Session。",
-  "首次运行只采集最近 3 天；后续由插件本地成功游标、重叠窗口和内容哈希自动确定增量范围。",
+  "首次运行只采集最近 1 天；后续由插件本地成功游标、重叠窗口和内容哈希自动确定增量范围。",
   "先判断整个 Session 是否包含对映射项目有意义的实际工作；舍弃闲聊、无关话题、低价值往返，以及没有明确成果、进展、决策、阻塞或下一步的 Session。",
   "所有提取指令以及上传的标题、摘要和贡献正文必须使用中文。",
   "只写入 Skill 要求且通过校验的 SessionExtractionResult，并只上传 SessionContribution。",

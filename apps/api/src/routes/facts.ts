@@ -6,7 +6,12 @@ import {
   sessionContributionSchema,
   sessionContributionStateQuerySchema,
 } from "@partner-report/contracts";
-import { sqlClient as sql } from "@partner-report/db";
+import {
+  DEFAULT_WEEKLY_PERIOD_RULE,
+  sqlClient as sql,
+  weeklyPeriodAt,
+  type WeeklyPeriodRule,
+} from "@partner-report/db";
 import {
   ApiError,
   audit,
@@ -15,6 +20,69 @@ import {
   stableJsonHash,
 } from "../common.js";
 import { resolveProjectIdentity } from "../project-discovery.js";
+
+async function ensureIngestionPeriod(actor: {
+  tenantId: string;
+  teamId: string;
+}) {
+  const now = new Date();
+  const openPeriods = await sql<any[]>`
+    select * from report_periods
+    where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+      and status = 'open' and cutoff_at > ${now.toISOString()}
+    order by starts_at desc limit 1
+  `;
+  if (openPeriods[0]) return openPeriods[0];
+
+  const teams = await sql<any[]>`
+    select t.timezone, t.period_rule,
+      (
+        select rp.template_id from report_periods rp
+        where rp.tenant_id = t.tenant_id and rp.team_id = t.id
+        order by rp.starts_at desc limit 1
+      ) as template_id
+    from teams t
+    where t.id = ${actor.teamId} and t.tenant_id = ${actor.tenantId}
+      and t.report_type = 'weekly'
+    limit 1
+  `;
+  const team = teams[0];
+  if (!team)
+    throw new ApiError(
+      409,
+      "REPORT_PERIOD_MISSING",
+      "当前 Team 没有可用的 Report Period。",
+    );
+  const period = weeklyPeriodAt(
+    now,
+    team.timezone,
+    (team.period_rule ?? DEFAULT_WEEKLY_PERIOD_RULE) as WeeklyPeriodRule,
+  );
+  await sql`
+    insert into report_periods (
+      id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+      submission_deadline_at, timezone, status, template_id
+    ) values (
+      ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${period.periodKey},
+      ${period.startsAt.toISOString()}, ${period.endsAt.toISOString()},
+      ${period.cutoffAt.toISOString()}, ${period.submissionDeadlineAt.toISOString()},
+      ${team.timezone}, 'open', ${team.template_id}
+    ) on conflict (tenant_id, team_id, period_key) do nothing
+  `;
+  const created = await sql<any[]>`
+    select * from report_periods
+    where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+      and period_key = ${period.periodKey} and status = 'open'
+    limit 1
+  `;
+  if (!created[0])
+    throw new ApiError(
+      409,
+      "REPORT_PERIOD_MISSING",
+      "当前 Team 没有开放的 Report Period。",
+    );
+  return created[0];
+}
 
 export async function factRoutes(app: FastifyInstance) {
   app.get("/v1/session-contributions/state", async (request) => {
@@ -77,31 +145,7 @@ export async function factRoutes(app: FastifyInstance) {
       return existing.response;
     }
 
-    const requestedPeriods = await sql<any[]>`
-      select * from report_periods
-      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and period_key = ${input.periodKey}
-      limit 1
-    `;
-    const currentPeriods = await sql<any[]>`
-      select * from report_periods
-      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and status in ('open', 'closing')
-      order by case when status = 'open' then 0 else 1 end, starts_at desc
-      limit 1
-    `;
-    const requestedPeriod = requestedPeriods[0];
-    const requestedAccepting =
-      requestedPeriod && ["open", "closing"].includes(requestedPeriod.status);
-    const period = requestedAccepting ? requestedPeriod : currentPeriods[0];
-    const lateFromPeriodKey =
-      period?.period_key !== input.periodKey ? input.periodKey : null;
-    if (!period)
-      throw new ApiError(
-        409,
-        "REPORT_PERIOD_MISSING",
-        "当前 Team 没有开放的 Report Period。",
-      );
+    const period = await ensureIngestionPeriod(actor);
     const response = await sql.begin(async (tx) => {
       const resolvedProject = await resolveProjectIdentity(
         tx,
@@ -130,11 +174,11 @@ export async function factRoutes(app: FastifyInstance) {
           insert into session_records (
             id, tenant_id, team_id, partner_id, period_id,
             session_id, latest_source_revision, source_hash, status, observed_at,
-            source_occurred_at, late_from_period_key
+            source_occurred_at
           ) values (
             ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
             ${input.sessionKey}, ${revision}, ${input.contentHash}, 'extracted',
-            ${input.observedAt}, ${input.activity.endedAt}, ${lateFromPeriodKey}
+            ${input.observedAt}, ${input.activity.endedAt}
           ) on conflict (tenant_id, partner_id, session_id) do update set
             period_id = excluded.period_id,
             latest_source_revision = excluded.latest_source_revision,
@@ -142,7 +186,6 @@ export async function factRoutes(app: FastifyInstance) {
             status = excluded.status,
             observed_at = excluded.observed_at,
             source_occurred_at = excluded.source_occurred_at,
-            late_from_period_key = excluded.late_from_period_key,
             updated_at = now()
         `;
         await tx`
@@ -155,6 +198,7 @@ export async function factRoutes(app: FastifyInstance) {
         contributionId = randomUUID();
         const payload = {
           ...input,
+          periodKey: period.period_key,
           recordType: "session_contribution",
           project: {
             id: resolvedProject?.id ?? null,
@@ -172,11 +216,11 @@ export async function factRoutes(app: FastifyInstance) {
           insert into session_facts (
             id, tenant_id, team_id, partner_id, period_id,
             session_id, external_fact_id, source_revision, source_hash,
-            source_occurred_at, late_from_period_key, payload, current
+            source_occurred_at, payload, current
           ) values (
             ${contributionId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
             ${input.sessionKey}, ${`${input.sessionKey}:contribution`}, ${revision}, ${input.contentHash},
-            ${input.activity.endedAt}, ${lateFromPeriodKey}, ${JSON.stringify(payload)}::jsonb, true
+            ${input.activity.endedAt}, ${JSON.stringify(payload)}::jsonb, true
           )
         `;
       }
@@ -214,8 +258,8 @@ export async function factRoutes(app: FastifyInstance) {
       {
         status: response.status,
         revision: response.revision,
-        lateFromPeriodKey,
-        weeklyAggregationDeferredUntil: period.cutoff_at,
+        aggregationBatch: period.period_key,
+        aggregationAt: period.cutoff_at,
       },
     );
     return response;
@@ -241,7 +285,7 @@ export async function factRoutes(app: FastifyInstance) {
         projectId: z
           .union([z.string().uuid(), z.literal("unassigned")])
           .optional(),
-        sessionId: z.string().max(200).optional(),
+        sessionDate: z.string().date().optional(),
         page: z.coerce.number().int().min(1).default(1),
         pageSize: z.coerce.number().int().min(1).max(100).default(25),
       })
@@ -251,7 +295,7 @@ export async function factRoutes(app: FastifyInstance) {
       select sf.id, sf.partner_id, p.display_name as partner_name,
         sf.period_id, rp.period_key, sf.session_id, sf.external_fact_id,
         sf.source_revision, sf.source_hash, sf.source_occurred_at,
-        sf.late_from_period_key, sf.payload, sf.created_at, sf.updated_at,
+        sf.payload, sf.created_at, sf.updated_at,
         count(*) over()::int as total
       from session_facts sf
       join partners p on p.id = sf.partner_id and p.tenant_id = sf.tenant_id
@@ -265,7 +309,10 @@ export async function factRoutes(app: FastifyInstance) {
           or (${query.projectId ?? null} = 'unassigned' and sf.payload->>'projectId' is null)
           or sf.payload->>'projectId' = ${query.projectId ?? null}
         )
-        and (${query.sessionId ?? null}::text is null or sf.session_id = ${query.sessionId ?? null})
+        and (
+          ${query.sessionDate ?? null}::date is null
+          or (sf.source_occurred_at at time zone 'Asia/Shanghai')::date = ${query.sessionDate ?? null}::date
+        )
       order by sf.source_occurred_at desc nulls last, sf.created_at desc
       limit ${query.pageSize} offset ${offset}
     `;

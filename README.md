@@ -12,7 +12,7 @@ Plugin：
 - 通过 Codex App Server 读取 `thread/list` 与 `thread/read(includeTurns)`。
 - 用最长项目根目录匹配 Session；根目录下任意层级子目录都属于同一项目。
 - 只把完整的用户问题和正常 `final_answer` 作为 Session 摘要输入，不维护 Turn 游标。
-- 首次运行只采集最近 3 天；后续使用插件本地成功游标和 24 小时重叠窗口筛选候选 Session。
+- 首次运行只采集最近 1 天；后续使用插件本地成功游标和 24 小时重叠窗口筛选候选 Session。
 - 由当前 Codex Scheduled Task 一次处理一个 Session；无项目价值的 Session 只保存匿名本地 hash 以防重复提取，有价值的 Session 经脱敏、中文字段和 Schema 校验后立即上传。
 - 使用跨运行租约阻止自动和手动采集并发；已接收 Session 继续由中台 `contentHash` 与幂等键防重。任何 Session 读取或提取失败时都不推进成功游标，下一次继续覆盖旧范围。
 - 不做跨 Session 聚合，不生成工作卡片或 Report，不安装生命周期 Hook，不运行常驻 Runner。
@@ -23,7 +23,9 @@ Plugin：
 - 在同一 `partner_id` 下合并多个 Plugin 上传的 Session Contribution，并保持 Tenant/Team/Partner 数据隔离。
 - 周期到达截止时间后直接冻结当前贡献并进行跨 Session 聚合，不等待额外采集宽限期。
 - 保存真实 Work Item，供 Admin 在 Web 中模拟 Partner 完成第一轮确认和修改。
-- 基于确认后的不可变 Snapshot 调用模型生成 Report，供第二轮确认、重新生成和锁定。
+- 最后一张工作卡片完成审核后，自动冻结不可变 Snapshot 并生成个人 Report 草稿。
+- Team Admin 分别配置工作卡片聚合时间和 Team Report 生成时间；Team Report 不因全员提前提交而提前生成。
+- 归档工作卡片、个人 Report 和 Team Report，并保留每个个人 Report 版本引用的工作卡片版本。
 
 ## 本地启动
 
@@ -112,7 +114,7 @@ macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTN
 ```text
 Codex Scheduled task（默认每天北京时间 13:30、新聊天、无项目；面板可修改）
   -> 当前任务选择的模型与推理强度
-  -> 首次最近 3 天，后续按本地成功游标增量扫描
+  -> 首次最近 1 天，后续按本地成功游标增量扫描
   -> 本地租约阻止自动与手动并发采集
   -> 过滤为完整 user question + final_answer Turn
   -> 已接收或已忽略且 hash 未变化的 Session 直接跳过
@@ -121,9 +123,10 @@ Codex Scheduled task（默认每天北京时间 13:30、新聊天、无项目；
   -> 中台按 Partner 冻结本周期 Fact
   -> 中台模型跨 Session 聚合 Work Item
   -> Admin Web 模拟 Partner 第一次审核和修改
-  -> 冻结 Work Item Snapshot
-  -> 中台模型生成个人 Report
+  -> 最后一张卡片审核后自动冻结 Work Item Snapshot
+  -> 中台模型自动生成个人 Report
   -> Admin Web 模拟 Partner 第二次审核并锁定
+  -> 到 Team 配置时间后基于届时已锁定版本生成 Team Report
 ```
 
 ## 验证

@@ -16,7 +16,6 @@ type FactPage = {
     source_revision: number;
     source_hash: string;
     source_occurred_at: string | null;
-    late_from_period_key: string | null;
     payload: Record<string, any>;
   }>;
   page: number;
@@ -44,7 +43,7 @@ export function FactPreviewPage() {
   const [partnerId, setPartnerId] = useState("");
   const [periodId, setPeriodId] = useState("");
   const [projectId, setProjectId] = useState("");
-  const [sessionKey, setSessionKey] = useState("");
+  const [sessionDate, setSessionDate] = useState("");
   const [page, setPage] = useState(1);
   const overview = useQuery({
     queryKey: ["admin-overview"],
@@ -54,9 +53,16 @@ export function FactPreviewPage() {
   if (partnerId) params.set("partnerId", partnerId);
   if (periodId) params.set("periodId", periodId);
   if (projectId) params.set("projectId", projectId);
-  if (sessionKey.trim()) params.set("sessionId", sessionKey.trim());
+  if (sessionDate) params.set("sessionDate", sessionDate);
   const facts = useQuery({
-    queryKey: ["admin-facts", partnerId, periodId, projectId, sessionKey, page],
+    queryKey: [
+      "admin-facts",
+      partnerId,
+      periodId,
+      projectId,
+      sessionDate,
+      page,
+    ],
     queryFn: () => api<FactPage>(`/v1/admin/session-facts?${params}`),
   });
   const data = overview.data;
@@ -132,13 +138,13 @@ export function FactPreviewPage() {
             ))}
           </select>
         </Field>
-        <Field label="匿名 Session Key">
+        <Field label="会话日期">
           <input
-            value={sessionKey}
+            type="date"
+            value={sessionDate}
             onChange={(event) =>
-              resetPage(() => setSessionKey(event.target.value))
+              resetPage(() => setSessionDate(event.target.value))
             }
-            placeholder="精确匹配"
           />
         </Field>
       </section>
@@ -184,11 +190,6 @@ export function FactPreviewPage() {
                     >
                       {statusLabels[fact.status] ?? fact.status}
                     </Badge>
-                    {row.late_from_period_key && (
-                      <Badge tone="warning">
-                        迟到自 {row.late_from_period_key}
-                      </Badge>
-                    )}
                   </div>
                 </div>
                 <p className="fact-summary">{factSummary(fact)}</p>
@@ -215,16 +216,13 @@ export function FactPreviewPage() {
                   />
                 </div>
                 <div className="fact-lineage">
-                  <span>
-                    Session Key <code>{shortId(row.session_id)}</code>
-                  </span>
+                  <span>会话发生于 {formatTime(row.source_occurred_at)}</span>
                   <span>
                     Revision <code>{row.source_revision}</code>
                   </span>
                   <span>
                     Contribution <code>{shortId(row.external_fact_id)}</code>
                   </span>
-                  <span>{formatTime(row.source_occurred_at)}</span>
                 </div>
               </article>
             );
@@ -313,5 +311,10 @@ function shortId(value: string) {
 }
 
 function formatTime(value: string | null) {
-  return value ? new Date(value).toLocaleString("zh-CN") : "时间未知";
+  return value
+    ? new Date(value).toLocaleString("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        hour12: false,
+      })
+    : "时间未知";
 }

@@ -207,6 +207,15 @@ suite("synthetic report generation pipeline", () => {
       select * from individual_report_versions where report_id = ${reportId}
     `;
     expect(individualVersions).toHaveLength(1);
+    const versionLinks = await sql<any[]>`
+      select link.*, wiv.work_item_id, wiv.version as work_item_version
+      from individual_report_version_work_items link
+      join work_item_versions wiv on wiv.id = link.work_item_version_id
+      where link.report_version_id = ${individualVersions[0].id}
+    `;
+    expect(versionLinks).toMatchObject([
+      { work_item_id: workItems[0].id, work_item_version: 1 },
+    ]);
     await sql`
       update individual_reports set status = 'LOCKED', locked_at = now()
       where id = ${reportId}
@@ -215,6 +224,12 @@ suite("synthetic report generation pipeline", () => {
     expect(
       await scheduleDueTeamReports(
         new Date("2026-08-08T00:00:00Z"),
+        fixture.period,
+      ),
+    ).toBe(0);
+    expect(
+      await scheduleDueTeamReports(
+        new Date("2026-08-10T02:00:00Z"),
         fixture.period,
       ),
     ).toBe(1);
