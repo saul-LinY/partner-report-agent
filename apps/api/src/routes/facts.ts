@@ -188,14 +188,7 @@ export async function factRoutes(app: FastifyInstance) {
             source_occurred_at = excluded.source_occurred_at,
             updated_at = now()
         `;
-        await tx`
-          update session_facts set current = false, updated_at = now()
-          where tenant_id = ${actor.tenantId}
-            and partner_id = ${actor.partnerId}
-            and session_id = ${input.sessionKey}
-            and current = true
-        `;
-        contributionId = randomUUID();
+        const nextContributionId = randomUUID();
         const payload = {
           ...input,
           periodKey: period.period_key,
@@ -212,24 +205,36 @@ export async function factRoutes(app: FastifyInstance) {
           projectRootFingerprint:
             resolvedProject?.rootFingerprint ?? input.project.rootFingerprint,
         };
-        await tx`
+        const contributionRows = await tx<{ id: string }[]>`
           insert into session_facts (
             id, tenant_id, team_id, partner_id, period_id,
             session_id, external_fact_id, source_revision, source_hash,
             source_occurred_at, payload, current
           ) values (
-            ${contributionId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
+            ${nextContributionId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
             ${input.sessionKey}, ${`${input.sessionKey}:contribution`}, ${revision}, ${input.contentHash},
             ${input.activity.endedAt}, ${JSON.stringify(payload)}::jsonb, true
           )
+          on conflict (tenant_id, partner_id, session_id, external_fact_id)
+          do update set
+            team_id = excluded.team_id,
+            period_id = excluded.period_id,
+            source_revision = excluded.source_revision,
+            source_hash = excluded.source_hash,
+            source_occurred_at = excluded.source_occurred_at,
+            payload = excluded.payload,
+            current = true,
+            excluded = false,
+            updated_at = now()
+          returning id
         `;
+        contributionId = contributionRows[0]!.id;
       }
 
       const result = {
         status: unchanged ? "unchanged" : "accepted",
         sessionKey: input.sessionKey,
         contentHash: input.contentHash,
-        revision,
         ...(contributionId ? { contributionId } : {}),
       };
       await tx`
@@ -257,7 +262,6 @@ export async function factRoutes(app: FastifyInstance) {
       input.sessionKey,
       {
         status: response.status,
-        revision: response.revision,
         aggregationBatch: period.period_key,
         aggregationAt: period.cutoff_at,
       },
@@ -294,14 +298,14 @@ export async function factRoutes(app: FastifyInstance) {
     const rows = await sql<any[]>`
       select sf.id, sf.partner_id, p.display_name as partner_name,
         sf.period_id, rp.period_key, sf.session_id, sf.external_fact_id,
-        sf.source_revision, sf.source_hash, sf.source_occurred_at,
+        sf.source_hash, sf.source_occurred_at,
         sf.payload, sf.created_at, sf.updated_at,
         count(*) over()::int as total
       from session_facts sf
       join partners p on p.id = sf.partner_id and p.tenant_id = sf.tenant_id
       left join report_periods rp on rp.id = sf.period_id
       where sf.tenant_id = ${actor.tenantId} and sf.team_id = ${actor.teamId}
-        and sf.current = true and sf.excluded = false
+        and sf.excluded = false
         and (${query.partnerId ?? null}::uuid is null or sf.partner_id = ${query.partnerId ?? null})
         and (${query.periodId ?? null}::uuid is null or sf.period_id = ${query.periodId ?? null})
         and (

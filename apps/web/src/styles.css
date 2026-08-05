@@ -938,6 +938,9 @@ td {
   align-items: start;
   justify-content: center;
 }
+.report-layout-current {
+  grid-template-columns: minmax(0, 860px);
+}
 .report-review-controls {
   max-width: 860px;
   margin: 20px auto 0;
@@ -951,7 +954,7 @@ td {
 .report-review-controls .field {
   margin: 0;
 }
-.report-versions {
+.report-side-list {
   position: sticky;
   top: 20px;
   padding: 17px;
@@ -959,7 +962,7 @@ td {
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
-.report-versions button {
+.report-side-list button {
   width: 100%;
   min-height: 56px;
   padding: 9px;
@@ -971,21 +974,21 @@ td {
   text-align: left;
   cursor: pointer;
 }
-.report-versions button:hover,
-.report-versions button.active {
+.report-side-list button:hover,
+.report-side-list button.active {
   background: #f4f7f8;
   border-color: #dce3e6;
 }
-.report-versions button span {
+.report-side-list button span {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
 }
-.report-versions button strong {
+.report-side-list button strong {
   font-size: 13px;
 }
-.report-versions time {
+.report-side-list time {
   display: block;
   margin-top: 5px;
   color: var(--muted);
@@ -1094,10 +1097,10 @@ td {
   margin-left: 4px;
   color: var(--accent);
 }
-.work-item-history-list button span {
+.work-item-archive-list button span {
   align-items: flex-start;
 }
-.work-item-history-list button strong {
+.work-item-archive-list button strong {
   max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1109,7 +1112,7 @@ td {
   flex-wrap: wrap;
   gap: 5px;
 }
-.work-item-version-meta {
+.work-item-archive-meta {
   margin-bottom: 24px;
   display: flex;
   flex-wrap: wrap;
@@ -1118,7 +1121,7 @@ td {
   color: var(--muted);
   font-size: 10px;
 }
-.work-item-version-meta time {
+.work-item-archive-meta time {
   margin-left: auto;
 }
 .archived-daily-progress ol {
@@ -2518,17 +2521,17 @@ select:focus {
   .report-review-controls {
     grid-template-columns: 1fr;
   }
-  .report-versions {
+  .report-side-list {
     position: static;
     display: flex;
     gap: 7px;
     overflow-x: auto;
   }
-  .report-versions .section-heading,
+  .report-side-list .section-heading,
   .report-provenance {
     display: none;
   }
-  .report-versions button {
+  .report-side-list button {
     min-width: 125px;
   }
   .report-document {
@@ -2537,7 +2540,7 @@ select:focus {
   .archive-detail-actions {
     margin-top: 16px;
   }
-  .work-item-version-meta time {
+  .work-item-archive-meta time {
     width: 100%;
     margin-left: 0;
   }

@@ -14,7 +14,6 @@ type DuePeriod = {
   starts_at: Date;
   ends_at: Date;
   cutoff_at: Date;
-  submission_deadline_at: Date;
   timezone: string;
   template_id: string | null;
 };
@@ -107,10 +106,10 @@ export async function ensureCurrentWeeklyPeriods(
         order by rp.starts_at desc limit 1
       ) as template_id
     from teams t where t.report_type = 'weekly'
+      and (${onlyTeamId ?? null}::uuid is null or t.id = ${onlyTeamId ?? null})
   `;
   let created = 0;
   for (const team of teams) {
-    if (onlyTeamId && team.team_id !== onlyTeamId) continue;
     const period = weeklyPeriodAt(
       now,
       team.timezone,
@@ -145,7 +144,16 @@ export async function scheduleDueWeeklyReports(
   now = new Date(),
   onlyPeriodId?: string,
 ): Promise<WeeklyScheduleResult> {
-  await ensureCurrentWeeklyPeriods(now);
+  const scopedPeriods = onlyPeriodId
+    ? await sql<{ team_id: string }[]>`
+        select team_id from report_periods where id = ${onlyPeriodId}
+      `
+    : [];
+  if (onlyPeriodId && !scopedPeriods[0]) {
+    return { closedPeriods: 0, aggregationJobs: 0, teamReportJobs: 0 };
+  }
+  const onlyTeamId = scopedPeriods[0]?.team_id;
+  await ensureCurrentWeeklyPeriods(now, onlyTeamId);
   await beginDueClosures(now, onlyPeriodId);
   const candidates = await sql<DuePeriod[]>`
     select rp.*
@@ -172,7 +180,7 @@ export async function scheduleDueWeeklyReports(
       const partners = await tx<{ partner_id: string }[]>`
         select distinct partner_id from session_facts
         where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
-          and period_id = ${period.id} and current = true and excluded = false
+          and period_id = ${period.id} and excluded = false
         order by partner_id
       `;
       const projects = await tx<any[]>`
@@ -185,7 +193,7 @@ export async function scheduleDueWeeklyReports(
         const facts = await tx<any[]>`
           select id, payload, source_occurred_at from session_facts
           where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}
-            and period_id = ${period.id} and current = true and excluded = false
+            and period_id = ${period.id} and excluded = false
           order by source_occurred_at nulls last, created_at, id
         `;
         const projectBuckets = buildProjectBuckets(facts, projects);
@@ -253,42 +261,39 @@ export async function scheduleDueWeeklyReports(
     if (result.closed) closedPeriods += 1;
     aggregationJobs += result.jobs;
   }
-  await ensureCurrentWeeklyPeriods(new Date(now.getTime() + 1));
-  const teamReportJobs = await scheduleDueTeamReports(now, onlyPeriodId);
+  await ensureCurrentWeeklyPeriods(new Date(now.getTime() + 1), onlyTeamId);
+  const teamReportJobs = await scheduleDueTeamReports(onlyPeriodId);
   return { closedPeriods, aggregationJobs, teamReportJobs };
 }
 
-/** Generate or refresh a Team Draft at the team's configured generation time. */
-export async function scheduleDueTeamReports(
-  now = new Date(),
-  onlyPeriodId?: string,
-) {
+/** Generate or refresh a Team Draft once every active Partner has locked their report. */
+export async function scheduleDueTeamReports(onlyPeriodId?: string) {
   const periods = await sql<any[]>`
     select rp.* from report_periods rp
     where rp.status in ('facts_frozen', 'closed')
       and (${onlyPeriodId ?? null}::uuid is null or rp.id = ${onlyPeriodId ?? null})
-      and rp.submission_deadline_at <= ${now.toISOString()}
-    order by rp.submission_deadline_at
+    order by rp.cutoff_at
   `;
   let queued = 0;
   for (const period of periods) {
     const result = await sql.begin(async (tx) => {
       const reportRows = await tx<any[]>`
         select p.id as partner_id, p.display_name as partner_name,
-          ir.id as report_id, irv.id as version_id, irv.version, irv.payload
+          ir.id as report_id, ir.payload
         from partners p
         left join individual_reports ir on ir.tenant_id = p.tenant_id
           and ir.partner_id = p.id and ir.period_id = ${period.id} and ir.status = 'LOCKED'
-        left join individual_report_versions irv on irv.report_id = ir.id
-          and irv.version = ir.current_version
         where p.tenant_id = ${period.tenant_id} and p.team_id = ${period.team_id}
           and p.status = 'active'
         order by p.display_name
       `;
-      const submitted = reportRows.filter((row) => row.version_id);
+      const submitted = reportRows.filter(
+        (row) => row.report_id && row.payload,
+      );
       const missingPartnerIds = reportRows
-        .filter((row) => !row.version_id)
+        .filter((row) => !row.report_id || !row.payload)
         .map((row) => row.partner_id);
+      if (reportRows.length === 0 || missingPartnerIds.length > 0) return 0;
       const previousRows = await tx<any[]>`
         select trv.id as version_id, trv.payload
         from team_reports tr
@@ -309,8 +314,7 @@ export async function scheduleDueTeamReports(
         individualReports: submitted.map((row) => ({
           partnerId: row.partner_id,
           partnerName: row.partner_name,
-          versionId: row.version_id,
-          version: row.version,
+          reportId: row.report_id,
           payload: row.payload,
         })),
         missingPartnerIds,

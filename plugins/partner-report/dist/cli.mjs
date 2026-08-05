@@ -4227,7 +4227,7 @@ var individualReportResultSchema = external_exports.object({
 });
 var teamReportClaimSchema = external_exports.object({
   claim: external_exports.string().min(1).max(1e3),
-  individualReportVersionIds: external_exports.array(idSchema).min(1)
+  individualReportIds: external_exports.array(idSchema).min(1)
 });
 var teamReportSectionSchema = external_exports.object({
   key: external_exports.enum([

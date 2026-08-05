@@ -13,7 +13,6 @@ type FactPage = {
     period_key: string;
     session_id: string;
     external_fact_id: string;
-    source_revision: number;
     source_hash: string;
     source_occurred_at: string | null;
     payload: Record<string, any>;
@@ -78,7 +77,7 @@ export function FactPreviewPage() {
         <div>
           <span className="eyebrow">STRUCTURED INGESTION</span>
           <h1>Session 贡献预览</h1>
-          <p>仅展示中台已接收的结构化项目贡献和版本</p>
+          <p>仅展示中台当前保留的结构化项目贡献</p>
         </div>
         <Button
           variant="secondary"
@@ -217,9 +216,6 @@ export function FactPreviewPage() {
                 </div>
                 <div className="fact-lineage">
                   <span>会话发生于 {formatTime(row.source_occurred_at)}</span>
-                  <span>
-                    Revision <code>{row.source_revision}</code>
-                  </span>
                   <span>
                     Contribution <code>{shortId(row.external_fact_id)}</code>
                   </span>

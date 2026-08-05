@@ -6,6 +6,20 @@ import { buildApp } from "./server.js";
 const enabled = process.env.RUN_DB_TESTS === "1";
 const suite = enabled ? describe : describe.skip;
 
+async function waitForBlockedReportMutation() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const rows = await sql<Array<{ waiting: number }>>`
+      select count(*)::int as waiting
+      from pg_stat_activity
+      where datname = current_database() and pid <> pg_backend_pid()
+        and wait_event_type = 'Lock' and query ilike '%individual_reports%'
+    `;
+    if ((rows[0]?.waiting ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for a blocked individual report mutation");
+}
+
 suite("tenant and role authorization", () => {
   const fixture = {
     tenantA: randomUUID(),
@@ -21,6 +35,8 @@ suite("tenant and role authorization", () => {
     workItemA: randomUUID(),
     pluginA: randomUUID(),
     bindingA: randomUUID(),
+    feishuBindingA: randomUUID(),
+    feishuDeliveryA: randomUUID(),
     jobA: randomUUID(),
     tenantB: randomUUID(),
     teamB: randomUUID(),
@@ -34,9 +50,13 @@ suite("tenant and role authorization", () => {
   const token = `tenant-isolation-${fixture.userA}`;
   const pluginToken = `plugin-idempotency-${fixture.pluginA}`;
   const bindingCode = `PR-TEST-${fixture.bindingA}`.toUpperCase();
+  const originalFeishuAppId = process.env.FEISHU_APP_ID;
+  const feishuAppId = `cli_authorization_overview_${fixture.feishuBindingA}`;
+  const feishuOpenId = `ou_authorization_${fixture.feishuBindingA}`;
   let app: Awaited<ReturnType<typeof buildApp>>;
 
   beforeAll(async () => {
+    process.env.FEISHU_APP_ID = feishuAppId;
     await sql.begin(async (tx) => {
       await tx`insert into tenants (id, name) values (${fixture.tenantA}, 'Fixture Tenant A'), (${fixture.tenantB}, 'Fixture Tenant B')`;
       await tx`insert into teams (id, tenant_id, name, timezone, report_type) values (${fixture.teamA}, ${fixture.tenantA}, 'Fixture Team A', 'Asia/Shanghai', 'test'), (${fixture.teamB}, ${fixture.tenantB}, 'Fixture Team B', 'Asia/Shanghai', 'test')`;
@@ -51,6 +71,8 @@ suite("tenant and role authorization", () => {
       await tx`insert into work_items (id, tenant_id, team_id, partner_id, period_id, review_id, project_id, title, status, fact_ids, payload) values (${fixture.workItemA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.periodA}, ${fixture.reviewA}, ${fixture.projectA}, 'Direct progress item', 'completed', '[]'::jsonb, '{"summary":"Visible in data platform","outcomes":["Done"],"blockers":[],"nextSteps":[],"importance":{"partnerEmphasis":3}}'::jsonb)`;
       await tx`insert into plugin_instances (id, tenant_id, team_id, partner_id, device_name, version, access_token_hash, refresh_token_hash, access_expires_at) values (${fixture.pluginA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'fixture-device', '0.1.0', ${createHash("sha256").update(pluginToken).digest("hex")}, ${createHash("sha256").update(`refresh-${fixture.pluginA}`).digest("hex")}, ${new Date(Date.now() + 3_600_000).toISOString()})`;
       await tx`insert into plugin_binding_codes (id, tenant_id, team_id, partner_id, code_hash, code_value, code_prefix, label, created_by) values (${fixture.bindingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${createHash("sha256").update(bindingCode).digest("hex")}, ${bindingCode}, 'PR-TEST', 'Fixture Codex', ${fixture.userA})`;
+      await tx`insert into feishu_partner_bindings (id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at) values (${fixture.feishuBindingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${feishuAppId}, ${feishuOpenId}, 'active', now())`;
+      await tx`insert into feishu_deliveries (id, tenant_id, team_id, partner_id, kind, aggregate_type, aggregate_id, receive_id, receive_id_type, message_id, domain_version, status, idempotency_key, sent_at) values (${fixture.feishuDeliveryA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'review', 'review', ${fixture.reviewA}, ${feishuOpenId}, 'open_id', ${`om_${fixture.feishuDeliveryA}`}, 1, 'sent', ${`review:${feishuAppId}:${fixture.partnerA}:${fixture.reviewA}`}, now())`;
       await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, plugin_instance_id, type, status, idempotency_key, input_payload, output_payload, completed_at) values (${fixture.jobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, 'RESCAN_SESSIONS', 'COMPLETED', ${`fixture:${fixture.jobA}`}, '{}'::jsonb, '{"completed":true,"batchIds":[]}'::jsonb, now())`;
       await tx`insert into report_periods (id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, submission_deadline_at, timezone) values (${fixture.periodB}, ${fixture.tenantB}, ${fixture.teamB}, 'fixture-period', '2026-08-01T00:00:00Z', '2026-08-08T00:00:00Z', '2026-08-08T00:00:00Z', '2026-08-10T02:00:00Z', 'Asia/Shanghai')`;
       await tx`insert into reviews (id, tenant_id, team_id, partner_id, period_id) values (${fixture.reviewB}, ${fixture.tenantB}, ${fixture.teamB}, ${fixture.partnerB}, ${fixture.periodB})`;
@@ -66,6 +88,8 @@ suite("tenant and role authorization", () => {
       await tx`delete from web_sessions where id = ${fixture.sessionA}`;
       await tx`delete from audit_events where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from outbox_events where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from feishu_deliveries where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from feishu_partner_bindings where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from agent_jobs where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from team_report_versions where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from team_reports where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
@@ -88,6 +112,11 @@ suite("tenant and role authorization", () => {
       await tx`delete from teams where id in (${fixture.teamA}, ${fixture.teamB})`;
       await tx`delete from tenants where id in (${fixture.tenantA}, ${fixture.tenantB})`;
     });
+    if (originalFeishuAppId === undefined) {
+      delete process.env.FEISHU_APP_ID;
+    } else {
+      process.env.FEISHU_APP_ID = originalFeishuAppId;
+    }
   });
 
   const headers = { cookie: `pra_session=${token}` };
@@ -205,6 +234,14 @@ suite("tenant and role authorization", () => {
         connectionState: "connected",
         deviceName: "Fixture Laptop",
         version: "0.2.0",
+        feishu: expect.objectContaining({
+          state: "connected",
+          bindingState: "connected",
+          deliveryState: "healthy",
+          verifiedAt: expect.any(String),
+          lastDeliveryKind: "review",
+          lastDeliveryStatus: "sent",
+        }),
       }),
     );
     expect(overview.json().bindingCodes).toContainEqual(
@@ -228,6 +265,46 @@ suite("tenant and role authorization", () => {
     });
     expect(reused.statusCode).toBe(400);
     expect(reused.json().code).toBe("BINDING_CODE_INVALID");
+  });
+
+  it("keeps an unresolved Feishu delivery visible after a newer success", async () => {
+    const failedDeliveryId = randomUUID();
+    try {
+      await sql`
+        insert into feishu_deliveries (
+          id, tenant_id, team_id, partner_id, kind, aggregate_type,
+          aggregate_id, receive_id, receive_id_type, status,
+          idempotency_key, last_error_code, next_retry_at, updated_at
+        ) values (
+          ${failedDeliveryId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${fixture.partnerA}, 'report', 'individual_report',
+          ${failedDeliveryId}, ${feishuOpenId}, 'open_id', 'retry_wait',
+          ${`report:${feishuAppId}:${fixture.partnerA}:${failedDeliveryId}`},
+          'TEST_RETRY', now() + interval '5 minutes',
+          now() - interval '10 minutes'
+        )
+      `;
+      const overview = await app.inject({
+        method: "GET",
+        url: "/v1/admin/overview",
+        headers,
+      });
+      expect(overview.statusCode).toBe(200);
+      expect(overview.json().connections).toContainEqual(
+        expect.objectContaining({
+          partnerId: fixture.partnerA,
+          feishu: expect.objectContaining({
+            state: "delivery_error",
+            deliveryState: "retrying",
+            lastDeliveryKind: "report",
+            lastDeliveryStatus: "retry_wait",
+            lastErrorCode: "TEST_RETRY",
+          }),
+        }),
+      );
+    } finally {
+      await sql`delete from feishu_deliveries where id = ${failedDeliveryId}`;
+    }
   });
 
   it("keeps the latest closed period available for read-only Partner navigation", async () => {
@@ -285,7 +362,7 @@ suite("tenant and role authorization", () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it("ingests one Session Contribution idempotently and versions changed content", async () => {
+  it("ingests one Session Contribution idempotently and replaces changed content", async () => {
     const pluginHeaders = { authorization: `Bearer ${pluginToken}` };
     const baseStatus = {
       pluginVersion: "0.3.0",
@@ -366,7 +443,6 @@ suite("tenant and role authorization", () => {
       status: "accepted",
       sessionKey,
       contentHash: contribution.contentHash,
-      revision: 1,
     });
     const repeated = await app.inject({
       method: "POST",
@@ -402,8 +478,9 @@ suite("tenant and role authorization", () => {
     expect(changed.json()).toMatchObject({
       status: "accepted",
       sessionKey,
-      revision: 2,
+      contentHash: "b".repeat(64),
     });
+    expect(changed.json().contributionId).toBe(first.json().contributionId);
 
     const state = await app.inject({
       method: "GET",
@@ -439,7 +516,6 @@ suite("tenant and role authorization", () => {
       items: [
         {
           external_fact_id: `${sessionKey}:contribution`,
-          source_revision: 2,
           period_id: fixture.currentPeriodA,
           payload: {
             recordType: "session_contribution",
@@ -473,13 +549,13 @@ suite("tenant and role authorization", () => {
     });
     expect(invalidSessionDate.statusCode).toBe(400);
     const records = await sql<any[]>`
-      select session_id, latest_source_revision, collection_run_id
+      select session_id, source_hash, collection_run_id
       from session_records where tenant_id = ${fixture.tenantA}
     `;
     expect(records).toEqual([
       {
         session_id: sessionKey,
-        latest_source_revision: 2,
+        source_hash: "b".repeat(64),
         collection_run_id: null,
       },
     ]);
@@ -586,13 +662,11 @@ suite("tenant and role authorization", () => {
     });
   });
 
-  it("regenerates a personal Report from natural-language review and archives the accepted version", async () => {
+  it("regenerates a personal Report by replacing its current content", async () => {
     const snapshotId = randomUUID();
     const reportId = randomUUID();
-    const versionId = randomUUID();
-    const workItemVersionId = randomUUID();
-    const secondWorkItemVersionId = randomUUID();
     const secondWorkItemId = randomUUID();
+    let autoTeamReportId = "";
     await sql.begin(async (tx) => {
       await tx`
         insert into work_item_snapshots (
@@ -606,7 +680,18 @@ suite("tenant and role authorization", () => {
               {
                 id: fixture.workItemA,
                 title: "Fixture Project A",
+                status: "completed",
+                review_status: "approved",
+                fact_ids: [],
                 payload: { overview: "完成项目进展。" },
+              },
+              {
+                id: secondWorkItemId,
+                title: "Independent work",
+                status: "completed",
+                review_status: "approved",
+                fact_ids: [],
+                payload: { overview: "完成独立工作。" },
               },
             ],
             coverage: { discovered: 1, extracted: 1 },
@@ -617,68 +702,54 @@ suite("tenant and role authorization", () => {
       await tx`
         insert into individual_reports (
           id, tenant_id, team_id, partner_id, period_id, snapshot_id,
-          status, current_version
-        ) values (
-          ${reportId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
-          ${fixture.periodA}, ${snapshotId}, 'REPORT_REVIEW', 1
-        )
-      `;
-      await tx`
-        insert into individual_report_versions (
-          id, tenant_id, report_id, version, title, summary, markdown, payload,
+          status, content_revision, title, summary, markdown, payload,
           preferences, source_checksum, generator_version
         ) values (
-          ${versionId}, ${fixture.tenantA}, ${reportId}, 1, '个人周报',
+          ${reportId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.periodA}, ${snapshotId}, 'REPORT_REVIEW', 1, '个人周报',
           '初始摘要', '# 个人周报\n\n初始内容。',
           ${JSON.stringify({ sections: [] })}::jsonb, '{}'::jsonb,
           'fixture-personal-source', 'synthetic-test/1.0'
         )
       `;
-      await tx`
-        insert into work_item_versions (
-          id, tenant_id, team_id, partner_id, period_id, review_id,
-          work_item_id, project_id, version, title, status, review_status,
-          fact_ids, payload, lineage, change_type, created_by
-        ) values (
-          ${workItemVersionId}, ${fixture.tenantA}, ${fixture.teamA},
-          ${fixture.partnerA}, ${fixture.periodA}, ${fixture.reviewA},
-          ${fixture.workItemA}, ${fixture.projectA}, 1, 'Fixture Project A',
-          'completed', 'approved', '[]'::jsonb,
-          '{"overview":"完成项目进展。"}'::jsonb, '{}'::jsonb,
-          'review_completed', ${fixture.userA}
-        )
-      `;
-      await tx`
-        insert into individual_report_version_work_items (
-          report_version_id, work_item_version_id
-        ) values (${versionId}, ${workItemVersionId})
-      `;
-      await tx`
-        insert into work_item_versions (
-          id, tenant_id, team_id, partner_id, period_id, review_id,
-          work_item_id, project_id, version, title, status, review_status,
-          fact_ids, payload, lineage, change_type, created_by
-        ) values (
-          ${secondWorkItemVersionId}, ${fixture.tenantA}, ${fixture.teamA},
-          ${fixture.partnerA}, ${fixture.periodA}, ${fixture.reviewA},
-          ${secondWorkItemId}, null, 1, 'Independent work', 'completed',
-          'approved', '[]'::jsonb, '{"overview":"完成独立工作。"}'::jsonb,
-          '{}'::jsonb, 'review_completed', ${fixture.userA}
-        )
-      `;
-      await tx`
-        insert into individual_report_version_work_items (
-          report_version_id, work_item_version_id
-        ) values (${versionId}, ${secondWorkItemVersionId})
-      `;
     });
 
     try {
+      const detail = await app.inject({
+        method: "GET",
+        url: `/v1/individual-reports/${reportId}`,
+        headers,
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({
+        report: { id: reportId, content_revision: 1 },
+        current: { id: reportId, title: "个人周报" },
+      });
+      expect(detail.json()).not.toHaveProperty("versions");
+      expect(detail.json().current).not.toHaveProperty("version");
+
+      const staleRegenerate = await app.inject({
+        method: "POST",
+        url: `/v1/individual-reports/${reportId}/regenerate`,
+        headers,
+        payload: {
+          instruction: "这是过期卡片上的修改意见。",
+          contentRevision: 2,
+        },
+      });
+      expect(staleRegenerate.statusCode).toBe(409);
+      expect(staleRegenerate.json()).toMatchObject({
+        code: "REPORT_CONTENT_CHANGED",
+      });
+
       const regenerate = await app.inject({
         method: "POST",
         url: `/v1/individual-reports/${reportId}/regenerate`,
         headers,
-        payload: { instruction: "突出项目结果，减少过程描述。" },
+        payload: {
+          instruction: "突出项目结果，减少过程描述。",
+          contentRevision: 1,
+        },
       });
       expect(regenerate.statusCode).toBe(200);
       const jobs = await sql<any[]>`
@@ -690,8 +761,8 @@ suite("tenant and role authorization", () => {
       expect(jobs).toHaveLength(1);
       expect(jobs[0].input_payload).toMatchObject({
         reviewInstruction: "突出项目结果，减少过程描述。",
-        currentReport: { version: 1, title: "个人周报" },
-        workItems: [{ id: fixture.workItemA }],
+        currentReport: { title: "个人周报" },
+        workItems: [{ id: fixture.workItemA }, { id: secondWorkItemId }],
       });
 
       await sql`
@@ -701,9 +772,30 @@ suite("tenant and role authorization", () => {
         method: "POST",
         url: `/v1/individual-reports/${reportId}/submit`,
         headers,
-        payload: { baseVersion: 1 },
+        payload: { contentRevision: 1 },
       });
       expect(accepted.statusCode).toBe(200);
+      const autoTeamReports = await sql<any[]>`
+        select tr.id, tr.status, aj.type, aj.input_payload
+        from team_reports tr
+        join agent_jobs aj on aj.tenant_id = tr.tenant_id
+          and aj.input_payload->>'reportId' = tr.id::text
+        where tr.tenant_id = ${fixture.tenantA}
+          and tr.team_id = ${fixture.teamA}
+          and tr.period_id = ${fixture.periodA}
+      `;
+      expect(autoTeamReports).toMatchObject([
+        {
+          id: expect.any(String),
+          status: "AGGREGATING",
+          type: "GENERATE_TEAM_REPORT",
+          input_payload: {
+            individualReports: [{ reportId }],
+            missingPartnerIds: [],
+          },
+        },
+      ]);
+      autoTeamReportId = autoTeamReports[0].id;
 
       const archive = await app.inject({
         method: "GET",
@@ -735,7 +827,6 @@ suite("tenant and role authorization", () => {
           partner_id: fixture.partnerA,
           period_id: fixture.periodA,
           work_item_count: 2,
-          work_item_version_count: 2,
           included_work_item_count: 2,
         }),
       ]);
@@ -756,7 +847,6 @@ suite("tenant and role authorization", () => {
             name: "Fixture A",
             individualReport: {
               id: reportId,
-              version: 1,
               title: "个人周报",
             },
           },
@@ -767,14 +857,12 @@ suite("tenant and role authorization", () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: fixture.workItemA,
-            version: 1,
             title: "Fixture Project A",
             reviewStatus: "approved",
             includedInReport: true,
           }),
           expect.objectContaining({
             id: secondWorkItemId,
-            version: 1,
             title: "Independent work",
             includedInReport: true,
           }),
@@ -782,13 +870,370 @@ suite("tenant and role authorization", () => {
       );
     } finally {
       await sql.begin(async (tx) => {
+        await tx`delete from agent_jobs where tenant_id = ${fixture.tenantA} and input_payload->>'reportId' = ${autoTeamReportId || null}`;
+        await tx`delete from team_reports where id = ${autoTeamReportId || null}`;
         await tx`delete from agent_jobs where tenant_id = ${fixture.tenantA} and input_payload->>'reportId' = ${reportId}`;
-        await tx`delete from individual_report_versions where report_id = ${reportId}`;
         await tx`delete from individual_reports where id = ${reportId}`;
         await tx`delete from work_item_snapshots where id = ${snapshotId}`;
-        await tx`delete from work_item_versions where id in (${workItemVersionId}, ${secondWorkItemVersionId})`;
       });
     }
+  });
+
+  it("generates a Team Report on demand from the selected period", async () => {
+    const periodId = randomUUID();
+    const reviewId = randomUUID();
+    const snapshotId = randomUUID();
+    const individualReportId = randomUUID();
+    let teamReportId = "";
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+          submission_deadline_at, timezone, status
+        ) values (
+          ${periodId}, ${fixture.tenantA}, ${fixture.teamA}, ${`manual-team-${periodId}`},
+          '2022-08-01T00:00:00Z', '2022-08-08T00:00:00Z',
+          '2022-08-08T00:00:00Z', '2022-08-08T00:00:00Z',
+          'Asia/Shanghai', 'facts_frozen'
+        )
+      `;
+      await tx`
+        insert into reviews (
+          id, tenant_id, team_id, partner_id, period_id, state
+        ) values (
+          ${reviewId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${periodId}, 'ITEMS_APPROVED'
+        )
+      `;
+      await tx`
+        insert into work_item_snapshots (
+          id, tenant_id, team_id, partner_id, period_id, review_id,
+          review_version, checksum, payload, approved_by, approved_at
+        ) values (
+          ${snapshotId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${periodId}, ${reviewId}, 1, 'manual-team-source',
+          '{"workItems":[],"coverage":{}}'::jsonb, ${fixture.userA}, now()
+        )
+      `;
+      await tx`
+        insert into individual_reports (
+          id, tenant_id, team_id, partner_id, period_id, snapshot_id,
+          status, content_revision, title, summary, markdown, payload,
+          source_checksum, generator_version, submitted_at, locked_at
+        ) values (
+          ${individualReportId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${fixture.partnerA}, ${periodId}, ${snapshotId}, 'LOCKED', 1,
+          '最终个人报告', '最终摘要', '# 最终个人报告',
+          '{"sections":[]}'::jsonb, 'manual-team-source', 'synthetic-test/1.0',
+          now(), now()
+        )
+      `;
+    });
+
+    try {
+      const generated = await app.inject({
+        method: "POST",
+        url: "/v1/admin/team-reports/generate",
+        headers,
+        payload: { periodId },
+      });
+      expect(generated.statusCode).toBe(200);
+      expect(generated.json()).toMatchObject({
+        reportId: expect.any(String),
+        queued: true,
+        individualReportCount: 1,
+        missingPartnerIds: [],
+      });
+      teamReportId = generated.json().reportId;
+
+      const jobs = await sql<any[]>`
+        select type, input_payload from agent_jobs
+        where tenant_id = ${fixture.tenantA}
+          and input_payload->>'reportId' = ${teamReportId}
+      `;
+      expect(jobs).toMatchObject([
+        {
+          type: "GENERATE_TEAM_REPORT",
+          input_payload: {
+            individualReports: [{ reportId: individualReportId }],
+            missingPartnerIds: [],
+          },
+        },
+      ]);
+
+      const repeated = await app.inject({
+        method: "POST",
+        url: "/v1/admin/team-reports/generate",
+        headers,
+        payload: { periodId },
+      });
+      expect(repeated.statusCode).toBe(409);
+      expect(repeated.json()).toMatchObject({ code: "TEAM_REPORT_EXISTS" });
+    } finally {
+      await sql.begin(async (tx) => {
+        await tx`delete from agent_jobs where tenant_id = ${fixture.tenantA} and input_payload->>'reportId' = ${teamReportId || null}`;
+        await tx`delete from team_reports where id = ${teamReportId || null}`;
+        await tx`delete from individual_reports where id = ${individualReportId}`;
+        await tx`delete from work_item_snapshots where id = ${snapshotId}`;
+        await tx`delete from reviews where id = ${reviewId}`;
+        await tx`delete from report_periods where id = ${periodId}`;
+      });
+    }
+  });
+
+  it("replaces the personal Report when approved work cards change", async () => {
+    const periodId = randomUUID();
+    const reviewId = randomUUID();
+    const workItemId = randomUUID();
+    const coverageId = randomUUID();
+    let reportId = "";
+
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+          submission_deadline_at, timezone, status
+        ) values (
+          ${periodId}, ${fixture.tenantA}, ${fixture.teamA}, ${`replacement-${periodId}`},
+          '2021-08-01T00:00:00Z', '2021-08-08T00:00:00Z',
+          '2021-08-08T00:00:00Z', '2021-08-10T02:00:00Z',
+          'Asia/Shanghai', 'facts_frozen'
+        )
+      `;
+      await tx`
+        insert into reviews (
+          id, tenant_id, team_id, partner_id, period_id, state,
+          approved_count, pending_count
+        ) values (
+          ${reviewId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${periodId}, 'IN_PROGRESS', 1, 0
+        )
+      `;
+      await tx`
+        insert into work_items (
+          id, tenant_id, team_id, partner_id, period_id, review_id,
+          title, status, review_status, fact_ids, payload
+        ) values (
+          ${workItemId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${periodId}, ${reviewId}, 'Replacement work card', 'in_progress',
+          'approved', '[]'::jsonb, '{"overview":"第一次确认。"}'::jsonb
+        )
+      `;
+      await tx`
+        insert into coverage_snapshots (
+          id, tenant_id, team_id, partner_id, period_id, payload
+        ) values (
+          ${coverageId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${periodId}, '{"discovered":1,"extracted":1}'::jsonb
+        )
+      `;
+    });
+
+    try {
+      const first = await app.inject({
+        method: "POST",
+        url: `/v1/reviews/${reviewId}/complete`,
+        headers,
+        payload: { baseVersion: 1 },
+      });
+      expect(first.statusCode).toBe(200);
+      reportId = first.json().reportId;
+      expect(reportId).toEqual(expect.any(String));
+
+      await sql`
+        update individual_reports set
+          status = 'REPORT_REVIEW', content_revision = 1,
+          title = '旧个人报告', summary = '旧摘要', markdown = '# 旧个人报告',
+          payload = '{"sections":[]}'::jsonb
+        where id = ${reportId}
+      `;
+      const reopened = await app.inject({
+        method: "POST",
+        url: `/v1/reviews/${reviewId}/reopen`,
+        headers,
+        payload: { baseVersion: 1 },
+      });
+      expect(reopened.statusCode).toBe(200);
+
+      await sql`
+        update work_items set payload = '{"overview":"第二次确认。"}'::jsonb
+        where id = ${workItemId}
+      `;
+      const second = await app.inject({
+        method: "POST",
+        url: `/v1/reviews/${reviewId}/complete`,
+        headers,
+        payload: { baseVersion: 2 },
+      });
+      expect(second.statusCode).toBe(200);
+      expect(second.json().reportId).toBe(reportId);
+
+      const reports = await sql<any[]>`
+        select id, status, content_revision, title, summary, markdown, payload
+        from individual_reports
+        where tenant_id = ${fixture.tenantA} and partner_id = ${fixture.partnerA}
+          and period_id = ${periodId}
+      `;
+      expect(reports).toEqual([
+        {
+          id: reportId,
+          status: "REPORT_DRAFT",
+          content_revision: 1,
+          title: null,
+          summary: null,
+          markdown: null,
+          payload: null,
+        },
+      ]);
+    } finally {
+      await sql.begin(async (tx) => {
+        await tx`
+          delete from agent_jobs
+          where tenant_id = ${fixture.tenantA}
+            and input_payload->>'reportId' in (
+              select id::text from individual_reports where period_id = ${periodId}
+            )
+        `;
+        await tx`delete from individual_reports where period_id = ${periodId}`;
+        await tx`delete from work_item_snapshots where review_id = ${reviewId}`;
+        await tx`delete from work_items where review_id = ${reviewId}`;
+        await tx`delete from coverage_snapshots where id = ${coverageId}`;
+        await tx`delete from reviews where id = ${reviewId}`;
+        await tx`delete from report_periods where id = ${periodId}`;
+      });
+    }
+  });
+
+  it("does not let return or reopen overwrite a concurrently locked Report", async () => {
+    const verifyLockedReportWins = async (action: "return" | "reopen") => {
+      const periodId = randomUUID();
+      const reviewId = randomUUID();
+      const snapshotId = randomUUID();
+      const reportId = randomUUID();
+      let releaseReportLock!: () => void;
+      let reportLockAcquired!: () => void;
+      const releaseReportLockPromise = new Promise<void>((resolve) => {
+        releaseReportLock = resolve;
+      });
+      const reportLockAcquiredPromise = new Promise<void>((resolve) => {
+        reportLockAcquired = resolve;
+      });
+      let lockingTransaction: Promise<unknown> | undefined;
+
+      try {
+        await sql.begin(async (tx) => {
+          await tx`
+            insert into report_periods (
+              id, tenant_id, team_id, period_key, starts_at, ends_at,
+              cutoff_at, submission_deadline_at, timezone, status
+            ) values (
+              ${periodId}, ${fixture.tenantA}, ${fixture.teamA},
+              ${`report-lock-race-${periodId}`}, '2099-03-01T00:00:00Z',
+              '2099-03-07T23:59:59Z', '2099-03-07T12:00:00Z',
+              '2099-03-08T12:00:00Z', 'Asia/Shanghai', 'closed'
+            )
+          `;
+          await tx`
+            insert into reviews (
+              id, tenant_id, team_id, partner_id, period_id, state, version
+            ) values (
+              ${reviewId}, ${fixture.tenantA}, ${fixture.teamA},
+              ${fixture.partnerA}, ${periodId}, 'ITEMS_APPROVED', 1
+            )
+          `;
+          await tx`
+            insert into work_item_snapshots (
+              id, tenant_id, team_id, partner_id, period_id, review_id,
+              review_version, checksum, payload, approved_by_actor_type,
+              approved_by_actor_id, approved_at
+            ) values (
+              ${snapshotId}, ${fixture.tenantA}, ${fixture.teamA},
+              ${fixture.partnerA}, ${periodId}, ${reviewId}, 1,
+              ${`report-lock-race-${snapshotId}`},
+              '{"workItems":[],"coverage":{}}'::jsonb, 'user',
+              ${fixture.userA}, now()
+            )
+          `;
+          await tx`
+            insert into individual_reports (
+              id, tenant_id, team_id, partner_id, period_id, snapshot_id,
+              status, content_revision, title, summary, markdown, payload,
+              preferences, source_checksum, generator_version
+            ) values (
+              ${reportId}, ${fixture.tenantA}, ${fixture.teamA},
+              ${fixture.partnerA}, ${periodId}, ${snapshotId},
+              'REPORT_REVIEW', 1, '并发锁定测试', '并发锁定摘要',
+              '# 并发锁定测试', '{"sections":[]}'::jsonb, '{}'::jsonb,
+              ${`report-lock-race-${snapshotId}`}, 'synthetic-test/1.0'
+            )
+          `;
+        });
+
+        lockingTransaction = sql.begin(async (tx) => {
+          await tx`
+            select id from individual_reports
+            where id = ${reportId} and tenant_id = ${fixture.tenantA}
+            for update
+          `;
+          reportLockAcquired();
+          await releaseReportLockPromise;
+          await tx`
+            update individual_reports set
+              status = 'LOCKED', submitted_at = now(), locked_at = now(),
+              updated_at = now()
+            where id = ${reportId} and tenant_id = ${fixture.tenantA}
+          `;
+        });
+        await reportLockAcquiredPromise;
+
+        const responsePromise = app.inject(
+          action === "return"
+            ? {
+                method: "POST",
+                url: `/v1/individual-reports/${reportId}/return-to-items`,
+                headers,
+              }
+            : {
+                method: "POST",
+                url: `/v1/reviews/${reviewId}/reopen`,
+                headers,
+                payload: { baseVersion: 1 },
+              },
+        );
+        await waitForBlockedReportMutation();
+        releaseReportLock();
+        await lockingTransaction;
+        lockingTransaction = undefined;
+
+        const response = await responsePromise;
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toMatchObject({ code: "REPORT_LOCKED" });
+        const [reports, reviews] = await Promise.all([
+          sql<Array<{ status: string }>>`
+            select status from individual_reports where id = ${reportId}
+          `,
+          sql<Array<{ state: string; version: number }>>`
+            select state, version from reviews where id = ${reviewId}
+          `,
+        ]);
+        expect(reports).toEqual([{ status: "LOCKED" }]);
+        expect(reviews).toEqual([{ state: "ITEMS_APPROVED", version: 1 }]);
+      } finally {
+        releaseReportLock?.();
+        await lockingTransaction?.catch(() => undefined);
+        await sql.begin(async (tx) => {
+          await tx`delete from audit_events where tenant_id = ${fixture.tenantA} and target_id in (${reportId}, ${reviewId})`;
+          await tx`delete from outbox_events where tenant_id = ${fixture.tenantA} and aggregate_id in (${reportId}, ${reviewId})`;
+          await tx`delete from individual_reports where id = ${reportId}`;
+          await tx`delete from work_item_snapshots where id = ${snapshotId}`;
+          await tx`delete from reviews where id = ${reviewId}`;
+          await tx`delete from report_periods where id = ${periodId}`;
+        });
+      }
+    };
+
+    await verifyLockedReportWins("return");
+    await verifyLockedReportWins("reopen");
   });
 
   it("automatically queues an individual Report after the final Work Card decision", async () => {
@@ -841,7 +1286,7 @@ suite("tenant and role authorization", () => {
       });
       const createdReportId = String(decision.json().reportId);
       reportId = createdReportId;
-      const [reports, jobs, snapshots, workItemVersions] = await Promise.all([
+      const [reports, jobs, snapshots] = await Promise.all([
         sql<any[]>`
           select id, status, snapshot_id from individual_reports
           where id = ${createdReportId}
@@ -855,10 +1300,6 @@ suite("tenant and role authorization", () => {
           select payload from work_item_snapshots
           where id = ${decision.json().snapshotId}
         `,
-        sql<any[]>`
-          select id, version, change_type from work_item_versions
-          where work_item_id = ${workItemId}
-        `,
       ]);
       expect(reports).toMatchObject([{ id: reportId, status: "REPORT_DRAFT" }]);
       expect(jobs).toMatchObject([
@@ -868,8 +1309,8 @@ suite("tenant and role authorization", () => {
             workItems: [
               {
                 id: workItemId,
-                version: 2,
-                versionId: expect.any(String),
+                title: "自动生成个人报告",
+                review_status: "approved",
               },
             ],
           },
@@ -877,19 +1318,19 @@ suite("tenant and role authorization", () => {
       ]);
       expect(snapshots[0].payload.workItems[0]).toMatchObject({
         id: workItemId,
-        version: 2,
-        versionId: workItemVersions[0].id,
+        title: "自动生成个人报告",
+        status: "in_progress",
+        review_status: "approved",
+        payload: {
+          overview: "最后一张工作卡片完成审核。",
+        },
       });
-      expect(workItemVersions).toMatchObject([
-        { version: 2, change_type: "approve" },
-      ]);
     } finally {
       await sql.begin(async (tx) => {
         await tx`
           delete from agent_jobs where tenant_id = ${fixture.tenantA}
             and input_payload->>'reportId' = ${reportId ?? null}
         `;
-        await tx`delete from individual_report_versions where report_id = ${reportId ?? null}`;
         await tx`delete from individual_reports where id = ${reportId ?? null}`;
         await tx`delete from work_item_snapshots where review_id = ${reviewId}`;
         await tx`delete from coverage_snapshots where id = ${coverageId}`;

@@ -52,7 +52,7 @@
                       "minLength": 1,
                       "maxLength": 1000
                     },
-                    "individualReportVersionIds": {
+                    "individualReportIds": {
                       "type": "array",
                       "items": {
                         "type": "string",
@@ -63,7 +63,7 @@
                   },
                   "required": [
                     "claim",
-                    "individualReportVersionIds"
+                    "individualReportIds"
                   ],
                   "additionalProperties": false
                 },
@@ -88,7 +88,7 @@
         "missingPartnerIds": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/TeamReportResultV1/properties/sections/items/properties/claims/items/properties/individualReportVersionIds/items"
+            "$ref": "#/definitions/TeamReportResultV1/properties/sections/items/properties/claims/items/properties/individualReportIds/items"
           },
           "default": []
         },

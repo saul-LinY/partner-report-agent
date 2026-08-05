@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pluginConnectivityStatus, pluginRunStatus } from "./admin.js";
+import {
+  feishuBindingState,
+  feishuConnectionState,
+  feishuDeliveryState,
+  pluginConnectivityStatus,
+  pluginRunStatus,
+} from "./admin.js";
 
 const now = new Date("2026-08-02T09:00:00.000Z");
 const base = {
@@ -75,5 +81,71 @@ describe("Plugin Fleet status projection", () => {
         connectivityChallengeExpiresAt: new Date(now.getTime() + 60_000),
       }),
     ).toBe("failed");
+  });
+});
+
+describe("Feishu connection status projection", () => {
+  it("keeps binding state independent from delivery state", () => {
+    expect(
+      feishuBindingState({
+        enabled: false,
+        status: "active",
+        openIdPresent: true,
+      }),
+    ).toBe("disabled");
+    expect(
+      feishuBindingState({
+        enabled: true,
+        status: null,
+        openIdPresent: false,
+      }),
+    ).toBe("not_connected");
+    expect(
+      feishuBindingState({
+        enabled: true,
+        status: "pending",
+        openIdPresent: false,
+      }),
+    ).toBe("pending");
+    expect(
+      feishuBindingState({
+        enabled: true,
+        status: "active",
+        openIdPresent: true,
+      }),
+    ).toBe("connected");
+    expect(
+      feishuBindingState({
+        enabled: true,
+        status: "active",
+        openIdPresent: false,
+      }),
+    ).toBe("invalid");
+  });
+
+  it("projects successful, in-flight and failed deliveries", () => {
+    expect(feishuDeliveryState(null)).toBe("idle");
+    expect(feishuDeliveryState("sent")).toBe("healthy");
+    expect(feishuDeliveryState("confirmed")).toBe("healthy");
+    expect(feishuDeliveryState("sending")).toBe("sending");
+    expect(feishuDeliveryState("deferred")).toBe("deferred");
+    expect(feishuDeliveryState("retry_wait")).toBe("retrying");
+    expect(feishuDeliveryState("failed")).toBe("failed");
+    expect(feishuDeliveryState("unexpected")).toBe("unknown");
+  });
+
+  it("surfaces delivery problems before and after the Partner is bound", () => {
+    expect(feishuConnectionState("pending", "retrying")).toBe("delivery_error");
+    expect(feishuConnectionState("connected", "sending")).toBe(
+      "delivery_pending",
+    );
+    expect(feishuConnectionState("connected", "retrying")).toBe(
+      "delivery_error",
+    );
+    expect(feishuConnectionState("connected", "healthy")).toBe("connected");
+    expect(feishuConnectionState("connected", "unknown")).toBe(
+      "delivery_error",
+    );
+    expect(feishuConnectionState("disabled", "healthy")).toBe("disabled");
   });
 });

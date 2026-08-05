@@ -6,6 +6,7 @@ import {
   Check,
   ClipboardCheck,
   Copy,
+  FileText,
   KeyRound,
   Plus,
   RefreshCw,
@@ -13,7 +14,7 @@ import {
   Server,
   TriangleAlert,
 } from "lucide-react";
-import { api } from "./api.js";
+import { ApiClientError, api } from "./api.js";
 import { selectCurrentOpenPeriod } from "./period-selection.js";
 import {
   Badge,
@@ -24,10 +25,52 @@ import {
   Modal,
 } from "./components.js";
 
+type FeishuConnectionState =
+  | "disabled"
+  | "not_connected"
+  | "pending"
+  | "connected"
+  | "invalid"
+  | "delivery_pending"
+  | "delivery_error";
+
+type FeishuConnectionOverview = {
+  state: FeishuConnectionState;
+  bindingState:
+    "disabled" | "not_connected" | "pending" | "connected" | "invalid";
+  deliveryState:
+    | "idle"
+    | "pending"
+    | "sending"
+    | "healthy"
+    | "retrying"
+    | "failed"
+    | "deferred"
+    | "unknown";
+  verifiedAt: string | null;
+  lastDeliveryKind: string | null;
+  lastDeliveryStatus: string | null;
+  lastDeliveryAt: string | null;
+  lastErrorCode: string | null;
+  nextRetryAt: string | null;
+};
+
+type PartnerConnection = {
+  partnerId: string;
+  partnerName: string;
+  partnerEmail: string;
+  connectionState: string;
+  verifiedAt: string | null;
+  lastUploadAt: string | null;
+  deviceName: string | null;
+  version: string | null;
+  feishu?: FeishuConnectionOverview;
+};
+
 type Overview = {
   team: any;
   partners: any[];
-  connections: any[];
+  connections: PartnerConnection[];
   periods: any[];
   bindingCodes: any[];
   reviewQueue: any[];
@@ -51,6 +94,29 @@ const statusLabel: Record<string, string> = {
   failed: "连接测试失败",
   expired: "连接已失效",
   not_connected: "未连接",
+};
+
+const feishuStatusTone: Record<
+  FeishuConnectionState,
+  "success" | "warning" | "danger" | "neutral"
+> = {
+  disabled: "warning",
+  connected: "success",
+  pending: "warning",
+  delivery_pending: "warning",
+  delivery_error: "danger",
+  invalid: "danger",
+  not_connected: "neutral",
+};
+
+const feishuStatusLabel: Record<FeishuConnectionState, string> = {
+  disabled: "飞书 · 未启用",
+  connected: "飞书 · 已绑定",
+  pending: "飞书 · 待确认",
+  delivery_pending: "飞书 · 投递中",
+  delivery_error: "飞书 · 投递异常",
+  invalid: "飞书 · 绑定异常",
+  not_connected: "飞书 · 未接入",
 };
 
 export function AdminConsole() {
@@ -141,12 +207,13 @@ function Operations({ data }: { data: Overview }) {
       </div>
 
       <ScheduleSettings team={data.team} />
+      <ManualTeamReportGeneration periods={data.periods} />
 
       <section className="section-block">
         <div className="section-heading">
           <div>
             <h2>人员连接状态</h2>
-            <p>首次配置完成连接测试；之后以中台收到的实时上传为准</p>
+            <p>查看 Codex 插件上传与飞书机器人绑定状态</p>
           </div>
           <Button
             variant="secondary"
@@ -183,6 +250,17 @@ function Operations({ data }: { data: Overview }) {
                   <div className="plugin-state-badges">
                     <Badge tone={statusTone[connection.connectionState]}>
                       {statusLabel[connection.connectionState]}
+                    </Badge>
+                    <Badge
+                      tone={
+                        feishuStatusTone[
+                          connection.feishu?.state ?? "not_connected"
+                        ] ?? "neutral"
+                      }
+                    >
+                      {feishuStatusLabel[
+                        connection.feishu?.state ?? "not_connected"
+                      ] ?? "飞书 · 状态未知"}
                     </Badge>
                   </div>
                   <div>
@@ -262,6 +340,133 @@ function Operations({ data }: { data: Overview }) {
   );
 }
 
+function ManualTeamReportGeneration({ periods }: { periods: any[] }) {
+  const queryClient = useQueryClient();
+  const defaultPeriod =
+    selectCurrentOpenPeriod(periods) ??
+    [...periods].sort(
+      (left, right) =>
+        new Date(right.starts_at).getTime() -
+        new Date(left.starts_at).getTime(),
+    )[0];
+  const [periodId, setPeriodId] = useState(defaultPeriod?.id ?? "");
+  const [submittedPeriodIds, setSubmittedPeriodIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [notice, setNotice] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+  const generate = useMutation({
+    mutationFn: () =>
+      api("/v1/admin/team-reports/generate", {
+        method: "POST",
+        body: JSON.stringify({ periodId }),
+      }),
+    onSuccess: (result: any) => {
+      setSubmittedPeriodIds((current) => new Set(current).add(periodId));
+      setNotice({
+        title: "已提交生成",
+        message: result?.queued
+          ? "Team Report 已进入生成队列。"
+          : "Team Report 已经在生成队列中，请稍后查看。",
+      });
+      queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+      queryClient.invalidateQueries({ queryKey: ["team-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["report-archive"] });
+    },
+    onError: (error) => {
+      if (
+        error instanceof ApiClientError &&
+        ["TEAM_REPORT_EXISTS", "TEAM_REPORT_LOCKED"].includes(error.code)
+      ) {
+        setSubmittedPeriodIds((current) => new Set(current).add(periodId));
+        setNotice({
+          title: "该周期已有 Team Report",
+          message:
+            "当前周期已经存在 Team Report，请到 Team Report 页面查看或继续编辑现有报告。",
+        });
+      }
+    },
+  });
+  const selectedPeriod = periods.find((period) => period.id === periodId);
+  const alreadySubmitted = submittedPeriodIds.has(periodId);
+  return (
+    <section className="schedule-settings-band">
+      <div className="section-heading">
+        <div>
+          <h2>一键生成 Team Report</h2>
+          <p>选择周期后，使用该周期已最终确认的个人 Report 直接生成团队报告</p>
+        </div>
+        <FileText size={19} />
+      </div>
+      <div className="schedule-settings-grid">
+        <div className="schedule-setting">
+          <div className="schedule-setting-title">
+            <strong>生成周期</strong>
+            <span>
+              {selectedPeriod
+                ? `${formatFullTime(selectedPeriod.starts_at)} - ${formatFullTime(selectedPeriod.ends_at)}`
+                : "只会读取所选周期下已通过的个人 Report"}
+            </span>
+          </div>
+          <Field label="周期">
+            <select
+              value={periodId}
+              onChange={(event) => setPeriodId(event.target.value)}
+            >
+              {periods.map((period) => (
+                <option value={period.id} key={period.id}>
+                  {period.period_key}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <Button
+          variant="secondary"
+          icon={<FileText size={16} />}
+          loading={generate.isPending}
+          disabled={!periodId || alreadySubmitted}
+          onClick={() => generate.mutate()}
+        >
+          {alreadySubmitted ? "已提交生成" : "生成 Team Report"}
+        </Button>
+      </div>
+      <ErrorBanner
+        error={
+          generate.error instanceof ApiClientError &&
+          ["TEAM_REPORT_EXISTS", "TEAM_REPORT_LOCKED"].includes(
+            generate.error.code,
+          )
+            ? null
+            : generate.error
+        }
+      />
+      {notice && (
+        <Modal
+          title={notice.title}
+          onClose={() => setNotice(null)}
+          footer={
+            <Button variant="secondary" onClick={() => setNotice(null)}>
+              知道了
+            </Button>
+          }
+        >
+          <p>{notice.message}</p>
+          {selectedPeriod && (
+            <p>
+              周期：{selectedPeriod.period_key} ·{" "}
+              {formatFullTime(selectedPeriod.starts_at)} -{" "}
+              {formatFullTime(selectedPeriod.ends_at)}
+            </p>
+          )}
+        </Modal>
+      )}
+    </section>
+  );
+}
+
 function ScheduleSettings({ team }: { team: any }) {
   const queryClient = useQueryClient();
   const defaults = team.period_rule ?? {};
@@ -270,12 +475,6 @@ function ScheduleSettings({ team }: { team: any }) {
   );
   const [cutoffTime, setCutoffTime] = useState(
     defaults.factCutoffTime ?? "14:00",
-  );
-  const [teamReportDay, setTeamReportDay] = useState(
-    String(defaults.reportDeadlineWeekday ?? 1),
-  );
-  const [teamReportTime, setTeamReportTime] = useState(
-    defaults.reportDeadlineTime ?? "10:00",
   );
   const saveDefaults = useMutation({
     mutationFn: () =>
@@ -287,8 +486,6 @@ function ScheduleSettings({ team }: { team: any }) {
             weekStartsOn: 1,
             factCutoffWeekday: Number(cutoffDay),
             factCutoffTime: cutoffTime,
-            reportDeadlineWeekday: Number(teamReportDay),
-            reportDeadlineTime: teamReportTime,
           },
         }),
       }),
@@ -300,7 +497,10 @@ function ScheduleSettings({ team }: { team: any }) {
       <div className="section-heading">
         <div>
           <h2>报告生成时间</h2>
-          <p>分别控制工作卡片聚合与 Team Report 生成，时区为 Asia/Shanghai</p>
+          <p>
+            工作卡片按设定时间聚合，后续 Report 流程按审批自动推进，时区为
+            Asia/Shanghai
+          </p>
         </div>
         <CalendarClock size={19} />
       </div>
@@ -328,24 +528,12 @@ function ScheduleSettings({ team }: { team: any }) {
         </div>
         <div className="schedule-setting">
           <div className="schedule-setting-title">
-            <strong>Team Report 生成</strong>
-            <span>按届时已归档的个人 Report 生成团队报告</span>
+            <strong>自动生成链路</strong>
+            <span>
+              用户审批完工作卡片后生成个人 Report；全部个人 Report 通过后生成
+              Team Report
+            </span>
           </div>
-          <Field label="每周">
-            <select
-              value={teamReportDay}
-              onChange={(event) => setTeamReportDay(event.target.value)}
-            >
-              {weekdayOptions()}
-            </select>
-          </Field>
-          <Field label="开始时间">
-            <input
-              type="time"
-              value={teamReportTime}
-              onChange={(event) => setTeamReportTime(event.target.value)}
-            />
-          </Field>
         </div>
         <Button
           variant="secondary"

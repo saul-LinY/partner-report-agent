@@ -1,0 +1,1 @@
+ALTER TABLE "teams" ALTER COLUMN "period_rule" SET DEFAULT '{"frequency":"weekly","weekStartsOn":1,"factCutoffWeekday":5,"factCutoffTime":"14:00"}'::jsonb;

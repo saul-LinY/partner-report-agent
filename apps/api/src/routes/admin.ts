@@ -42,8 +42,6 @@ const teamUpdateSchema = z.object({
       weekStartsOn: z.number().int().min(1).max(7).default(1),
       factCutoffWeekday: z.number().int().min(1).max(7),
       factCutoffTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-      reportDeadlineWeekday: z.number().int().min(1).max(7),
-      reportDeadlineTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     })
     .optional(),
 });
@@ -75,7 +73,6 @@ const periodSchema = z
     startsAt: z.string().datetime({ offset: true }),
     endsAt: z.string().datetime({ offset: true }),
     cutoffAt: z.string().datetime({ offset: true }),
-    submissionDeadlineAt: z.string().datetime({ offset: true }),
     timezone: z.string().min(1).max(100),
     templateId: z.string().uuid().optional(),
     status: z
@@ -88,13 +85,6 @@ const periodSchema = z
         code: z.ZodIssueCode.custom,
         path: ["endsAt"],
         message: "endsAt 必须晚于 startsAt",
-      });
-    }
-    if (new Date(value.cutoffAt) >= new Date(value.submissionDeadlineAt)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["submissionDeadlineAt"],
-        message: "Team Report 生成时间必须晚于工作卡片聚合时间",
       });
     }
     try {
@@ -162,7 +152,63 @@ export function pluginRunStatus(row: {
 
 export const pluginHealth = pluginRunStatus;
 
+export type FeishuBindingState =
+  "disabled" | "not_connected" | "pending" | "connected" | "invalid";
+
+export type FeishuDeliveryState =
+  | "idle"
+  | "pending"
+  | "sending"
+  | "healthy"
+  | "retrying"
+  | "failed"
+  | "deferred"
+  | "unknown";
+
+export type FeishuConnectionState =
+  FeishuBindingState | "delivery_error" | "delivery_pending";
+
+export function feishuBindingState(row: {
+  enabled: boolean;
+  status: string | null;
+  openIdPresent: boolean;
+}): FeishuBindingState {
+  if (!row.enabled) return "disabled";
+  if (!row.status) return "not_connected";
+  if (row.status === "pending") return "pending";
+  if (row.status === "active" && row.openIdPresent) return "connected";
+  return "invalid";
+}
+
+export function feishuDeliveryState(
+  status: string | null,
+): FeishuDeliveryState {
+  if (!status) return "idle";
+  if (["sent", "confirmed"].includes(status)) return "healthy";
+  if (status === "retry_wait") return "retrying";
+  if (status === "failed") return "failed";
+  if (status === "pending") return "pending";
+  if (status === "sending") return "sending";
+  if (status === "deferred") return "deferred";
+  return "unknown";
+}
+
+export function feishuConnectionState(
+  binding: FeishuBindingState,
+  delivery: FeishuDeliveryState,
+): FeishuConnectionState {
+  if (["disabled", "not_connected", "invalid"].includes(binding))
+    return binding;
+  if (["retrying", "failed", "unknown"].includes(delivery))
+    return "delivery_error";
+  if (binding === "pending") return "pending";
+  if (["pending", "sending", "deferred"].includes(delivery))
+    return "delivery_pending";
+  return "connected";
+}
+
 export async function adminRoutes(app: FastifyInstance) {
+  const feishuAppId = process.env.FEISHU_APP_ID?.trim() || null;
   app.get("/v1/admin/overview", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const [
@@ -179,8 +225,39 @@ export async function adminRoutes(app: FastifyInstance) {
         any[]
       >`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
       sql<any[]>`
-        select p.id, p.display_name, p.email, p.status, p.preferences, p.user_id, p.created_at
+        select p.id, p.display_name, p.email, p.status, p.preferences, p.user_id, p.created_at,
+          fb.status as feishu_binding_status,
+          (fb.open_id is not null) as feishu_open_id_present,
+          fb.verified_at as feishu_verified_at,
+          fd.kind as feishu_delivery_kind,
+          fd.status as feishu_delivery_status,
+          fd.updated_at as feishu_delivery_updated_at,
+          fd.last_error_code as feishu_delivery_error_code,
+          fd.next_retry_at as feishu_delivery_next_retry_at
         from partners p
+        left join lateral (
+          select b.app_id, b.status, b.open_id, b.verified_at
+          from feishu_partner_bindings b
+          where b.tenant_id = p.tenant_id and b.team_id = p.team_id
+            and b.partner_id = p.id
+            and b.app_id = ${feishuAppId}
+          order by b.updated_at desc
+          limit 1
+        ) fb on true
+        left join lateral (
+          select d.kind, d.status, d.updated_at, d.last_error_code, d.next_retry_at
+          from feishu_deliveries d
+          where d.tenant_id = p.tenant_id and d.team_id = p.team_id
+            and d.partner_id = p.id
+            and split_part(d.idempotency_key, ':', 2) = fb.app_id
+          order by case
+            when d.status in ('retry_wait', 'failed') then 0
+            when d.status in ('pending', 'sending', 'deferred') then 1
+            when d.status in ('sent', 'confirmed') then 2
+            else 0
+          end, d.updated_at desc
+          limit 1
+        ) fd on fb.app_id is not null
         where p.team_id = ${actor.teamId} and p.tenant_id = ${actor.tenantId}
         order by p.display_name
       `,
@@ -270,7 +347,7 @@ export async function adminRoutes(app: FastifyInstance) {
         select r.id as review_id, r.state as review_state, r.version as review_version,
           r.pending_count, r.approved_count, r.excluded_count, r.updated_at,
           p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
-          rp.period_key, ir.id as report_id, ir.status as report_status, ir.current_version
+          rp.period_key, ir.id as report_id, ir.status as report_status, ir.content_revision
         from reviews r
         join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
         join report_periods rp on rp.id = r.period_id and rp.tenant_id = r.tenant_id
@@ -319,6 +396,12 @@ export async function adminRoutes(app: FastifyInstance) {
             : plugin.last_sync_at
               ? "active"
               : "connected";
+      const bindingState = feishuBindingState({
+        enabled: feishuAppId !== null,
+        status: partner.feishu_binding_status,
+        openIdPresent: partner.feishu_open_id_present === true,
+      });
+      const deliveryState = feishuDeliveryState(partner.feishu_delivery_status);
       return {
         partnerId: partner.id,
         partnerName: partner.display_name,
@@ -328,12 +411,32 @@ export async function adminRoutes(app: FastifyInstance) {
         lastUploadAt: plugin?.last_sync_at ?? null,
         deviceName: plugin?.device_name ?? null,
         version: plugin?.version ?? null,
+        feishu: {
+          state: feishuConnectionState(bindingState, deliveryState),
+          bindingState,
+          deliveryState,
+          verifiedAt: partner.feishu_verified_at ?? null,
+          lastDeliveryKind: partner.feishu_delivery_kind ?? null,
+          lastDeliveryStatus: partner.feishu_delivery_status ?? null,
+          lastDeliveryAt: partner.feishu_delivery_updated_at ?? null,
+          lastErrorCode: partner.feishu_delivery_error_code ?? null,
+          nextRetryAt: partner.feishu_delivery_next_retry_at ?? null,
+        },
       };
     });
+    const partners = partnerRows.map((partner) => ({
+      id: partner.id,
+      display_name: partner.display_name,
+      email: partner.email,
+      status: partner.status,
+      preferences: partner.preferences,
+      user_id: partner.user_id,
+      created_at: partner.created_at,
+    }));
 
     return {
       team: teamRows[0],
-      partners: partnerRows,
+      partners,
       periods: periodRows,
       projects: projectRows,
       connections,
@@ -595,7 +698,7 @@ export async function adminRoutes(app: FastifyInstance) {
       )
       values (
         ${id}, ${actor.tenantId}, ${actor.teamId}, ${input.periodKey}, ${input.startsAt}, ${input.endsAt},
-        ${input.cutoffAt}, ${input.submissionDeadlineAt}, ${input.timezone}, ${input.status}, ${input.templateId ?? null}
+        ${input.cutoffAt}, ${input.cutoffAt}, ${input.timezone}, ${input.status}, ${input.templateId ?? null}
       ) returning *
     `;
     await audit(request, actor, "report_period.created", "report_period", id, {
@@ -618,7 +721,6 @@ export async function adminRoutes(app: FastifyInstance) {
         ]),
         templateId: z.string().uuid().nullable().optional(),
         cutoffAt: z.string().datetime({ offset: true }).optional(),
-        submissionDeadlineAt: z.string().datetime({ offset: true }).optional(),
       })
       .parse(request.body);
     if (input.templateId) {
@@ -634,7 +736,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const rows = await sql<any[]>`
       update report_periods set status = ${input.status},
         cutoff_at = coalesce(${input.cutoffAt ?? null}, cutoff_at),
-        submission_deadline_at = coalesce(${input.submissionDeadlineAt ?? null}, submission_deadline_at),
+        submission_deadline_at = coalesce(${input.cutoffAt ?? null}, submission_deadline_at),
         template_id = case when ${input.templateId === undefined} then template_id else ${input.templateId ?? null} end,
         updated_at = now()
       where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}

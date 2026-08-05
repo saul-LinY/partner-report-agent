@@ -27,7 +27,7 @@ type Version = {
 };
 
 type Detail = {
-  report: TeamReportSummary & { submission_deadline_at: string };
+  report: TeamReportSummary;
   current: Version | null;
   versions: Version[];
 };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -11,12 +11,11 @@ import {
 import ReactMarkdown from "react-markdown";
 import { useLocation, useRoute } from "wouter";
 import { api } from "./api.js";
-import { Badge, Button, ErrorBanner, Field } from "./components.js";
+import { Button, ErrorBanner, Field } from "./components.js";
 
 type ReportData = {
   report: any;
   current: any | null;
-  versions: any[];
 };
 
 const statusLabels: Record<string, string> = {
@@ -32,7 +31,6 @@ export function ReportPage() {
   const reportId = params?.reportId ?? "";
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [instruction, setInstruction] = useState("");
   const query = useQuery({
     queryKey: ["report", reportId],
@@ -41,15 +39,14 @@ export function ReportPage() {
       state.state.data?.report.status === "REPORT_DRAFT" ? 3_000 : false,
   });
 
-  useEffect(() => {
-    if (query.data?.current) setSelectedVersion(query.data.current.version);
-  }, [query.data?.current?.version]);
-
   const regenerate = useMutation({
     mutationFn: () =>
       api(`/v1/individual-reports/${reportId}/regenerate`, {
         method: "POST",
-        body: JSON.stringify({ instruction: instruction.trim() }),
+        body: JSON.stringify({
+          instruction: instruction.trim(),
+          contentRevision: query.data!.report.content_revision,
+        }),
       }),
     onSuccess: async () => {
       setInstruction("");
@@ -62,7 +59,7 @@ export function ReportPage() {
       api(`/v1/individual-reports/${reportId}/submit`, {
         method: "POST",
         body: JSON.stringify({
-          baseVersion: query.data!.report.current_version,
+          contentRevision: query.data!.report.content_revision,
         }),
       }),
     onSuccess: async () => {
@@ -101,12 +98,9 @@ export function ReportPage() {
     );
 
   const data = query.data!;
-  const viewing =
-    data.versions.find((version) => version.version === selectedVersion) ??
-    data.current;
+  const viewing = data.current;
   const isLocked = data.report.status === "LOCKED";
-  const isCurrent = viewing?.version === data.report.current_version;
-  const canReview = data.report.status === "REPORT_REVIEW" && isCurrent;
+  const canReview = data.report.status === "REPORT_REVIEW";
 
   return (
     <div className="page report-page">
@@ -114,10 +108,7 @@ export function ReportPage() {
         <div>
           <span className="eyebrow">PERSONAL REPORT REVIEW</span>
           <h1>{viewing?.title ?? "个人 Report"}</h1>
-          <p>
-            {statusLabels[data.report.status] ?? data.report.status}
-            {viewing ? ` · v${viewing.version}` : ""}
-          </p>
+          <p>{statusLabels[data.report.status] ?? data.report.status}</p>
         </div>
         <div className="header-actions">
           {data.current && (
@@ -156,41 +147,8 @@ export function ReportPage() {
         </section>
       ) : (
         <>
-          <div className="report-layout">
-            <aside className="report-versions">
-              <div className="section-heading">
-                <div>
-                  <h2>版本</h2>
-                  <p>{data.versions.length} 个版本</p>
-                </div>
-              </div>
-              {data.versions.map((version) => (
-                <button
-                  key={version.id}
-                  className={
-                    viewing?.version === version.version ? "active" : ""
-                  }
-                  onClick={() => setSelectedVersion(version.version)}
-                >
-                  <span>
-                    <strong>v{version.version}</strong>
-                    {version.version === data.report.current_version && (
-                      <Badge tone="info">当前</Badge>
-                    )}
-                  </span>
-                  <time>
-                    {new Date(version.created_at).toLocaleString("zh-CN")}
-                  </time>
-                </button>
-              ))}
-            </aside>
+          <div className="report-layout report-layout-current">
             <article className="report-document">
-              {!isCurrent && (
-                <div className="version-notice">
-                  <FileClock size={17} />
-                  正在查看历史版本 v{viewing.version}
-                </div>
-              )}
               {isLocked && (
                 <div className="locked-notice">
                   <CheckCircle2 size={18} />

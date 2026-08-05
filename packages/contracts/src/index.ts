@@ -207,7 +207,7 @@ export const individualReportResultSchema: z.ZodTypeAny = z.object({
 
 export const teamReportClaimSchema: z.ZodTypeAny = z.object({
   claim: z.string().min(1).max(1000),
-  individualReportVersionIds: z.array(idSchema).min(1),
+  individualReportIds: z.array(idSchema).min(1),
 });
 
 export const teamReportSectionSchema: z.ZodTypeAny = z.object({

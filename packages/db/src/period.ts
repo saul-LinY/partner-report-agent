@@ -12,8 +12,6 @@ export type WeeklyPeriodRule = {
   weekStartsOn?: number;
   factCutoffWeekday?: number;
   factCutoffTime?: string;
-  reportDeadlineWeekday?: number;
-  reportDeadlineTime?: string;
 };
 
 export const DEFAULT_WEEKLY_PERIOD_RULE: Required<WeeklyPeriodRule> = {
@@ -21,8 +19,6 @@ export const DEFAULT_WEEKLY_PERIOD_RULE: Required<WeeklyPeriodRule> = {
   weekStartsOn: 1,
   factCutoffWeekday: 5,
   factCutoffTime: "14:00",
-  reportDeadlineWeekday: 1,
-  reportDeadlineTime: "10:00",
 };
 
 function partsInZone(date: Date, timezone: string): DateParts {
@@ -107,7 +103,6 @@ export function weeklyPeriodAt(
 ) {
   const rule = { ...DEFAULT_WEEKLY_PERIOD_RULE, ...configured };
   const cutoffClock = clock(rule.factCutoffTime, "14:00");
-  const deadlineClock = clock(rule.reportDeadlineTime, "10:00");
   const local = partsInZone(now, timezone);
   const localDate = new Date(Date.UTC(local.year, local.month - 1, local.day));
   const day = localDate.getUTCDay() || 7;
@@ -120,19 +115,6 @@ export function weeklyPeriodAt(
     localDate.setUTCDate(localDate.getUTCDate() - 7);
   }
   const nextCutoffDate = new Date(localDate.getTime() + 7 * 86_400_000);
-  let deadlineDays =
-    (rule.reportDeadlineWeekday - rule.factCutoffWeekday + 7) % 7;
-  if (
-    deadlineDays === 0 &&
-    (deadlineClock.hour < cutoffClock.hour ||
-      (deadlineClock.hour === cutoffClock.hour &&
-        deadlineClock.minute <= cutoffClock.minute))
-  ) {
-    deadlineDays = 7;
-  }
-  const deadlineDate = new Date(
-    nextCutoffDate.getTime() + deadlineDays * 86_400_000,
-  );
   const startsAt = zonedDate(
     {
       year: localDate.getUTCFullYear(),
@@ -155,22 +137,12 @@ export function weeklyPeriodAt(
     },
     timezone,
   );
-  const submissionDeadlineAt = zonedDate(
-    {
-      year: deadlineDate.getUTCFullYear(),
-      month: deadlineDate.getUTCMonth() + 1,
-      day: deadlineDate.getUTCDate(),
-      hour: deadlineClock.hour,
-      minute: deadlineClock.minute,
-      second: 0,
-    },
-    timezone,
-  );
   return {
     periodKey: isoWeekKey(localDate),
     startsAt,
     endsAt,
     cutoffAt: endsAt,
-    submissionDeadlineAt,
+    // Kept as a storage compatibility value; Team Report generation is approval-driven.
+    submissionDeadlineAt: endsAt,
   };
 }

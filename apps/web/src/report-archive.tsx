@@ -16,7 +16,6 @@ import { Badge, EmptyState, ErrorBanner, Field } from "./components.js";
 type ArchivedReport = {
   id: string;
   period_key: string;
-  current_version: number;
   title: string;
   summary: string;
   locked_at: string;
@@ -31,15 +30,12 @@ type ArchivedReport = {
 type ArchiveDetail = {
   report: ArchivedReport;
   current: any;
-  versions: any[];
   workItemSnapshot: any;
   workItems: any[];
 };
 
 type FinalWorkItem = {
   id: string;
-  versionId: string;
-  version: number;
   title: string;
   status: string;
   reviewStatus: string;
@@ -48,19 +44,20 @@ type FinalWorkItem = {
   createdAt: string;
 };
 
-type FinalReport = {
+type FinalIndividualReport = {
   id: string;
-  version: number;
   title: string;
   summary: string;
   lockedAt: string;
 };
 
+type FinalTeamReport = FinalIndividualReport & { version: number };
+
 type ArchivePerson = {
   id: string;
   name: string;
   email: string;
-  individualReport: FinalReport;
+  individualReport: FinalIndividualReport;
   workItems: FinalWorkItem[];
 };
 
@@ -70,7 +67,7 @@ type ArchivePeriod = {
   startsAt: string;
   endsAt: string;
   people: ArchivePerson[];
-  teamReport: FinalReport | null;
+  teamReport: FinalTeamReport | null;
 };
 
 type ReportArchive = { periods: ArchivePeriod[] };
@@ -218,7 +215,7 @@ function ArchiveList() {
                       <div className="archive-content-heading">
                         <FolderKanban size={17} />
                         <h3>工作卡片</h3>
-                        <span>最终确认版本</span>
+                        <span>最终确认结果</span>
                       </div>
                       {person.workItems.length > 0 ? (
                         <div className="archive-work-item-list">
@@ -240,7 +237,6 @@ function ArchiveList() {
                                   {reviewLabel(item.reviewStatus)}
                                 </Badge>
                                 <span>{statusLabel(item.status)}</span>
-                                <span>v{item.version}</span>
                               </div>
                             </button>
                           ))}
@@ -256,9 +252,7 @@ function ArchiveList() {
                       <div className="archive-content-heading">
                         <FileStack size={17} />
                         <h3>个人 Report</h3>
-                        <Badge tone="success">
-                          最终 v{person.individualReport.version}
-                        </Badge>
+                        <Badge tone="success">已确认</Badge>
                       </div>
                       <button
                         onClick={() =>
@@ -269,7 +263,7 @@ function ArchiveList() {
                       >
                         <strong>{person.individualReport.title}</strong>
                         <p>{person.individualReport.summary}</p>
-                        <span>查看报告与历史版本</span>
+                        <span>查看最终报告</span>
                       </button>
                     </section>
                   </div>
@@ -327,17 +321,9 @@ function IndividualArchiveDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
   const initialParams = new URLSearchParams(window.location.search);
   const isWorkItemDetail = initialParams.get("view") === "work-items";
-  const initialReportVersion = Number(initialParams.get("reportVersion"));
-  const initialWorkItemVersion = Number(initialParams.get("workItemVersion"));
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(
-    initialReportVersion > 0 ? initialReportVersion : null,
-  );
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(
     initialParams.get("workItem"),
   );
-  const [selectedWorkItemVersion, setSelectedWorkItemVersion] = useState<
-    number | null
-  >(initialWorkItemVersion > 0 ? initialWorkItemVersion : null);
   const query = useQuery({
     queryKey: ["archived-individual-report", id],
     queryFn: () => api<ArchiveDetail>(`/v1/admin/individual-reports/${id}`),
@@ -356,24 +342,11 @@ function IndividualArchiveDetail({ id }: { id: string }) {
       </div>
     );
   const data = query.data!;
-  const viewing =
-    data.versions.find((version) => version.version === selectedVersion) ??
-    data.current;
   const selectedWorkItem =
     data.workItems.find((item) => item.id === selectedWorkItemId) ??
     data.workItems[0];
-  const viewingWorkItem =
-    selectedWorkItem?.versions.find(
-      (version: any) => version.version === selectedWorkItemVersion,
-    ) ?? selectedWorkItem?.versions[0];
-  const linkedWorkItems = data.workItems.flatMap((item) =>
-    item.versions
-      .filter((version: any) =>
-        version.report_versions.some(
-          (link: any) => link.reportVersion === viewing.version,
-        ),
-      )
-      .map((version: any) => ({ item, version })),
+  const linkedWorkItems = data.workItems.filter(
+    (item) => item.includedInReport,
   );
   return (
     <div className="page admin-page">
@@ -386,8 +359,8 @@ function IndividualArchiveDetail({ id }: { id: string }) {
           <p>
             {data.report.period_key} ·{" "}
             {isWorkItemDetail
-              ? "工作卡片最终确认版本"
-              : `个人 Report 最终版本 v${data.report.current_version}`}
+              ? "工作卡片最终确认结果"
+              : "个人 Report 最终确认结果"}
           </p>
         </div>
         <div className="header-actions archive-detail-actions">
@@ -397,61 +370,36 @@ function IndividualArchiveDetail({ id }: { id: string }) {
         </div>
       </header>
       {!isWorkItemDetail ? (
-        <div className="report-layout">
-          <aside className="report-versions">
-            <div className="section-heading">
-              <div>
-                <h2>Report 版本</h2>
-              </div>
-            </div>
-            {data.versions.map((version) => (
-              <button
-                key={version.id}
-                className={viewing.version === version.version ? "active" : ""}
-                onClick={() => setSelectedVersion(version.version)}
-              >
-                <span>
-                  <strong>v{version.version}</strong>
-                  {version.version === data.report.current_version && (
-                    <Badge tone="success">最终</Badge>
-                  )}
-                </span>
-                <time>
-                  {new Date(version.created_at).toLocaleString("zh-CN")}
-                </time>
-              </button>
-            ))}
-          </aside>
+        <div className="report-layout report-layout-current">
           <article className="report-document">
             <div className="report-source-cards">
               <span>
                 <GitBranch size={15} /> 来源工作卡片
               </span>
               <div>
-                {linkedWorkItems.map(({ item, version }) => (
+                {linkedWorkItems.map((item) => (
                   <button
-                    key={version.id}
+                    key={item.id}
                     onClick={() => {
                       setSelectedWorkItemId(item.id);
-                      setSelectedWorkItemVersion(version.version);
                       navigate(
-                        `/admin/reports/individual/${id}?view=work-items&workItem=${item.id}&workItemVersion=${version.version}`,
+                        `/admin/reports/individual/${id}?view=work-items&workItem=${item.id}`,
                       );
                     }}
                   >
-                    {item.title} <strong>v{version.version}</strong>
+                    {item.title}
                   </button>
                 ))}
               </div>
             </div>
-            <h1>{viewing.title}</h1>
-            <p className="report-lede">{viewing.summary}</p>
-            <ReactMarkdown>{viewing.markdown}</ReactMarkdown>
+            <h1>{data.current.title}</h1>
+            <p className="report-lede">{data.current.summary}</p>
+            <ReactMarkdown>{data.current.markdown}</ReactMarkdown>
           </article>
         </div>
       ) : (
-        <div className="report-layout work-item-history-layout">
-          <aside className="report-versions work-item-history-list">
+        <div className="report-layout work-item-archive-layout">
+          <aside className="report-side-list work-item-archive-list">
             <div className="section-heading">
               <div>
                 <h2>工作卡片</h2>
@@ -462,92 +410,60 @@ function IndividualArchiveDetail({ id }: { id: string }) {
                 key={item.id}
                 title={item.title}
                 className={selectedWorkItem?.id === item.id ? "active" : ""}
-                onClick={() => {
-                  setSelectedWorkItemId(item.id);
-                  setSelectedWorkItemVersion(null);
-                }}
+                onClick={() => setSelectedWorkItemId(item.id)}
               >
                 <span>
                   <strong>{item.title}</strong>
-                  <Badge tone={item.includedInReport ? "success" : "neutral"}>
-                    {item.includedInReport ? "已关联" : "已忽略"}
-                  </Badge>
+                  <Badge tone="success">已采用</Badge>
                 </span>
-                <time>{item.versions.length} 个版本</time>
               </button>
             ))}
           </aside>
-          {viewingWorkItem ? (
-            <article className="report-document work-item-history-document">
-              <div className="work-item-version-tabs">
-                {selectedWorkItem.versions.map((version: any) => (
-                  <button
-                    key={version.id}
-                    className={
-                      viewingWorkItem.version === version.version
-                        ? "active"
-                        : ""
-                    }
-                    onClick={() => setSelectedWorkItemVersion(version.version)}
-                  >
-                    v{version.version}
-                  </button>
-                ))}
-              </div>
-              <div className="work-item-version-meta">
-                <Badge tone={reviewTone(viewingWorkItem.review_status)}>
-                  {reviewLabel(viewingWorkItem.review_status)}
+          {selectedWorkItem ? (
+            <article className="report-document work-item-archive-document">
+              <div className="work-item-archive-meta">
+                <Badge tone={reviewTone(selectedWorkItem.reviewStatus)}>
+                  {reviewLabel(selectedWorkItem.reviewStatus)}
                 </Badge>
-                <span>{statusLabel(viewingWorkItem.status)}</span>
-                <span>{changeLabel(viewingWorkItem.change_type)}</span>
+                <span>{statusLabel(selectedWorkItem.status)}</span>
                 <time>
-                  {new Date(viewingWorkItem.created_at).toLocaleString("zh-CN")}
+                  {new Date(selectedWorkItem.createdAt).toLocaleString("zh-CN")}
                 </time>
               </div>
-              <h1>{viewingWorkItem.title}</h1>
+              <h1>{selectedWorkItem.title}</h1>
               <p className="report-lede">
-                {viewingWorkItem.payload.overview ??
-                  viewingWorkItem.payload.summary ??
+                {selectedWorkItem.payload.overview ??
+                  selectedWorkItem.payload.summary ??
                   "暂无总览"}
               </p>
-              {(viewingWorkItem.payload.dailyProgress ?? []).length > 0 && (
+              {(selectedWorkItem.payload.dailyProgress ?? []).length > 0 && (
                 <section className="archived-daily-progress">
                   <h2>每日进展</h2>
                   <ol>
-                    {viewingWorkItem.payload.dailyProgress.map((entry: any) => (
-                      <li key={entry.date}>
-                        <time>{entry.date}</time>
-                        <p>{entry.summary}</p>
-                      </li>
-                    ))}
+                    {selectedWorkItem.payload.dailyProgress.map(
+                      (entry: any) => (
+                        <li key={entry.date}>
+                          <time>{entry.date}</time>
+                          <p>{entry.summary}</p>
+                        </li>
+                      ),
+                    )}
                   </ol>
                 </section>
               )}
               <section className="work-item-report-links">
-                <h2>对应个人 Report 版本</h2>
-                {viewingWorkItem.report_versions.length > 0 ? (
-                  <div>
-                    {viewingWorkItem.report_versions.map((link: any) => (
-                      <button
-                        key={link.reportVersionId}
-                        onClick={() => {
-                          setSelectedVersion(link.reportVersion);
-                          navigate(
-                            `/admin/reports/individual/${id}?reportVersion=${link.reportVersion}`,
-                          );
-                        }}
-                      >
-                        Report v{link.reportVersion}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p>这个工作卡片版本未被个人 Report 采用。</p>
-                )}
+                <h2>对应个人 Report</h2>
+                <div>
+                  <button
+                    onClick={() => navigate(`/admin/reports/individual/${id}`)}
+                  >
+                    {data.current.title}
+                  </button>
+                </div>
               </section>
             </article>
           ) : (
-            <EmptyState title="没有工作卡片版本" />
+            <EmptyState title="没有工作卡片" />
           )}
         </div>
       )}
@@ -585,23 +501,6 @@ function statusLabel(value: string) {
         completed: "已完成",
         blocked: "阻塞",
         cancelled: "取消",
-      } as Record<string, string>
-    )[value] ?? value
-  );
-}
-
-function changeLabel(value: string) {
-  return (
-    (
-      {
-        generated: "中台生成",
-        regenerated: "重新生成",
-        regeneration_requested: "申请重新生成",
-        approve: "审核接受",
-        exclude: "审核忽略",
-        review_completed: "完成审核",
-        migration_snapshot: "历史快照",
-        migration_current: "升级前版本",
       } as Record<string, string>
     )[value] ?? value
   );

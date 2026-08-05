@@ -2,23 +2,28 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { FastifyRequest } from "fastify";
 import { sqlClient as sql } from "@partner-report/db";
 
-export type WebActor = {
-  type: "user";
-  userId: string;
+export type DomainActor = {
+  actorType: string;
+  actorId: string;
+  userId: string | null;
   tenantId: string;
   teamId: string;
   partnerId: string | null;
+};
+
+export type WebActor = DomainActor & {
+  type: "user";
+  userId: string;
   roles: string[];
   email: string;
   displayName: string;
 };
 
-export type PluginActor = {
+export type PluginActor = DomainActor & {
   type: "plugin";
   pluginInstanceId: string;
-  tenantId: string;
-  teamId: string;
   partnerId: string;
+  userId: null;
   status: string;
   version: string;
 };
@@ -28,7 +33,7 @@ export class ApiError extends Error {
     public readonly statusCode: number,
     public readonly code: string,
     message: string,
-    public readonly details?: unknown
+    public readonly details?: unknown,
   ) {
     super(message);
   }
@@ -48,7 +53,7 @@ function sortObject(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, sortObject(nested)])
+        .map(([key, nested]) => [key, sortObject(nested)]),
     );
   }
   return value;
@@ -61,18 +66,29 @@ export function randomToken(bytes = 32) {
 export function userCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const bytes = randomBytes(8);
-  const left = Array.from(bytes.subarray(0, 4), (byte) => alphabet[byte % alphabet.length]).join("");
-  const right = Array.from(bytes.subarray(4), (byte) => alphabet[byte % alphabet.length]).join("");
+  const left = Array.from(
+    bytes.subarray(0, 4),
+    (byte) => alphabet[byte % alphabet.length],
+  ).join("");
+  const right = Array.from(
+    bytes.subarray(4),
+    (byte) => alphabet[byte % alphabet.length],
+  ).join("");
   return `${left}-${right}`;
 }
 
-export async function requireWebActor(request: FastifyRequest, role?: "admin" | "partner") {
+export async function requireWebActor(
+  request: FastifyRequest,
+  role?: "admin" | "partner",
+) {
   const token = request.cookies.pra_session;
   if (!token) throw new ApiError(401, "UNAUTHENTICATED", "请先登录。");
 
   const rows = await sql<WebActor[]>`
     select
       'user' as type,
+      'user' as "actorType",
+      u.id as "actorId",
       u.id as "userId",
       m.tenant_id as "tenantId",
       m.team_id as "teamId",
@@ -90,7 +106,8 @@ export async function requireWebActor(request: FastifyRequest, role?: "admin" | 
     limit 1
   `;
   const actor = rows[0];
-  if (!actor) throw new ApiError(401, "UNAUTHENTICATED", "登录已过期，请重新登录。");
+  if (!actor)
+    throw new ApiError(401, "UNAUTHENTICATED", "登录已过期，请重新登录。");
   if (role && !actor.roles.includes(role)) {
     if (!(role === "partner" && actor.roles.includes("admin"))) {
       throw new ApiError(403, "FORBIDDEN", "当前账号没有此操作权限。");
@@ -107,7 +124,11 @@ export async function requireWebActor(request: FastifyRequest, role?: "admin" | 
         limit 1
       `;
       if (!partners[0]) {
-        throw new ApiError(403, "PARTNER_SCOPE_INVALID", "模拟审核的 Partner 不属于当前 Team。");
+        throw new ApiError(
+          403,
+          "PARTNER_SCOPE_INVALID",
+          "模拟审核的 Partner 不属于当前 Team。",
+        );
       }
       actor.partnerId = partners[0].id;
     }
@@ -126,6 +147,9 @@ export async function requirePluginActor(request: FastifyRequest) {
   const rows = await sql<PluginActor[]>`
     select
       'plugin' as type,
+      'plugin' as "actorType",
+      id as "actorId",
+      null::uuid as "userId",
       id as "pluginInstanceId",
       tenant_id as "tenantId",
       team_id as "teamId",
@@ -139,31 +163,54 @@ export async function requirePluginActor(request: FastifyRequest) {
   `;
   const actor = rows[0];
   if (!actor || actor.status !== "active") {
-    throw new ApiError(401, "PLUGIN_BINDING_INVALID", "Plugin 绑定已过期或被撤销。");
+    throw new ApiError(
+      401,
+      "PLUGIN_BINDING_INVALID",
+      "Plugin 绑定已过期或被撤销。",
+    );
   }
   return actor;
 }
 
 export async function audit(
   request: FastifyRequest,
-  actor: WebActor | PluginActor,
+  actor: DomainActor,
   action: string,
   targetType: string,
   targetId: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+) {
+  return auditWithRequestId(
+    request.id,
+    actor,
+    action,
+    targetType,
+    targetId,
+    metadata,
+  );
+}
+
+export async function auditWithRequestId(
+  requestId: string,
+  actor: DomainActor,
+  action: string,
+  targetType: string,
+  targetId: string,
+  metadata: Record<string, unknown> = {},
 ) {
   await sql`
     insert into audit_events (
       id, tenant_id, team_id, actor_type, actor_id, action,
       target_type, target_id, request_id, metadata
     ) values (
-      ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.type},
-      ${actor.type === "user" ? actor.userId : actor.pluginInstanceId},
-      ${action}, ${targetType}, ${targetId}, ${request.id}, ${JSON.stringify(metadata)}::jsonb
+      ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.actorType},
+      ${actor.actorId},
+      ${action}, ${targetType}, ${targetId}, ${requestId}, ${JSON.stringify(metadata)}::jsonb
     )
   `;
 }
 
 export function assertTenant(actual: string, expected: string) {
-  if (actual !== expected) throw new ApiError(403, "TENANT_MISMATCH", "资源不属于当前租户。");
+  if (actual !== expected)
+    throw new ApiError(403, "TENANT_MISMATCH", "资源不属于当前租户。");
 }

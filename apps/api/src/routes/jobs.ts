@@ -157,35 +157,28 @@ async function applyReport(job: any, output: unknown) {
       }
     }
   }
-  const reportRows = await sql<
-    any[]
-  >`select * from individual_reports where id = ${reportId} and tenant_id = ${job.tenant_id}`;
-  const report = reportRows[0];
-  if (!report || ["SUBMITTED", "LOCKED"].includes(report.status)) {
-    throw new ApiError(409, "REPORT_NOT_EDITABLE", "Report 已提交或不存在。");
-  }
-  const version = report.current_version + 1;
   await sql.begin(async (tx) => {
-    await tx`
-      insert into individual_report_versions (
-        id, tenant_id, report_id, version, title, summary, markdown, payload,
-        preferences, source_checksum, generator_version
-      ) values (
-        ${randomUUID()}, ${job.tenant_id}, ${reportId}, ${version}, ${result.title}, ${result.summary},
-        ${result.markdown}, ${JSON.stringify(result)}::jsonb,
-        ${JSON.stringify(job.input_payload.preferences ?? {})}::jsonb,
-        ${job.input_payload.sourceChecksum}, ${job.input_payload.generatorVersion ?? "partner-report-sync/0.1.0"}
-      )
-    `;
-    await tx`
-      update individual_reports set status = 'REPORT_REVIEW', current_version = ${version}, updated_at = now()
+    const updated = await tx<{ content_revision: number }[]>`
+      update individual_reports set
+        status = 'REPORT_REVIEW', content_revision = content_revision + 1,
+        title = ${result.title}, summary = ${result.summary},
+        markdown = ${result.markdown}, payload = ${JSON.stringify(result)}::jsonb,
+        preferences = ${JSON.stringify(job.input_payload.preferences ?? {})}::jsonb,
+        source_checksum = ${job.input_payload.sourceChecksum},
+        generator_version = ${job.input_payload.generatorVersion ?? "partner-report-sync/0.1.0"},
+        updated_at = now()
       where id = ${reportId} and tenant_id = ${job.tenant_id}
+        and status not in ('SUBMITTED', 'LOCKED')
+        and (source_checksum = ${job.input_payload.sourceChecksum} or source_checksum is null)
+      returning content_revision
     `;
+    if (!updated[0])
+      throw new ApiError(409, "REPORT_NOT_EDITABLE", "Report 已提交或不存在。");
     await tx`
       insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
       values (
         ${randomUUID()}, ${job.tenant_id}, 'individual_report.draft.created', 'individual_report', ${reportId},
-        ${JSON.stringify({ version, warnings: result.qualityWarnings })}::jsonb
+        ${JSON.stringify({ contentRevision: updated[0].content_revision, warnings: result.qualityWarnings })}::jsonb
       )
     `;
   });

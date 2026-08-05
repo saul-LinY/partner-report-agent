@@ -6,7 +6,13 @@ import {
   workStatusSchema,
 } from "@partner-report/contracts";
 import { sqlClient as sql } from "@partner-report/db";
-import { ApiError, audit, requireWebActor, stableJsonHash } from "../common.js";
+import {
+  ApiError,
+  audit,
+  type DomainActor,
+  requireWebActor,
+  stableJsonHash,
+} from "../common.js";
 
 type WorkItemRow = {
   id: string;
@@ -15,7 +21,6 @@ type WorkItemRow = {
   title: string;
   status: string;
   review_status: string;
-  version: number;
   fact_ids: string[];
   payload: Record<string, any>;
   lineage: Record<string, any>;
@@ -82,12 +87,11 @@ function patchWorkItem(item: WorkItemRow, operation: string, value: unknown) {
     default:
       break;
   }
-  after.version += 1;
   return after;
 }
 
 async function loadReview(
-  actor: { tenantId: string; partnerId: string | null },
+  actor: Pick<DomainActor, "tenantId" | "partnerId">,
   reviewId: string,
 ) {
   if (!actor.partnerId)
@@ -106,7 +110,34 @@ async function loadReview(
   return review;
 }
 
-async function recalculateReview(tx: any, reviewId: string) {
+async function loadReviewForUpdate(
+  tx: any,
+  actor: Pick<DomainActor, "tenantId" | "partnerId">,
+  reviewId: string,
+) {
+  if (!actor.partnerId)
+    throw new ApiError(
+      403,
+      "PARTNER_REQUIRED",
+      "当前账号没有 Partner Profile。",
+    );
+  const rows = await tx<any[]>`
+    select * from reviews
+    where id = ${reviewId} and tenant_id = ${actor.tenantId}
+      and partner_id = ${actor.partnerId}
+    for update
+  `;
+  const review = rows[0];
+  if (!review) throw new ApiError(404, "REVIEW_NOT_FOUND", "Review 不存在。");
+  return review;
+}
+
+async function recalculateReview(
+  tx: any,
+  actor: Pick<DomainActor, "tenantId">,
+  reviewId: string,
+  expectedVersion?: number,
+) {
   const counts = await tx<any[]>`
     select
       count(*) filter (where review_status = 'approved')::int as approved,
@@ -115,71 +146,80 @@ async function recalculateReview(tx: any, reviewId: string) {
     from work_items where review_id = ${reviewId}
   `;
   const count = counts[0];
-  const versions = await tx<{ version: number }[]>`
-    update reviews set
-      state = 'IN_PROGRESS', version = version + 1,
-      approved_count = ${count.approved}, excluded_count = ${count.excluded}, pending_count = ${count.pending},
-      updated_at = now()
-    where id = ${reviewId}
-    returning version
-  `;
+  const versions =
+    expectedVersion === undefined
+      ? await tx<{ version: number }[]>`
+          update reviews set
+            state = 'IN_PROGRESS', version = version + 1,
+            approved_count = ${count.approved}, excluded_count = ${count.excluded}, pending_count = ${count.pending},
+            updated_at = now()
+          where id = ${reviewId} and tenant_id = ${actor.tenantId}
+          returning version
+        `
+      : await tx<{ version: number }[]>`
+          update reviews set
+            state = 'IN_PROGRESS', version = version + 1,
+            approved_count = ${count.approved}, excluded_count = ${count.excluded}, pending_count = ${count.pending},
+            updated_at = now()
+          where id = ${reviewId} and tenant_id = ${actor.tenantId}
+            and state = 'IN_PROGRESS' and version = ${expectedVersion}
+          returning version
+        `;
+  if (!versions[0])
+    throw new ApiError(
+      409,
+      "VERSION_CONFLICT",
+      "审核内容已更新，请刷新后重试。",
+    );
   return { ...count, version: versions[0]!.version };
 }
 
-async function recordReviewWorkItemVersions(
-  tx: any,
-  actor: {
-    tenantId: string;
-    userId: string;
-  },
-  reviewId: string,
-  changeType: string,
-) {
-  await tx`
-    insert into work_item_versions (
-      id, tenant_id, team_id, partner_id, period_id, review_id, work_item_id,
-      project_id, version, title, status, review_status, fact_ids, payload,
-      lineage, change_type, created_by
-    )
-    select gen_random_uuid(), wi.tenant_id, wi.team_id, wi.partner_id,
-      wi.period_id, wi.review_id, wi.id, wi.project_id, wi.version, wi.title,
-      wi.status, wi.review_status, wi.fact_ids, wi.payload, wi.lineage,
-      ${changeType}, ${actor.userId}
-    from work_items wi
-    where wi.tenant_id = ${actor.tenantId} and wi.review_id = ${reviewId}
-    on conflict (work_item_id, version) do nothing
-  `;
-}
-
-type ReviewActor = {
-  tenantId: string;
-  teamId: string;
-  partnerId: string | null;
-  userId: string;
+export type CompleteReviewResult = {
+  ignored?: boolean;
+  snapshotId?: string;
+  reportId?: string;
+  checksum?: string;
+  idempotent?: boolean;
 };
 
-async function finalizeReview(
-  actor: ReviewActor,
+async function loadCompletedReviewResult(
+  db: any,
+  actor: Pick<DomainActor, "tenantId">,
+  reviewId: string,
+): Promise<CompleteReviewResult | null> {
+  const reviews = await db<any[]>`
+    select state from reviews
+    where id = ${reviewId} and tenant_id = ${actor.tenantId}
+    limit 1
+  `;
+  if (reviews[0]?.state === "ITEMS_DISMISSED")
+    return { ignored: true, idempotent: true };
+  if (reviews[0]?.state !== "ITEMS_APPROVED") return null;
+  const existing = await db<any[]>`
+    select ir.id as report_id, ir.snapshot_id, wis.checksum
+    from individual_reports ir
+    join work_item_snapshots wis on wis.id = ir.snapshot_id
+    where ir.tenant_id = ${actor.tenantId} and wis.review_id = ${reviewId}
+    order by ir.created_at desc limit 1
+  `;
+  if (!existing[0]) return null;
+  return {
+    snapshotId: existing[0].snapshot_id,
+    reportId: existing[0].report_id,
+    checksum: existing[0].checksum,
+    idempotent: true,
+  };
+}
+
+export async function completeReview(
+  actor: DomainActor,
   reviewId: string,
   baseVersion: number,
-) {
+): Promise<CompleteReviewResult> {
   const review = await loadReview(actor, reviewId);
-  if (review.state === "ITEMS_DISMISSED") return { ignored: true };
-  if (review.state === "ITEMS_APPROVED") {
-    const existing = await sql<any[]>`
-      select ir.id as report_id, ir.snapshot_id, wis.checksum
-      from individual_reports ir
-      join work_item_snapshots wis on wis.id = ir.snapshot_id
-      where ir.tenant_id = ${actor.tenantId} and wis.review_id = ${reviewId}
-      order by ir.created_at desc limit 1
-    `;
-    if (existing[0])
-      return {
-        snapshotId: existing[0].snapshot_id,
-        reportId: existing[0].report_id,
-        checksum: existing[0].checksum,
-        idempotent: true,
-      };
+  if (["ITEMS_DISMISSED", "ITEMS_APPROVED"].includes(review.state)) {
+    const existing = await loadCompletedReviewResult(sql, actor, reviewId);
+    if (existing) return existing;
   }
   if (review.state !== "IN_PROGRESS")
     throw new ApiError(
@@ -222,11 +262,22 @@ async function finalizeReview(
     (item) => item.review_status === "approved",
   );
   if (approvedItems.length === 0) {
-    await sql.begin(async (tx) => {
-      await tx`
+    return sql.begin(async (tx) => {
+      const claimed = await tx<{ id: string }[]>`
         update reviews set state = 'ITEMS_DISMISSED', updated_at = now()
         where id = ${reviewId} and tenant_id = ${actor.tenantId}
+          and state = 'IN_PROGRESS' and version = ${baseVersion}
+        returning id
       `;
+      if (!claimed[0]) {
+        const existing = await loadCompletedReviewResult(tx, actor, reviewId);
+        if (existing) return existing;
+        throw new ApiError(
+          409,
+          "VERSION_CONFLICT",
+          "Review 已更新，请刷新后重试。",
+        );
+      }
       await tx`
         insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
         values (
@@ -234,8 +285,8 @@ async function finalizeReview(
           ${JSON.stringify({ excludedWorkItemIds: items.map((item) => item.id) })}::jsonb
         )
       `;
+      return { ignored: true };
     });
-    return { ignored: true };
   }
 
   for (const item of approvedItems.filter(
@@ -278,34 +329,11 @@ async function finalizeReview(
   if (!coverage)
     throw new ApiError(409, "COVERAGE_MISSING", "缺少 Coverage Snapshot。");
 
-  await sql.begin((tx) =>
-    recordReviewWorkItemVersions(tx, actor, reviewId, "review_completed"),
-  );
-  const versionRows = await sql<any[]>`
-    select id, work_item_id, version from work_item_versions
-    where tenant_id = ${actor.tenantId} and review_id = ${reviewId}
-  `;
-  const versionIds = new Map(
-    versionRows.map((version) => [
-      `${version.work_item_id}:${version.version}`,
-      version.id,
-    ]),
-  );
-  const snapshotWorkItems = approvedItems.map((item) => {
-    const versionId = versionIds.get(`${item.id}:${item.version}`);
-    if (!versionId)
-      throw new ApiError(
-        409,
-        "WORK_ITEM_VERSION_MISSING",
-        `工作卡片“${item.title}”缺少版本记录。`,
-      );
-    return { ...item, versionId };
-  });
   const payload = {
     reviewId,
     reviewVersion: review.version,
     periodId: review.period_id,
-    workItems: snapshotWorkItems,
+    workItems: approvedItems,
     excludedWorkItemIds: items
       .filter((item) => item.review_status === "excluded")
       .map((item) => item.id),
@@ -313,7 +341,7 @@ async function finalizeReview(
   };
   const checksum = stableJsonHash(payload);
   const snapshotId = randomUUID();
-  const reportId = randomUUID();
+  const nextReportId = randomUUID();
   let templates = await sql<any[]>`
     select rt.* from report_periods rp
     join report_templates rt on rt.id = rp.template_id and rt.tenant_id = rp.tenant_id
@@ -333,7 +361,7 @@ async function finalizeReview(
     where id = ${actor.partnerId} and tenant_id = ${actor.tenantId}
   `;
   const previousReports = await sql<any[]>`
-    select previous_version.id as version_id, previous_version.payload
+    select previous_report.id as report_id, previous_report.payload
     from report_periods current_period
     join report_periods previous_period
       on previous_period.tenant_id = current_period.tenant_id
@@ -344,45 +372,64 @@ async function finalizeReview(
       and previous_report.tenant_id = current_period.tenant_id
       and previous_report.partner_id = ${actor.partnerId}
       and previous_report.status = 'LOCKED'
-    join individual_report_versions previous_version
-      on previous_version.report_id = previous_report.id
-      and previous_version.version = previous_report.current_version
     where current_period.id = ${review.period_id}
     order by previous_period.starts_at desc limit 1
   `;
 
-  await sql.begin(async (tx) => {
+  return sql.begin(async (tx) => {
     const claimed = await tx<{ id: string }[]>`
       update reviews set state = 'ITEMS_APPROVED', updated_at = now()
       where id = ${reviewId} and tenant_id = ${actor.tenantId}
         and state = 'IN_PROGRESS' and version = ${baseVersion}
       returning id
     `;
-    if (!claimed[0])
+    if (!claimed[0]) {
+      const existing = await loadCompletedReviewResult(tx, actor, reviewId);
+      if (existing) return existing;
       throw new ApiError(
         409,
         "VERSION_CONFLICT",
         "Review 已更新，请刷新后重试。",
       );
+    }
     await tx`update coverage_snapshots set immutable = true where id = ${coverage.id}`;
     await tx`
       insert into work_item_snapshots (
         id, tenant_id, team_id, partner_id, period_id, review_id, review_version,
-        checksum, payload, approved_by, approved_at
+        checksum, payload, approved_by, approved_by_actor_type,
+        approved_by_actor_id, approved_at
       ) values (
         ${snapshotId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
         ${review.period_id}, ${reviewId}, ${review.version}, ${checksum},
-        ${JSON.stringify(payload)}::jsonb, ${actor.userId}, now()
+        ${JSON.stringify(payload)}::jsonb, ${actor.userId}, ${actor.actorType},
+        ${actor.actorId}, now()
       )
     `;
-    await tx`
+    const reportRows = await tx<{ id: string }[]>`
       insert into individual_reports (
-        id, tenant_id, team_id, partner_id, period_id, snapshot_id
+        id, tenant_id, team_id, partner_id, period_id, snapshot_id,
+        status, source_checksum
       ) values (
-        ${reportId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
-        ${review.period_id}, ${snapshotId}
+        ${nextReportId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
+        ${review.period_id}, ${snapshotId}, 'REPORT_DRAFT', ${checksum}
       )
+      on conflict (tenant_id, partner_id, period_id) do update set
+        team_id = excluded.team_id,
+        snapshot_id = excluded.snapshot_id,
+        status = 'REPORT_DRAFT',
+        title = null,
+        summary = null,
+        markdown = null,
+        payload = null,
+        preferences = '{}'::jsonb,
+        source_checksum = excluded.source_checksum,
+        generator_version = null,
+        submitted_at = null,
+        locked_at = null,
+        updated_at = now()
+      returning id
     `;
+    const reportId = reportRows[0]!.id;
     await tx`
       insert into agent_jobs (
         id, tenant_id, team_id, partner_id, plugin_instance_id, type,
@@ -416,8 +463,256 @@ async function finalizeReview(
         ${JSON.stringify({ reportId, checksum })}::jsonb
       )
     `;
+    return { snapshotId, reportId, checksum };
   });
-  return { snapshotId, reportId, checksum };
+}
+
+export type RegenerateReviewWorkItemCommand = {
+  reviewId: string;
+  workItemId: string;
+  instruction: string;
+  baseVersion: number;
+};
+
+const regenerateReviewWorkItemCommandSchema = z
+  .object({
+    reviewId: z.string().uuid(),
+    workItemId: z.string().uuid(),
+    instruction: z.string().trim().min(2).max(1200),
+    baseVersion: z.number().int().positive(),
+  })
+  .strict();
+
+export async function regenerateReviewWorkItem(
+  actor: DomainActor,
+  command: RegenerateReviewWorkItemCommand,
+) {
+  const { reviewId, workItemId, instruction, baseVersion } =
+    regenerateReviewWorkItemCommandSchema.parse(command);
+  return sql.begin(async (tx) => {
+    const review = await loadReviewForUpdate(tx, actor, reviewId);
+    if (review.state !== "IN_PROGRESS")
+      throw new ApiError(409, "REVIEW_NOT_EDITABLE", "当前审核不能修改。");
+    if (review.version !== baseVersion)
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "审核内容已更新，请刷新后重试。",
+      );
+
+    const itemRows = await tx<any[]>`
+      select wi.*, p.name as project_name
+      from work_items wi left join projects p on p.id = wi.project_id
+      where wi.id = ${workItemId} and wi.review_id = ${reviewId}
+        and wi.tenant_id = ${actor.tenantId}
+      limit 1
+      for update of wi
+    `;
+    const item = itemRows[0];
+    if (!item)
+      throw new ApiError(404, "WORK_ITEM_NOT_FOUND", "工作卡片不存在。");
+    const pendingJobs = await tx<any[]>`
+      select id from agent_jobs
+      where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
+        and type = 'AGGREGATE_WORK_ITEMS'
+        and input_payload->>'targetWorkItemId' = ${workItemId}
+        and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
+      limit 1
+    `;
+    if (pendingJobs[0])
+      throw new ApiError(409, "REGENERATION_PENDING", "这张卡片正在重新生成。");
+
+    const facts = await tx<any[]>`
+      select sf.id, sf.payload, sf.source_occurred_at
+      from work_item_facts wf
+      join session_facts sf on sf.id = wf.fact_id and sf.tenant_id = ${actor.tenantId}
+      where wf.work_item_id = ${workItemId}
+      order by sf.source_occurred_at nulls last, sf.created_at, sf.id
+    `;
+    if (facts.length === 0)
+      throw new ApiError(
+        409,
+        "PROJECT_CARD_EMPTY",
+        "这张卡片没有可用于重新生成的贡献。",
+      );
+
+    const projectKey =
+      item.payload.projectKey ??
+      (item.project_id ? `project:${item.project_id}` : `work-item:${item.id}`);
+    const jobId = randomUUID();
+    const projectBucket = {
+      projectKey,
+      projectId: item.project_id,
+      projectName: item.project_name ?? item.title,
+      factIds: facts.map((fact) => fact.id),
+      facts,
+    };
+    await tx`
+      update work_items set review_status = 'pending', updated_at = now()
+      where id = ${workItemId} and review_id = ${reviewId}
+        and tenant_id = ${actor.tenantId}
+    `;
+    const completion = await recalculateReview(
+      tx,
+      actor,
+      reviewId,
+      review.version,
+    );
+    await tx`
+      insert into agent_jobs (
+        id, tenant_id, team_id, partner_id, plugin_instance_id,
+        type, idempotency_key, input_payload
+      ) values (
+        ${jobId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
+        'AGGREGATE_WORK_ITEMS',
+        ${`project-card-regeneration:${workItemId}:${review.version}:${stableJsonHash(instruction)}`},
+        ${JSON.stringify({
+          schemaVersion: "1.0",
+          aggregationMode: "project_card_regeneration",
+          reviewId,
+          targetWorkItemId: workItemId,
+          period: { id: review.period_id },
+          projectBuckets: [projectBucket],
+          reviewInstruction: instruction,
+        })}::jsonb
+      )
+    `;
+    await tx`
+      insert into outbox_events (
+        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, 'work_item.regeneration.requested',
+        'review', ${reviewId},
+        ${JSON.stringify({
+          itemId: workItemId,
+          jobId,
+          version: completion.version,
+        })}::jsonb
+      )
+    `;
+    return { jobId, status: "PENDING" as const, version: completion.version };
+  });
+}
+
+export type DecideReviewWorkItemCommand = {
+  reviewId: string;
+  workItemId: string;
+  decision: "approve" | "exclude";
+  baseVersion: number;
+};
+
+const decideReviewWorkItemCommandSchema = z
+  .object({
+    reviewId: z.string().uuid(),
+    workItemId: z.string().uuid(),
+    decision: z.enum(["approve", "exclude"]),
+    baseVersion: z.number().int().positive(),
+  })
+  .strict();
+
+export async function decideReviewWorkItem(
+  actor: DomainActor,
+  command: DecideReviewWorkItemCommand,
+) {
+  const { reviewId, workItemId, decision, baseVersion } =
+    decideReviewWorkItemCommandSchema.parse(command);
+  const targetStatus = decision === "approve" ? "approved" : "excluded";
+  const result = await sql.begin(async (tx) => {
+    const review = await loadReviewForUpdate(tx, actor, reviewId);
+    const items = await tx<{ id: string; review_status: string }[]>`
+      select id, review_status from work_items
+      where id = ${workItemId} and review_id = ${reviewId}
+        and tenant_id = ${actor.tenantId}
+      for update
+    `;
+    const item = items[0];
+    if (!item)
+      throw new ApiError(404, "WORK_ITEM_NOT_FOUND", "工作卡片不存在。");
+
+    if (item.review_status === targetStatus) {
+      const snapshots =
+        review.state === "IN_PROGRESS" && review.pending_count === 0
+          ? await tx`
+              select 1 from work_item_snapshots
+              where review_id = ${reviewId} and tenant_id = ${actor.tenantId}
+              limit 1
+            `
+          : [];
+      return {
+        version: review.version,
+        pending: review.pending_count,
+        state: review.state,
+        hasSnapshot: snapshots.length > 0,
+        decisionApplied: false,
+      };
+    }
+    if (review.state !== "IN_PROGRESS")
+      throw new ApiError(409, "REVIEW_NOT_EDITABLE", "当前审核不能修改。");
+    if (review.version !== baseVersion)
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "审核内容已更新，请刷新后重试。",
+      );
+    if (item.review_status !== "pending")
+      throw new ApiError(
+        409,
+        "WORK_ITEM_NOT_PENDING",
+        "这张工作卡片已经处理。",
+      );
+
+    const updated = await tx<{ id: string }[]>`
+      update work_items set
+        review_status = ${targetStatus}, updated_at = now()
+      where id = ${workItemId} and review_id = ${reviewId}
+        and tenant_id = ${actor.tenantId} and review_status = 'pending'
+      returning id
+    `;
+    if (!updated[0])
+      throw new ApiError(
+        409,
+        "WORK_ITEM_NOT_PENDING",
+        "这张工作卡片已经处理。",
+      );
+    const completion = await recalculateReview(
+      tx,
+      actor,
+      reviewId,
+      review.version,
+    );
+    await tx`
+      insert into outbox_events (
+        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, 'work_item.review.changed',
+        'review', ${reviewId},
+        ${JSON.stringify({
+          itemId: workItemId,
+          decision,
+          version: completion.version,
+        })}::jsonb
+      )
+    `;
+    return {
+      ...completion,
+      state: review.state,
+      hasSnapshot: false,
+      decisionApplied: true,
+    };
+  });
+
+  const finalized =
+    result.pending === 0 &&
+    (result.decisionApplied ||
+      ["ITEMS_APPROVED", "ITEMS_DISMISSED"].includes(result.state) ||
+      !result.hasSnapshot)
+      ? await completeReview(actor, reviewId, result.version)
+      : null;
+  return {
+    version: result.version,
+    decisionApplied: result.decisionApplied,
+    finalized,
+  };
 }
 
 export async function reviewRoutes(app: FastifyInstance) {
@@ -471,10 +766,9 @@ export async function reviewRoutes(app: FastifyInstance) {
         order by rp.starts_at desc, r.created_at desc limit 1
       `,
         sql<any[]>`
-        select r.*, v.title, v.summary, v.markdown, rp.period_key
+        select r.*, rp.period_key
         from individual_reports r
         join report_periods rp on rp.id = r.period_id
-        left join individual_report_versions v on v.report_id = r.id and v.version = r.current_version
         where r.tenant_id = ${actor.tenantId} and r.partner_id = ${actor.partnerId}
         order by rp.starts_at desc, r.created_at desc limit 1
       `,
@@ -486,7 +780,7 @@ export async function reviewRoutes(app: FastifyInstance) {
         select count(*)::int as fact_count
         from session_facts
         where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
-          and period_id = ${period.id} and current = true and excluded = false
+          and period_id = ${period.id} and excluded = false
       `,
       ]);
     return {
@@ -544,94 +838,10 @@ export async function reviewRoutes(app: FastifyInstance) {
       })
       .strict()
       .parse(request.body);
-    const review = await loadReview(actor, id);
-    if (review.state !== "IN_PROGRESS")
-      throw new ApiError(409, "REVIEW_NOT_EDITABLE", "当前审核不能修改。");
-    if (review.version !== input.baseVersion)
-      throw new ApiError(
-        409,
-        "VERSION_CONFLICT",
-        "审核内容已更新，请刷新后重试。",
-      );
-
-    const itemRows = await sql<any[]>`
-      select wi.*, p.name as project_name
-      from work_items wi left join projects p on p.id = wi.project_id
-      where wi.id = ${workItemId} and wi.review_id = ${id}
-        and wi.tenant_id = ${actor.tenantId}
-      limit 1
-    `;
-    const item = itemRows[0];
-    if (!item)
-      throw new ApiError(404, "WORK_ITEM_NOT_FOUND", "工作卡片不存在。");
-    const pendingJobs = await sql<any[]>`
-      select id from agent_jobs
-      where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
-        and type = 'AGGREGATE_WORK_ITEMS'
-        and input_payload->>'targetWorkItemId' = ${workItemId}
-        and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
-      limit 1
-    `;
-    if (pendingJobs[0])
-      throw new ApiError(409, "REGENERATION_PENDING", "这张卡片正在重新生成。");
-
-    const facts = await sql<any[]>`
-      select sf.id, sf.payload, sf.source_occurred_at
-      from work_item_facts wf
-      join session_facts sf on sf.id = wf.fact_id and sf.tenant_id = ${actor.tenantId}
-      where wf.work_item_id = ${workItemId}
-      order by sf.source_occurred_at nulls last, sf.created_at, sf.id
-    `;
-    if (facts.length === 0)
-      throw new ApiError(
-        409,
-        "PROJECT_CARD_EMPTY",
-        "这张卡片没有可用于重新生成的贡献。",
-      );
-
-    const projectKey =
-      item.payload.projectKey ??
-      (item.project_id ? `project:${item.project_id}` : `work-item:${item.id}`);
-    const jobId = randomUUID();
-    const projectBucket = {
-      projectKey,
-      projectId: item.project_id,
-      projectName: item.project_name ?? item.title,
-      factIds: facts.map((fact) => fact.id),
-      facts,
-    };
-    await sql.begin(async (tx) => {
-      await tx`
-        update work_items set review_status = 'pending', version = version + 1,
-          updated_at = now()
-        where id = ${workItemId} and tenant_id = ${actor.tenantId}
-      `;
-      await recordReviewWorkItemVersions(
-        tx,
-        actor,
-        id,
-        "regeneration_requested",
-      );
-      await recalculateReview(tx, id);
-      await tx`
-        insert into agent_jobs (
-          id, tenant_id, team_id, partner_id, plugin_instance_id,
-          type, idempotency_key, input_payload
-        ) values (
-          ${jobId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
-          'AGGREGATE_WORK_ITEMS',
-          ${`project-card-regeneration:${workItemId}:${review.version}:${stableJsonHash(input.instruction)}`},
-          ${JSON.stringify({
-            schemaVersion: "1.0",
-            aggregationMode: "project_card_regeneration",
-            reviewId: id,
-            targetWorkItemId: workItemId,
-            period: { id: review.period_id },
-            projectBuckets: [projectBucket],
-            reviewInstruction: input.instruction,
-          })}::jsonb
-        )
-      `;
+    const result = await regenerateReviewWorkItem(actor, {
+      reviewId: id,
+      workItemId,
+      ...input,
     });
     await audit(
       request,
@@ -640,10 +850,10 @@ export async function reviewRoutes(app: FastifyInstance) {
       "work_item",
       workItemId,
       {
-        jobId,
+        jobId: result.jobId,
       },
     );
-    return { jobId, status: "PENDING" };
+    return result;
   });
 
   app.post("/v1/reviews/:id/items/:workItemId/decision", async (request) => {
@@ -658,62 +868,40 @@ export async function reviewRoutes(app: FastifyInstance) {
       })
       .strict()
       .parse(request.body);
-    const review = await loadReview(actor, id);
-    if (review.state !== "IN_PROGRESS")
-      throw new ApiError(409, "REVIEW_NOT_EDITABLE", "当前审核不能修改。");
-    if (review.version !== input.baseVersion)
-      throw new ApiError(
-        409,
-        "VERSION_CONFLICT",
-        "审核内容已更新，请刷新后重试。",
-      );
-
-    const completion = await sql.begin(async (tx) => {
-      const rows = await tx<{ id: string }[]>`
-        update work_items set
-          review_status = ${input.decision === "approve" ? "approved" : "excluded"},
-          version = version + 1, updated_at = now()
-        where id = ${workItemId} and review_id = ${id}
-          and tenant_id = ${actor.tenantId} and review_status = 'pending'
-        returning id
-      `;
-      if (!rows[0])
-        throw new ApiError(
-          409,
-          "WORK_ITEM_NOT_PENDING",
-          "这张工作卡片已经处理。",
-        );
-      await recordReviewWorkItemVersions(tx, actor, id, input.decision);
-      return recalculateReview(tx, id);
-    });
-    await audit(
-      request,
-      actor,
-      `project_card.${input.decision}d`,
-      "work_item",
+    const result = await decideReviewWorkItem(actor, {
+      reviewId: id,
       workItemId,
-    );
-    const finalized =
-      completion.pending === 0
-        ? await finalizeReview(actor, id, completion.version)
-        : null;
-    if (finalized) {
+      ...input,
+    });
+    if (result.decisionApplied)
       await audit(
         request,
         actor,
-        finalized.ignored
+        `project_card.${input.decision}d`,
+        "work_item",
+        workItemId,
+      );
+    if (result.finalized && !result.finalized.idempotent) {
+      await audit(
+        request,
+        actor,
+        result.finalized.ignored
           ? "work_items.all_dismissed"
           : "work_items.snapshot.approved",
-        finalized.ignored ? "review" : "work_item_snapshot",
-        finalized.ignored ? id : finalized.snapshotId!,
-        finalized.ignored
+        result.finalized.ignored ? "review" : "work_item_snapshot",
+        result.finalized.ignored ? id : result.finalized.snapshotId!,
+        result.finalized.ignored
           ? undefined
-          : { reportId: finalized.reportId, checksum: finalized.checksum },
+          : {
+              reportId: result.finalized.reportId,
+              checksum: result.finalized.checksum,
+            },
       );
     }
     return {
-      version: completion.version,
-      ...finalized,
+      version: result.version,
+      ...(!result.decisionApplied ? { idempotent: true } : {}),
+      ...result.finalized,
     };
   });
 
@@ -787,7 +975,6 @@ export async function reviewRoutes(app: FastifyInstance) {
             ...primary.lineage,
             mergedFrom: rest.map((item) => item.id),
           },
-          version: primary.version + 1,
         },
         removedIds: rest.map((item) => item.id),
       };
@@ -892,7 +1079,31 @@ export async function reviewRoutes(app: FastifyInstance) {
         "Review 已更新，请重新 Preview。",
       );
 
-    await sql.begin(async (tx) => {
+    const applyResult = await sql.begin(async (tx) => {
+      const lockedReview = await loadReviewForUpdate(tx, actor, id);
+      const lockedChanges = await tx<any[]>`
+        select status, base_version from review_changes
+        where id = ${changeId} and review_id = ${id}
+          and tenant_id = ${actor.tenantId}
+        for update
+      `;
+      const lockedChange = lockedChanges[0];
+      if (lockedChange?.status === "applied")
+        return {
+          version: lockedReview.version,
+          pending: lockedReview.pending_count,
+          idempotent: true,
+        };
+      if (
+        !lockedChange ||
+        lockedChange.base_version !== lockedReview.version ||
+        lockedReview.state !== "IN_PROGRESS"
+      )
+        throw new ApiError(
+          409,
+          "VERSION_CONFLICT",
+          "Review 已更新，请重新 Preview。",
+        );
       if (
         [
           "approve",
@@ -909,7 +1120,7 @@ export async function reviewRoutes(app: FastifyInstance) {
           await tx`
             update work_items set
               project_id = ${item.project_id}, title = ${item.title}, status = ${item.status},
-              review_status = ${item.review_status}, version = ${item.version}, payload = ${JSON.stringify(item.payload)}::jsonb,
+              review_status = ${item.review_status}, payload = ${JSON.stringify(item.payload)}::jsonb,
               updated_at = now()
             where id = ${item.id} and tenant_id = ${actor.tenantId} and review_id = ${id}
           `;
@@ -923,7 +1134,7 @@ export async function reviewRoutes(app: FastifyInstance) {
         await tx`
           update work_items set title = ${primary.title}, fact_ids = ${JSON.stringify(primary.fact_ids)}::jsonb,
             payload = ${JSON.stringify(primary.payload)}::jsonb, lineage = ${JSON.stringify(primary.lineage)}::jsonb,
-            version = ${primary.version}, updated_at = now()
+            updated_at = now()
           where id = ${primary.id} and tenant_id = ${actor.tenantId}
         `;
         for (const removedId of merged.removedIds) {
@@ -993,13 +1204,12 @@ export async function reviewRoutes(app: FastifyInstance) {
           `不支持的审核操作: ${change.operation}`,
         );
       }
-      await recordReviewWorkItemVersions(
+      const completion = await recalculateReview(
         tx,
         actor,
         id,
-        `review_${change.operation}`,
+        lockedReview.version,
       );
-      await recalculateReview(tx, id);
       if (change.operation === "change_period") {
         await tx`update reviews set state = 'WAITING_LOCAL_REANALYSIS', updated_at = now() where id = ${id}`;
       }
@@ -1011,10 +1221,10 @@ export async function reviewRoutes(app: FastifyInstance) {
           ${JSON.stringify({ changeId, operation: change.operation, source: change.source })}::jsonb
         )
       `;
+      return { ...completion, idempotent: false };
     });
-    const versions = await sql<
-      { version: number; pending_count: number }[]
-    >`select version, pending_count from reviews where id = ${id}`;
+    if (applyResult.idempotent)
+      return { ok: true, version: applyResult.version, idempotent: true };
     await audit(
       request,
       actor,
@@ -1024,10 +1234,10 @@ export async function reviewRoutes(app: FastifyInstance) {
       { operation: change.operation },
     );
     const finalized =
-      versions[0]?.pending_count === 0
-        ? await finalizeReview(actor, id, versions[0].version)
+      applyResult.pending === 0
+        ? await completeReview(actor, id, applyResult.version)
         : null;
-    return { ok: true, version: versions[0]?.version, ...finalized };
+    return { ok: true, version: applyResult.version, ...finalized };
   });
 
   app.post("/v1/reviews/:id/complete", async (request) => {
@@ -1036,19 +1246,20 @@ export async function reviewRoutes(app: FastifyInstance) {
     const { baseVersion } = z
       .object({ baseVersion: z.number().int().positive() })
       .parse(request.body);
-    const result = await finalizeReview(actor, id, baseVersion);
-    await audit(
-      request,
-      actor,
-      result.ignored
-        ? "work_items.all_dismissed"
-        : "work_items.snapshot.approved",
-      result.ignored ? "review" : "work_item_snapshot",
-      result.ignored ? id : result.snapshotId!,
-      result.ignored
-        ? undefined
-        : { reportId: result.reportId, checksum: result.checksum },
-    );
+    const result = await completeReview(actor, id, baseVersion);
+    if (!result.idempotent)
+      await audit(
+        request,
+        actor,
+        result.ignored
+          ? "work_items.all_dismissed"
+          : "work_items.snapshot.approved",
+        result.ignored ? "review" : "work_item_snapshot",
+        result.ignored ? id : result.snapshotId!,
+        result.ignored
+          ? undefined
+          : { reportId: result.reportId, checksum: result.checksum },
+      );
     return result;
   });
   app.post("/v1/reviews/:id/reopen", async (request) => {
@@ -1057,48 +1268,81 @@ export async function reviewRoutes(app: FastifyInstance) {
     const { baseVersion } = z
       .object({ baseVersion: z.number().int().positive() })
       .parse(request.body);
-    const review = await loadReview(actor, id);
-    if (review.version !== baseVersion)
-      throw new ApiError(
-        409,
-        "VERSION_CONFLICT",
-        "Review 已更新，请刷新后重试。",
-      );
-    if (review.state !== "ITEMS_APPROVED")
-      throw new ApiError(
-        409,
-        "REVIEW_NOT_REOPENABLE",
-        "当前 Review 不能重新打开。",
-      );
-    const reports = await sql<any[]>`
-      select ir.id, ir.status from individual_reports ir
-      join work_item_snapshots wis on wis.id = ir.snapshot_id
-      where wis.review_id = ${id} and ir.tenant_id = ${actor.tenantId}
-      order by ir.created_at desc limit 1
-    `;
-    const report = reports[0];
-    if (report && ["SUBMITTED", "LOCKED"].includes(report.status)) {
-      throw new ApiError(
-        409,
-        "REPORT_LOCKED",
-        "Report 已提交，不能重新打开事实审核。",
-      );
-    }
-    await sql.begin(async (tx) => {
-      await tx`update reviews set state = 'IN_PROGRESS', version = version + 1, updated_at = now() where id = ${id} and tenant_id = ${actor.tenantId}`;
-      if (report)
-        await tx`update individual_reports set status = 'RETURNED_TO_ITEMS', updated_at = now() where id = ${report.id} and tenant_id = ${actor.tenantId}`;
+    const result = await sql.begin(async (tx) => {
+      const review = await loadReviewForUpdate(tx, actor, id);
+      if (review.version !== baseVersion)
+        throw new ApiError(
+          409,
+          "VERSION_CONFLICT",
+          "Review 已更新，请刷新后重试。",
+        );
+      if (review.state !== "ITEMS_APPROVED")
+        throw new ApiError(
+          409,
+          "REVIEW_NOT_REOPENABLE",
+          "当前 Review 不能重新打开。",
+        );
+
+      const reports = await tx<any[]>`
+        select ir.id, ir.status from individual_reports ir
+        join work_item_snapshots wis
+          on wis.id = ir.snapshot_id and wis.tenant_id = ir.tenant_id
+          and wis.team_id = ir.team_id and wis.partner_id = ir.partner_id
+        where wis.review_id = ${id} and ir.tenant_id = ${actor.tenantId}
+          and ir.team_id = ${actor.teamId} and ir.partner_id = ${actor.partnerId}
+        order by ir.created_at desc limit 1
+        for update of ir
+      `;
+      const report = reports[0];
+      if (report && ["SUBMITTED", "LOCKED"].includes(report.status))
+        throw new ApiError(
+          409,
+          "REPORT_LOCKED",
+          "Report 已提交，不能重新打开事实审核。",
+        );
+
+      const versions = await tx<Array<{ version: number }>>`
+        update reviews set
+          state = 'IN_PROGRESS', version = version + 1, updated_at = now()
+        where id = ${id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and partner_id = ${actor.partnerId}
+          and state = 'ITEMS_APPROVED' and version = ${baseVersion}
+        returning version
+      `;
+      if (!versions[0])
+        throw new ApiError(
+          409,
+          "VERSION_CONFLICT",
+          "Review 已更新，请刷新后重试。",
+        );
+      if (report) {
+        const returned = await tx<Array<{ id: string }>>`
+          update individual_reports set
+            status = 'RETURNED_TO_ITEMS', updated_at = now()
+          where id = ${report.id} and tenant_id = ${actor.tenantId}
+            and team_id = ${actor.teamId} and partner_id = ${actor.partnerId}
+            and status not in ('SUBMITTED', 'LOCKED')
+          returning id
+        `;
+        if (!returned[0])
+          throw new ApiError(
+            409,
+            "REPORT_LOCKED",
+            "Report 已提交，不能重新打开事实审核。",
+          );
+      }
       await tx`
         insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
         values (${randomUUID()}, ${actor.tenantId}, 'review.reopened', 'review', ${id}, ${JSON.stringify({ reportId: report?.id ?? null })}::jsonb)
       `;
+      return {
+        reportId: typeof report?.id === "string" ? report.id : null,
+        version: versions[0].version,
+      };
     });
     await audit(request, actor, "review.reopened", "review", id, {
-      reportId: report?.id ?? null,
+      reportId: result.reportId,
     });
-    const versions = await sql<
-      { version: number }[]
-    >`select version from reviews where id = ${id} and tenant_id = ${actor.tenantId}`;
-    return { id, state: "IN_PROGRESS", version: versions[0]?.version };
+    return { id, state: "IN_PROGRESS", version: result.version };
   });
 }

@@ -28,7 +28,7 @@ const reportInstructions = (model: string) =>
   `You generate an individual Partner report from an approved immutable Work Item Snapshot. When currentReport and reviewInstruction are supplied, revise the current report according to that natural-language instruction while keeping every statement grounded in the approved Work Items. Use previousReport only to compare prior state with current approved Work Items. Include each of the seven required sections exactly once. Every current factual claim must cite one or more allowed Work Item IDs. Never alter facts merely to satisfy a wording request. State coverage limits plainly and do not invent percentages. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-04.individual-review.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportInstructions = (model: string) =>
-  `Generate a Team Report only from locked individual report versions supplied in individualReports. Never infer missing Partner work and never read or request Session Facts. Account for missingPartnerIds explicitly. Use previousTeamReport only for sourced status comparisons. Include exactly five sections: summary, project_progress, risks, next_priorities, coverage. Every factual claim must cite one or more supplied individual report version IDs. Return production metadata {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-04.team.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+  `Generate a Team Report only from locked individual reports supplied in individualReports. Never infer missing Partner work and never read or request Session Facts. Account for missingPartnerIds explicitly. Use previousTeamReport only for sourced status comparisons. Include exactly five sections: summary, project_progress, risks, next_priorities, coverage. Every factual claim must cite one or more supplied individual report IDs. Return production metadata {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-05.team.v2","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 async function selectedModelFor(job: Job) {
   const rows = await sql<{ central_model: string }[]>`
@@ -102,36 +102,6 @@ function projectCardPayload(group: any) {
   };
 }
 
-async function recordWorkItemVersion(
-  tx: any,
-  tenantId: string,
-  workItemId: string,
-  changeType: string,
-) {
-  const rows = await tx<{ id: string; version: number }[]>`
-    insert into work_item_versions (
-      id, tenant_id, team_id, partner_id, period_id, review_id, work_item_id,
-      project_id, version, title, status, review_status, fact_ids, payload,
-      lineage, change_type
-    )
-    select ${randomUUID()}, wi.tenant_id, wi.team_id, wi.partner_id, wi.period_id,
-      wi.review_id, wi.id, wi.project_id, wi.version, wi.title, wi.status,
-      wi.review_status, wi.fact_ids, wi.payload, wi.lineage, ${changeType}
-    from work_items wi
-    where wi.id = ${workItemId} and wi.tenant_id = ${tenantId}
-    on conflict (work_item_id, version) do nothing
-    returning id, version
-  `;
-  if (rows[0]) return rows[0];
-  const existing = await tx<{ id: string; version: number }[]>`
-    select id, version from work_item_versions
-    where tenant_id = ${tenantId} and work_item_id = ${workItemId}
-    order by version desc limit 1
-  `;
-  if (!existing[0]) throw new Error("WORK_ITEM_VERSION_NOT_RECORDED");
-  return existing[0];
-}
-
 async function applyAggregation(job: Job, output: unknown) {
   const result = validateAggregation(job, output);
   const reviewId = job.input_payload.reviewId as string;
@@ -149,18 +119,12 @@ async function applyAggregation(job: Job, output: unknown) {
           status = ${group.status}, review_status = 'pending',
           fact_ids = ${JSON.stringify(bucket.factIds)}::jsonb,
           payload = ${JSON.stringify(projectCardPayload(group))}::jsonb,
-          version = version + 1, updated_at = now()
+          updated_at = now()
         where id = ${targetWorkItemId} and tenant_id = ${job.tenant_id}
           and review_id = ${reviewId}
         returning id
       `;
       if (!updated[0]) throw new Error("PROJECT_CARD_NOT_FOUND");
-      await recordWorkItemVersion(
-        tx,
-        job.tenant_id,
-        targetWorkItemId,
-        "regenerated",
-      );
       await tx`delete from work_item_facts where work_item_id = ${targetWorkItemId}`;
       for (const factId of bucket.factIds) {
         await tx`insert into work_item_facts (work_item_id, fact_id) values (${targetWorkItemId}, ${factId})`;
@@ -177,6 +141,19 @@ async function applyAggregation(job: Job, output: unknown) {
           approved_count = ${counts[0].approved}, excluded_count = ${counts[0].excluded},
           pending_count = ${counts[0].pending}, updated_at = now()
         where id = ${reviewId} and tenant_id = ${job.tenant_id}
+      `;
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created', 'review', ${reviewId},
+          ${JSON.stringify({
+            count: 1,
+            targetWorkItemId,
+            regenerated: true,
+            warnings: result.qualityWarnings,
+          })}::jsonb
+        )
       `;
     });
     return result;
@@ -208,7 +185,6 @@ async function applyAggregation(job: Job, output: unknown) {
           ${JSON.stringify(payload)}::jsonb
         )
       `;
-      await recordWorkItemVersion(tx, job.tenant_id, workItemId, "generated");
       for (const factId of bucket.factIds) {
         await tx`insert into work_item_facts (work_item_id, fact_id) values (${workItemId}, ${factId})`;
       }
@@ -239,54 +215,26 @@ async function applyReport(job: Job, output: unknown, model: string) {
         if (!allowed.has(id))
           throw new Error(`UNKNOWN_WORK_ITEM_REFERENCE:${id}`);
     }
-  const reports = await sql<any[]>`
-    select * from individual_reports where id = ${job.input_payload.reportId}
-      and tenant_id = ${job.tenant_id} limit 1
-  `;
-  const report = reports[0];
-  if (!report || ["SUBMITTED", "LOCKED"].includes(report.status))
-    throw new Error("REPORT_NOT_EDITABLE");
-  const version = report.current_version + 1;
-  const reportVersionId = randomUUID();
   await sql.begin(async (tx) => {
-    await tx`
-      insert into individual_report_versions (
-        id, tenant_id, report_id, version, title, summary, markdown, payload,
-        preferences, source_checksum, generator_version
-      ) values (
-        ${reportVersionId}, ${job.tenant_id}, ${report.id}, ${version}, ${result.title}, ${result.summary},
-        ${result.markdown}, ${JSON.stringify(result)}::jsonb,
-        ${JSON.stringify(job.input_payload.preferences ?? {})}::jsonb,
-        ${job.input_payload.sourceChecksum}, ${`partner-report-platform/0.2.0 (${model})`}
-      )
+    const updated = await tx<{ content_revision: number }[]>`
+      update individual_reports set
+        status = 'REPORT_REVIEW', content_revision = content_revision + 1,
+        title = ${result.title}, summary = ${result.summary},
+        markdown = ${result.markdown}, payload = ${JSON.stringify(result)}::jsonb,
+        preferences = ${JSON.stringify(job.input_payload.preferences ?? {})}::jsonb,
+        source_checksum = ${job.input_payload.sourceChecksum},
+        generator_version = ${`partner-report-platform/0.2.0 (${model})`},
+        updated_at = now()
+      where id = ${job.input_payload.reportId} and tenant_id = ${job.tenant_id}
+        and status not in ('SUBMITTED', 'LOCKED')
+        and (source_checksum = ${job.input_payload.sourceChecksum} or source_checksum is null)
+      returning content_revision
     `;
-    for (const item of job.input_payload.workItems) {
-      const versionRows = await tx<{ id: string }[]>`
-        select id from work_item_versions
-        where tenant_id = ${job.tenant_id} and work_item_id = ${item.id}
-          and version = ${item.version}
-        limit 1
-      `;
-      const workItemVersionId = item.versionId ?? versionRows[0]?.id;
-      if (!workItemVersionId)
-        throw new Error(
-          `WORK_ITEM_VERSION_NOT_FOUND:${item.id}:${item.version}`,
-        );
-      await tx`
-        insert into individual_report_version_work_items (
-          report_version_id, work_item_version_id
-        ) values (${reportVersionId}, ${workItemVersionId})
-        on conflict do nothing
-      `;
-    }
-    await tx`
-      update individual_reports set status = 'REPORT_REVIEW', current_version = ${version}, updated_at = now()
-      where id = ${report.id} and tenant_id = ${job.tenant_id}
-    `;
+    if (!updated[0]) throw new Error("REPORT_NOT_EDITABLE");
     await tx`
       insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-      values (${randomUUID()}, ${job.tenant_id}, 'individual_report.draft.created', 'individual_report', ${report.id},
-        ${JSON.stringify({ version, warnings: result.qualityWarnings })}::jsonb)
+      values (${randomUUID()}, ${job.tenant_id}, 'individual_report.draft.created', 'individual_report', ${job.input_payload.reportId},
+        ${JSON.stringify({ contentRevision: updated[0].content_revision, warnings: result.qualityWarnings })}::jsonb)
     `;
   });
   return result;
@@ -296,11 +244,11 @@ async function applyTeamReport(job: Job, output: unknown, model: string) {
   const result = teamReportResultSchema.parse(output);
   assertTeamReportSemantics(result);
   const allowed = new Set<string>(
-    job.input_payload.individualReports.map((report: any) => report.versionId),
+    job.input_payload.individualReports.map((report: any) => report.reportId),
   );
   for (const section of result.sections)
     for (const claim of section.claims)
-      for (const id of claim.individualReportVersionIds)
+      for (const id of claim.individualReportIds)
         if (!allowed.has(id))
           throw new Error(`UNKNOWN_INDIVIDUAL_REPORT_REFERENCE:${id}`);
   const expectedMissing = [...job.input_payload.missingPartnerIds].sort();

@@ -6,53 +6,165 @@ import { ApiError, audit, requireWebActor, stableJsonHash } from "../common.js";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 
+type IndividualReportSourceRow = {
+  partner_id: string;
+  partner_name: string;
+  report_id: string | null;
+  payload: unknown | null;
+};
+
+async function enqueueTeamReportForPeriod(
+  tx: any,
+  input: {
+    tenantId: string;
+    teamId: string;
+    periodId: string;
+    requireAllLocked?: boolean;
+    lockedBehavior?: "error" | "ignore";
+  },
+) {
+  const periodRows = await tx<any[]>`
+    select * from report_periods
+    where id = ${input.periodId} and tenant_id = ${input.tenantId}
+      and team_id = ${input.teamId}
+    limit 1
+  `;
+  const period = periodRows[0];
+  if (!period) throw new ApiError(404, "PERIOD_NOT_FOUND", "所选周期不存在。");
+
+  const reportRows = (await tx`
+    select p.id as partner_id, p.display_name as partner_name,
+      ir.id as report_id, ir.payload
+    from partners p
+    left join individual_reports ir on ir.tenant_id = p.tenant_id
+      and ir.partner_id = p.id and ir.period_id = ${input.periodId}
+      and ir.status = 'LOCKED'
+    where p.tenant_id = ${input.tenantId} and p.team_id = ${input.teamId}
+      and p.status = 'active'
+    order by p.display_name
+  `) as IndividualReportSourceRow[];
+  const submitted = reportRows.filter((row) => row.report_id && row.payload);
+  const missingPartnerIds = reportRows
+    .filter((row) => !row.report_id || !row.payload)
+    .map((row) => row.partner_id);
+  if (submitted.length === 0)
+    throw new ApiError(
+      409,
+      "NO_LOCKED_INDIVIDUAL_REPORTS",
+      "该周期还没有最终确认的个人 Report。",
+    );
+  if (input.requireAllLocked && missingPartnerIds.length > 0) return null;
+
+  const previousRows = await tx<any[]>`
+    select trv.id as version_id, trv.payload
+    from team_reports tr
+    join report_periods previous_period on previous_period.id = tr.period_id
+    join team_report_versions trv on trv.report_id = tr.id and trv.version = tr.current_version
+    where tr.tenant_id = ${input.tenantId} and tr.team_id = ${input.teamId}
+      and tr.status = 'LOCKED' and previous_period.starts_at < ${period.starts_at}
+    order by previous_period.starts_at desc limit 1
+  `;
+  const projects = await tx<any[]>`
+    select id, name, aliases, external_ids
+    from projects
+    where tenant_id = ${input.tenantId} and team_id = ${input.teamId}
+      and status = 'active'
+    order by name
+  `;
+  const source = {
+    individualReports: submitted.map((row) => ({
+      partnerId: row.partner_id,
+      partnerName: row.partner_name,
+      reportId: row.report_id,
+      payload: row.payload,
+    })),
+    missingPartnerIds,
+    projects,
+    previousTeamReport: previousRows[0] ?? null,
+  };
+  const sourceChecksum = stableJsonHash(source);
+  const teamReportRows = await tx<{ id: string; status: string }[]>`
+    insert into team_reports (
+      id, tenant_id, team_id, period_id, status, missing_partner_ids
+    ) values (
+      ${randomUUID()}, ${input.tenantId}, ${input.teamId}, ${input.periodId},
+      'AGGREGATING', ${JSON.stringify(missingPartnerIds)}::jsonb
+    ) on conflict (tenant_id, team_id, period_id) do update set
+      status = team_reports.status,
+      missing_partner_ids = team_reports.missing_partner_ids,
+      updated_at = team_reports.updated_at
+    returning id, status
+  `;
+  if (teamReportRows[0]?.status === "LOCKED") {
+    if (input.lockedBehavior === "ignore") return null;
+    throw new ApiError(
+      409,
+      "TEAM_REPORT_LOCKED",
+      "该周期 Team Report 已最终确认，不能重新生成。",
+    );
+  }
+
+  const inserted = await tx<{ id: string }[]>`
+    insert into agent_jobs (
+      id, tenant_id, team_id, partner_id, type, idempotency_key, input_payload
+    ) values (
+      ${randomUUID()}, ${input.tenantId}, ${input.teamId}, null,
+      'GENERATE_TEAM_REPORT', ${`team-report:${input.periodId}:${sourceChecksum}`},
+      ${JSON.stringify({
+        schemaVersion: "1.0",
+        reportId: teamReportRows[0]!.id,
+        period: {
+          id: period.id,
+          key: period.period_key,
+          startsAt: period.starts_at,
+          endsAt: period.ends_at,
+        },
+        sourceChecksum,
+        ...source,
+      })}::jsonb
+    ) on conflict (tenant_id, idempotency_key) do nothing returning id
+  `;
+  if (inserted[0]) {
+    await tx`
+      update team_reports set status = 'AGGREGATING',
+        missing_partner_ids = ${JSON.stringify(missingPartnerIds)}::jsonb,
+        updated_at = now()
+      where id = ${teamReportRows[0]!.id}
+    `;
+  }
+  return {
+    reportId: teamReportRows[0]!.id,
+    jobId: inserted[0]?.id ?? null,
+    queued: Boolean(inserted[0]),
+    individualReportCount: submitted.length,
+    missingPartnerIds,
+  };
+}
+
+export { enqueueTeamReportForPeriod };
+
 export async function teamReportRoutes(app: FastifyInstance) {
   app.get("/v1/admin/report-archive", async (request) => {
     const actor = await requireWebActor(request, "admin");
-    const [individualReportRows, workItemRows, teamReportRows] =
-      await Promise.all([
-        sql<any[]>`
+    const [individualReportRows, teamReportRows] = await Promise.all([
+      sql<any[]>`
           select rp.id as period_id, rp.period_key, rp.starts_at, rp.ends_at,
             p.id as partner_id, p.display_name as partner_name,
-            p.email as partner_email, ir.id as report_id,
-            ir.current_version as report_version, ir.locked_at,
-            current.title as report_title, current.summary as report_summary
+            p.email as partner_email, ir.id as report_id, ir.locked_at,
+            ir.title as report_title, ir.summary as report_summary,
+            wis.payload as work_item_snapshot
           from individual_reports ir
           join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
           join report_periods rp on rp.id = ir.period_id
             and rp.tenant_id = ir.tenant_id
-          join individual_report_versions current on current.report_id = ir.id
-            and current.version = ir.current_version
-          where ir.tenant_id = ${actor.tenantId}
-            and ir.team_id = ${actor.teamId} and ir.status = 'LOCKED'
-          order by rp.starts_at desc, p.display_name
-        `,
-        sql<any[]>`
-          select ir.id as report_id, final.id as version_id,
-            final.work_item_id, final.version, final.title, final.status,
-            final.review_status, final.payload, final.created_at,
-            (current_link.work_item_version_id is not null) as included_in_report
-          from individual_reports ir
           join work_item_snapshots wis on wis.id = ir.snapshot_id
             and wis.tenant_id = ir.tenant_id
-          join individual_report_versions current_report
-            on current_report.report_id = ir.id
-            and current_report.version = ir.current_version
-          join lateral (
-            select distinct on (history.work_item_id) history.*
-            from work_item_versions history
-            where history.tenant_id = ir.tenant_id
-              and history.review_id = wis.review_id
-            order by history.work_item_id, history.version desc
-          ) final on true
-          left join individual_report_version_work_items current_link
-            on current_link.report_version_id = current_report.id
-            and current_link.work_item_version_id = final.id
           where ir.tenant_id = ${actor.tenantId}
             and ir.team_id = ${actor.teamId} and ir.status = 'LOCKED'
-          order by lower(final.title)
+            and ir.payload is not null
+          order by rp.starts_at desc, p.display_name
         `,
-        sql<any[]>`
+      sql<any[]>`
           select rp.id as period_id, rp.period_key, rp.starts_at, rp.ends_at,
             tr.id as report_id, tr.current_version as report_version,
             tr.locked_at, current.title as report_title,
@@ -66,7 +178,7 @@ export async function teamReportRoutes(app: FastifyInstance) {
             and tr.team_id = ${actor.teamId} and tr.status = 'LOCKED'
           order by rp.starts_at desc
         `,
-      ]);
+    ]);
 
     const periods = new Map<string, any>();
     const ensurePeriod = (row: any) => {
@@ -92,32 +204,21 @@ export async function teamReportRoutes(app: FastifyInstance) {
         email: row.partner_email,
         individualReport: {
           id: row.report_id,
-          version: row.report_version,
           title: row.report_title,
           summary: row.report_summary,
           lockedAt: row.locked_at,
         },
-        workItems: [],
-      });
-    }
-
-    const peopleByReportId = new Map<string, any>();
-    for (const period of periods.values()) {
-      for (const person of period.people) {
-        peopleByReportId.set(person.individualReport.id, person);
-      }
-    }
-    for (const row of workItemRows) {
-      peopleByReportId.get(row.report_id)?.workItems.push({
-        id: row.work_item_id,
-        versionId: row.version_id,
-        version: row.version,
-        title: row.title,
-        status: row.status,
-        reviewStatus: row.review_status,
-        overview: row.payload?.overview ?? row.payload?.summary ?? "",
-        includedInReport: row.included_in_report,
-        createdAt: row.created_at,
+        workItems: Array.isArray(row.work_item_snapshot?.workItems)
+          ? row.work_item_snapshot.workItems.map((item: any) => ({
+              id: item.id,
+              title: item.title,
+              status: item.status,
+              reviewStatus: item.review_status,
+              overview: item.payload?.overview ?? item.payload?.summary ?? "",
+              includedInReport: true,
+              createdAt: item.updated_at ?? item.created_at ?? row.locked_at,
+            }))
+          : [],
       });
     }
     for (const row of teamReportRows) {
@@ -142,17 +243,15 @@ export async function teamReportRoutes(app: FastifyInstance) {
   app.get("/v1/admin/individual-reports", async (request) => {
     const actor = await requireWebActor(request, "admin");
     return sql<any[]>`
-      select ir.id, ir.status, ir.current_version, ir.locked_at,
+      select ir.id, ir.status, ir.locked_at,
         p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
         rp.id as period_id, rp.period_key, rp.starts_at, rp.ends_at,
-        current.title, current.summary
+        ir.title, ir.summary
       from individual_reports ir
       join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
       join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
-      join individual_report_versions current on current.report_id = ir.id
-        and current.version = ir.current_version
       where ir.tenant_id = ${actor.tenantId} and ir.team_id = ${actor.teamId}
-        and ir.status = 'LOCKED'
+        and ir.status = 'LOCKED' and ir.payload is not null
       order by rp.starts_at desc, p.display_name
     `;
   });
@@ -160,34 +259,17 @@ export async function teamReportRoutes(app: FastifyInstance) {
   app.get("/v1/admin/work-item-archives", async (request) => {
     const actor = await requireWebActor(request, "admin");
     return sql<any[]>`
-      select ir.id, ir.id as report_id, ir.current_version as report_version,
-        ir.locked_at, p.id as partner_id, p.display_name as partner_name,
+      select ir.id, ir.id as report_id, ir.locked_at,
+        p.id as partner_id, p.display_name as partner_name,
         p.email as partner_email, rp.id as period_id, rp.period_key,
-        rp.starts_at, rp.ends_at, card_stats.work_item_count,
-        card_stats.work_item_version_count,
-        card_stats.included_work_item_count
+        rp.starts_at, rp.ends_at,
+        jsonb_array_length(coalesce(wis.payload->'workItems', '[]'::jsonb))::int as work_item_count,
+        jsonb_array_length(coalesce(wis.payload->'workItems', '[]'::jsonb))::int as included_work_item_count
       from individual_reports ir
       join work_item_snapshots wis on wis.id = ir.snapshot_id
         and wis.tenant_id = ir.tenant_id
       join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
       join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
-      join lateral (
-        select count(distinct history.work_item_id)::int as work_item_count,
-          count(history.id)::int as work_item_version_count,
-          count(distinct history.work_item_id) filter (
-            where current_link.work_item_version_id is not null
-          )::int as included_work_item_count
-        from work_item_versions history
-        left join (
-          select link.work_item_version_id
-          from individual_report_version_work_items link
-          join individual_report_versions irv
-            on irv.id = link.report_version_id
-          where irv.report_id = ir.id and irv.version = ir.current_version
-        ) current_link on current_link.work_item_version_id = history.id
-        where history.tenant_id = ir.tenant_id
-          and history.review_id = wis.review_id
-      ) card_stats on true
       where ir.tenant_id = ${actor.tenantId} and ir.team_id = ${actor.teamId}
         and ir.status = 'LOCKED'
       order by rp.starts_at desc, p.display_name
@@ -198,7 +280,9 @@ export async function teamReportRoutes(app: FastifyInstance) {
     const actor = await requireWebActor(request, "admin");
     const { id } = paramsSchema.parse(request.params);
     const reports = await sql<any[]>`
-      select ir.id, ir.status, ir.current_version, ir.locked_at, ir.snapshot_id,
+      select ir.id, ir.status, ir.locked_at, ir.snapshot_id,
+        ir.title, ir.summary, ir.markdown, ir.payload, ir.source_checksum,
+        ir.generator_version, ir.updated_at,
         p.display_name as partner_name, p.email as partner_email,
         rp.period_key, rp.starts_at, rp.ends_at
       from individual_reports ir
@@ -210,67 +294,37 @@ export async function teamReportRoutes(app: FastifyInstance) {
     `;
     if (!reports[0])
       throw new ApiError(404, "NOT_FOUND", "个人 Report 归档不存在。");
-    const versions = await sql<any[]>`
-      select id, version, title, summary, markdown, payload, source_checksum,
-        generator_version, created_at
-      from individual_report_versions
-      where tenant_id = ${actor.tenantId} and report_id = ${id}
-      order by version desc
-    `;
     const snapshotRows = await sql<any[]>`
       select id, review_id, review_version, checksum, payload, approved_at
       from work_item_snapshots
       where tenant_id = ${actor.tenantId} and id = ${reports[0].snapshot_id}
       limit 1
     `;
-    const workItemVersionRows = snapshotRows[0]
-      ? await sql<any[]>`
-          select wiv.*,
-            coalesce(
-              jsonb_agg(
-                jsonb_build_object(
-                  'reportVersionId', irv.id,
-                  'reportVersion', irv.version
-                ) order by irv.version
-              ) filter (where irv.id is not null),
-              '[]'::jsonb
-            ) as report_versions
-          from work_item_versions wiv
-          left join individual_report_version_work_items link
-            on link.work_item_version_id = wiv.id
-          left join individual_report_versions irv
-            on irv.id = link.report_version_id and irv.report_id = ${id}
-          where wiv.tenant_id = ${actor.tenantId}
-            and wiv.review_id = ${snapshotRows[0].review_id}
-          group by wiv.id
-          order by lower(wiv.title), wiv.version desc
-        `
+    const workItems = Array.isArray(snapshotRows[0]?.payload?.workItems)
+      ? snapshotRows[0].payload.workItems.map((item: any) => ({
+          id: item.id,
+          title: item.title,
+          status: item.status,
+          reviewStatus: item.review_status,
+          factIds: item.fact_ids,
+          payload: item.payload,
+          includedInReport: true,
+          createdAt:
+            item.updated_at ?? item.created_at ?? snapshotRows[0].approved_at,
+        }))
       : [];
-    const workItems = [
-      ...workItemVersionRows
-        .reduce((groups, version) => {
-          const existing = groups.get(version.work_item_id) ?? {
-            id: version.work_item_id,
-            title: version.title,
-            currentVersion: version.version,
-            reviewStatus: version.review_status,
-            includedInReport: false,
-            versions: [],
-          };
-          existing.includedInReport ||= version.report_versions.length > 0;
-          existing.versions.push(version);
-          groups.set(version.work_item_id, existing);
-          return groups;
-        }, new Map<string, any>())
-        .values(),
-    ];
     return {
       report: reports[0],
-      current:
-        versions.find(
-          (version) => version.version === reports[0].current_version,
-        ) ?? null,
-      versions,
+      current: {
+        id: reports[0].id,
+        title: reports[0].title,
+        summary: reports[0].summary,
+        markdown: reports[0].markdown,
+        payload: reports[0].payload,
+        source_checksum: reports[0].source_checksum,
+        generator_version: reports[0].generator_version,
+        created_at: reports[0].updated_at,
+      },
       workItemSnapshot: snapshotRows[0] ?? null,
       workItems,
     };
@@ -280,7 +334,7 @@ export async function teamReportRoutes(app: FastifyInstance) {
     const actor = await requireWebActor(request, "admin");
     return sql<any[]>`
       select tr.*, rp.period_key, rp.starts_at, rp.ends_at,
-        rp.submission_deadline_at, current.title, current.summary
+        current.title, current.summary
       from team_reports tr
       join report_periods rp on rp.id = tr.period_id and rp.tenant_id = tr.tenant_id
       left join team_report_versions current on current.report_id = tr.id
@@ -290,12 +344,59 @@ export async function teamReportRoutes(app: FastifyInstance) {
     `;
   });
 
+  app.post("/v1/admin/team-reports/generate", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const input = z
+      .object({ periodId: z.string().uuid() })
+      .strict()
+      .parse(request.body);
+    const existing = await sql<
+      { id: string; status: string; current_version: number }[]
+    >`
+      select id, status, current_version from team_reports
+      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        and period_id = ${input.periodId}
+      limit 1
+    `;
+    if (existing[0])
+      throw new ApiError(
+        409,
+        "TEAM_REPORT_EXISTS",
+        "该周期已经有 Team Report。",
+        {
+          reportId: existing[0].id,
+          status: existing[0].status,
+          currentVersion: existing[0].current_version,
+        },
+      );
+    const result = await sql.begin((tx) =>
+      enqueueTeamReportForPeriod(tx, {
+        tenantId: actor.tenantId,
+        teamId: actor.teamId,
+        periodId: input.periodId,
+      }),
+    );
+    await audit(
+      request,
+      actor,
+      "team_report.generation_requested",
+      "team_report",
+      result!.reportId,
+      {
+        periodId: input.periodId,
+        jobId: result!.jobId,
+        individualReportCount: result!.individualReportCount,
+        missingPartnerIds: result!.missingPartnerIds,
+      },
+    );
+    return result;
+  });
+
   app.get("/v1/admin/team-reports/:id", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const { id } = paramsSchema.parse(request.params);
     const reports = await sql<any[]>`
-      select tr.*, rp.period_key, rp.starts_at, rp.ends_at,
-        rp.submission_deadline_at
+      select tr.*, rp.period_key, rp.starts_at, rp.ends_at
       from team_reports tr
       join report_periods rp on rp.id = tr.period_id and rp.tenant_id = tr.tenant_id
       where tr.id = ${id} and tr.tenant_id = ${actor.tenantId}

@@ -110,7 +110,6 @@ suite("synthetic report generation pipeline", () => {
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
-      await tx`delete from individual_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from individual_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_item_snapshots where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_item_facts where work_item_id in (select id from work_items where tenant_id = ${fixture.tenant})`;
@@ -191,7 +190,7 @@ suite("synthetic report generation pipeline", () => {
             coverage: { discovered: 1, extracted: 1 },
             preferences: {},
             previousReport: {
-              versionId: randomUUID(),
+              reportId: randomUUID(),
               payload: { summary: "上一期已启动验证" },
             },
           })}::jsonb
@@ -203,47 +202,70 @@ suite("synthetic report generation pipeline", () => {
       processed: true,
       type: "GENERATE_INDIVIDUAL_REPORT",
     });
-    const individualVersions = await sql<any[]>`
-      select * from individual_report_versions where report_id = ${reportId}
+    const individualReports = await sql<any[]>`
+      select id, status, content_revision, title, payload
+      from individual_reports where id = ${reportId}
     `;
-    expect(individualVersions).toHaveLength(1);
-    const versionLinks = await sql<any[]>`
-      select link.*, wiv.work_item_id, wiv.version as work_item_version
-      from individual_report_version_work_items link
-      join work_item_versions wiv on wiv.id = link.work_item_version_id
-      where link.report_version_id = ${individualVersions[0].id}
+    expect(individualReports).toMatchObject([
+      {
+        id: reportId,
+        status: "REPORT_REVIEW",
+        content_revision: 1,
+        title: "合成个人报告",
+      },
+    ]);
+    await sql`
+      insert into agent_jobs (
+        id, tenant_id, team_id, partner_id, type, idempotency_key, input_payload
+      ) values (
+        ${randomUUID()}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
+        'REGENERATE_INDIVIDUAL_REPORT', ${`synthetic-report-replace:${reportId}`},
+        ${JSON.stringify({
+          reportId,
+          snapshotId,
+          sourceChecksum,
+          workItems,
+          coverage: { discovered: 1, extracted: 1 },
+          preferences: { reviewInstruction: "更新摘要" },
+        })}::jsonb
+      )
     `;
-    expect(versionLinks).toMatchObject([
-      { work_item_id: workItems[0].id, work_item_version: 1 },
+    nextOutput = {
+      ...individualReport(workItems[0].id),
+      title: "替换后的个人报告",
+      summary: "当前内容已被直接替换。",
+    };
+    expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
+      processed: true,
+      type: "REGENERATE_INDIVIDUAL_REPORT",
+    });
+    const replacedReports = await sql<any[]>`
+      select id, content_revision, title, summary
+      from individual_reports where id = ${reportId}
+    `;
+    expect(replacedReports).toEqual([
+      {
+        id: reportId,
+        content_revision: 2,
+        title: "替换后的个人报告",
+        summary: "当前内容已被直接替换。",
+      },
     ]);
     await sql`
       update individual_reports set status = 'LOCKED', locked_at = now()
       where id = ${reportId}
     `;
 
-    expect(
-      await scheduleDueTeamReports(
-        new Date("2026-08-08T00:00:00Z"),
-        fixture.period,
-      ),
-    ).toBe(0);
-    expect(
-      await scheduleDueTeamReports(
-        new Date("2026-08-10T02:00:00Z"),
-        fixture.period,
-      ),
-    ).toBe(1);
+    expect(await scheduleDueTeamReports(fixture.period)).toBe(1);
     const teamJobs = await sql<any[]>`
       select * from agent_jobs where tenant_id = ${fixture.tenant}
         and type = 'GENERATE_TEAM_REPORT'
     `;
     expect(teamJobs[0].input_payload).toMatchObject({
       missingPartnerIds: [],
-      individualReports: [
-        { partnerId: fixture.partner, versionId: individualVersions[0].id },
-      ],
+      individualReports: [{ partnerId: fixture.partner, reportId }],
     });
-    nextOutput = teamReport(individualVersions[0].id);
+    nextOutput = teamReport(reportId);
     expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
       processed: true,
       type: "GENERATE_TEAM_REPORT",
@@ -302,7 +324,7 @@ function individualReport(workItemId: string) {
   };
 }
 
-function teamReport(versionId: string) {
+function teamReport(reportId: string) {
   const keys = [
     "summary",
     "project_progress",
@@ -323,7 +345,7 @@ function teamReport(versionId: string) {
           ? [
               {
                 claim: "团队已完成链路验证",
-                individualReportVersionIds: [versionId],
+                individualReportIds: [reportId],
               },
             ]
           : [],

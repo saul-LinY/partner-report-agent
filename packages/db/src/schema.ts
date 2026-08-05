@@ -54,8 +54,6 @@ export const teams = pgTable(
       weekStartsOn: 1,
       factCutoffWeekday: 5,
       factCutoffTime: "14:00",
-      reportDeadlineWeekday: 1,
-      reportDeadlineTime: "10:00",
     }),
     evidenceExcerptEnabled: boolean("evidence_excerpt_enabled")
       .notNull()
@@ -154,6 +152,115 @@ export const externalIdentities = pgTable(
       table.tenantId,
       table.provider,
       table.externalSubject,
+    ),
+  ],
+);
+
+export const feishuPartnerBindings = pgTable(
+  "feishu_partner_bindings",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    appId: text("app_id").notNull(),
+    openId: text("open_id"),
+    unionId: text("union_id"),
+    tenantKey: text("tenant_key"),
+    status: text("status").notNull().default("pending"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("feishu_partner_bindings_partner_app_unique").on(
+      table.tenantId,
+      table.partnerId,
+      table.appId,
+    ),
+    uniqueIndex("feishu_partner_bindings_app_open_unique").on(
+      table.appId,
+      table.openId,
+    ),
+    index("feishu_partner_bindings_team_status_idx").on(
+      table.tenantId,
+      table.teamId,
+      table.status,
+    ),
+  ],
+);
+
+export const feishuInboxEvents = pgTable(
+  "feishu_inbox_events",
+  {
+    id: uuid("id").primaryKey(),
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    status: text("status").notNull().default("received"),
+    sanitizedPayload: jsonb("sanitized_payload").notNull().default({}),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("feishu_inbox_events_event_unique").on(table.eventId),
+    index("feishu_inbox_events_status_received_idx").on(
+      table.status,
+      table.receivedAt,
+    ),
+  ],
+);
+
+export const feishuDeliveries = pgTable(
+  "feishu_deliveries",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    kind: text("kind").notNull(),
+    aggregateType: text("aggregate_type").notNull(),
+    aggregateId: text("aggregate_id").notNull(),
+    receiveId: text("receive_id").notNull(),
+    receiveIdType: text("receive_id_type").notNull(),
+    messageId: text("message_id"),
+    domainVersion: integer("domain_version"),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("feishu_deliveries_idempotency_unique").on(
+      table.tenantId,
+      table.idempotencyKey,
+    ),
+    uniqueIndex("feishu_deliveries_message_unique").on(table.messageId),
+    index("feishu_deliveries_retry_idx").on(table.status, table.nextRetryAt),
+    index("feishu_deliveries_aggregate_idx").on(
+      table.tenantId,
+      table.aggregateType,
+      table.aggregateId,
     ),
   ],
 );
@@ -617,11 +724,10 @@ export const sessionFacts = pgTable(
     ...timestamps(),
   },
   (table) => [
-    uniqueIndex("session_fact_revision_unique").on(
+    uniqueIndex("session_fact_current_unique").on(
       table.tenantId,
       table.partnerId,
       table.sessionId,
-      table.sourceRevision,
       table.externalFactId,
     ),
     index("session_facts_period_idx").on(
@@ -740,7 +846,6 @@ export const workItems = pgTable(
     title: text("title").notNull(),
     status: text("status").notNull(),
     reviewStatus: text("review_status").notNull().default("pending"),
-    version: integer("version").notNull().default(1),
     factIds: jsonb("fact_ids").notNull().$type<string[]>(),
     payload: jsonb("payload").notNull(),
     lineage: jsonb("lineage").notNull().default({}),
@@ -748,38 +853,6 @@ export const workItems = pgTable(
   },
   (table) => [
     index("work_items_review_idx").on(table.tenantId, table.reviewId),
-  ],
-);
-
-export const workItemVersions = pgTable(
-  "work_item_versions",
-  {
-    id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id").notNull(),
-    teamId: uuid("team_id").notNull(),
-    partnerId: uuid("partner_id").notNull(),
-    periodId: uuid("period_id").notNull(),
-    reviewId: uuid("review_id")
-      .notNull()
-      .references(() => reviews.id, { onDelete: "cascade" }),
-    workItemId: uuid("work_item_id").notNull(),
-    projectId: uuid("project_id"),
-    version: integer("version").notNull(),
-    title: text("title").notNull(),
-    status: text("status").notNull(),
-    reviewStatus: text("review_status").notNull(),
-    factIds: jsonb("fact_ids").notNull().$type<string[]>(),
-    payload: jsonb("payload").notNull(),
-    lineage: jsonb("lineage").notNull().default({}),
-    changeType: text("change_type").notNull(),
-    createdBy: uuid("created_by"),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("work_item_version_unique").on(table.workItemId, table.version),
-    index("work_item_versions_review_idx").on(table.tenantId, table.reviewId),
   ],
 );
 
@@ -846,9 +919,9 @@ export const workItemSnapshots = pgTable("work_item_snapshots", {
   reviewVersion: integer("review_version").notNull(),
   checksum: text("checksum").notNull(),
   payload: jsonb("payload").notNull(),
-  approvedBy: uuid("approved_by")
-    .notNull()
-    .references(() => users.id),
+  approvedBy: uuid("approved_by").references(() => users.id),
+  approvedByActorType: text("approved_by_actor_type"),
+  approvedByActorId: text("approved_by_actor_id"),
   approvedAt: timestamp("approved_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
@@ -916,61 +989,24 @@ export const individualReports = pgTable(
       .notNull()
       .references(() => workItemSnapshots.id),
     status: text("status").notNull().default("REPORT_DRAFT"),
-    currentVersion: integer("current_version").notNull().default(0),
+    contentRevision: integer("content_revision").notNull().default(0),
+    title: text("title"),
+    summary: text("summary"),
+    markdown: text("markdown"),
+    payload: jsonb("payload"),
+    preferences: jsonb("preferences").notNull().default({}),
+    sourceChecksum: text("source_checksum"),
+    generatorVersion: text("generator_version"),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
     ...timestamps(),
   },
   (table) => [
-    index("individual_reports_partner_period_idx").on(
+    uniqueIndex("individual_reports_partner_period_unique").on(
       table.tenantId,
       table.partnerId,
       table.periodId,
     ),
-  ],
-);
-
-export const individualReportVersions = pgTable(
-  "individual_report_versions",
-  {
-    id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
-    reportId: uuid("report_id")
-      .notNull()
-      .references(() => individualReports.id),
-    version: integer("version").notNull(),
-    title: text("title").notNull(),
-    summary: text("summary").notNull(),
-    markdown: text("markdown").notNull(),
-    payload: jsonb("payload").notNull(),
-    preferences: jsonb("preferences").notNull().default({}),
-    sourceChecksum: text("source_checksum").notNull(),
-    generatorVersion: text("generator_version").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("report_version_unique").on(table.reportId, table.version),
-  ],
-);
-
-export const individualReportVersionWorkItems = pgTable(
-  "individual_report_version_work_items",
-  {
-    reportVersionId: uuid("report_version_id")
-      .notNull()
-      .references(() => individualReportVersions.id, { onDelete: "cascade" }),
-    workItemVersionId: uuid("work_item_version_id")
-      .notNull()
-      .references(() => workItemVersions.id, { onDelete: "cascade" }),
-  },
-  (table) => [
-    primaryKey({
-      columns: [table.reportVersionId, table.workItemVersionId],
-    }),
   ],
 );
 
