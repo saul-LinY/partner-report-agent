@@ -1,0 +1,113 @@
+Partner Report 中台手动重启说明
+================================
+
+仓库目录：
+
+  /Users/saul/PROJECT/partner-report-agent
+
+
+一、进入仓库
+------------
+
+  cd /Users/saul/PROJECT/partner-report-agent
+
+
+二、停止旧的中台进程
+--------------------
+
+如果中台是你在当前 Terminal 里启动的，直接按：
+
+  Ctrl+C
+
+如果不确定是否还有旧进程占用端口，先查看：
+
+  lsof -nP -iTCP:4310 -iTCP:4311 -sTCP:LISTEN
+
+看到占用 4310 或 4311 的 node/vite 进程后，停止对应 PID：
+
+  kill <PID>
+
+注意：不要杀 PostgreSQL 的 Docker 进程；数据库用下一步的 docker compose 管理。
+
+
+三、重启数据库
+--------------
+
+  docker compose restart postgres
+
+确认数据库 healthy：
+
+  docker compose ps
+
+正常时会看到 postgres 状态包含 healthy。
+
+
+四、启动 API / Web / Worker
+---------------------------
+
+推荐用下面这个非 watch 启动方式，适合手动恢复服务，也能避开
+"EMFILE: too many open files, watch" 文件监听数量限制：
+
+  ./node_modules/.bin/concurrently -k -n api,web,worker -c cyan,green,yellow "npm run start -w @partner-report/api" "npm run dev -w @partner-report/web" "npm run start -w @partner-report/worker"
+
+这个命令会一直运行，Terminal 需要保持打开。
+
+正常日志里应该看到类似：
+
+  Web: http://localhost:4311/
+  Web: http://172.20.10.14:4311/
+  API: Server listening at http://127.0.0.1:4310
+  API: Server listening at http://172.20.10.14:4310
+  Worker: Partner Report worker started.
+
+
+五、健康检查
+------------
+
+新开一个 Terminal，执行：
+
+  curl -sS http://127.0.0.1:4310/health
+
+正常返回类似：
+
+  {"status":"ok","time":"2026-08-05T08:27:38.089Z"}
+
+检查 Web 首页：
+
+  curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4311/
+
+正常返回：
+
+  200
+
+
+六、局域网地址变化时
+--------------------
+
+如果这台 Mac 的局域网 IP 变了，需要先更新根目录 .env 里的三个地址：
+
+  WEB_ORIGIN
+  VITE_API_URL
+  PARTNER_REPORT_SERVER_URL
+
+例如 IP 是 172.20.10.14 时：
+
+  WEB_ORIGIN=http://172.20.10.14:4311
+  VITE_API_URL=http://172.20.10.14:4310
+  PARTNER_REPORT_SERVER_URL=http://172.20.10.14:4310
+
+改完 .env 后，重新执行本文件里的重启流程。
+
+
+七、常用入口
+------------
+
+当前局域网入口：
+
+  Web: http://172.20.10.14:4311
+  API: http://172.20.10.14:4310
+
+默认本地账号：
+
+  saul@laien.io
+  123456
