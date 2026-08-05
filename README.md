@@ -39,9 +39,14 @@ npm run db:seed
 npm run dev
 ```
 
-Web：`http://127.0.0.1:4311`
+当前这台中台 Mac 的局域网入口：
 
-API：`http://127.0.0.1:4310`
+```text
+Web：http://172.20.10.14:4311
+API：http://172.20.10.14:4310
+```
+
+API 和 Web 监听所有网卡，PostgreSQL 仅监听本机回环地址。局域网 IP 变化后，需要同步更新根目录 `.env` 中的 `WEB_ORIGIN`、`VITE_API_URL` 和 `PARTNER_REPORT_SERVER_URL`，再重启服务。同事设备必须与中台处于同一可信局域网；macOS 防火墙需要允许 Node 接收入站连接。
 
 默认本地账号：
 
@@ -79,6 +84,14 @@ Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `g
 ```
 
 绑定成功即按文档中的采集范围默认启用，不再要求单独确认上传授权。Plugin 只读取合格的完整 Turn，只向当前绑定中台上传校验后的结构化 Fact，并继续执行敏感信息过滤和 Session 排除规则。
+
+当前局域网测试环境使用 HTTP。同事连接时需要明确说明这是可信测试局域网，由 Skill 在连接命令中显式追加 `--allow-insecure-http`。例如：
+
+```text
+使用 $partner-report-sync，把可信测试局域网的数据中台 http://172.20.10.14:4310 和绑定码 PR-XXXX-XXXX 连接起来，允许局域网 HTTP。
+```
+
+HTTP 会明文传输访问令牌和贡献数据，只适合隔离的临时测试网络；跨网络或长期使用应按部署文档配置 HTTPS。
 
 绑定成功后，`$partner-report-sync` 会立即检查 Codex 桌面端的同名 Scheduled task。若不存在则按以下默认值创建；若已存在则保留用户修改过的时间、时区、模型、推理强度、通知、运行位置和项目设置：
 

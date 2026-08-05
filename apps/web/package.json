@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite --host 127.0.0.1 --port 4311",
-    "preview": "vite preview --host 127.0.0.1 --port 4311",
+    "dev": "vite --host 0.0.0.0 --port 4311",
+    "preview": "vite preview --host 0.0.0.0 --port 4311",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

@@ -29,7 +29,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" <COMMAND>
 node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <BINDING_CODE>
 ```
 
-远程端点必须使用 HTTPS；本机回环地址允许 HTTP。Token 默认保存在 macOS Keychain，绝不能输出。绑定后的连通性检查失败时，保留绑定并重试 `connectivity-test`，不得重新领取绑定码。
+远程端点必须使用 HTTPS；本机回环地址允许 HTTP。用户明确说明中台与 Partner 设备位于同一个可信测试局域网，并提供私有 IP 的 HTTP 地址时，连接命令必须显式追加 `--allow-insecure-http`；不得对公网地址或未经用户确认的网络绕过 HTTPS。Token 默认保存在 macOS Keychain，绝不能输出。绑定后的连通性检查失败时，保留绑定并重试 `connectivity-test`，不得重新领取绑定码。
 
 连接后运行 `scheduled-task-config`。使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。
 

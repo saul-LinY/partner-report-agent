@@ -5933,7 +5933,7 @@ function configureExclusion(kind, remove = false) {
 function help() {
   output({
     commands: [
-      "connect --server <url> --binding-code <code> [--device-name <name>]",
+      "connect --server <url> --binding-code <code> [--device-name <name>] [--allow-insecure-http]",
       "connectivity-test",
       "scheduled-task-config",
       "collect-start [--force]",

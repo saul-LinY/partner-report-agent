@@ -22,6 +22,32 @@ PLUGIN_MIN_VERSION=0.1.0
 
 `VITE_API_URL` 是构建 Web 前端时写入浏览器包的公开 API 地址。`WEB_ORIGIN` 是用户实际打开的 Web 地址，同时用于 CORS、设备确认链接和邀请链接。两者不要以 `/` 结尾。防火墙只需向 Partner 设备开放 API 的 HTTPS 入口；PostgreSQL 不应暴露到公网。
 
+## 可信局域网联调
+
+临时局域网联调时，API 和 Web 进程应监听 `0.0.0.0`，但公开 URL 必须填写中台 Mac 的实际私有 IP。以下示例假设 IP 为 `192.168.1.100`：
+
+```dotenv
+API_HOST=0.0.0.0
+API_PORT=4310
+WEB_ORIGIN=http://192.168.1.100:4311
+VITE_API_URL=http://192.168.1.100:4310
+SESSION_COOKIE_SECURE=false
+PARTNER_REPORT_SERVER_URL=http://192.168.1.100:4310
+```
+
+局域网 IP 改变后，更新三个公开 URL 并重启 API、Web。Docker Compose 只把 PostgreSQL 发布到 `127.0.0.1:54329`，不得为了插件连接而开放数据库端口。
+
+Partner 设备连接局域网 HTTP 时必须明确接受明文传输风险：
+
+```bash
+node "<installed-plugin-path>/dist/cli.mjs" connect \
+  --server http://192.168.1.100:4310 \
+  --binding-code PR-XXXX-XXXX \
+  --allow-insecure-http
+```
+
+这种方式只用于同一可信、隔离的测试局域网。跨网段、共享办公网络或长期运行时必须使用 HTTPS。
+
 典型启动顺序：
 
 ```bash
@@ -53,6 +79,6 @@ PARTNER_REPORT_SERVER_URL=https://report-api.example.com \
   node "<installed-plugin-path>/dist/cli.mjs" connect
 ```
 
-非本机 HTTP 会被拒绝，因为访问令牌、Fact 和任务结果都需要传输保护。本地开发允许 `http://127.0.0.1:4310`。仅在明确隔离的测试网络里，才可使用 `--allow-insecure-http`。
+非本机 HTTP 会被拒绝，因为访问令牌、Fact 和任务结果都需要传输保护。本机开发允许回环 HTTP；仅在明确隔离的测试网络里，才可使用 `--allow-insecure-http`。
 
 更换服务器时重新运行 `connect --server <new-url>` 完成新的设备授权。插件只会在新服务器签发凭据后切换保存地址，并清理旧的本地 Token。
