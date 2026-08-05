@@ -33,6 +33,7 @@ import {
   refreshCollectionLease,
   releaseCollectionLease,
   removeIgnoredSession,
+  reviewCollectionCompletion,
   saveCollectionState,
   threadIsInScanWindow,
 } from "./collection-state.js";
@@ -602,6 +603,7 @@ async function finishRun(
   }
   const summary = {
     status: "completed",
+    reviewed: true,
     periodKey: manifest.period.period_key,
     collectionStartsAt: manifest.period.starts_at,
     collectionEndsAt: manifest.period.ends_at,
@@ -614,12 +616,20 @@ async function finishRun(
   output(summary);
 }
 
+function completionReview(manifest: RunManifest) {
+  return reviewCollectionCompletion({
+    cursor: manifest.cursor,
+    queueLength: manifest.queue.length,
+    hasCurrentJob: manifest.current !== null,
+    counts: manifest.counts,
+  });
+}
+
 async function collectNext() {
   const runPath = option("run");
   if (!runPath) throw new Error("collect-next 需要 --run <path>。");
   const { absolute, manifest } = readRun(runPath);
   if (manifest.current) return currentJobOutput(absolute, manifest.current);
-  const config = loadConfig()!;
   const server = new CodexAppServer();
   try {
     await server.connect();
@@ -666,7 +676,28 @@ async function collectNext() {
   } finally {
     server.close();
   }
-  await finishRun(absolute, manifest, config);
+  output({
+    status: "review_required",
+    runPath: absolute,
+    review: completionReview(manifest),
+    nextCommand: `collect-review --run ${absolute}`,
+  });
+}
+
+async function collectReview() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-review 需要 --run <path>。");
+  const { absolute, manifest } = readRun(runPath);
+  const review = completionReview(manifest);
+  if (!review.readyToFinalize) {
+    return output({
+      status: "review_failed",
+      runPath: absolute,
+      review,
+      nextCommand: `collect-next --run ${absolute}`,
+    });
+  }
+  await finishRun(absolute, manifest, loadConfig()!);
 }
 
 function assertImmutableContribution(contribution: any, expected: any) {
@@ -843,6 +874,7 @@ function help() {
       "scheduled-task-config",
       "collect-start [--force]",
       "collect-next --run <path>",
+      "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
       "collect-skip --run <path> [--error-code <code>]",
       "status",
@@ -862,6 +894,7 @@ try {
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
   else if (command === "collect-next") await collectNext();
+  else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
   else if (command === "collect-skip") collectSkip();
   else if (command === "status") await status();

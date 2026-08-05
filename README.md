@@ -75,7 +75,7 @@ codex plugin marketplace add saul-LinY/partner-report-agent --ref main
 
 然后在 Codex 桌面端打开 `/plugins`，从 `Partner Report Marketplace` 安装 `Partner Report`，并新建会话。
 
-Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `gpt-5.6-sol`、`medium` 推理；之后 Codex Scheduled 面板是运行时间、模型、推理强度和通知策略的唯一配置来源。定时任务当前选择的模型直接完成 Session 级 Fact 提取，Plugin 不会再启动或指定另一个模型。跨 Session 聚合和 Report 生成仍使用 Admin 在中台选择的模型。
+Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `gpt-5.5`、`low` 推理；之后 Codex Scheduled 面板是运行时间、模型、推理强度和通知策略的唯一配置来源。定时任务当前选择的模型直接完成 Session 级 Fact 提取，Plugin 不会再启动或指定另一个模型。跨 Session 聚合和 Report 生成仍使用 Admin 在中台选择的模型。
 
 在 Admin Web 中先创建 Partner，再生成绑定码。随后在 Codex 中说：
 
@@ -99,12 +99,12 @@ HTTP 会明文传输访问令牌和贡献数据，只适合隔离的临时测试
 名称：Partner Report daily collection
 运行于：新聊天
 项目：无
-时间：每天 13:30
+时间：每天 14:30
 时区：Asia/Shanghai（北京时间）
-模型：gpt-5.6-sol
-推理强度：medium
-通知：仅失败提醒
-Prompt：由 Plugin CLI 返回，包含采集边界、数据最小化规则和 automation memory 最小化规则
+模型：gpt-5.5
+推理强度：low
+通知：所有运行
+Prompt：由 Plugin CLI 返回，包含采集边界、数据最小化规则、automation memory 最小化规则和终态审查要求
 ```
 
 Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默认任务，并在安全契约升级时只修复 Prompt，不覆盖用户在面板中的时间、模型等配置。Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
@@ -125,14 +125,15 @@ macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTN
 ## 数据流
 
 ```text
-Codex Scheduled task（默认每天北京时间 13:30、新聊天、无项目；面板可修改）
+Codex Scheduled task（默认每天北京时间 14:30、新聊天、无项目；面板可修改）
   -> 当前任务选择的模型与推理强度
   -> 首次最近 1 天，后续按本地成功游标增量扫描
   -> 本地租约阻止自动与手动并发采集
   -> 过滤为完整 user question + final_answer Turn
   -> 已接收或已忽略且 hash 未变化的 Session 直接跳过
   -> 当前 Scheduled 会话逐 Session 生成中文贡献，Plugin 逐个校验
-  -> HTTPS 幂等上传，完整成功后推进本地运行游标
+  -> HTTPS 幂等上传，队列清空后执行独立终态审查
+  -> 审查确认无剩余 Job 且无失败后推进本地运行游标
   -> 中台按 Partner 冻结本周期 Fact
   -> 中台模型跨 Session 聚合 Work Item
   -> Admin Web 模拟 Partner 第一次审核和修改

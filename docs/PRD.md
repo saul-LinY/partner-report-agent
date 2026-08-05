@@ -1,8 +1,10 @@
 # Partner Report Agent 产品需求文档
 
-> MVP 实现决策（2026-08-04）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 13:30、`gpt-5.6-sol` 和 `medium` 推理，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；安全契约升级时只修复 Prompt，已有任务的用户配置保持不变。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
+> MVP 实现决策（2026-08-04）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 14:30、`gpt-5.5` 和 `low` 推理，并通知所有运行，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；安全契约升级时只修复 Prompt，已有任务的用户配置保持不变。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
 
 > 采集状态修订（2026-08-05）：首次运行只采集最近 1 天；后续按 Plugin 本地成功运行游标和 24 小时重叠窗口筛选候选 Session。已接收 Session 使用中台内容 hash 防重，被判定为 `ignore` 的 Session 使用本地匿名 hash 防重，跨运行租约阻止自动和手动采集并发。只有完整成功的 Run 才推进游标。所有 Session 提取指令以及上传的标题、摘要和贡献正文使用中文。任务级 automation memory 只保存安全运行摘要，不作为防重事实源。
+
+> 采集终态审查修订（2026-08-05）：队列清空后 `collect-next` 只返回 `review_required`，独立的 `collect-review` 再核对队列和当前 Job；只有审查命令返回 `completed` 且 `checkpointAdvanced: true` 才能记录完整成功。所有携带 `nextCommand` 的状态都必须继续执行，不能因已运行时长或已处理部分 Session 提前收尾。
 
 > 报告调度与归档修订（2026-08-05）：Team Admin 分别配置工作卡片聚合时间和 Team Report 生成时间。最后一张工作卡片完成审核后，中台自动冻结 Snapshot 并创建个人 Report 生成任务；Team Report 只在配置时间到达后，基于届时已锁定的个人 Report 版本生成，未提交人员显式列为缺席，不因全员提前提交而提前触发。报告归档同时保存工作卡片版本、个人 Report 版本及两者的明确引用关系。
 
@@ -160,7 +162,7 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 11. 本地 Scheduled Task 依赖电脑开机、Codex 桌面应用运行以及适当的文件和网络权限。
 12. Codex CLI 和 IDE 当前不是 Scheduled Tasks 的管理入口。
 13. Partner 关闭历史记录、删除 Session、使用多个设备或云端 Session 时，可能出现覆盖缺口。
-14. 本产品正常采集链路不使用每 Turn 的 `Stop`/`SessionEnd` Hook，而使用 Codex Scheduled Task 按面板配置触发结构化扫描（首次创建默认每天北京时间 13:30）；生命周期 Hook 仅作为已知平台能力保留，不是 MVP 依赖。
+14. 本产品正常采集链路不使用每 Turn 的 `Stop`/`SessionEnd` Hook，而使用 Codex Scheduled Task 按面板配置触发结构化扫描（首次创建默认每天北京时间 14:30）；生命周期 Hook 仅作为已知平台能力保留，不是 MVP 依赖。
 
 官方参考：
 
@@ -211,7 +213,7 @@ Monitor 不安装 Codex Plugin，不需要登录 Report Service，不承担任�
 
 默认采集规则：
 
-1. Plugin 按 Codex Scheduled 面板配置触发 Daily Collection Run，首次创建任务默认每天北京时间 13:30。
+1. Plugin 按 Codex Scheduled 面板配置触发 Daily Collection Run，首次创建任务默认每天北京时间 14:30。
 2. 每个报告数据窗口为“上一次周五 13:00 至本次周五 13:00”；13:00 之后完成的 Turn 进入下一个窗口。
 3. 第一次运行把采集下界固化为“运行开始前 1 天”和报告周期开始时间中的较晚者；后续周期不得回溯到该下界之前。
 4. 后续运行使用上次完整成功 Run 的开始时间作为候选游标，并向前重叠 24 小时；失败或中断不得推进游标。
@@ -303,7 +305,7 @@ flowchart TD
     install[Partner 安装插件]
     bind[输入 Admin 分配的绑定码]
     session[Partner 使用 Codex]
-    dailyRun[按 Scheduled 面板触发<br/>首次创建默认每天北京时间 13:30]
+    dailyRun[按 Scheduled 面板触发<br/>首次创建默认每天北京时间 14:30]
     scheduledScan[thread/list + thread/read 扫描]
     completeTurn{问答是否完整?}
     pendingTurn[保留等待且不推进游标]
@@ -348,7 +350,7 @@ flowchart TD
 1. Team Admin 使用唯一工作邮箱创建 Partner；邮箱标准化后全局唯一，内部生成稳定 `partner_id`，后续邮箱展示信息变化不改变数据主键。
 2. Team Admin 为该 Partner 创建一个或多个长期 Binding Code；每个 Code 代表一个独立 Plugin Instance，可设置设备名称并由 Admin 停用。
 3. Team Admin 分发 GitHub Marketplace 稳定版本入口和对应 Binding Code；Partner 不需要登录 Report Service。
-4. Partner 安装并启用 Plugin；绑定成功后 Skill 在同名任务不存在时创建独立 Scheduled Task，默认每天北京时间 13:30、运行于新聊天且项目为无；已有任务保留 Partner 在面板中的配置，正常链路不安装每 Turn 触发的生命周期 Hook。
+4. Partner 安装并启用 Plugin；绑定成功后 Skill 在同名任务不存在时创建独立 Scheduled Task，默认每天北京时间 14:30、运行于新聊天且项目为无；已有任务保留 Partner 在面板中的配置，正常链路不安装每 Turn 触发的生命周期 Hook。
 5. Partner 在 Plugin 连接流程中输入 Binding Code 和设备名称。
 6. Report Service 根据 Binding Code 建立以下绑定：
 
@@ -368,7 +370,7 @@ tenant_id
    - 默认报告周期。
    - 从中台获取允许或排除的项目根目录。
    - 是否上传有限证据摘要。
-   - 首次默认的北京时区和每天 13:30 采集计划；之后以 Scheduled 面板为准。
+   - 首次默认的北京时区和每天 14:30 采集计划；之后以 Scheduled 面板为准。
    - 是否允许访问 Report Service 网络域名。
 9. 系统执行一次只读预检，展示可发现 Session 数量，不立即上传完整数据。
 10. 系统执行一次测试同步，展示读取、排除、失败和待处理数量。
@@ -376,7 +378,7 @@ tenant_id
 
 ### 9.2 每日 Session 发现与本地提取
 
-1. Codex Scheduled Task 按面板配置在新聊天中启动 Daily Collection Run（首次创建默认每天北京时间 13:30），不在每个 Agent Turn 结束时运行 Hook。
+1. Codex Scheduled Task 按面板配置在新聊天中启动 Daily Collection Run（首次创建默认每天北京时间 14:30），不在每个 Agent Turn 结束时运行 Hook。
 2. Plugin 先取得本地采集租约；若自动或手动 Run 已持有有效租约，则当前 Run 返回 `COLLECTION_ALREADY_RUNNING`，不并发提取。
 3. Plugin 读取本地 `collection-state.json`。没有成功历史时固化最近 1 天采集下界；有成功历史时从上次成功 Run 开始时间向前重叠 24 小时。
 4. Plugin 向中台发送“本次采集开始”状态，通过 Codex App Server `thread/list` 按更新时间筛选候选 Session，再调用 `thread/read(includeTurns)`。
@@ -472,7 +474,7 @@ Partner 设置采用四步向导：
 3. 确认本地 Session 历史记录未关闭。
 4. 选择允许分析和必须排除的项目目录。
 5. 选择是否允许上传有限 Evidence Excerpt。
-6. 确认 Skill 已创建默认每天北京时间 13:30、运行于新聊天、项目为无、模型为 `gpt-5.6-sol`、推理强度为 `medium`、仅失败提醒的 Daily Collection Task；这些值可在 Scheduled 面板修改，并授权访问 Report Service 网络域名。
+6. 确认 Skill 已创建默认每天北京时间 14:30、运行于新聊天、项目为无、模型为 `gpt-5.5`、推理强度为 `low`、通知所有运行的 Daily Collection Task；这些值可在 Scheduled 面板修改，并授权访问 Report Service 网络域名。
 7. 完成一次测试同步，确认 Session 覆盖和错误提示。
 
 可选设置：
@@ -541,7 +543,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 支持按创建或更新时间筛选 Session。
 - 支持按项目目录和显式排除规则过滤。
 - 支持发现活跃和已归档本地 Session。
-- Plugin 必须按 Codex Scheduled 面板配置运行 Daily Collection Run，首次创建默认每天北京时间 13:30；正常情况下不在计划外自动扫描。
+- Plugin 必须按 Codex Scheduled 面板配置运行 Daily Collection Run，首次创建默认每天北京时间 14:30；正常情况下不在计划外自动扫描。
 - 第一次 Run 只处理最近 1 天；后续 Run 必须使用成功运行游标和 24 小时重叠窗口，通过 `thread/list` 和 `thread/read(includeTurns)` 发现候选 Session。
 - Plugin 必须比较中台已接收内容 hash 和本地 ignore 内容 hash；未变化时不得重复调用模型。
 - 扫描时正在回答的 Turn 必须从模型输入中排除；同一 Session 中更早的 Complete Turn 仍应正常提取。
@@ -1383,7 +1385,7 @@ flowchart LR
     subgraph local [Partner 本地]
         codex[Codex]
         plugin[Report Plugin]
-        dailyTask[Codex Scheduled Task<br/>首次创建默认每天北京时间 13:30]
+        dailyTask[Codex Scheduled Task<br/>首次创建默认每天北京时间 14:30]
         dailyScanner[Daily Session Scanner]
         completeTurn{Complete Turn?}
         outbox[(Local Outbox)]
@@ -1650,7 +1652,8 @@ flowchart LR
 目标：验证关键能力是否可用。
 
 - 创建本地 Codex Plugin 原型。
-- 验证默认每天北京时间 13:30 Daily Collection Task 的首次创建、用户配置保留、单次触发和运行状态上报。
+- 验证默认每天北京时间 14:30 Daily Collection Task 的首次创建、用户配置保留、单次触发和运行状态上报。
+- 验证队列清空后必须通过独立 `collect-review` 终态审查，未清空队列或仍有当前 Job 时不能返回 `completed`。
 - 验证正常链路不会在每个 Turn、每 5 分钟或每 6 小时触发采集。
 - 验证首次只采集最近 1 天，后续按成功运行游标和重叠窗口筛选候选 Session。
 - 验证一周内无 Hook 提示的新增内容仍可通过 `thread/list`、`thread/read`、更新时间和内容 hash 被发现。
@@ -1670,7 +1673,7 @@ flowchart LR
 ### Phase 1：个人 Report MVP
 
 - Plugin 安装和 Binding Code 接入。
-- Scheduled 面板可配置、首次创建默认每天北京时间 13:30 的增量 Session 提取。
+- Scheduled 面板可配置、首次创建默认每天北京时间 14:30 的增量 Session 提取。
 - Session Work Facts 上传。
 - 中台跨 Session 工作事项聚合和重要性排序。
 - 飞书工作事项第一轮审核。
@@ -1838,7 +1841,8 @@ Admin 停用 Binding Code 后，对应 Plugin 立即不能继续上传；其他�
 - 本地成功运行游标、ignore hash 与租约 Store。
 - App Server Reader。
 - Extraction Skill。
-- 默认每天北京时间 13:30 Daily Collection Task 首次创建、用户配置保留、幂等运行和错过后增量补采。
+- 默认每天北京时间 14:30 Daily Collection Task 首次创建、用户配置保留、幂等运行和错过后增量补采。
+- 独立终态审查与非终态 `nextCommand` 强制续跑。
 - Complete Turn 判断、回答中 Turn 排除和完整 Session hash 修订。
 - Remote MCP 或 Sync Client。
 - Binding Code、本地配置和排除规则。

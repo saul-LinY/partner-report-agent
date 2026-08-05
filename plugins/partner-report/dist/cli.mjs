@@ -4637,10 +4637,11 @@ async function authenticatedRequest(path, init = {}) {
 }
 
 // src/collection-config.ts
-var DEFAULT_COLLECTION_MODEL = "gpt-5.6-sol";
-var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
+var DEFAULT_COLLECTION_MODEL = "gpt-5.5";
+var DEFAULT_COLLECTION_REASONING_EFFORT = "low";
 var SCHEDULED_COLLECTION_PROMPT = [
   "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
+  "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
@@ -4648,19 +4649,22 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u63D2\u4EF6\u672C\u5730\u72B6\u6001\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "\u6301\u7EED\u6267\u884C\u5230 CLI \u8FD4\u56DE completed\uFF0C\u7136\u540E\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
+  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "\u961F\u5217\u6E05\u7A7A\u540E\u5FC5\u987B\u6267\u884C collect-review\uFF1B\u53EA\u6709\u8BE5\u5BA1\u67E5\u547D\u4EE4\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextCommand \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
+  "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 CLI \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
+  "\u6700\u7EC8\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
 ].join(" ");
 var SCHEDULED_COLLECTION_TASK = {
   name: "Partner Report daily collection",
   destination: "new_chat",
   project: null,
   schedule: {
-    rrule: "RRULE:FREQ=DAILY;BYHOUR=13;BYMINUTE=30",
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=14;BYMINUTE=30",
     timezone: "Asia/Shanghai"
   },
   model: DEFAULT_COLLECTION_MODEL,
   reasoningEffort: DEFAULT_COLLECTION_REASONING_EFFORT,
-  notifications: "failures_only",
+  notifications: "all_runs",
   prompt: SCHEDULED_COLLECTION_PROMPT
 };
 
@@ -4789,6 +4793,16 @@ function removeIgnoredSession(state, sessionKey) {
 }
 function canAdvanceCollectionCheckpoint(counts) {
   return counts.failedRead === 0 && counts.failedExtract === 0;
+}
+function reviewCollectionCompletion(input) {
+  const queueExhausted = input.cursor === input.queueLength;
+  const noCurrentJob = !input.hasCurrentJob;
+  return {
+    queueExhausted,
+    noCurrentJob,
+    readyToFinalize: queueExhausted && noCurrentJob,
+    checkpointEligible: canAdvanceCollectionCheckpoint(input.counts)
+  };
 }
 function writeLease(path, lease, exclusive = false) {
   writeFileSync2(path, `${JSON.stringify(lease)}
@@ -5712,6 +5726,7 @@ async function finishRun(runPath, manifest, config) {
   }
   const summary = {
     status: "completed",
+    reviewed: true,
     periodKey: manifest.period.period_key,
     collectionStartsAt: manifest.period.starts_at,
     collectionEndsAt: manifest.period.ends_at,
@@ -5723,12 +5738,19 @@ async function finishRun(runPath, manifest, config) {
   rmSync(dirname2(runPath), { recursive: true, force: true });
   output(summary);
 }
+function completionReview(manifest) {
+  return reviewCollectionCompletion({
+    cursor: manifest.cursor,
+    queueLength: manifest.queue.length,
+    hasCurrentJob: manifest.current !== null,
+    counts: manifest.counts
+  });
+}
 async function collectNext() {
   const runPath = option("run");
   if (!runPath) throw new Error("collect-next \u9700\u8981 --run <path>\u3002");
   const { absolute, manifest } = readRun(runPath);
   if (manifest.current) return currentJobOutput(absolute, manifest.current);
-  const config = loadConfig();
   const server = new CodexAppServer();
   try {
     await server.connect();
@@ -5775,7 +5797,27 @@ async function collectNext() {
   } finally {
     server.close();
   }
-  await finishRun(absolute, manifest, config);
+  output({
+    status: "review_required",
+    runPath: absolute,
+    review: completionReview(manifest),
+    nextCommand: `collect-review --run ${absolute}`
+  });
+}
+async function collectReview() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-review \u9700\u8981 --run <path>\u3002");
+  const { absolute, manifest } = readRun(runPath);
+  const review = completionReview(manifest);
+  if (!review.readyToFinalize) {
+    return output({
+      status: "review_failed",
+      runPath: absolute,
+      review,
+      nextCommand: `collect-next --run ${absolute}`
+    });
+  }
+  await finishRun(absolute, manifest, loadConfig());
 }
 function assertImmutableContribution(contribution, expected) {
   for (const key of [
@@ -5938,6 +5980,7 @@ function help() {
       "scheduled-task-config",
       "collect-start [--force]",
       "collect-next --run <path>",
+      "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
       "collect-skip --run <path> [--error-code <code>]",
       "status",
@@ -5956,6 +5999,7 @@ try {
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
   else if (command === "collect-next") await collectNext();
+  else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
   else if (command === "collect-skip") collectSkip();
   else if (command === "status") await status();

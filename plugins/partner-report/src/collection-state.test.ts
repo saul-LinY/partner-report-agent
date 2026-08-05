@@ -11,6 +11,7 @@ import {
   recordIgnoredSession,
   refreshCollectionLease,
   releaseCollectionLease,
+  reviewCollectionCompletion,
   saveCollectionState,
   threadIsInScanWindow,
 } from "./collection-state.js";
@@ -126,6 +127,54 @@ describe("collection state", () => {
     expect(
       canAdvanceCollectionCheckpoint({ failedRead: 0, failedExtract: 1 }),
     ).toBe(false);
+  });
+
+  it("requires an exhausted queue and no active job before final review", () => {
+    expect(
+      reviewCollectionCompletion({
+        cursor: 2,
+        queueLength: 3,
+        hasCurrentJob: false,
+        counts: { failedRead: 0, failedExtract: 0 },
+      }),
+    ).toMatchObject({ readyToFinalize: false, queueExhausted: false });
+    expect(
+      reviewCollectionCompletion({
+        cursor: 3,
+        queueLength: 3,
+        hasCurrentJob: true,
+        counts: { failedRead: 0, failedExtract: 0 },
+      }),
+    ).toMatchObject({ readyToFinalize: false, noCurrentJob: false });
+    expect(
+      reviewCollectionCompletion({
+        cursor: 3,
+        queueLength: 3,
+        hasCurrentJob: false,
+        counts: { failedRead: 0, failedExtract: 0 },
+      }),
+    ).toEqual({
+      queueExhausted: true,
+      noCurrentJob: true,
+      readyToFinalize: true,
+      checkpointEligible: true,
+    });
+  });
+
+  it("allows partial runs to finalize without advancing the checkpoint", () => {
+    expect(
+      reviewCollectionCompletion({
+        cursor: 3,
+        queueLength: 3,
+        hasCurrentJob: false,
+        counts: { failedRead: 1, failedExtract: 0 },
+      }),
+    ).toEqual({
+      queueExhausted: true,
+      noCurrentJob: true,
+      readyToFinalize: true,
+      checkpointEligible: false,
+    });
   });
 });
 

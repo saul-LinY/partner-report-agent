@@ -217,6 +217,22 @@ export function canAdvanceCollectionCheckpoint(counts: {
   return counts.failedRead === 0 && counts.failedExtract === 0;
 }
 
+export function reviewCollectionCompletion(input: {
+  cursor: number;
+  queueLength: number;
+  hasCurrentJob: boolean;
+  counts: { failedRead: number; failedExtract: number };
+}) {
+  const queueExhausted = input.cursor === input.queueLength;
+  const noCurrentJob = !input.hasCurrentJob;
+  return {
+    queueExhausted,
+    noCurrentJob,
+    readyToFinalize: queueExhausted && noCurrentJob,
+    checkpointEligible: canAdvanceCollectionCheckpoint(input.counts),
+  };
+}
+
 function writeLease(path: string, lease: CollectionLease, exclusive = false) {
   writeFileSync(path, `${JSON.stringify(lease)}\n`, {
     mode: 0o600,

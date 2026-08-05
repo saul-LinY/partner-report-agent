@@ -14,6 +14,7 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain('node "<PLUGIN_PATH>/dist/cli.mjs"');
     expect(skill).toContain("collect-start");
     expect(skill).toContain("collect-next --run");
+    expect(skill).toContain("collect-review --run");
     expect(skill).toContain("collect-submit --run");
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
@@ -23,6 +24,8 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("官方 Codex Scheduled Task");
     expect(skill).toContain("必须使用简体中文");
     expect(skill).toContain("防重与成功游标以 CLI 本地状态和中台状态为准");
+    expect(skill).toContain("所有 `nextCommand` 都必须执行");
+    expect(skill).toContain("终态审查");
     expect(skill).not.toContain("continuation-task-config");
     expect(skill).not.toContain("next-local");
     expect(skill).not.toContain("daily-finish");
