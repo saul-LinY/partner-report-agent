@@ -28,6 +28,9 @@ function callbackValues(card: FeishuCard): FeishuActionValue[] {
     if (record.type === "callback" && record.value) {
       values.push(feishuActionValueSchema.parse(record.value));
     }
+    if (record.action_type === "form_submit" && record.value) {
+      values.push(feishuActionValueSchema.parse(record.value));
+    }
     Object.values(record).forEach(visit);
   };
   visit(card);
@@ -155,6 +158,17 @@ describe("Feishu JSON 2.0 cards", () => {
       required: true,
       max_length: 1_000,
     });
+    expect(findByElementId(card, "review_regen_btn")).toMatchObject({
+      tag: "button",
+      action_type: "form_submit",
+      name: "review_regen_submit",
+      value: {
+        action: "review_regenerate",
+      },
+    });
+    expect(findByElementId(card, "review_regen_btn")).not.toHaveProperty(
+      "behaviors",
+    );
   });
 
   it("keeps report actions scoped to delivery and report aggregate", () => {
@@ -197,6 +211,13 @@ describe("Feishu JSON 2.0 cards", () => {
     expect(findByElementId(card, "report_regen_input")).toMatchObject({
       name: "instruction",
       input_type: "multiline_text",
+    });
+    expect(findByElementId(card, "report_regen_btn")).toMatchObject({
+      action_type: "form_submit",
+      name: "report_regen_submit",
+      value: {
+        action: "report_regenerate",
+      },
     });
   });
 

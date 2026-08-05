@@ -372,16 +372,22 @@ function regenerationForm(input: {
   value: FeishuActionValue;
 }): FeishuCardElement {
   const prefix = input.prefix === "review" ? "review" : "report";
-  const submit = callbackButton({
-    elementId: `${prefix}_regen_btn`,
-    label: "按意见重新生成",
+  const submit: FeishuCardElement = {
+    tag: "button",
+    element_id: `${prefix}_regen_btn`,
+    text: plainText("按意见重新生成"),
     type: "default",
-    value: input.value,
+    width: "fill",
+    action_type: "form_submit",
+    name: `${prefix}_regen_submit`,
+    value: feishuActionValueSchema.parse(input.value),
     confirm: {
-      title: "确认重新生成",
-      text: "将根据填写的意见生成新版本，当前内容会保留在历史版本中。",
+      title: plainText("确认重新生成"),
+      text: plainText(
+        "将根据填写的意见生成新版本，当前内容会保留在历史版本中。",
+      ),
     },
-  });
+  };
   return {
     tag: "form",
     name: `${prefix}_regen_form`,
@@ -401,11 +407,7 @@ function regenerationForm(input: {
         label_position: "top",
         placeholder: plainText("请说明需要补充、更正或调整的内容"),
       },
-      {
-        ...submit,
-        action_type: "form_submit",
-        name: `${prefix}_regen_submit`,
-      },
+      buttonRow([submit]),
     ],
   };
 }

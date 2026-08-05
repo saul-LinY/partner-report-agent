@@ -13,8 +13,8 @@ Partner Report 中台重启速查
 
 然后在 Terminal 里复制执行：
 
-  cd /Users/saul/PROJECT/partner-report-agent
-  lsof -nP -iTCP:4310 -iTCP:4311 -sTCP:LISTEN
+cd /Users/saul/PROJECT/partner-report-agent
+lsof -nP -iTCP:4310 -iTCP:4311 -sTCP:LISTEN
 
 如果上面命令看到 4310 或 4311 被 node / vite 占用，先停止对应 PID：
 
@@ -22,9 +22,9 @@ Partner Report 中台重启速查
 
 确认端口空了以后继续执行：
 
-  docker compose restart postgres
-  docker compose ps
-  ./node_modules/.bin/concurrently -k -n api,web,worker -c cyan,green,yellow "npm run start -w @partner-report/api" "npm run dev -w @partner-report/web" "npm run start -w @partner-report/worker"
+docker compose restart postgres
+docker compose ps
+./node_modules/.bin/concurrently -k -n api,web,worker -c cyan,green,yellow "npm run start -w @partner-report/api" "npm run dev -w @partner-report/web" "npm run start -w @partner-report/worker"
 
 说明：
 
