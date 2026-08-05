@@ -1,6 +1,6 @@
 {
   "name": "partner-report",
-  "version": "0.4.0+codex.20260805032305",
+  "version": "0.4.0+codex.20260805060429",
   "description": "\u7b5b\u9009 Codex Session\uff0c\u5e76\u53ea\u540c\u6b65\u6709\u610f\u4e49\u7684\u4e2d\u6587\u9879\u76ee\u8d21\u732e\u3002",
   "author": {
     "name": "Saul",
@@ -21,14 +21,14 @@
     "developerName": "Saul",
     "category": "Productivity",
     "brandColor": "#287469",
-    "composerIcon": "./assets/partner-report-bot-avatar.png",
-    "logo": "./assets/partner-report-bot-avatar.png",
+    "composerIcon": "./assets/partner-report-avatar.png",
+    "logo": "./assets/partner-report-avatar.png",
     "capabilities": [
-      "\u5b98\u65b9\u5b9a\u65f6\u4efb\u52a1\u8bbe\u7f6e\u4e0e\u4fee\u590d",
-      "\u9879\u76ee\u6839\u76ee\u5f55\u4e0e\u5b50\u76ee\u5f55 Session \u6620\u5c04",
-      "\u6709\u610f\u4e49 Session \u7684\u5b89\u5168\u7b5b\u9009\u4e0e\u63d0\u53d6",
-      "\u5e42\u7b49\u8d21\u732e\u540c\u6b65\u4e0e\u7248\u672c\u66f4\u65b0",
-      "\u672c\u5730\u6392\u9664\u4e0e\u654f\u611f\u6570\u636e\u4fdd\u62a4"
+      "\u6bcf\u65e5\u81ea\u52a8\u6574\u7406\u5e76\u540c\u6b65\u9879\u76ee\u8fdb\u5c55",
+      "\u81ea\u52a8\u5ffd\u7565\u95f2\u804a\u548c\u65e0\u5173\u5185\u5bb9",
+      "\u6309\u9879\u76ee\u751f\u6210\u4e2d\u6587\u5de5\u4f5c\u6458\u8981",
+      "\u53ef\u6392\u9664\u6307\u5b9a\u4f1a\u8bdd\u6216\u76ee\u5f55",
+      "\u53ea\u4e0a\u4f20\u5b89\u5168\u6458\u8981\uff0c\u539f\u59cb\u5bf9\u8bdd\u7559\u5728\u672c\u5730"
     ],
     "defaultPrompt": [
       "\u4f7f\u7528 $partner-report-sync\uff0c\u901a\u8fc7 Admin \u63d0\u4f9b\u7684\u7ed1\u5b9a\u7801\u8fde\u63a5\u5f53\u524d Codex\u3002",
