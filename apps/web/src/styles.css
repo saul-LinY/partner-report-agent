@@ -286,6 +286,10 @@ select:focus-visible {
 .icon-button:hover {
   background: rgba(127, 137, 144, 0.14);
 }
+.icon-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .icon-button.danger {
   color: var(--danger);
 }
@@ -1705,6 +1709,16 @@ select:focus {
 .plugin-status-row > div span {
   margin-top: 3px;
 }
+.plugin-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.plugin-row-actions .button span {
+  display: inline;
+  margin-top: 0;
+}
 .binding-code-copy {
   min-height: 26px;
   padding: 0;
@@ -1725,6 +1739,18 @@ select:focus {
 }
 .binding-code-copy:hover code {
   text-decoration: underline;
+}
+.partner-remove-copy {
+  color: #43515a;
+  line-height: 1.65;
+}
+.partner-remove-copy p {
+  margin: 0;
+}
+.partner-remove-copy p + p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .queue-filter {
   width: min(280px, 100%);
@@ -2466,10 +2492,13 @@ select:focus {
     padding: 12px 0;
     grid-template-columns: 10px 1fr auto;
   }
-  .plugin-status-row > div:not(:first-of-type):not(.plugin-state-badges) {
+  .plugin-status-row
+    > div:not(:first-of-type):not(.plugin-state-badges):not(
+      .plugin-row-actions
+    ) {
     display: none;
   }
-  .plugin-status-row > .button {
+  .plugin-status-row > .plugin-row-actions {
     grid-column: 2 / -1;
     justify-self: start;
   }

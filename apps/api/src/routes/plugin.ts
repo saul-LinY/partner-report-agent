@@ -125,6 +125,19 @@ export async function pluginRoutes(app: FastifyInstance) {
           ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
         )
       `;
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${row.tenant_id}, 'plugin.binding.claimed',
+          'partner', ${row.partner_id},
+          ${JSON.stringify({
+            teamId: row.team_id,
+            partnerId: row.partner_id,
+            pluginInstanceId,
+          })}::jsonb
+        )
+      `;
       return row;
     });
     if (!binding)

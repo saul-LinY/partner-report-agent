@@ -702,7 +702,15 @@ export class FeishuDeliveryService {
   private async sendBindingCardForPartner(
     partner: PartnerRow,
   ): Promise<FeishuDeliveryResult> {
-    const { binding, delivery } = await this.database.begin(async (tx) => {
+    const prepared = await this.database.begin(async (tx) => {
+      const activePartners = await tx<Array<{ id: string }>>`
+        select id from partners
+        where id = ${partner.id} and tenant_id = ${partner.tenant_id}
+          and team_id = ${partner.team_id} and status = 'active'
+        for share
+      `;
+      if (!activePartners[0]) return null;
+
       const bindings = await tx<BindingRow[]>`
         insert into feishu_partner_bindings (
           id, tenant_id, team_id, partner_id, app_id, status
@@ -866,6 +874,13 @@ export class FeishuDeliveryService {
         delivery: refreshed[0] ?? delivery,
       };
     });
+    if (!prepared)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "not_reviewable",
+      };
+    const { binding, delivery } = prepared;
 
     if (binding.status === "active" && binding.open_id)
       return {

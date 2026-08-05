@@ -314,18 +314,24 @@ export class FeishuGateway {
           from outbox_events
           where published_at is null
           and (${this.tenantIdFilter}::uuid is null or tenant_id = ${this.tenantIdFilter})
-          and event_type in (
-            'work_items.draft.created',
-            'work_item.review.changed',
-            'work_item.regeneration.requested',
-            'work_items.snapshot.approved',
-            'work_items.all_dismissed',
-            'review.change.applied',
-            'review.reopened',
-            'individual_report.draft.created',
-            'individual_report.regeneration.requested',
-            'individual_report.submitted',
-            'individual_report.returned_to_items'
+          and (
+            event_type = 'plugin.binding.claimed'
+            or (
+              ${this.reviewDeliveryEnabled}
+              and event_type in (
+                'work_items.draft.created',
+                'work_item.review.changed',
+                'work_item.regeneration.requested',
+                'work_items.snapshot.approved',
+                'work_items.all_dismissed',
+                'review.change.applied',
+                'review.reopened',
+                'individual_report.draft.created',
+                'individual_report.regeneration.requested',
+                'individual_report.submitted',
+                'individual_report.returned_to_items'
+              )
+            )
           )
           and not exists (
             select 1 from feishu_deliveries deferred
@@ -845,6 +851,17 @@ export class FeishuGateway {
   }
 
   private async processOutboxEvent(event: OutboxRow): Promise<boolean> {
+    if (event.event_type === "plugin.binding.claimed") {
+      const scope = await this.loadPartnerScope(
+        event.tenant_id,
+        event.aggregate_id,
+      );
+      if (!scope) return true;
+      await this.deliveries.sendBindingCardForScope(scope);
+      // Delivery failures are persisted and retried by retryDueDeliveries.
+      return true;
+    }
+
     if (
       [
         "work_items.draft.created",
@@ -951,6 +968,27 @@ export class FeishuGateway {
     }
 
     return true;
+  }
+
+  private async loadPartnerScope(
+    tenantId: string,
+    partnerId: string,
+  ): Promise<FeishuDeliveryScope | null> {
+    const rows = await this.database<
+      Array<{ tenant_id: string; team_id: string; partner_id: string }>
+    >`
+      select tenant_id, team_id, id as partner_id from partners
+      where id = ${partnerId} and tenant_id = ${tenantId} and status = 'active'
+      limit 1
+    `;
+    const row = rows[0];
+    return row
+      ? {
+          tenantId: row.tenant_id,
+          teamId: row.team_id,
+          partnerId: row.partner_id,
+        }
+      : null;
   }
 
   private async loadReviewScope(

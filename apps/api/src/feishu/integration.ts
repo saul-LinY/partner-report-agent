@@ -98,9 +98,7 @@ export async function startFeishuIntegration(
     tickRunning = true;
     try {
       await gateway.drainInbox();
-      if (reviewDeliveryEnabled) {
-        await gateway.drainOutbox();
-      }
+      await gateway.drainOutbox();
       await gateway.retryDueDeliveries(20, reviewDeliveryEnabled);
     } catch (_error) {
       logger.error(

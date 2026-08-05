@@ -316,6 +316,93 @@ describe("FeishuGateway binding callback", () => {
   });
 });
 
+describe("FeishuGateway plugin binding automation", () => {
+  it("sends the Feishu binding card from a claimed-plugin outbox event", async () => {
+    const tenantId = randomUUID();
+    const teamId = randomUUID();
+    const partnerId = randomUUID();
+    const outboxId = randomUUID();
+    const appId = `cli_plugin_binding_${randomUUID()}`;
+    const email = `plugin-binding-${partnerId}@example.com`;
+    const messageId = `om_${randomUUID()}`;
+    const sendInteractiveCard = vi.fn(async () => ({ messageId }));
+    const updateInteractiveCard = vi.fn(async () => undefined);
+
+    try {
+      await sql`insert into tenants (id, name) values (${tenantId}, 'Plugin binding automation')`;
+      await sql`
+        insert into teams (id, tenant_id, name)
+        values (${teamId}, ${tenantId}, 'Plugin binding automation')
+      `;
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${partnerId}, ${tenantId}, ${teamId}, ${email}, 'Automatic Binding')
+      `;
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${outboxId}, ${tenantId}, 'plugin.binding.claimed', 'partner',
+          ${partnerId}, ${JSON.stringify({ teamId, partnerId })}::jsonb
+        )
+      `;
+      const service = new FeishuDeliveryService({
+        appId,
+        messageClient: { sendInteractiveCard, updateInteractiveCard },
+      });
+      const gateway = new FeishuGateway(
+        { appId, appSecret: "plugin-binding-automation-secret" },
+        { updateInteractiveCard },
+        service,
+        {
+          tenantIdFilter: tenantId,
+          reviewDeliveryEnabled: false,
+        },
+      );
+
+      await expect(gateway.drainOutbox()).resolves.toBe(1);
+      expect(sendInteractiveCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          receiveIdType: "email",
+          receiveId: email,
+        }),
+      );
+      const state = await sql<
+        Array<{
+          binding_status: string;
+          delivery_status: string;
+          receive_id: string;
+          published: boolean;
+        }>
+      >`
+        select b.status as binding_status, d.status as delivery_status,
+          d.receive_id, (o.published_at is not null) as published
+        from feishu_partner_bindings b
+        join feishu_deliveries d on d.tenant_id = b.tenant_id
+          and d.partner_id = b.partner_id and d.kind = 'binding'
+        join outbox_events o on o.id = ${outboxId}
+        where b.tenant_id = ${tenantId} and b.partner_id = ${partnerId}
+          and b.app_id = ${appId}
+      `;
+      expect(state).toEqual([
+        {
+          binding_status: "pending",
+          delivery_status: "sent",
+          receive_id: email,
+          published: true,
+        },
+      ]);
+    } finally {
+      await sql`delete from outbox_events where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
+      await sql`delete from partners where tenant_id = ${tenantId}`;
+      await sql`delete from teams where tenant_id = ${tenantId}`;
+      await sql`delete from tenants where id = ${tenantId}`;
+    }
+  });
+});
+
 describe("FeishuGateway individual report callback", () => {
   it("submits a fully displayed report for the bound Feishu identity", async () => {
     const markdown = "# 个人报告\n\n本周完成了数据链路审核，并核对了全部事实。";

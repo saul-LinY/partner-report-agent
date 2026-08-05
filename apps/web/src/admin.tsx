@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Save,
   Server,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { ApiClientError, api } from "./api.js";
@@ -146,6 +147,7 @@ function Operations({ data }: { data: Overview }) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [codeFor, setCodeFor] = useState<any | null>(null);
+  const [removePartner, setRemovePartner] = useState<any | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
@@ -304,16 +306,28 @@ function Operations({ data }: { data: Overview }) {
                       <strong>尚未生成</strong>
                     )}
                   </div>
-                  <Button
-                    variant="secondary"
-                    icon={<KeyRound size={16} />}
-                    disabled={!partner}
-                    onClick={() =>
-                      setCodeFor({ ...partner, existingCode: bindingCode })
-                    }
-                  >
-                    {bindingCode ? "查看绑定码" : "生成绑定码"}
-                  </Button>
+                  <div className="plugin-row-actions">
+                    <Button
+                      variant="secondary"
+                      icon={<KeyRound size={16} />}
+                      disabled={!partner}
+                      onClick={() =>
+                        setCodeFor({ ...partner, existingCode: bindingCode })
+                      }
+                    >
+                      {bindingCode ? "查看绑定码" : "生成绑定码"}
+                    </Button>
+                    <button
+                      className="icon-button danger"
+                      type="button"
+                      title="删除人员"
+                      aria-label={`删除 ${connection.partnerName}`}
+                      disabled={!partner}
+                      onClick={() => setRemovePartner(partner)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -334,6 +348,16 @@ function Operations({ data }: { data: Overview }) {
           partner={codeFor}
           onClose={() => setCodeFor(null)}
           onCreated={refresh}
+        />
+      )}
+      {removePartner && (
+        <RemovePartnerModal
+          partner={removePartner}
+          onClose={() => setRemovePartner(null)}
+          onRemoved={() => {
+            setRemovePartner(null);
+            refresh();
+          }}
         />
       )}
     </div>
@@ -739,6 +763,57 @@ function BindingCodeModal({
           />
         </Field>
       )}
+    </Modal>
+  );
+}
+
+function RemovePartnerModal({
+  partner,
+  onClose,
+  onRemoved,
+}: {
+  partner: any;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const mutation = useMutation({
+    mutationFn: () =>
+      api(`/v1/admin/partners/${partner.id}`, {
+        method: "DELETE",
+      }),
+    onSuccess: onRemoved,
+  });
+
+  return (
+    <Modal
+      title="删除人员"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            variant="danger"
+            icon={<Trash2 size={16} />}
+            loading={mutation.isPending}
+            onClick={() => mutation.mutate()}
+          >
+            确认删除
+          </Button>
+        </>
+      }
+    >
+      <ErrorBanner error={mutation.error} />
+      <div className="partner-remove-copy">
+        <p>
+          确认删除 <strong>{partner.display_name}</strong>（{partner.email}）？
+        </p>
+        <p>
+          删除后，该人员的 Codex
+          插件令牌、未使用绑定码和飞书绑定会立即失效，待发送的飞书消息也会停止重试。历史报告与审核记录仍会保留。
+        </p>
+      </div>
     </Modal>
   );
 }

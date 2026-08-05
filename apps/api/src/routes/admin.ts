@@ -259,6 +259,7 @@ export async function adminRoutes(app: FastifyInstance) {
           limit 1
         ) fd on fb.app_id is not null
         where p.team_id = ${actor.teamId} and p.tenant_id = ${actor.tenantId}
+          and p.status = 'active'
         order by p.display_name
       `,
       sql<any[]>`
@@ -506,6 +507,109 @@ export async function adminRoutes(app: FastifyInstance) {
       code,
       codePrefix: code.slice(0, 7),
       label: input.label,
+    };
+  });
+
+  app.delete("/v1/admin/partners/:id", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const removed = await sql.begin(async (tx) => {
+      const partners = await tx<
+        Array<{
+          id: string;
+          user_id: string | null;
+          display_name: string;
+          email: string;
+        }>
+      >`
+        select id, user_id, display_name, email from partners
+        where id = ${id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and status = 'active'
+        for update
+      `;
+      const partner = partners[0];
+      if (!partner) return null;
+
+      await tx`
+        update partners set status = 'suspended', updated_at = now()
+        where id = ${id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId}
+      `;
+      const plugins = await tx<{ id: string }[]>`
+        update plugin_instances set
+          status = 'revoked', access_expires_at = now(),
+          connectivity_status = 'expired', connectivity_challenge_hash = null,
+          connectivity_challenge_expires_at = null, updated_at = now()
+        where partner_id = ${id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and status <> 'revoked'
+        returning id
+      `;
+      const bindingCodes = await tx<{ id: string }[]>`
+        update plugin_binding_codes set status = 'revoked', updated_at = now()
+        where partner_id = ${id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and status = 'active'
+        returning id
+      `;
+      const feishuBindings = await tx<{ id: string }[]>`
+        update feishu_partner_bindings set
+          status = 'revoked', open_id = null, union_id = null,
+          tenant_key = null, verified_at = null, updated_at = now()
+        where partner_id = ${id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and status <> 'revoked'
+        returning id
+      `;
+      const feishuDeliveries = await tx<{ id: string }[]>`
+        update feishu_deliveries set
+          status = 'cancelled', next_retry_at = null,
+          last_error_code = 'PARTNER_REMOVED', last_error_message = null,
+          updated_at = now()
+        where partner_id = ${id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId}
+          and status in ('pending', 'sending', 'retry_wait', 'failed', 'deferred')
+        returning id
+      `;
+      if (partner.user_id) {
+        await tx`
+          update memberships m set
+            roles = coalesce((
+              select jsonb_agg(role.value)
+              from jsonb_array_elements_text(m.roles) as role(value)
+              where role.value <> 'partner'
+            ), '[]'::jsonb),
+            partner_id = null
+          where m.tenant_id = ${actor.tenantId} and m.team_id = ${actor.teamId}
+            and m.partner_id = ${id} and m.user_id = ${partner.user_id}
+        `;
+        await tx`
+          delete from memberships
+          where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+            and user_id = ${partner.user_id} and roles = '[]'::jsonb
+        `;
+      }
+      return {
+        ...partner,
+        revokedPluginCount: plugins.length,
+        revokedBindingCodeCount: bindingCodes.length,
+        revokedFeishuBindingCount: feishuBindings.length,
+        cancelledFeishuDeliveryCount: feishuDeliveries.length,
+      };
+    });
+    if (!removed)
+      throw new ApiError(404, "PARTNER_NOT_FOUND", "人员不存在或已经删除。");
+    await audit(request, actor, "partner.deleted", "partner", id, {
+      email: removed.email,
+      revokedPluginCount: removed.revokedPluginCount,
+      revokedBindingCodeCount: removed.revokedBindingCodeCount,
+      revokedFeishuBindingCount: removed.revokedFeishuBindingCount,
+      cancelledFeishuDeliveryCount: removed.cancelledFeishuDeliveryCount,
+    });
+    return {
+      ok: true,
+      partnerId: id,
+      revokedPluginCount: removed.revokedPluginCount,
+      revokedBindingCodeCount: removed.revokedBindingCodeCount,
+      revokedFeishuBindingCount: removed.revokedFeishuBindingCount,
+      cancelledFeishuDeliveryCount: removed.cancelledFeishuDeliveryCount,
     };
   });
 

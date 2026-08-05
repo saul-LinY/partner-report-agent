@@ -140,6 +140,24 @@ suite("tenant and role authorization", () => {
       connectivityStatus: "pending",
       capabilityVersion: "1.0",
     });
+    const bindingEvents = await sql<any[]>`
+      select aggregate_type, aggregate_id, payload
+      from outbox_events
+      where tenant_id = ${fixture.tenantA}
+        and event_type = 'plugin.binding.claimed'
+        and aggregate_id = ${fixture.partnerA}
+    `;
+    expect(bindingEvents).toEqual([
+      {
+        aggregate_type: "partner",
+        aggregate_id: fixture.partnerA,
+        payload: {
+          teamId: fixture.teamA,
+          partnerId: fixture.partnerA,
+          pluginInstanceId: claim.json().pluginInstanceId,
+        },
+      },
+    ]);
     const pluginHeaders = {
       authorization: `Bearer ${claim.json().accessToken}`,
     };
@@ -304,6 +322,150 @@ suite("tenant and role authorization", () => {
       );
     } finally {
       await sql`delete from feishu_deliveries where id = ${failedDeliveryId}`;
+    }
+  });
+
+  it("removes a Partner and revokes both Plugin and Feishu bindings", async () => {
+    const partnerId = randomUUID();
+    const pluginId = randomUUID();
+    const bindingCodeId = randomUUID();
+    const feishuBindingId = randomUUID();
+    const feishuDeliveryId = randomUUID();
+    const historicalDeliveryId = randomUUID();
+    const pluginAccessToken = `removed-partner-${pluginId}`;
+    const bindingCode = `PR-REMOVE-${bindingCodeId}`.toUpperCase();
+    const email = `removed-${partnerId}@local.test`;
+    try {
+      await sql.begin(async (tx) => {
+        await tx`
+          insert into partners (id, tenant_id, team_id, email, display_name)
+          values (${partnerId}, ${fixture.tenantA}, ${fixture.teamA}, ${email}, 'Removed Partner')
+        `;
+        await tx`
+          insert into plugin_instances (
+            id, tenant_id, team_id, partner_id, device_name, version,
+            access_token_hash, refresh_token_hash, access_expires_at
+          ) values (
+            ${pluginId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
+            'removed-device', '0.4.0',
+            ${createHash("sha256").update(pluginAccessToken).digest("hex")},
+            ${createHash("sha256").update(`refresh-${pluginId}`).digest("hex")},
+            now() + interval '1 hour'
+          )
+        `;
+        await tx`
+          insert into plugin_binding_codes (
+            id, tenant_id, team_id, partner_id, code_hash, code_value,
+            code_prefix, label, created_by
+          ) values (
+            ${bindingCodeId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
+            ${createHash("sha256").update(bindingCode).digest("hex")},
+            ${bindingCode}, 'PR-REMOVE', 'Removed fixture', ${fixture.userA}
+          )
+        `;
+        await tx`
+          insert into feishu_partner_bindings (
+            id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
+          ) values (
+            ${feishuBindingId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
+            ${feishuAppId}, ${`ou_${partnerId}`}, 'active', now()
+          )
+        `;
+        await tx`
+          insert into feishu_deliveries (
+            id, tenant_id, team_id, partner_id, kind, aggregate_type,
+            aggregate_id, receive_id, receive_id_type, domain_version,
+            status, idempotency_key
+          ) values (
+            ${feishuDeliveryId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
+            'binding', 'partner', ${partnerId}, ${`ou_${partnerId}`}, 'open_id',
+            1, 'pending', ${`binding:${feishuAppId}:${partnerId}:${partnerId}`}
+          )
+        `;
+        await tx`
+          insert into feishu_deliveries (
+            id, tenant_id, team_id, partner_id, kind, aggregate_type,
+            aggregate_id, receive_id, receive_id_type, message_id,
+            domain_version, status, idempotency_key, sent_at
+          ) values (
+            ${historicalDeliveryId}, ${fixture.tenantA}, ${fixture.teamA},
+            ${partnerId}, 'review', 'review', ${fixture.reviewA},
+            ${`ou_${partnerId}`}, 'open_id', ${`om_${historicalDeliveryId}`},
+            1, 'sent', ${`review:${feishuAppId}:${partnerId}:${fixture.reviewA}`},
+            now()
+          )
+        `;
+      });
+
+      const removed = await app.inject({
+        method: "DELETE",
+        url: `/v1/admin/partners/${partnerId}`,
+        headers,
+      });
+      expect(removed.statusCode).toBe(200);
+      expect(removed.json()).toMatchObject({
+        ok: true,
+        partnerId,
+        revokedPluginCount: 1,
+        revokedBindingCodeCount: 1,
+        revokedFeishuBindingCount: 1,
+        cancelledFeishuDeliveryCount: 1,
+      });
+      const state = await sql<any[]>`
+        select p.status as partner_status, pi.status as plugin_status,
+          pbc.status as binding_code_status, fb.status as feishu_binding_status,
+          fb.open_id, fd.status as feishu_delivery_status,
+          fd.last_error_code
+        from partners p
+        join plugin_instances pi on pi.partner_id = p.id
+        join plugin_binding_codes pbc on pbc.partner_id = p.id
+        join feishu_partner_bindings fb on fb.partner_id = p.id
+        join feishu_deliveries fd on fd.partner_id = p.id
+          and fd.id = ${feishuDeliveryId}
+        where p.id = ${partnerId} and p.tenant_id = ${fixture.tenantA}
+      `;
+      expect(state).toEqual([
+        {
+          partner_status: "suspended",
+          plugin_status: "revoked",
+          binding_code_status: "revoked",
+          feishu_binding_status: "revoked",
+          open_id: null,
+          feishu_delivery_status: "cancelled",
+          last_error_code: "PARTNER_REMOVED",
+        },
+      ]);
+      const historicalDeliveries = await sql<any[]>`
+        select status, last_error_code from feishu_deliveries
+        where id = ${historicalDeliveryId}
+      `;
+      expect(historicalDeliveries).toEqual([
+        { status: "sent", last_error_code: null },
+      ]);
+      const pluginRequest = await app.inject({
+        method: "GET",
+        url: "/v1/plugin-bindings/me",
+        headers: { authorization: `Bearer ${pluginAccessToken}` },
+      });
+      expect(pluginRequest.statusCode).toBe(401);
+      const overview = await app.inject({
+        method: "GET",
+        url: "/v1/admin/overview",
+        headers,
+      });
+      expect(
+        overview
+          .json()
+          .connections.some(
+            (connection: any) => connection.partnerId === partnerId,
+          ),
+      ).toBe(false);
+    } finally {
+      await sql`delete from feishu_deliveries where partner_id = ${partnerId}`;
+      await sql`delete from feishu_partner_bindings where partner_id = ${partnerId}`;
+      await sql`delete from plugin_binding_codes where partner_id = ${partnerId}`;
+      await sql`delete from plugin_instances where partner_id = ${partnerId}`;
+      await sql`delete from partners where id = ${partnerId}`;
     }
   });
 
