@@ -25,13 +25,7 @@
             "properties": {
               "key": {
                 "type": "string",
-                "enum": [
-                  "summary",
-                  "project_progress",
-                  "risks",
-                  "next_priorities",
-                  "coverage"
-                ]
+                "enum": ["summary", "project_progress", "risks"]
               },
               "title": {
                 "type": "string",
@@ -61,24 +55,17 @@
                       "minItems": 1
                     }
                   },
-                  "required": [
-                    "claim",
-                    "individualReportIds"
-                  ],
+                  "required": ["claim", "individualReportIds"],
                   "additionalProperties": false
                 },
                 "default": []
               }
             },
-            "required": [
-              "key",
-              "title",
-              "markdown"
-            ],
+            "required": ["key", "title", "markdown"],
             "additionalProperties": false
           },
-          "minItems": 5,
-          "maxItems": 5
+          "minItems": 3,
+          "maxItems": 3
         },
         "markdown": {
           "type": "string",
@@ -123,10 +110,7 @@
             },
             "producer": {
               "type": "string",
-              "enum": [
-                "codex-skill",
-                "data-platform"
-              ]
+              "enum": ["codex-skill", "data-platform"]
             },
             "modelVersion": {
               "type": "string",

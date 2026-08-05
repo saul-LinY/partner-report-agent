@@ -211,13 +211,7 @@ export const teamReportClaimSchema: z.ZodTypeAny = z.object({
 });
 
 export const teamReportSectionSchema: z.ZodTypeAny = z.object({
-  key: z.enum([
-    "summary",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coverage",
-  ]),
+  key: z.enum(["summary", "project_progress", "risks"]),
   title: z.string().min(1).max(100),
   markdown: z.string().max(16000),
   claims: z.array(teamReportClaimSchema).default([]),
@@ -227,7 +221,7 @@ export const teamReportResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
   title: z.string().min(1).max(200),
   summary: z.string().min(1).max(1600),
-  sections: z.array(teamReportSectionSchema).length(5),
+  sections: z.array(teamReportSectionSchema).length(3),
   markdown: z.string().min(1).max(80000),
   missingPartnerIds: z.array(idSchema).default([]),
   qualityWarnings: z.array(z.string()).default([]),
@@ -403,20 +397,24 @@ export function assertReportSemantics(report: {
 export function assertTeamReportSemantics(report: {
   sections: Array<{ key: string }>;
 }) {
-  const required = [
-    "summary",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coverage",
-  ];
-  const actual = new Set(report.sections.map((section) => section.key));
-  if (
-    actual.size !== required.length ||
-    required.some((key) => !actual.has(key))
-  ) {
+  const required = ["summary", "project_progress", "risks"];
+  const actual = report.sections.map((section) => section.key);
+  if (JSON.stringify(actual) !== JSON.stringify(required)) {
     throw new Error(
-      "Team Report must contain each required section exactly once.",
+      "Team Report must contain each required section exactly once and in order.",
     );
+  }
+}
+
+export function assertChineseTeamReport(report: {
+  summary: string;
+  sections: Array<{ markdown: string }>;
+}) {
+  const containsChinese = (value: string) => /[\u3400-\u9fff]/u.test(value);
+  if (
+    !containsChinese(report.summary) ||
+    report.sections.some((section) => !containsChinese(section.markdown))
+  ) {
+    throw new Error("Team Report summary and every section must be Chinese.");
   }
 }

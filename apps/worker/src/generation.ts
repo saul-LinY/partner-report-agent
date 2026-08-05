@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   aggregationResultSchema,
+  assertChineseTeamReport,
   assertReportSemantics,
   assertTeamReportSemantics,
   individualReportResultSchema,
@@ -28,7 +29,41 @@ const reportInstructions = (model: string) =>
   `You generate an individual Partner report from an approved immutable Work Item Snapshot. When currentReport and reviewInstruction are supplied, revise the current report according to that natural-language instruction while keeping every statement grounded in the approved Work Items. Use previousReport only to compare prior state with current approved Work Items. Include each of the seven required sections exactly once. Every current factual claim must cite one or more allowed Work Item IDs. Never alter facts merely to satisfy a wording request. State coverage limits plainly and do not invent percentages. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-04.individual-review.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportInstructions = (model: string) =>
-  `Generate a Team Report only from locked individual reports supplied in individualReports. Never infer missing Partner work and never read or request Session Facts. Account for missingPartnerIds explicitly. Use previousTeamReport only for sourced status comparisons. Include exactly five sections: summary, project_progress, risks, next_priorities, coverage. Every factual claim must cite one or more supplied individual report IDs. Return production metadata {"skillVersion":"partner-report-platform/0.2.0","promptVersion":"2026-08-05.team.v2","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+  `Generate a Chinese Team Report strictly from the locked current-period reports in individualReports. Write the summary and all section prose in Chinese; preserve original project names, product names, people names, and technical identifiers when needed. These reports are the sole source of current-period facts: never use project master data, Session Facts, assumptions, or general knowledge. Include exactly three sections in this order: summary, project_progress, risks. Do not create coverage or next-priorities sections. In summary, first synthesize the team's overall work for the week and then summarize progress for every project represented in the individual reports. In project_progress, group content by project; for each project provide a project-level synthesis followed by a separate subsection for every Partner who reported work on that project, preserving their concrete work, deliverables, status, and other relevant details. Do not merge people or omit a Partner/project contribution. Include risks only when supported by the current individual reports and state plainly when none were reported. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied individual report IDs. The top-level markdown must contain the three required sections only and must not repeat the report title. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-06.team.v3","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+
+const teamReportSectionTitles = {
+  summary: "本周团队工作摘要",
+  project_progress: "项目与人员工作明细",
+  risks: "风险与阻塞",
+} as const;
+
+function finalizeTeamReport(input: any, result: any) {
+  const sections = result.sections.map((section: any) => ({
+    ...section,
+    title:
+      teamReportSectionTitles[
+        section.key as keyof typeof teamReportSectionTitles
+      ],
+  }));
+  return {
+    ...result,
+    title: `团队周报 ${input.period.key}`,
+    production: {
+      ...result.production,
+      skillVersion: "partner-report-platform/0.3.0",
+      promptVersion: "2026-08-06.team.v3",
+      schemaVersion: "1.0",
+      producer: "data-platform",
+    },
+    sections,
+    markdown: sections
+      .map(
+        (section: any) =>
+          `## ${section.title}\n\n${section.markdown.trim() || "个人 Report 未提供相关内容。"}`,
+      )
+      .join("\n\n"),
+  };
+}
 
 async function selectedModelFor(job: Job) {
   const rows = await sql<{ central_model: string }[]>`
@@ -241,8 +276,10 @@ async function applyReport(job: Job, output: unknown, model: string) {
 }
 
 async function applyTeamReport(job: Job, output: unknown, model: string) {
-  const result = teamReportResultSchema.parse(output);
-  assertTeamReportSemantics(result);
+  const parsed = teamReportResultSchema.parse(output);
+  assertTeamReportSemantics(parsed);
+  assertChineseTeamReport(parsed);
+  const result = finalizeTeamReport(job.input_payload, parsed);
   const allowed = new Set<string>(
     job.input_payload.individualReports.map((report: any) => report.reportId),
   );
@@ -274,14 +311,20 @@ async function applyTeamReport(job: Job, output: unknown, model: string) {
         ${randomUUID()}, ${job.tenant_id}, ${report.id}, ${version},
         ${result.title}, ${result.summary}, ${result.markdown},
         ${JSON.stringify(result)}::jsonb, ${job.input_payload.sourceChecksum},
-        ${`partner-report-platform/0.2.0 (${model})`}
+        ${`partner-report-platform/0.3.0 (${model})`}
       )
     `;
     await tx`
-      update team_reports set status = 'TEAM_DRAFT', current_version = ${version},
+      update team_reports set status = 'LOCKED', current_version = ${version},
         missing_partner_ids = ${JSON.stringify(result.missingPartnerIds)}::jsonb,
-        generated_at = now(), updated_at = now()
+        generated_at = now(), locked_at = now(), locked_by = null,
+        updated_at = now()
       where id = ${report.id} and tenant_id = ${job.tenant_id}
+    `;
+    await tx`
+      update report_periods set status = 'completed', updated_at = now()
+      where id = ${report.period_id} and tenant_id = ${job.tenant_id}
+        and team_id = ${job.team_id}
     `;
   });
   return result;

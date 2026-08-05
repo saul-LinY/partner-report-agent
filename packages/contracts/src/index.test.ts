@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertChineseTeamReport,
   assertReportSemantics,
   assertTeamReportSemantics,
   aggregationResultSchema,
@@ -310,13 +311,39 @@ describe("fact and report semantic guards", () => {
       assertTeamReportSemantics({
         sections: [
           { key: "summary" },
-          { key: "summary" },
+          { key: "project_progress" },
           { key: "risks" },
-          { key: "next_priorities" },
-          { key: "coverage" },
         ],
       }),
-    ).toThrow(/each required section/i);
+    ).not.toThrow();
+    expect(() =>
+      assertTeamReportSemantics({
+        sections: [
+          { key: "project_progress" },
+          { key: "summary" },
+          { key: "risks" },
+        ],
+      }),
+    ).toThrow(/in order/i);
+  });
+
+  it("requires Chinese Team Report prose", () => {
+    expect(() =>
+      assertChineseTeamReport({
+        summary: "本周完成团队目标。",
+        sections: [
+          { markdown: "Headroom_MVP 项目已完成。" },
+          { markdown: "林勇完成了接口接入。" },
+          { markdown: "本周没有已报告的风险。" },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertChineseTeamReport({
+        summary: "Weekly progress is complete.",
+        sections: [{ markdown: "All tasks shipped." }],
+      }),
+    ).toThrow(/must be Chinese/i);
   });
 });
 

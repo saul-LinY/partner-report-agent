@@ -1680,7 +1680,7 @@ select:focus {
   display: grid;
   grid-template-columns:
     10px minmax(160px, 1fr) minmax(76px, auto)
-    repeat(4, minmax(96px, 0.6fr))
+    minmax(140px, 0.75fr) repeat(4, minmax(96px, 0.6fr))
     auto;
   align-items: center;
   gap: 16px;
@@ -1708,6 +1708,40 @@ select:focus {
 }
 .plugin-status-row > div span {
   margin-top: 3px;
+}
+.review-progress-value {
+  display: flex !important;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.review-progress-value span {
+  margin-top: 0 !important;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.review-progress-cell progress {
+  width: 100%;
+  height: 5px;
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 2px;
+  color: var(--accent);
+  background: var(--surface-alt);
+  accent-color: var(--accent);
+}
+.review-progress-cell progress::-webkit-progress-bar {
+  background: var(--surface-alt);
+}
+.review-progress-cell progress::-webkit-progress-value {
+  background: var(--accent);
+}
+.review-progress-cell > span:last-child {
+  color: var(--muted);
+  font-size: 10px;
 }
 .plugin-row-actions {
   display: flex;
@@ -2321,10 +2355,10 @@ select:focus {
   }
   .plugin-status-row {
     grid-template-columns:
-      10px 1fr auto repeat(2, minmax(100px, 0.6fr))
+      10px 1fr auto minmax(140px, 0.75fr) repeat(2, minmax(100px, 0.6fr))
       minmax(120px, 0.6fr) auto;
   }
-  .plugin-status-row > div:nth-of-type(5) {
+  .plugin-status-row > .plugin-device-cell {
     display: none;
   }
   .status-strip,
@@ -2495,8 +2529,11 @@ select:focus {
   .plugin-status-row
     > div:not(:first-of-type):not(.plugin-state-badges):not(
       .plugin-row-actions
-    ) {
+    ):not(.review-progress-cell) {
     display: none;
+  }
+  .plugin-status-row > .review-progress-cell {
+    grid-column: 2 / -1;
   }
   .plugin-status-row > .plugin-row-actions {
     grid-column: 2 / -1;

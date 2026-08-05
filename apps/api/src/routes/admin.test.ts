@@ -3,6 +3,7 @@ import {
   feishuBindingState,
   feishuConnectionState,
   feishuDeliveryState,
+  partnerReviewProgress,
   pluginConnectivityStatus,
   pluginRunStatus,
 } from "./admin.js";
@@ -147,5 +148,57 @@ describe("Feishu connection status projection", () => {
       "delivery_error",
     );
     expect(feishuConnectionState("disabled", "healthy")).toBe("disabled");
+  });
+});
+
+describe("Partner review progress projection", () => {
+  it("keeps card counts visible throughout the personal report flow", () => {
+    const base = {
+      reviewId: "review-1",
+      periodKey: "2026-W31",
+      reviewState: "IN_PROGRESS",
+      pendingCount: 1,
+      approvedCount: 2,
+      excludedCount: 1,
+      reportStatus: null,
+    };
+    expect(partnerReviewProgress(base)).toEqual({
+      periodKey: "2026-W31",
+      stage: "reviewing_cards",
+      reviewed: 3,
+      total: 4,
+      pending: 1,
+      approved: 2,
+      excluded: 1,
+    });
+    expect(
+      partnerReviewProgress({
+        ...base,
+        pendingCount: 0,
+        reportStatus: "LOCKED",
+      }),
+    ).toMatchObject({ stage: "completed", reviewed: 3, total: 3 });
+  });
+
+  it("marks a person without review cards as not started", () => {
+    expect(
+      partnerReviewProgress({
+        reviewId: null,
+        periodKey: null,
+        reviewState: null,
+        pendingCount: null,
+        approvedCount: null,
+        excludedCount: null,
+        reportStatus: null,
+      }),
+    ).toEqual({
+      periodKey: null,
+      stage: "not_started",
+      reviewed: 0,
+      total: 0,
+      pending: 0,
+      approved: 0,
+      excluded: 0,
+    });
   });
 });

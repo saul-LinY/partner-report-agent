@@ -13,6 +13,9 @@ suite("synthetic report generation pipeline", () => {
     team: randomUUID(),
     user: randomUUID(),
     partner: randomUUID(),
+    previousPeriod: randomUUID(),
+    previousTeamReport: randomUUID(),
+    previousTeamReportVersion: randomUUID(),
     period: randomUUID(),
     fact: randomUUID(),
     review: randomUUID(),
@@ -51,6 +54,37 @@ suite("synthetic report generation pipeline", () => {
       await tx`insert into teams (id, tenant_id, name, timezone, report_type) values (${fixture.team}, ${fixture.tenant}, 'Synthetic Team', 'Asia/Shanghai', 'weekly')`;
       await tx`insert into users (id, email, display_name, password_hash) values (${fixture.user}, ${`synthetic-${fixture.user}@local.test`}, 'Synthetic Admin', 'not-used')`;
       await tx`insert into partners (id, tenant_id, team_id, user_id, email, display_name) values (${fixture.partner}, ${fixture.tenant}, ${fixture.team}, ${fixture.user}, ${`synthetic-${fixture.partner}@local.test`}, 'Synthetic Partner')`;
+      await tx`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+          submission_deadline_at, timezone, status, facts_frozen_at
+        ) values (
+          ${fixture.previousPeriod}, ${fixture.tenant}, ${fixture.team}, 'synthetic-previous',
+          '2026-07-24T06:00:00Z', '2026-07-31T06:00:00Z',
+          '2026-07-31T06:00:00Z', '2026-08-03T02:00:00Z',
+          'Asia/Shanghai', 'completed', now()
+        )
+      `;
+      await tx`
+        insert into team_reports (
+          id, tenant_id, team_id, period_id, status, current_version,
+          generated_at, locked_at
+        ) values (
+          ${fixture.previousTeamReport}, ${fixture.tenant}, ${fixture.team},
+          ${fixture.previousPeriod}, 'LOCKED', 1, now(), now()
+        )
+      `;
+      await tx`
+        insert into team_report_versions (
+          id, tenant_id, report_id, version, title, summary, markdown, payload,
+          source_checksum, generator_version
+        ) values (
+          ${fixture.previousTeamReportVersion}, ${fixture.tenant},
+          ${fixture.previousTeamReport}, 1, '上一期团队周报', '上一期摘要',
+          '## 上一期摘要', '{"summary":"上一期摘要"}'::jsonb,
+          ${"p".repeat(64)}, 'synthetic-test/1.0'
+        )
+      `;
       await tx`
         insert into report_periods (
           id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
@@ -124,7 +158,7 @@ suite("synthetic report generation pipeline", () => {
     });
   });
 
-  it("generates traceable Work Item, individual Report, and Team Draft", async () => {
+  it("generates traceable Work Item, individual Report, and published Team Report", async () => {
     nextOutput = {
       schemaVersion: "1.0",
       groups: [
@@ -264,24 +298,44 @@ suite("synthetic report generation pipeline", () => {
     expect(teamJobs[0].input_payload).toMatchObject({
       missingPartnerIds: [],
       individualReports: [{ partnerId: fixture.partner, reportId }],
+      previousTeamReport: {
+        period_key: "synthetic-previous",
+        payload: { summary: "上一期摘要" },
+      },
     });
+    expect(teamJobs[0].input_payload).not.toHaveProperty("projects");
     nextOutput = teamReport(reportId);
     expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
       processed: true,
       type: "GENERATE_TEAM_REPORT",
     });
     const teamReports = await sql<any[]>`
-      select tr.status, tr.current_version, trv.payload
+      select tr.status, tr.current_version, tr.locked_at, trv.payload
       from team_reports tr join team_report_versions trv on trv.report_id = tr.id
-      where tr.tenant_id = ${fixture.tenant}
+      where tr.tenant_id = ${fixture.tenant} and tr.period_id = ${fixture.period}
     `;
     expect(teamReports).toMatchObject([
       {
-        status: "TEAM_DRAFT",
+        status: "LOCKED",
         current_version: 1,
-        payload: { missingPartnerIds: [] },
+        locked_at: expect.any(String),
+        payload: {
+          title: "团队周报 synthetic-period",
+          missingPartnerIds: [],
+          sections: [
+            { key: "summary", title: "本周团队工作摘要" },
+            { key: "project_progress", title: "项目与人员工作明细" },
+            { key: "risks", title: "风险与阻塞" },
+          ],
+          markdown: expect.stringContaining("## 本周团队工作摘要"),
+        },
       },
     ]);
+    expect(teamReports[0].payload.markdown).not.toMatch(/数据覆盖|下一期重点/);
+    const periods = await sql<any[]>`
+      select status from report_periods where id = ${fixture.period}
+    `;
+    expect(periods).toEqual([{ status: "completed" }]);
   });
 });
 
@@ -325,13 +379,7 @@ function individualReport(workItemId: string) {
 }
 
 function teamReport(reportId: string) {
-  const keys = [
-    "summary",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coverage",
-  ];
+  const keys = ["summary", "project_progress", "risks"];
   return {
     schemaVersion: "1.0",
     title: "合成 Team Report",
@@ -339,7 +387,7 @@ function teamReport(reportId: string) {
     sections: keys.map((key) => ({
       key,
       title: key,
-      markdown: `${key} 内容`,
+      markdown: `${key} 中文内容`,
       claims:
         key === "summary"
           ? [
@@ -350,9 +398,9 @@ function teamReport(reportId: string) {
             ]
           : [],
     })),
-    markdown: "# 合成 Team Report\n\n团队链路验证完成。",
+    markdown: "这段模型 Markdown 会由服务端重新组装。",
     missingPartnerIds: [],
     qualityWarnings: [],
-    production: production("2026-08-04.team.v1"),
+    production: production("2026-08-06.team.v3"),
   };
 }

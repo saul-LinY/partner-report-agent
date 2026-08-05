@@ -1,12 +1,13 @@
 import { defineConfig } from "drizzle-kit";
+import { resolveDatabaseUrl } from "./src/config.js";
 
 export default defineConfig({
   dialect: "postgresql",
   schema: "./packages/db/src/schema.ts",
   out: "./packages/db/migrations",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgres://partner_report:partner_report@localhost:54329/partner_report"
+    url: resolveDatabaseUrl(),
   },
   strict: true,
-  verbose: true
+  verbose: true,
 });

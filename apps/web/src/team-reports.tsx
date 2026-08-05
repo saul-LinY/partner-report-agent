@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, RefreshCw, Save } from "lucide-react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Link, useRoute } from "wouter";
 import { api } from "./api.js";
-import { Badge, Button, EmptyState, ErrorBanner, Field } from "./components.js";
+import { Badge, EmptyState, ErrorBanner } from "./components.js";
 
 type TeamReportSummary = {
   id: string;
@@ -38,16 +38,12 @@ export function TeamReportPage() {
 }
 
 function TeamReportDetail({ id }: { id: string }) {
-  const queryClient = useQueryClient();
   const detail = useQuery({
     queryKey: ["team-report", id],
     queryFn: () => api<Detail>(`/v1/admin/team-reports/${id}`),
     refetchInterval: 15_000,
   });
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
-  const [title, setTitle] = useState("");
-  const [summary, setSummary] = useState("");
-  const [markdown, setMarkdown] = useState("");
   const current = detail.data?.current;
   const report = detail.data?.report;
   const viewed = selectedVersion
@@ -55,54 +51,12 @@ function TeamReportDetail({ id }: { id: string }) {
         (version) => version.version === selectedVersion,
       )
     : current;
-  useEffect(() => {
-    if (!current) return;
-    setTitle(current.title);
-    setSummary(current.summary);
-    setMarkdown(current.markdown);
-  }, [current?.id]);
-  const refresh = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["team-report", id] }),
-      queryClient.invalidateQueries({ queryKey: ["team-reports"] }),
-    ]);
-  };
-  const save = useMutation({
-    mutationFn: () =>
-      api(`/v1/admin/team-reports/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          baseVersion: current?.version,
-          title,
-          summary,
-          markdown,
-        }),
-      }),
-    onSuccess: refresh,
-  });
-  const regenerate = useMutation({
-    mutationFn: () =>
-      api(`/v1/admin/team-reports/${id}/regenerate`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      }),
-    onSuccess: refresh,
-  });
-  const submit = useMutation({
-    mutationFn: () =>
-      api(`/v1/admin/team-reports/${id}/submit`, {
-        method: "POST",
-        body: JSON.stringify({ baseVersion: current?.version }),
-      }),
-    onSuccess: refresh,
-  });
-  const error = detail.error ?? save.error ?? regenerate.error ?? submit.error;
-  const editable = report?.status === "TEAM_DRAFT" && selectedVersion === null;
+  const error = detail.error;
   return (
     <div className="page admin-page">
       <header className="page-header">
         <div>
-          <span className="eyebrow">TEAM REPORT REVIEW</span>
+          <span className="eyebrow">TEAM REPORT</span>
           <h1>{report?.period_key ?? "Team Report"}</h1>
           <p>
             {report
@@ -114,33 +68,6 @@ function TeamReportDetail({ id }: { id: string }) {
           <Link className="button button-ghost" href="/admin/reports">
             返回归档
           </Link>
-          {editable && (
-            <>
-              <Button
-                variant="secondary"
-                icon={<RefreshCw size={16} />}
-                loading={regenerate.isPending}
-                onClick={() => regenerate.mutate()}
-              >
-                重新生成
-              </Button>
-              <Button
-                variant="secondary"
-                icon={<Save size={16} />}
-                loading={save.isPending}
-                onClick={() => save.mutate()}
-              >
-                保存版本
-              </Button>
-              <Button
-                icon={<Archive size={16} />}
-                loading={submit.isPending}
-                onClick={() => submit.mutate()}
-              >
-                锁定归档
-              </Button>
-            </>
-          )}
         </div>
       </header>
       <ErrorBanner error={error} />
@@ -175,37 +102,11 @@ function TeamReportDetail({ id }: { id: string }) {
             ))}
           </aside>
           <section className="team-report-editor">
-            {editable ? (
-              <>
-                <Field label="标题">
-                  <input
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                  />
-                </Field>
-                <Field label="摘要">
-                  <textarea
-                    rows={3}
-                    value={summary}
-                    onChange={(event) => setSummary(event.target.value)}
-                  />
-                </Field>
-                <Field label="报告正文">
-                  <textarea
-                    className="markdown-editor"
-                    rows={24}
-                    value={markdown}
-                    onChange={(event) => setMarkdown(event.target.value)}
-                  />
-                </Field>
-              </>
-            ) : (
-              <article className="report-document">
-                <h1>{viewed?.title}</h1>
-                <p className="report-lede">{viewed?.summary}</p>
-                <ReactMarkdown>{viewed?.markdown ?? ""}</ReactMarkdown>
-              </article>
-            )}
+            <article className="report-document">
+              <h1>{viewed?.title}</h1>
+              <p className="report-lede">{viewed?.summary}</p>
+              <ReactMarkdown>{viewed?.markdown ?? ""}</ReactMarkdown>
+            </article>
             <div className="team-report-meta">
               <span>
                 缺失用户 {viewed?.payload.missingPartnerIds?.length ?? 0}
@@ -226,7 +127,7 @@ function statusLabel(value: string) {
     (
       {
         AGGREGATING: "生成中",
-        TEAM_DRAFT: "待审核",
+        TEAM_DRAFT: "已生成",
         LOCKED: "已归档",
       } as Record<string, string>
     )[value] ?? value

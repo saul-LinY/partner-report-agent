@@ -1,10 +1,9 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
+import { resolveDatabaseUrl } from "./config.js";
 
-const connectionUrl =
-  process.env.DATABASE_URL ??
-  "postgres://partner_report:partner_report@localhost:54329/partner_report";
+const connectionUrl = resolveDatabaseUrl();
 
 export const sqlClient = postgres(connectionUrl, {
   max: Number(process.env.DB_POOL_SIZE ?? 10),
@@ -15,6 +14,7 @@ export const sqlClient = postgres(connectionUrl, {
 export const db = drizzle(sqlClient, { schema });
 export * from "./schema.js";
 export * from "./period.js";
+export * from "./config.js";
 
 export async function closeDatabase() {
   await sqlClient.end();

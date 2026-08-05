@@ -6,7 +6,6 @@ import {
   Check,
   ClipboardCheck,
   Copy,
-  FileText,
   KeyRound,
   Plus,
   RefreshCw,
@@ -15,7 +14,7 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { ApiClientError, api } from "./api.js";
+import { api } from "./api.js";
 import { selectCurrentOpenPeriod } from "./period-selection.js";
 import {
   Badge,
@@ -65,6 +64,20 @@ type PartnerConnection = {
   lastUploadAt: string | null;
   deviceName: string | null;
   version: string | null;
+  reviewProgress: {
+    periodKey: string | null;
+    stage:
+      | "not_started"
+      | "reviewing_cards"
+      | "generating_report"
+      | "reviewing_report"
+      | "completed";
+    reviewed: number;
+    total: number;
+    pending: number;
+    approved: number;
+    excluded: number;
+  };
   feishu?: FeishuConnectionOverview;
 };
 
@@ -118,6 +131,17 @@ const feishuStatusLabel: Record<FeishuConnectionState, string> = {
   delivery_error: "飞书 · 投递异常",
   invalid: "飞书 · 绑定异常",
   not_connected: "飞书 · 未接入",
+};
+
+const reviewStageLabel: Record<
+  PartnerConnection["reviewProgress"]["stage"],
+  string
+> = {
+  not_started: "尚未生成",
+  reviewing_cards: "卡片审核中",
+  generating_report: "个人报告生成中",
+  reviewing_report: "个人报告待审核",
+  completed: "审核完成",
 };
 
 export function AdminConsole() {
@@ -209,7 +233,6 @@ function Operations({ data }: { data: Overview }) {
       </div>
 
       <ScheduleSettings team={data.team} />
-      <ManualTeamReportGeneration periods={data.periods} />
 
       <section className="section-block">
         <div className="section-heading">
@@ -265,6 +288,29 @@ function Operations({ data }: { data: Overview }) {
                       ] ?? "飞书 · 状态未知"}
                     </Badge>
                   </div>
+                  <div
+                    className="review-progress-cell"
+                    title={`接受 ${connection.reviewProgress.approved} · 忽略 ${connection.reviewProgress.excluded} · 待审核 ${connection.reviewProgress.pending}`}
+                  >
+                    <span className="cell-label">审核卡片</span>
+                    <div className="review-progress-value">
+                      <strong>
+                        {connection.reviewProgress.reviewed}/
+                        {connection.reviewProgress.total}
+                      </strong>
+                      <span>
+                        {reviewStageLabel[connection.reviewProgress.stage]}
+                      </span>
+                    </div>
+                    <progress
+                      aria-label={`${connection.partnerName} 审核卡片进度`}
+                      max={Math.max(1, connection.reviewProgress.total)}
+                      value={connection.reviewProgress.reviewed}
+                    />
+                    <span>
+                      {connection.reviewProgress.periodKey ?? "当前无周期"}
+                    </span>
+                  </div>
                   <div>
                     <span className="cell-label">连接测试</span>
                     <strong>{formatTime(connection.verifiedAt)}</strong>
@@ -273,7 +319,7 @@ function Operations({ data }: { data: Overview }) {
                     <span className="cell-label">最近上传</span>
                     <strong>{formatTime(connection.lastUploadAt)}</strong>
                   </div>
-                  <div>
+                  <div className="plugin-device-cell">
                     <span className="cell-label">插件</span>
                     <strong title={connection.deviceName ?? undefined}>
                       {connection.deviceName ?? "--"}
@@ -361,133 +407,6 @@ function Operations({ data }: { data: Overview }) {
         />
       )}
     </div>
-  );
-}
-
-function ManualTeamReportGeneration({ periods }: { periods: any[] }) {
-  const queryClient = useQueryClient();
-  const defaultPeriod =
-    selectCurrentOpenPeriod(periods) ??
-    [...periods].sort(
-      (left, right) =>
-        new Date(right.starts_at).getTime() -
-        new Date(left.starts_at).getTime(),
-    )[0];
-  const [periodId, setPeriodId] = useState(defaultPeriod?.id ?? "");
-  const [submittedPeriodIds, setSubmittedPeriodIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [notice, setNotice] = useState<{
-    title: string;
-    message: string;
-  } | null>(null);
-  const generate = useMutation({
-    mutationFn: () =>
-      api("/v1/admin/team-reports/generate", {
-        method: "POST",
-        body: JSON.stringify({ periodId }),
-      }),
-    onSuccess: (result: any) => {
-      setSubmittedPeriodIds((current) => new Set(current).add(periodId));
-      setNotice({
-        title: "已提交生成",
-        message: result?.queued
-          ? "Team Report 已进入生成队列。"
-          : "Team Report 已经在生成队列中，请稍后查看。",
-      });
-      queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
-      queryClient.invalidateQueries({ queryKey: ["team-reports"] });
-      queryClient.invalidateQueries({ queryKey: ["report-archive"] });
-    },
-    onError: (error) => {
-      if (
-        error instanceof ApiClientError &&
-        ["TEAM_REPORT_EXISTS", "TEAM_REPORT_LOCKED"].includes(error.code)
-      ) {
-        setSubmittedPeriodIds((current) => new Set(current).add(periodId));
-        setNotice({
-          title: "该周期已有 Team Report",
-          message:
-            "当前周期已经存在 Team Report，请到 Team Report 页面查看或继续编辑现有报告。",
-        });
-      }
-    },
-  });
-  const selectedPeriod = periods.find((period) => period.id === periodId);
-  const alreadySubmitted = submittedPeriodIds.has(periodId);
-  return (
-    <section className="schedule-settings-band">
-      <div className="section-heading">
-        <div>
-          <h2>一键生成 Team Report</h2>
-          <p>选择周期后，使用该周期已最终确认的个人 Report 直接生成团队报告</p>
-        </div>
-        <FileText size={19} />
-      </div>
-      <div className="schedule-settings-grid">
-        <div className="schedule-setting">
-          <div className="schedule-setting-title">
-            <strong>生成周期</strong>
-            <span>
-              {selectedPeriod
-                ? `${formatFullTime(selectedPeriod.starts_at)} - ${formatFullTime(selectedPeriod.ends_at)}`
-                : "只会读取所选周期下已通过的个人 Report"}
-            </span>
-          </div>
-          <Field label="周期">
-            <select
-              value={periodId}
-              onChange={(event) => setPeriodId(event.target.value)}
-            >
-              {periods.map((period) => (
-                <option value={period.id} key={period.id}>
-                  {period.period_key}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-        <Button
-          variant="secondary"
-          icon={<FileText size={16} />}
-          loading={generate.isPending}
-          disabled={!periodId || alreadySubmitted}
-          onClick={() => generate.mutate()}
-        >
-          {alreadySubmitted ? "已提交生成" : "生成 Team Report"}
-        </Button>
-      </div>
-      <ErrorBanner
-        error={
-          generate.error instanceof ApiClientError &&
-          ["TEAM_REPORT_EXISTS", "TEAM_REPORT_LOCKED"].includes(
-            generate.error.code,
-          )
-            ? null
-            : generate.error
-        }
-      />
-      {notice && (
-        <Modal
-          title={notice.title}
-          onClose={() => setNotice(null)}
-          footer={
-            <Button variant="secondary" onClick={() => setNotice(null)}>
-              知道了
-            </Button>
-          }
-        >
-          <p>{notice.message}</p>
-          {selectedPeriod && (
-            <p>
-              周期：{selectedPeriod.period_key} ·{" "}
-              {formatFullTime(selectedPeriod.starts_at)} -{" "}
-              {formatFullTime(selectedPeriod.ends_at)}
-            </p>
-          )}
-        </Modal>
-      )}
-    </section>
   );
 }
 

@@ -207,6 +207,49 @@ export function feishuConnectionState(
   return "connected";
 }
 
+export type PartnerReviewStage =
+  | "not_started"
+  | "reviewing_cards"
+  | "generating_report"
+  | "reviewing_report"
+  | "completed";
+
+export function partnerReviewProgress(row: {
+  reviewId: string | null;
+  periodKey: string | null;
+  reviewState: string | null;
+  pendingCount: number | null;
+  approvedCount: number | null;
+  excludedCount: number | null;
+  reportStatus: string | null;
+}) {
+  const pending = Math.max(0, row.pendingCount ?? 0);
+  const approved = Math.max(0, row.approvedCount ?? 0);
+  const excluded = Math.max(0, row.excludedCount ?? 0);
+  const reviewed = approved + excluded;
+  const total = pending + reviewed;
+  let stage: PartnerReviewStage = "not_started";
+  if (row.reviewId) {
+    if (row.reportStatus === "LOCKED") stage = "completed";
+    else if (row.reportStatus === "REPORT_REVIEW") stage = "reviewing_report";
+    else if (
+      row.reportStatus === "REPORT_DRAFT" ||
+      row.reviewState === "ITEMS_APPROVED"
+    )
+      stage = "generating_report";
+    else stage = "reviewing_cards";
+  }
+  return {
+    periodKey: row.periodKey,
+    stage,
+    reviewed,
+    total,
+    pending,
+    approved,
+    excluded,
+  };
+}
+
 export async function adminRoutes(app: FastifyInstance) {
   const feishuAppId = process.env.FEISHU_APP_ID?.trim() || null;
   app.get("/v1/admin/overview", async (request) => {
@@ -233,7 +276,11 @@ export async function adminRoutes(app: FastifyInstance) {
           fd.status as feishu_delivery_status,
           fd.updated_at as feishu_delivery_updated_at,
           fd.last_error_code as feishu_delivery_error_code,
-          fd.next_retry_at as feishu_delivery_next_retry_at
+          fd.next_retry_at as feishu_delivery_next_retry_at,
+          latest_review.review_id, latest_review.period_key as review_period_key,
+          latest_review.review_state, latest_review.pending_count,
+          latest_review.approved_count, latest_review.excluded_count,
+          latest_review.report_status
         from partners p
         left join lateral (
           select b.app_id, b.status, b.open_id, b.verified_at
@@ -258,6 +305,21 @@ export async function adminRoutes(app: FastifyInstance) {
           end, d.updated_at desc
           limit 1
         ) fd on fb.app_id is not null
+        left join lateral (
+          select r.id as review_id, r.state as review_state,
+            r.pending_count, r.approved_count, r.excluded_count,
+            rp.period_key, ir.status as report_status
+          from reviews r
+          join report_periods rp on rp.id = r.period_id
+            and rp.tenant_id = r.tenant_id and rp.team_id = r.team_id
+          left join individual_reports ir on ir.tenant_id = r.tenant_id
+            and ir.team_id = r.team_id and ir.partner_id = r.partner_id
+            and ir.period_id = r.period_id
+          where r.tenant_id = p.tenant_id and r.team_id = p.team_id
+            and r.partner_id = p.id
+          order by rp.starts_at desc, r.created_at desc
+          limit 1
+        ) latest_review on true
         where p.team_id = ${actor.teamId} and p.tenant_id = ${actor.tenantId}
           and p.status = 'active'
         order by p.display_name
@@ -412,6 +474,15 @@ export async function adminRoutes(app: FastifyInstance) {
         lastUploadAt: plugin?.last_sync_at ?? null,
         deviceName: plugin?.device_name ?? null,
         version: plugin?.version ?? null,
+        reviewProgress: partnerReviewProgress({
+          reviewId: partner.review_id ?? null,
+          periodKey: partner.review_period_key ?? null,
+          reviewState: partner.review_state ?? null,
+          pendingCount: partner.pending_count ?? null,
+          approvedCount: partner.approved_count ?? null,
+          excludedCount: partner.excluded_count ?? null,
+          reportStatus: partner.report_status ?? null,
+        }),
         feishu: {
           state: feishuConnectionState(bindingState, deliveryState),
           bindingState,

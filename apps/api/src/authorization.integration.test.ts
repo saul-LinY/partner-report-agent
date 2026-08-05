@@ -1184,6 +1184,8 @@ suite("tenant and role authorization", () => {
           },
         },
       ]);
+      expect(jobs[0].input_payload.previousTeamReport).toBeNull();
+      expect(jobs[0].input_payload).not.toHaveProperty("projects");
 
       const repeated = await app.inject({
         method: "POST",

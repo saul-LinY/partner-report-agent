@@ -56,20 +56,20 @@ async function enqueueTeamReportForPeriod(
   if (input.requireAllLocked && missingPartnerIds.length > 0) return null;
 
   const previousRows = await tx<any[]>`
-    select trv.id as version_id, trv.payload
-    from team_reports tr
-    join report_periods previous_period on previous_period.id = tr.period_id
+    select trv.id as version_id, previous_period.period_key, trv.payload
+    from report_periods previous_period
+    join team_reports tr on tr.period_id = previous_period.id
+      and tr.tenant_id = previous_period.tenant_id
+      and tr.team_id = previous_period.team_id
     join team_report_versions trv on trv.report_id = tr.id and trv.version = tr.current_version
-    where tr.tenant_id = ${input.tenantId} and tr.team_id = ${input.teamId}
-      and tr.status = 'LOCKED' and previous_period.starts_at < ${period.starts_at}
-    order by previous_period.starts_at desc limit 1
-  `;
-  const projects = await tx<any[]>`
-    select id, name, aliases, external_ids
-    from projects
-    where tenant_id = ${input.tenantId} and team_id = ${input.teamId}
-      and status = 'active'
-    order by name
+    where previous_period.id = (
+      select prior.id from report_periods prior
+      where prior.tenant_id = ${input.tenantId}
+        and prior.team_id = ${input.teamId}
+        and prior.starts_at < ${period.starts_at}
+      order by prior.starts_at desc limit 1
+    ) and tr.status = 'LOCKED'
+    limit 1
   `;
   const source = {
     individualReports: submitted.map((row) => ({
@@ -79,7 +79,6 @@ async function enqueueTeamReportForPeriod(
       payload: row.payload,
     })),
     missingPartnerIds,
-    projects,
     previousTeamReport: previousRows[0] ?? null,
   };
   const sourceChecksum = stableJsonHash(source);
@@ -374,19 +373,26 @@ export async function teamReportRoutes(app: FastifyInstance) {
         tenantId: actor.tenantId,
         teamId: actor.teamId,
         periodId: input.periodId,
+        requireAllLocked: true,
       }),
     );
+    if (!result)
+      throw new ApiError(
+        409,
+        "TEAM_REPORT_WAITING_FOR_REVIEWS",
+        "仍有人员尚未完成个人 Report 审核，暂不能生成 Team Report。",
+      );
     await audit(
       request,
       actor,
       "team_report.generation_requested",
       "team_report",
-      result!.reportId,
+      result.reportId,
       {
         periodId: input.periodId,
-        jobId: result!.jobId,
-        individualReportCount: result!.individualReportCount,
-        missingPartnerIds: result!.missingPartnerIds,
+        jobId: result.jobId,
+        individualReportCount: result.individualReportCount,
+        missingPartnerIds: result.missingPartnerIds,
       },
     );
     return result;
