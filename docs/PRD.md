@@ -2,7 +2,7 @@
 
 > MVP 实现决策（2026-08-04）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 14:30、`gpt-5.5` 和 `low` 推理，并通知所有运行，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；安全契约升级时只修复 Prompt，已有任务的用户配置保持不变。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
 
-> 采集状态修订（2026-08-05）：首次运行只采集最近 1 天；后续按 Plugin 本地成功运行游标和 24 小时重叠窗口筛选候选 Session。已接收 Session 使用中台内容 hash 防重，被判定为 `ignore` 的 Session 使用本地匿名 hash 防重，跨运行租约阻止自动和手动采集并发。只有完整成功的 Run 才推进游标。所有 Session 提取指令以及上传的标题、摘要和贡献正文使用中文。任务级 automation memory 只保存安全运行摘要，不作为防重事实源。
+> 采集状态修订（2026-08-05）：首次运行只采集最近 1 天；后续按 Plugin 本地成功运行游标和 24 小时重叠窗口筛选候选 Session。已接收与已忽略 Session 均使用用户稳定目录中的本地匿名 hash ledger 防重，并与中台状态合并；hash 只覆盖周期内完整问答，不包含标题、项目 ID 或匹配方式等可变元数据。跨运行租约阻止自动和手动采集并发。只有完整成功的 Run 才推进游标。所有 Session 提取指令以及上传的标题、摘要和贡献正文使用中文。任务级 automation memory 只保存安全运行摘要，不作为防重事实源。
 
 > 采集终态审查修订（2026-08-05）：队列清空后 `collect-next` 只返回 `review_required`，独立的 `collect-review` 再核对队列和当前 Job；只有审查命令返回 `completed` 且 `checkpointAdvanced: true` 才能记录完整成功。所有携带 `nextCommand` 的状态都必须继续执行，不能因已运行时长或已处理部分 Session 提前收尾。
 
@@ -374,13 +374,13 @@ tenant_id
    - 是否允许访问 Report Service 网络域名。
 9. 系统执行一次只读预检，展示可发现 Session 数量，不立即上传完整数据。
 10. 系统执行一次测试同步，展示读取、排除、失败和待处理数量。
-11. 测试同步成功后确认 Daily Collection Task 已启用；后续 Marketplace 兼容升级复用同一 `PLUGIN_DATA`、Binding Code 和 Plugin Instance，不重复绑定。
+11. 测试同步成功后确认 Daily Collection Task 已启用；后续 Marketplace 兼容升级或重装复用用户稳定目录 `~/.partner-report-data`、Binding Code 和 Plugin Instance，不重复绑定，也不丢失 accepted/ignored 去重 ledger。旧版运行时 `PLUGIN_DATA` 中的持久文件自动迁移，临时 Run 和租约不迁移。
 
 ### 9.2 每日 Session 发现与本地提取
 
 1. Codex Scheduled Task 按面板配置在新聊天中启动 Daily Collection Run（首次创建默认每天北京时间 14:30），不在每个 Agent Turn 结束时运行 Hook。
 2. Plugin 先取得本地采集租约；若自动或手动 Run 已持有有效租约，则当前 Run 返回 `COLLECTION_ALREADY_RUNNING`，不并发提取。
-3. Plugin 读取本地 `collection-state.json`。没有成功历史时固化最近 1 天采集下界；有成功历史时从上次成功 Run 开始时间向前重叠 24 小时。
+3. Plugin 从用户稳定数据目录读取 `collection-state.json`。没有成功历史时固化最近 1 天采集下界；有成功历史时从上次成功 Run 开始时间向前重叠 24 小时。该文件中的 accepted/ignored 匿名 hash ledger 在插件更新、缓存目录替换和重装后继续复用。
 4. Plugin 向中台发送“本次采集开始”状态，通过 Codex App Server `thread/list` 按更新时间筛选候选 Session，再调用 `thread/read(includeTurns)`。
 5. 每个候选 Session 只保留采集范围内完整的“用户问题 + Assistant `final_answer`”组合；中断、取消、失败或缺少最终回复的 Turn 不进入模型输入。
 6. Plugin 重建候选 Session 在采集范围内的完整内容并计算匿名 Session key 和内容 hash。中台已接收且 hash 未变化时直接跳过。
@@ -388,7 +388,7 @@ tenant_id
 8. 规范化 Session 工作目录，并在配置的项目根目录中执行祖先目录匹配；同时匹配多个项目时选择最长根目录。
 9. 当前定时任务模型逐 Session 判断项目价值并生成中文标题、摘要和贡献正文；不得在 Plugin 中执行跨 Session 或周期级聚合。
 10. 本地完成敏感信息、中文字段、不可变字段和 Schema 校验。
-11. `ignore` 结果只保存本地匿名 hash，不上传；`include` 结果通过 HTTPS API 立即上传，并携带稳定幂等键。
+11. `ignore` 结果只保存本地匿名 hash，不上传；`include` 结果通过 HTTPS API 立即上传，并在成功后保存本地匿名 hash。后续先合并本地 ledger 与中台状态，稳定内容 hash 未变化时不再把 Session 交给模型。
 12. 只有全部候选 Session 处理完成且中台接收“本次采集完成”状态后，Plugin 才把本次 Run 开始时间写入成功游标并释放租约。
 13. 失败或中断不推进成功游标；下一次 Run 重新覆盖该范围，已上传和已忽略且 hash 未变化的 Session仍会被跳过。
 14. automation memory 只记录运行时间、状态、聚合计数和安全错误码；Plugin 本地状态和中台状态是防重事实源。
@@ -525,7 +525,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 插件必须包含唯一名称、版本和更新机制。
 - 插件必须可由 GitHub Marketplace 稳定 Release 通过 Codex 官方途径安装和升级；生产入口不得直接跟随未验证的 `main`。
 - Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新输入 Binding Code 或重新配置项目。
-- 本地 `collection-state.json` 必须包含 Schema 版本、Plugin Instance 归属并使用 `0600` 原子写入；Daily Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
+- 用户稳定目录中的 `collection-state.json` 必须包含 Schema 版本、Plugin Instance 归属、accepted/ignored 匿名 hash ledger，并使用 `0600` 原子写入；Plugin 更新或重装必须无损复用或迁移该状态。Daily Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
 - Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `collect-start` 入口；绑定成功后 Skill 必须通过 Codex 官方能力在同名任务不存在时自动创建默认任务，存在时保留用户的调度和模型配置，并在安全契约升级时只修复中文 Prompt。Prompt 必须声明首次 1 天边界、增量防重和 automation memory 最小化规则。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
 - Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
 - Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。

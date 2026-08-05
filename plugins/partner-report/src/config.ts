@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -28,6 +29,11 @@ export type PluginConfig = {
 
 const DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 const BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
+const PERSISTENT_DATA_FILES = [
+  "config.json",
+  "collection-state.json",
+  "secrets.json",
+] as const;
 
 export function normalizeServerUrl(value: string, allowInsecureHttp = false) {
   const raw = value.trim();
@@ -103,19 +109,37 @@ function saveKeychainValue(service: string, value: string) {
   );
 }
 
+export function migratePersistentDataDirectory(source: string, target: string) {
+  const sourceDirectory = resolve(source);
+  const targetDirectory = resolve(target);
+  if (sourceDirectory === targetDirectory || !existsSync(sourceDirectory))
+    return;
+  mkdirSync(targetDirectory, { recursive: true, mode: 0o700 });
+  for (const filename of PERSISTENT_DATA_FILES) {
+    const sourcePath = resolve(sourceDirectory, filename);
+    const targetPath = resolve(targetDirectory, filename);
+    if (!existsSync(sourcePath) || existsSync(targetPath)) continue;
+    copyFileSync(sourcePath, targetPath);
+    chmodSync(targetPath, 0o600);
+  }
+}
+
 export function dataDirectory() {
   const runtimeDirectory =
     process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
-  const stableFallback =
-    process.env.PARTNER_REPORT_DATA ??
-    resolve(homedir(), ".partner-report-data");
-  const configured = useKeychain()
-    ? (runtimeDirectory ??
-      readKeychainValue(DATA_DIRECTORY_SERVICE) ??
-      stableFallback)
-    : stableFallback;
-  const location = resolve(configured);
+  const explicitDirectory = process.env.PARTNER_REPORT_DATA;
+  const stableDirectory = resolve(homedir(), ".partner-report-data");
+  const rememberedDirectory = useKeychain()
+    ? readKeychainValue(DATA_DIRECTORY_SERVICE)
+    : null;
+  const location = resolve(explicitDirectory ?? stableDirectory);
   mkdirSync(location, { recursive: true, mode: 0o700 });
+  if (!explicitDirectory) {
+    for (const legacyDirectory of [rememberedDirectory, runtimeDirectory]) {
+      if (legacyDirectory)
+        migratePersistentDataDirectory(legacyDirectory, location);
+    }
+  }
   return location;
 }
 
@@ -147,11 +171,14 @@ export function loadConfig(required = true): PluginConfig | null {
 }
 
 export function saveConfig(config: PluginConfig) {
-  const path = configPath();
+  const directory = dataDirectory();
+  const path = resolve(directory, "config.json");
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
-  if (useKeychain())
+  if (useKeychain()) {
+    saveKeychainValue(DATA_DIRECTORY_SERVICE, directory);
     saveKeychainValue(BOOTSTRAP_CONFIG_SERVICE, JSON.stringify(config));
+  }
 }
 
 function keychainService(instanceId: string, kind: "access" | "refresh") {
@@ -232,7 +259,10 @@ export function loadSecret(instanceId: string, kind: "access" | "refresh") {
         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
       ).trim();
     } catch {
-      throw new Error(`无法从 macOS Keychain 读取 ${kind} Token。`);
+      throw Object.assign(
+        new Error(`无法从 macOS Keychain 读取 ${kind} Token。`),
+        { code: "KEYCHAIN_ACCESS_REQUIRED" },
+      );
     }
   }
   const path = fallbackSecretsPath();

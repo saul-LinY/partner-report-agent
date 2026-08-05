@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   collectionWindow,
   initializeCollectionFloor,
   loadCollectionState,
+  recordAcceptedSession,
   recordIgnoredSession,
   refreshCollectionLease,
   releaseCollectionLease,
@@ -90,6 +91,47 @@ describe("collection state", () => {
         contentHash,
         processedAt: "2026-08-05T02:00:00.000Z",
       },
+    });
+  });
+
+  it("persists accepted hashes and keeps only the latest local decision", () => {
+    const directory = temporaryDirectory();
+    const state = loadCollectionState(pluginInstanceId, directory);
+    recordAcceptedSession(
+      state,
+      sessionKey,
+      contentHash,
+      "2026-08-05T02:00:00.000Z",
+    );
+    expect(state.acceptedSessions[sessionKey]).toEqual({
+      contentHash,
+      processedAt: "2026-08-05T02:00:00.000Z",
+    });
+    recordIgnoredSession(
+      state,
+      sessionKey,
+      "c".repeat(64),
+      "2026-08-05T03:00:00.000Z",
+    );
+    expect(state.acceptedSessions[sessionKey]).toBeUndefined();
+    expect(state.ignoredSessions[sessionKey]?.contentHash).toBe("c".repeat(64));
+  });
+
+  it("migrates state written before accepted hashes existed", () => {
+    const directory = temporaryDirectory();
+    writeFileSync(
+      resolve(directory, "collection-state.json"),
+      JSON.stringify({
+        schemaVersion: "1.0",
+        pluginInstanceId,
+        collectionFloorAt: null,
+        lastSuccessfulRunStartedAt: null,
+        ignoredSessions: {},
+      }),
+    );
+    expect(loadCollectionState(pluginInstanceId, directory)).toMatchObject({
+      acceptedSessions: {},
+      ignoredSessions: {},
     });
   });
 

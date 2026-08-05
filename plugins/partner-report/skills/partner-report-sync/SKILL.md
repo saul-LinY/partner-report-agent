@@ -15,6 +15,8 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 运行 `codex plugin list --json`，找到已启用且名称为 `partner-report` 的 Plugin，读取其绝对 `source.path` 作为 `PLUGIN_PATH`。确认 `<PLUGIN_PATH>/.codex-plugin/plugin.json` 与 `<PLUGIN_PATH>/dist/cli.mjs` 都存在。不得猜测仓库路径。
 
+Skill 自身可能从 Codex 缓存路径加载，该路径不代表当前已安装 CLI。不要比较、解释或向用户展示 Skill 缓存路径与 `source.path` 的差异；只以 `codex plugin list --json` 返回的已启用 Plugin `source.path` 为准。仅当该目录缺少 manifest 或 CLI、导致任务无法继续时才报告安装异常。
+
 以下命令统一使用：
 
 ```bash
@@ -30,6 +32,8 @@ node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <
 ```
 
 远程端点必须使用 HTTPS；本机回环地址允许 HTTP。用户明确说明中台与 Partner 设备位于同一个可信测试局域网，并提供私有 IP 的 HTTP 地址时，连接命令必须显式追加 `--allow-insecure-http`；不得对公网地址或未经用户确认的网络绕过 HTTPS。Token 默认保存在 macOS Keychain，绝不能输出。绑定后的连通性检查失败时，保留绑定并重试 `connectivity-test`，不得重新领取绑定码。
+
+在 macOS 沙箱环境中，`collect-start`、`collect-submit`、`collect-review`、`status` 等已连接命令需要读取 Keychain。如果当前客户端提供命令权限提升，第一次执行就申请必要权限，不要先进行一次注定失败的无权限探测。`KEYCHAIN_ACCESS_REQUIRED` 表示权限不足，不代表 Token 丢失；不得因此重新绑定或启用明文文件 Token。
 
 连接后运行 `scheduled-task-config`。使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。
 
@@ -51,8 +55,9 @@ CLI 的本地持久化状态同时服务自动和手动运行：
 
 - 第一次运行只采集运行开始前最近 1 天，并且不早于当前 Report Period 开始时间。
 - 后续运行使用上次完整成功运行的开始时间作为增量游标，并保留 24 小时重叠窗口。
-- 未变化的已接收 Session 通过中台 `contentHash` 跳过。
-- 未变化且曾被判定为 `ignore` 的 Session 通过本地匿名 `contentHash` 跳过。
+- 已接收和已忽略 Session 都把匿名 Session key、稳定内容 hash 与处理时间记录在用户稳定数据目录的 `collection-state.json`；Plugin 更新、缓存目录替换或重装不得删除该文件。
+- CLI 在把 Session 交给模型前合并本地记录与中台状态。完整问答内容未变化时直接跳过，模型不会再次读取、判断或上传。
+- `contentHash` 只基于当前周期内的完整“用户问题 + 助手最终回答”；标题变化、项目从自动发现变为已登记、项目 ID 或匹配方式变化都不得触发 Revision。
 - 跨运行租约阻止自动任务和手动任务同时提取。
 - 只有 CLI 返回 `completed`、`checkpointAdvanced: true` 且没有读写或提取失败时才推进成功游标；失败、中断或部分失败不得推进。
 
@@ -61,6 +66,8 @@ CLI 的本地持久化状态同时服务自动和手动运行：
 ```bash
 node "<PLUGIN_PATH>/dist/cli.mjs" collect-next --run <RUN_PATH>
 ```
+
+`collect-start` 的 `queued` 只是更新时间窗口内的粗筛候选数，不是需要模型处理的数量。不要向用户描述为“待判定项”或“都会处理”；CLI 读取结构化 Turn 并完成本地/中台 hash 比对后，只有内容发生变化且符合输入条件的 Session 才会返回 `job`。
 
 CLI 返回的所有 `nextCommand` 都必须执行。`started`、`job`、`uploaded`、`ignored`、`skipped`、`review_required` 和 `review_failed` 均为非终态；出现其中任何状态时不得总结、更新 memory 为成功或结束任务。Session 数量、已运行时间或已经上传一部分结果都不能作为收尾依据。
 
@@ -98,7 +105,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-review --run <RUN_PATH>
 
 最终只返回中文的周期 key、采集起止时间、`checkpointAdvanced`、安全 warning 和聚合计数。不得输出 Session 文本、本地文件路径、指纹或标识。`PARTIAL_COLLECTION_RETRY_REQUIRED` 表示本次没有推进成功游标，下一次会继续覆盖旧范围。
 
-CLI 对候选 Session 重新计算采集范围内的完整内容，不维护 Turn 游标。Session 新增完整 Turn 后，其 `contentHash` 会变化，中台会保存新的当前版本。只向模型提供完整的“用户问题 + 助手最终回答”组合。
+CLI 对候选 Session 重新计算采集范围内的完整内容，不维护 Turn 游标。只有 Session 新增或修改完整 Turn 后，其稳定 `contentHash` 才会变化，中台会保存新的当前版本。只向模型提供完整的“用户问题 + 助手最终回答”组合。CLI 升级后的新 hash 口径兼容旧 hash，内容未变时不会因迁移本身触发一次额外 Revision。
 
 显式恢复时可以使用 `collect-start --force` 重新评估采集范围内的 Session。普通定时或手动采集不得使用 `--force`。
 
@@ -111,7 +118,7 @@ CLI 对候选 Session 重新计算采集范围内的完整内容，不维护 Tur
 - 安全的聚合计数；
 - 安全错误码。
 
-不得记录 Session 内容、Fact、证据、原始或匿名 Session 标识、内容 hash、端点、Token、绑定信息或本地路径。automation memory 只用于运行连续性和诊断；防重与成功游标以 CLI 本地状态和中台状态为准。
+不得记录 Session 内容、Fact、证据、原始或匿名 Session 标识、内容 hash、端点、Token、绑定信息或本地路径。automation memory 只用于运行连续性和诊断；防重与成功游标以用户稳定数据目录中的 CLI 本地状态和中台状态为准。
 
 ## 本地排除
 
@@ -128,4 +135,4 @@ node "<PLUGIN_PATH>/dist/cli.mjs" include-path --path <ABSOLUTE_PATH>
 
 ## 状态
 
-用户只询问健康状态时运行 `status`。报告插件版本、连通性、当前周期、已接收 Session 数、本地已忽略 Session 数、采集下界、上次成功运行时间和本地排除数量。当前周期缺失不代表连接失败。
+用户只询问健康状态时运行 `status`。报告插件版本、连通性、当前周期、中台已接收 Session 数、本地已接收与已忽略 Session 数、采集下界、上次成功运行时间和本地排除数量。当前周期缺失不代表连接失败。

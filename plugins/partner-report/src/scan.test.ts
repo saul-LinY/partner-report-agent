@@ -144,7 +144,7 @@ describe("safe Session input", () => {
     );
     expect(job!.expected.production).toMatchObject({
       skillVersion: "partner-report-sync/0.4.0",
-      promptVersion: "2026-08-05.zh-session-value.v2",
+      promptVersion: "2026-08-05.zh-session-value.v3",
     });
     const serialized = JSON.stringify(job);
     expect(serialized).not.toContain("raw-codex-session-id");
@@ -158,6 +158,75 @@ describe("safe Session input", () => {
     expect(anonymousSessionKey("binding-a", "session")).not.toBe(
       anonymousSessionKey("binding-b", "session"),
     );
+  });
+
+  it("hashes complete turns without mutable title or project metadata", () => {
+    const cwd = "/work/new-project";
+    const discovered = mappedProject(cwd, []);
+    const registeredProjects = [
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        name: discovered.name,
+        aliases: [],
+        allowed_paths: [],
+        external_ids: [`path-sha256:${discovered.rootFingerprint}`],
+      },
+    ];
+    const first = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      title: "旧标题",
+      cwd,
+      turns: [completeTurn("one")],
+      projects: [],
+      period,
+    })!;
+    const remapped = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      title: "旧标题",
+      cwd,
+      turns: [completeTurn("one")],
+      projects: registeredProjects,
+      period,
+    })!;
+    expect(remapped.contentHash).toBe(first.contentHash);
+    expect(remapped.compatibleContentHashes).toContain(
+      first.compatibleContentHashes[0],
+    );
+    const renamed = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      title: "自动更新后的标题",
+      cwd,
+      turns: [completeTurn("one")],
+      projects: registeredProjects,
+      period,
+    })!;
+    expect(renamed.contentHash).toBe(first.contentHash);
+  });
+
+  it("changes the content hash when a complete turn is added", () => {
+    const first = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      cwd: "/work/main",
+      turns: [completeTurn("one")],
+      projects,
+      period,
+    })!;
+    const changed = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      cwd: "/work/main",
+      turns: [
+        completeTurn("one"),
+        completeTurn("two", "2026-08-05T04:00:00.000Z"),
+      ],
+      projects,
+      period,
+    })!;
+    expect(changed.contentHash).not.toBe(first.contentHash);
   });
 
   it("requires Chinese titles, summaries, and contribution text", () => {

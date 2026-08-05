@@ -320,19 +320,39 @@ export function buildSessionJob(input: {
     input.pluginInstanceId,
     input.sessionId,
   );
+  const legacyContentHash = (legacyProject: ProjectIdentity) =>
+    sha256(
+      JSON.stringify({
+        periodKey: input.period.period_key,
+        title,
+        project: legacyProject,
+        activity,
+        turns,
+      }),
+    );
+  const compatibleContentHashes = new Set([legacyContentHash(project)]);
+  if (project.id) {
+    compatibleContentHashes.add(
+      legacyContentHash({
+        id: null,
+        name: project.name,
+        matchMethod: "path_discovered",
+        rootFingerprint: project.rootFingerprint,
+        rootName: project.name,
+      }),
+    );
+  }
   const contentHash = sha256(
     JSON.stringify({
+      hashVersion: "2.0",
       periodKey: input.period.period_key,
-      title,
-      project,
-      activity,
       turns,
     }),
   );
   const observedAt = input.observedAt ?? new Date().toISOString();
   const production = {
     skillVersion: "partner-report-sync/0.4.0" as const,
-    promptVersion: "2026-08-05.zh-session-value.v2",
+    promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0" as const,
     producer: "codex-skill" as const,
   };
@@ -340,6 +360,9 @@ export function buildSessionJob(input: {
   return {
     sessionKey,
     contentHash,
+    compatibleContentHashes: [...compatibleContentHashes].filter(
+      (hash) => hash !== contentHash,
+    ),
     expected: {
       schemaVersion: "1.0" as const,
       periodKey: input.period.period_key,

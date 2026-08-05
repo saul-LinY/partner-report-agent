@@ -4363,6 +4363,7 @@ var pluginDiagnosticBatchSchema = external_exports.object({
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -4373,6 +4374,11 @@ import { resolve } from "node:path";
 var PLUGIN_VERSION = "0.4.0";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
+var PERSISTENT_DATA_FILES = [
+  "config.json",
+  "collection-state.json",
+  "secrets.json"
+];
 function normalizeServerUrl(value, allowInsecureHttp = false) {
   const raw = value.trim();
   if (!raw) throw new Error("\u6570\u636E\u4E2D\u53F0\u5730\u5740\u4E0D\u80FD\u4E3A\u7A7A\u3002");
@@ -4431,12 +4437,33 @@ function saveKeychainValue(service, value) {
     { stdio: "ignore" }
   );
 }
+function migratePersistentDataDirectory(source, target) {
+  const sourceDirectory = resolve(source);
+  const targetDirectory = resolve(target);
+  if (sourceDirectory === targetDirectory || !existsSync(sourceDirectory))
+    return;
+  mkdirSync(targetDirectory, { recursive: true, mode: 448 });
+  for (const filename of PERSISTENT_DATA_FILES) {
+    const sourcePath = resolve(sourceDirectory, filename);
+    const targetPath = resolve(targetDirectory, filename);
+    if (!existsSync(sourcePath) || existsSync(targetPath)) continue;
+    copyFileSync(sourcePath, targetPath);
+    chmodSync(targetPath, 384);
+  }
+}
 function dataDirectory() {
   const runtimeDirectory = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
-  const stableFallback = process.env.PARTNER_REPORT_DATA ?? resolve(homedir(), ".partner-report-data");
-  const configured = useKeychain() ? runtimeDirectory ?? readKeychainValue(DATA_DIRECTORY_SERVICE) ?? stableFallback : stableFallback;
-  const location = resolve(configured);
+  const explicitDirectory = process.env.PARTNER_REPORT_DATA;
+  const stableDirectory = resolve(homedir(), ".partner-report-data");
+  const rememberedDirectory = useKeychain() ? readKeychainValue(DATA_DIRECTORY_SERVICE) : null;
+  const location = resolve(explicitDirectory ?? stableDirectory);
   mkdirSync(location, { recursive: true, mode: 448 });
+  if (!explicitDirectory) {
+    for (const legacyDirectory of [rememberedDirectory, runtimeDirectory]) {
+      if (legacyDirectory)
+        migratePersistentDataDirectory(legacyDirectory, location);
+    }
+  }
   return location;
 }
 function configPath() {
@@ -4465,12 +4492,15 @@ function loadConfig(required = true) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 function saveConfig(config) {
-  const path = configPath();
+  const directory = dataDirectory();
+  const path = resolve(directory, "config.json");
   writeFileSync(path, `${JSON.stringify(config, null, 2)}
 `, { mode: 384 });
   chmodSync(path, 384);
-  if (useKeychain())
+  if (useKeychain()) {
+    saveKeychainValue(DATA_DIRECTORY_SERVICE, directory);
     saveKeychainValue(BOOTSTRAP_CONFIG_SERVICE, JSON.stringify(config));
+  }
 }
 function keychainService(instanceId, kind) {
   return `partner-report:${instanceId}:${kind}`;
@@ -4527,7 +4557,10 @@ function loadSecret(instanceId, kind) {
         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
       ).trim();
     } catch {
-      throw new Error(`\u65E0\u6CD5\u4ECE macOS Keychain \u8BFB\u53D6 ${kind} Token\u3002`);
+      throw Object.assign(
+        new Error(`\u65E0\u6CD5\u4ECE macOS Keychain \u8BFB\u53D6 ${kind} Token\u3002`),
+        { code: "KEYCHAIN_ACCESS_REQUIRED" }
+      );
     }
   }
   const path = fallbackSecretsPath();
@@ -4648,7 +4681,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002",
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
-  "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u63D2\u4EF6\u672C\u5730\u72B6\u6001\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
+  "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
   "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
   "\u961F\u5217\u6E05\u7A7A\u540E\u5FC5\u987B\u6267\u884C collect-review\uFF1B\u53EA\u6709\u8BE5\u5BA1\u67E5\u547D\u4EE4\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextCommand \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
   "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 CLI \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
@@ -4667,6 +4700,51 @@ var SCHEDULED_COLLECTION_TASK = {
   notifications: "all_runs",
   prompt: SCHEDULED_COLLECTION_PROMPT
 };
+
+// src/collection-dedup.ts
+function knownContentHashes(known) {
+  return [
+    .../* @__PURE__ */ new Set([...known.contentHashes ?? [], known.contentHash])
+  ].filter((value) => Boolean(value));
+}
+function mergeKnownSession(sessions, sessionKey, contentHash, decision, override = false) {
+  const existing = sessions[sessionKey];
+  sessions[sessionKey] = !override && existing?.decision === decision ? {
+    decision,
+    contentHashes: [
+      .../* @__PURE__ */ new Set([...knownContentHashes(existing), contentHash])
+    ]
+  } : { decision, contentHashes: [contentHash] };
+}
+function buildKnownSessionIndex(input) {
+  const sessions = {};
+  for (const session of input.remoteAccepted) {
+    mergeKnownSession(
+      sessions,
+      session.sessionKey,
+      session.contentHash,
+      "accepted"
+    );
+  }
+  for (const [sessionKey, accepted] of Object.entries(input.localAccepted)) {
+    mergeKnownSession(sessions, sessionKey, accepted.contentHash, "accepted");
+  }
+  for (const [sessionKey, ignored] of Object.entries(input.localIgnored)) {
+    mergeKnownSession(
+      sessions,
+      sessionKey,
+      ignored.contentHash,
+      "ignored",
+      true
+    );
+  }
+  return sessions;
+}
+function matchingKnownDecision(known, candidateHashes) {
+  if (!known) return null;
+  const candidates = new Set(candidateHashes);
+  return knownContentHashes(known).some((hash) => candidates.has(hash)) ? known.decision : null;
+}
 
 // src/collection-state.ts
 import {
@@ -4694,6 +4772,7 @@ function emptyState(pluginInstanceId) {
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
+    acceptedSessions: {},
     ignoredSessions: {}
   };
 }
@@ -4708,19 +4787,22 @@ function validateState(value, pluginInstanceId) {
   const state = value;
   if (state.pluginInstanceId !== pluginInstanceId)
     return emptyState(pluginInstanceId);
-  if (state.schemaVersion !== "1.0" || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || !state.ignoredSessions || typeof state.ignoredSessions !== "object") {
+  const acceptedSessions = state.acceptedSessions ?? {};
+  if (state.schemaVersion !== "1.0" || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || !acceptedSessions || typeof acceptedSessions !== "object" || !state.ignoredSessions || typeof state.ignoredSessions !== "object") {
     throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u683C\u5F0F\u65E0\u6548\u3002"), {
       code: "COLLECTION_STATE_INVALID"
     });
   }
-  for (const [sessionKey, ignored] of Object.entries(state.ignoredSessions)) {
-    if (!/^[a-f0-9]{64}$/.test(sessionKey) || !ignored || typeof ignored !== "object" || !/^[a-f0-9]{64}$/.test(ignored.contentHash) || !validIso(ignored.processedAt)) {
-      throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u5305\u542B\u65E0\u6548\u7684\u5FFD\u7565\u8BB0\u5F55\u3002"), {
-        code: "COLLECTION_STATE_INVALID"
-      });
+  for (const records of [acceptedSessions, state.ignoredSessions]) {
+    for (const [sessionKey, processed] of Object.entries(records)) {
+      if (!/^[a-f0-9]{64}$/.test(sessionKey) || !processed || typeof processed !== "object" || !/^[a-f0-9]{64}$/.test(processed.contentHash) || !validIso(processed.processedAt)) {
+        throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u5305\u542B\u65E0\u6548\u7684\u5904\u7406\u8BB0\u5F55\u3002"), {
+          code: "COLLECTION_STATE_INVALID"
+        });
+      }
     }
   }
-  return state;
+  return { ...state, acceptedSessions };
 }
 function loadCollectionState(pluginInstanceId, directory = dataDirectory()) {
   const path = statePath(directory);
@@ -4786,9 +4868,19 @@ function threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
   return Number.isFinite(timestamp2) && timestamp2 >= new Date(scanStartsAt).getTime() && timestamp2 <= new Date(scanEndsAt).getTime();
 }
 function recordIgnoredSession(state, sessionKey, contentHash, processedAt = (/* @__PURE__ */ new Date()).toISOString()) {
-  state.ignoredSessions[sessionKey] = { contentHash, processedAt };
+  const existing = state.ignoredSessions[sessionKey];
+  state.ignoredSessions[sessionKey] = {
+    contentHash,
+    processedAt: existing?.contentHash === contentHash ? existing.processedAt : processedAt
+  };
+  delete state.acceptedSessions[sessionKey];
 }
-function removeIgnoredSession(state, sessionKey) {
+function recordAcceptedSession(state, sessionKey, contentHash, processedAt = (/* @__PURE__ */ new Date()).toISOString()) {
+  const existing = state.acceptedSessions[sessionKey];
+  state.acceptedSessions[sessionKey] = {
+    contentHash,
+    processedAt: existing?.contentHash === contentHash ? existing.processedAt : processedAt
+  };
   delete state.ignoredSessions[sessionKey];
 }
 function canAdvanceCollectionCheckpoint(counts) {
@@ -5197,25 +5289,47 @@ function buildSessionJob(input) {
     input.pluginInstanceId,
     input.sessionId
   );
-  const contentHash = sha256(
+  const legacyContentHash = (legacyProject) => sha256(
     JSON.stringify({
       periodKey: input.period.period_key,
       title,
-      project,
+      project: legacyProject,
       activity,
+      turns
+    })
+  );
+  const compatibleContentHashes = /* @__PURE__ */ new Set([legacyContentHash(project)]);
+  if (project.id) {
+    compatibleContentHashes.add(
+      legacyContentHash({
+        id: null,
+        name: project.name,
+        matchMethod: "path_discovered",
+        rootFingerprint: project.rootFingerprint,
+        rootName: project.name
+      })
+    );
+  }
+  const contentHash = sha256(
+    JSON.stringify({
+      hashVersion: "2.0",
+      periodKey: input.period.period_key,
       turns
     })
   );
   const observedAt = input.observedAt ?? (/* @__PURE__ */ new Date()).toISOString();
   const production = {
     skillVersion: "partner-report-sync/0.4.0",
-    promptVersion: "2026-08-05.zh-session-value.v2",
+    promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0",
     producer: "codex-skill"
   };
   return {
     sessionKey,
     contentHash,
+    compatibleContentHashes: [...compatibleContentHashes].filter(
+      (hash) => hash !== contentHash
+    ),
     expected: {
       schemaVersion: "1.0",
       periodKey: input.period.period_key,
@@ -5640,18 +5754,11 @@ async function collectStart() {
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
   }
-  const knownSessions = Object.fromEntries(
-    Object.entries(localState.ignoredSessions).map(([sessionKey, ignored]) => [
-      sessionKey,
-      { contentHash: ignored.contentHash, decision: "ignored" }
-    ])
-  );
-  for (const session of state.sessions) {
-    knownSessions[session.sessionKey] = {
-      contentHash: session.contentHash,
-      decision: "accepted"
-    };
-  }
+  const knownSessions = buildKnownSessionIndex({
+    remoteAccepted: state.sessions,
+    localAccepted: localState.acceptedSessions,
+    localIgnored: localState.ignoredSessions
+  });
   const manifest = {
     schemaVersion: "1.0",
     runId,
@@ -5782,8 +5889,18 @@ async function collectNext() {
       }
       manifest.counts.eligible += 1;
       const known = manifest.knownSessions[job.sessionKey];
-      if (!manifest.force && known?.contentHash === job.contentHash) {
-        if (known.decision === "accepted") manifest.counts.unchanged += 1;
+      const compatibleContentHashes = /* @__PURE__ */ new Set([
+        job.contentHash,
+        ...job.compatibleContentHashes
+      ]);
+      const knownDecision = manifest.force ? null : matchingKnownDecision(known, compatibleContentHashes);
+      if (knownDecision) {
+        const state = loadCollectionState(manifest.pluginInstanceId);
+        if (knownDecision === "accepted")
+          recordAcceptedSession(state, job.sessionKey, job.contentHash);
+        else recordIgnoredSession(state, job.sessionKey, job.contentHash);
+        saveCollectionState(state);
+        if (knownDecision === "accepted") manifest.counts.unchanged += 1;
         else manifest.counts.cachedIgnored += 1;
         saveRun(absolute, manifest);
         continue;
@@ -5870,7 +5987,7 @@ async function collectSubmit() {
     removeJobFiles(absolute, current);
     manifest.counts.ignored += 1;
     manifest.knownSessions[current.expected.sessionKey] = {
-      contentHash: current.expected.contentHash,
+      contentHashes: [current.expected.contentHash],
       decision: "ignored"
     };
     manifest.current = null;
@@ -5899,12 +6016,16 @@ async function collectSubmit() {
     }
   );
   const state = loadCollectionState(manifest.pluginInstanceId);
-  removeIgnoredSession(state, result.contribution.sessionKey);
+  recordAcceptedSession(
+    state,
+    result.contribution.sessionKey,
+    result.contribution.contentHash
+  );
   saveCollectionState(state);
   removeJobFiles(absolute, current);
   manifest.counts.uploaded += 1;
   manifest.knownSessions[result.contribution.sessionKey] = {
-    contentHash: result.contribution.contentHash,
+    contentHashes: [result.contribution.contentHash],
     decision: "accepted"
   };
   manifest.current = null;
@@ -5946,6 +6067,7 @@ async function status() {
     connectivityStatus: config.connectivityStatus ?? "pending",
     periodKey: policy.currentPeriod?.period_key ?? null,
     acceptedSessionCount: state.sessions.length,
+    localAcceptedSessionCount: Object.keys(localState.acceptedSessions).length,
     ignoredSessionCount: Object.keys(localState.ignoredSessions).length,
     collectionFloorAt: localState.collectionFloorAt,
     lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,

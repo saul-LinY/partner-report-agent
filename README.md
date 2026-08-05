@@ -109,7 +109,7 @@ Prompt：由 Plugin CLI 返回，包含采集边界、数据最小化规则、au
 
 Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默认任务，并在安全契约升级时只修复 Prompt，不覆盖用户在面板中的时间、模型等配置。Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
 
-Scheduled Task 会使用任务级 `memory.md` 延续运行上下文，它不是按 Session 生成。Plugin Prompt 只允许其中保存运行时间、完成/失败/中断状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、hash、端点或标识。memory 只用于运行摘要；自动与手动采集共享的防重和成功游标以 Plugin 本地 `collection-state.json` 及中台状态为准。
+Scheduled Task 会使用任务级 `memory.md` 延续运行上下文，它不是按 Session 生成。Plugin Prompt 只允许其中保存运行时间、完成/失败/中断状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、hash、端点或标识。memory 只用于运行摘要；自动与手动采集共享的防重和成功游标以用户稳定目录 `~/.partner-report-data/collection-state.json` 及中台状态为准。该文件只保存匿名 Session key、稳定内容 hash、处理时间和聚合游标，不保存原始对话，并在插件更新或重装后继续复用。
 
 Plugin 的 Session 提取指令使用中文，并在上传前强制校验 `title`、`summary` 和 `contributions[].text` 包含中文。JSON 字段名和状态枚举保留英文，以维持 API/Schema 兼容。
 
@@ -120,7 +120,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" status
 使用 $partner-report-sync 运行一次 collect-start，并只返回安全的中文摘要。
 ```
 
-macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTNER_REPORT_ALLOW_FILE_TOKENS=1` 才允许文件凭据回退。
+macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTNER_REPORT_ALLOW_FILE_TOKENS=1` 才允许文件凭据回退。CLI 会把旧版运行时 `PLUGIN_DATA` 中的持久文件迁移到稳定用户目录，不迁移临时 Run 或租约文件。
 
 ## 数据流
 
@@ -130,7 +130,8 @@ Codex Scheduled task（默认每天北京时间 14:30、新聊天、无项目；
   -> 首次最近 1 天，后续按本地成功游标增量扫描
   -> 本地租约阻止自动与手动并发采集
   -> 过滤为完整 user question + final_answer Turn
-  -> 已接收或已忽略且 hash 未变化的 Session 直接跳过
+  -> 仅按完整问答生成稳定内容 hash，不受标题或项目登记状态变化影响
+  -> 合并本地 accepted/ignored ledger 与中台状态，已处理且内容未变化的 Session 在模型前直接跳过
   -> 当前 Scheduled 会话逐 Session 生成中文贡献，Plugin 逐个校验
   -> HTTPS 幂等上传，队列清空后执行独立终态审查
   -> 审查确认无剩余 Job 且无失败后推进本地运行游标

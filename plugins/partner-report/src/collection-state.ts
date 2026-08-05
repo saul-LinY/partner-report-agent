@@ -14,7 +14,7 @@ export const INITIAL_LOOKBACK_DAYS = 1;
 export const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1_000;
 export const COLLECTION_LEASE_MS = 30 * 60 * 1_000;
 
-type IgnoredSessionState = {
+type ProcessedSessionState = {
   contentHash: string;
   processedAt: string;
 };
@@ -24,7 +24,8 @@ export type CollectionState = {
   pluginInstanceId: string;
   collectionFloorAt: string | null;
   lastSuccessfulRunStartedAt: string | null;
-  ignoredSessions: Record<string, IgnoredSessionState>;
+  acceptedSessions: Record<string, ProcessedSessionState>;
+  ignoredSessions: Record<string, ProcessedSessionState>;
 };
 
 type CollectionLease = {
@@ -49,6 +50,7 @@ function emptyState(pluginInstanceId: string): CollectionState {
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
+    acceptedSessions: {},
     ignoredSessions: {},
   };
 }
@@ -70,11 +72,14 @@ function validateState(
   const state = value as Partial<CollectionState>;
   if (state.pluginInstanceId !== pluginInstanceId)
     return emptyState(pluginInstanceId);
+  const acceptedSessions = state.acceptedSessions ?? {};
   if (
     state.schemaVersion !== "1.0" ||
     (state.collectionFloorAt !== null && !validIso(state.collectionFloorAt)) ||
     (state.lastSuccessfulRunStartedAt !== null &&
       !validIso(state.lastSuccessfulRunStartedAt)) ||
+    !acceptedSessions ||
+    typeof acceptedSessions !== "object" ||
     !state.ignoredSessions ||
     typeof state.ignoredSessions !== "object"
   ) {
@@ -82,20 +87,22 @@ function validateState(
       code: "COLLECTION_STATE_INVALID",
     });
   }
-  for (const [sessionKey, ignored] of Object.entries(state.ignoredSessions)) {
-    if (
-      !/^[a-f0-9]{64}$/.test(sessionKey) ||
-      !ignored ||
-      typeof ignored !== "object" ||
-      !/^[a-f0-9]{64}$/.test(ignored.contentHash) ||
-      !validIso(ignored.processedAt)
-    ) {
-      throw Object.assign(new Error("本地采集状态包含无效的忽略记录。"), {
-        code: "COLLECTION_STATE_INVALID",
-      });
+  for (const records of [acceptedSessions, state.ignoredSessions]) {
+    for (const [sessionKey, processed] of Object.entries(records)) {
+      if (
+        !/^[a-f0-9]{64}$/.test(sessionKey) ||
+        !processed ||
+        typeof processed !== "object" ||
+        !/^[a-f0-9]{64}$/.test(processed.contentHash) ||
+        !validIso(processed.processedAt)
+      ) {
+        throw Object.assign(new Error("本地采集状态包含无效的处理记录。"), {
+          code: "COLLECTION_STATE_INVALID",
+        });
+      }
     }
   }
-  return state as CollectionState;
+  return { ...state, acceptedSessions } as CollectionState;
 }
 
 export function loadCollectionState(
@@ -200,13 +207,31 @@ export function recordIgnoredSession(
   contentHash: string,
   processedAt = new Date().toISOString(),
 ) {
-  state.ignoredSessions[sessionKey] = { contentHash, processedAt };
+  const existing = state.ignoredSessions[sessionKey];
+  state.ignoredSessions[sessionKey] = {
+    contentHash,
+    processedAt:
+      existing?.contentHash === contentHash
+        ? existing.processedAt
+        : processedAt,
+  };
+  delete state.acceptedSessions[sessionKey];
 }
 
-export function removeIgnoredSession(
+export function recordAcceptedSession(
   state: CollectionState,
   sessionKey: string,
+  contentHash: string,
+  processedAt = new Date().toISOString(),
 ) {
+  const existing = state.acceptedSessions[sessionKey];
+  state.acceptedSessions[sessionKey] = {
+    contentHash,
+    processedAt:
+      existing?.contentHash === contentHash
+        ? existing.processedAt
+        : processedAt,
+  };
   delete state.ignoredSessions[sessionKey];
 }
 

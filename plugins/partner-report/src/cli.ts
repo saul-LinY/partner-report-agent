@@ -24,15 +24,20 @@ import {
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
 import { SCHEDULED_COLLECTION_TASK } from "./collection-config.js";
 import {
+  buildKnownSessionIndex,
+  matchingKnownDecision,
+  type KnownSession,
+} from "./collection-dedup.js";
+import {
   acquireCollectionLease,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
   initializeCollectionFloor,
   loadCollectionState,
+  recordAcceptedSession,
   recordIgnoredSession,
   refreshCollectionLease,
   releaseCollectionLease,
-  removeIgnoredSession,
   reviewCollectionCompletion,
   saveCollectionState,
   threadIsInScanWindow,
@@ -89,11 +94,6 @@ type RunCounts = {
   excluded: number;
   failedRead: number;
   failedExtract: number;
-};
-
-type KnownSession = {
-  contentHash: string;
-  decision: "accepted" | "ignored";
 };
 
 type CurrentJob = {
@@ -511,18 +511,11 @@ async function collectStart() {
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
   }
-  const knownSessions: Record<string, KnownSession> = Object.fromEntries(
-    Object.entries(localState.ignoredSessions).map(([sessionKey, ignored]) => [
-      sessionKey,
-      { contentHash: ignored.contentHash, decision: "ignored" as const },
-    ]),
-  );
-  for (const session of state.sessions) {
-    knownSessions[session.sessionKey] = {
-      contentHash: session.contentHash,
-      decision: "accepted",
-    };
-  }
+  const knownSessions = buildKnownSessionIndex({
+    remoteAccepted: state.sessions,
+    localAccepted: localState.acceptedSessions,
+    localIgnored: localState.ignoredSessions,
+  });
   const manifest: RunManifest = {
     schemaVersion: "1.0",
     runId,
@@ -661,8 +654,20 @@ async function collectNext() {
       }
       manifest.counts.eligible += 1;
       const known = manifest.knownSessions[job.sessionKey];
-      if (!manifest.force && known?.contentHash === job.contentHash) {
-        if (known.decision === "accepted") manifest.counts.unchanged += 1;
+      const compatibleContentHashes = new Set([
+        job.contentHash,
+        ...job.compatibleContentHashes,
+      ]);
+      const knownDecision = manifest.force
+        ? null
+        : matchingKnownDecision(known, compatibleContentHashes);
+      if (knownDecision) {
+        const state = loadCollectionState(manifest.pluginInstanceId);
+        if (knownDecision === "accepted")
+          recordAcceptedSession(state, job.sessionKey, job.contentHash);
+        else recordIgnoredSession(state, job.sessionKey, job.contentHash);
+        saveCollectionState(state);
+        if (knownDecision === "accepted") manifest.counts.unchanged += 1;
         else manifest.counts.cachedIgnored += 1;
         saveRun(absolute, manifest);
         continue;
@@ -755,7 +760,7 @@ async function collectSubmit() {
     removeJobFiles(absolute, current);
     manifest.counts.ignored += 1;
     manifest.knownSessions[current.expected.sessionKey] = {
-      contentHash: current.expected.contentHash,
+      contentHashes: [current.expected.contentHash],
       decision: "ignored",
     };
     manifest.current = null;
@@ -785,12 +790,16 @@ async function collectSubmit() {
     },
   );
   const state = loadCollectionState(manifest.pluginInstanceId);
-  removeIgnoredSession(state, result.contribution.sessionKey);
+  recordAcceptedSession(
+    state,
+    result.contribution.sessionKey,
+    result.contribution.contentHash,
+  );
   saveCollectionState(state);
   removeJobFiles(absolute, current);
   manifest.counts.uploaded += 1;
   manifest.knownSessions[result.contribution.sessionKey] = {
-    contentHash: result.contribution.contentHash,
+    contentHashes: [result.contribution.contentHash],
     decision: "accepted",
   };
   manifest.current = null;
@@ -836,6 +845,7 @@ async function status() {
     connectivityStatus: config.connectivityStatus ?? "pending",
     periodKey: policy.currentPeriod?.period_key ?? null,
     acceptedSessionCount: state.sessions.length,
+    localAcceptedSessionCount: Object.keys(localState.acceptedSessions).length,
     ignoredSessionCount: Object.keys(localState.ignoredSessions).length,
     collectionFloorAt: localState.collectionFloorAt,
     lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,

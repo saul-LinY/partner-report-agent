@@ -9,7 +9,9 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("首次运行只采集最近 1 天");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("必须使用中文");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("automation memory");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("插件本地状态和中台哈希");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "本地 accepted/ignored 哈希记录和中台哈希",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("采集和终态审查两个阶段");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-review");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("任何 nextCommand");

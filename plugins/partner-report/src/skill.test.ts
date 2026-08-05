@@ -11,6 +11,7 @@ describe("partner report skill packaging", () => {
 
     expect(skill).toContain("codex plugin list --json");
     expect(skill).toContain("source.path");
+    expect(skill).toContain("不要比较、解释或向用户展示 Skill 缓存路径");
     expect(skill).toContain('node "<PLUGIN_PATH>/dist/cli.mjs"');
     expect(skill).toContain("collect-start");
     expect(skill).toContain("collect-next --run");
@@ -19,11 +20,14 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
     expect(skill).toContain("第一次运行只采集运行开始前最近 1 天");
-    expect(skill).toContain("未变化且曾被判定为 `ignore`");
+    expect(skill).toContain("已接收和已忽略 Session");
+    expect(skill).toContain("模型不会再次读取、判断或上传");
+    expect(skill).toContain("不是需要模型处理的数量");
+    expect(skill).toContain("KEYCHAIN_ACCESS_REQUIRED");
     expect(skill).toContain("不维护 Turn 游标");
     expect(skill).toContain("官方 Codex Scheduled Task");
     expect(skill).toContain("必须使用简体中文");
-    expect(skill).toContain("防重与成功游标以 CLI 本地状态和中台状态为准");
+    expect(skill).toContain("用户稳定数据目录中的 CLI 本地状态和中台状态");
     expect(skill).toContain("所有 `nextCommand` 都必须执行");
     expect(skill).toContain("终态审查");
     expect(skill).not.toContain("continuation-task-config");
