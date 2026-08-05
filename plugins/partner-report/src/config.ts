@@ -9,7 +9,7 @@ import {
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-export const PLUGIN_VERSION = "0.3.0";
+export const PLUGIN_VERSION = "0.4.0";
 
 export type PluginConfig = {
   serverUrl: string;

@@ -16,10 +16,13 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("collect-next --run");
     expect(skill).toContain("collect-submit --run");
     expect(skill).toContain('decision: "ignore"');
-    expect(skill).toContain("project directory is context, not proof");
-    expect(skill).toContain("Ignored Sessions are deleted locally");
-    expect(skill).toContain("does not maintain a Turn cursor");
-    expect(skill).toContain("official Codex Scheduled Task");
+    expect(skill).toContain("项目目录只是上下文");
+    expect(skill).toContain("第一次运行只采集运行开始前最近 3 天");
+    expect(skill).toContain("未变化且曾被判定为 `ignore`");
+    expect(skill).toContain("不维护 Turn 游标");
+    expect(skill).toContain("官方 Codex Scheduled Task");
+    expect(skill).toContain("必须使用简体中文");
+    expect(skill).toContain("防重与成功游标以 CLI 本地状态和中台状态为准");
     expect(skill).not.toContain("continuation-task-config");
     expect(skill).not.toContain("next-local");
     expect(skill).not.toContain("daily-finish");

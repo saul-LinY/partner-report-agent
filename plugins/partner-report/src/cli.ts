@@ -23,10 +23,24 @@ import {
 } from "./config.js";
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
 import { SCHEDULED_COLLECTION_TASK } from "./collection-config.js";
+import {
+  acquireCollectionLease,
+  canAdvanceCollectionCheckpoint,
+  collectionWindow,
+  initializeCollectionFloor,
+  loadCollectionState,
+  recordIgnoredSession,
+  refreshCollectionLease,
+  releaseCollectionLease,
+  removeIgnoredSession,
+  saveCollectionState,
+  threadIsInScanWindow,
+} from "./collection-state.js";
 import { CodexAppServer } from "./app-server.js";
 import {
   buildSessionJob,
   containsSensitive,
+  firstNonChineseContributionField,
   isPluginSystemThread,
   pathIsExcluded,
   type CollectionPeriod,
@@ -69,9 +83,16 @@ type RunCounts = {
   uploaded: number;
   ignored: number;
   unchanged: number;
+  cachedIgnored: number;
+  outsideWindow: number;
   excluded: number;
   failedRead: number;
   failedExtract: number;
+};
+
+type KnownSession = {
+  contentHash: string;
+  decision: "accepted" | "ignored";
 };
 
 type CurrentJob = {
@@ -91,7 +112,7 @@ type RunManifest = {
   projects: ProjectPolicy[];
   queue: ThreadSummary[];
   cursor: number;
-  knownHashes: Record<string, string>;
+  knownSessions: Record<string, KnownSession>;
   counts: RunCounts;
   current: CurrentJob | null;
 };
@@ -341,6 +362,7 @@ function readRun(runPath: string) {
   ) {
     throw new Error("Run 清单无效或不属于当前 Plugin Instance。");
   }
+  refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
   return { absolute, manifest };
 }
 
@@ -383,14 +405,16 @@ async function postCollectionStatus(
     eligible: counts.eligible,
     readable: counts.read,
     extracted: counts.uploaded + counts.unchanged,
-    deferred: 0,
+    deferred: counts.outsideWindow,
     failedRead: counts.failedRead,
     failedExtract: counts.failedExtract,
-    excluded: counts.excluded + counts.ignored,
+    excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
     activeAtCutoff: 0,
     hookMissed: 0,
-    warnings: [],
+    warnings: canAdvanceCollectionCheckpoint(counts)
+      ? []
+      : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
     ...(lastSyncAt ? { lastSyncAt } : {}),
   };
   await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
@@ -405,7 +429,7 @@ async function postCollectionStatus(
       pendingLocalJobs: phase === "completed" ? 0 : manifest.queue.length,
       discoveredCount: counts.discovered,
       eligibleCount: counts.eligible,
-      excludedCount: counts.excluded + counts.ignored,
+      excludedCount: counts.excluded + counts.ignored + counts.cachedIgnored,
       lastScanAt: manifest.createdAt,
       ...(lastSyncAt ? { lastSyncAt } : {}),
       coverage,
@@ -420,11 +444,37 @@ async function collectStart() {
     throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
       code: "REPORT_PERIOD_MISSING",
     });
+  const runId = randomUUID();
+  const runStartedAt = new Date().toISOString();
+  acquireCollectionLease(config.pluginInstanceId, runId);
+  let localState: ReturnType<typeof loadCollectionState>;
+  let window: ReturnType<typeof collectionWindow>;
+  try {
+    localState = loadCollectionState(config.pluginInstanceId);
+    initializeCollectionFloor(
+      localState,
+      policy.currentPeriod.starts_at,
+      runStartedAt,
+    );
+    saveCollectionState(localState);
+    window = collectionWindow(localState, policy.currentPeriod, runStartedAt);
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  const effectivePeriod: CollectionPeriod = {
+    period_key: policy.currentPeriod.period_key,
+    starts_at: window.extractionStartsAt,
+    ends_at: window.extractionEndsAt,
+  };
   const server = new CodexAppServer();
   let listed: any[];
   try {
     await server.connect();
     listed = await server.listThreads();
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
   } finally {
     server.close();
   }
@@ -433,34 +483,56 @@ async function collectStart() {
     .filter((value): value is ThreadSummary => Boolean(value));
   const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
   const currentSessionId = process.env.CODEX_THREAD_ID;
-  const queue = summaries.filter(
+  const allowed = summaries.filter(
     (summary) =>
       summary.id !== currentSessionId &&
       !excludedSessionIds.has(summary.id) &&
       !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
       !isPluginSystemThread(summary as unknown as Record<string, unknown>),
   );
-  const state = await authenticatedRequest<{
+  const queue = flag("force")
+    ? allowed
+    : allowed.filter((summary) =>
+        threadIsInScanWindow(
+          summary.updatedAt,
+          window.scanStartsAt,
+          window.scanEndsAt,
+        ),
+      );
+  let state: {
     sessions: Array<{ sessionKey: string; contentHash: string }>;
-  }>(
-    `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`,
+  };
+  try {
+    state = await authenticatedRequest(
+      `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`,
+    );
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  const knownSessions: Record<string, KnownSession> = Object.fromEntries(
+    Object.entries(localState.ignoredSessions).map(([sessionKey, ignored]) => [
+      sessionKey,
+      { contentHash: ignored.contentHash, decision: "ignored" as const },
+    ]),
   );
+  for (const session of state.sessions) {
+    knownSessions[session.sessionKey] = {
+      contentHash: session.contentHash,
+      decision: "accepted",
+    };
+  }
   const manifest: RunManifest = {
     schemaVersion: "1.0",
-    runId: randomUUID(),
+    runId,
     pluginInstanceId: config.pluginInstanceId,
-    createdAt: new Date().toISOString(),
+    createdAt: runStartedAt,
     force: flag("force"),
-    period: policy.currentPeriod,
+    period: effectivePeriod,
     projects: policy.projects,
     queue,
     cursor: 0,
-    knownHashes: Object.fromEntries(
-      state.sessions.map((session) => [
-        session.sessionKey,
-        session.contentHash,
-      ]),
-    ),
+    knownSessions,
     counts: {
       discovered: summaries.length,
       read: 0,
@@ -468,20 +540,34 @@ async function collectStart() {
       uploaded: 0,
       ignored: 0,
       unchanged: 0,
-      excluded: summaries.length - queue.length,
+      cachedIgnored: 0,
+      outsideWindow: allowed.length - queue.length,
+      excluded: summaries.length - allowed.length,
       failedRead: 0,
       failedExtract: 0,
     },
     current: null,
   };
-  const runPath = createRun(manifest);
-  await postCollectionStatus(config, manifest, "started");
+  let runPath: string | null = null;
+  try {
+    runPath = createRun(manifest);
+    await postCollectionStatus(config, manifest, "started");
+  } catch (error) {
+    if (runPath) rmSync(dirname(runPath), { recursive: true, force: true });
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
   output({
     status: "started",
     runPath,
     periodKey: manifest.period.period_key,
+    collectionStartsAt: manifest.period.starts_at,
+    collectionEndsAt: manifest.period.ends_at,
+    scanStartsAt: window.scanStartsAt,
+    scanEndsAt: window.scanEndsAt,
     discovered: manifest.counts.discovered,
     queued: manifest.queue.length,
+    outsideWindow: manifest.counts.outsideWindow,
     excluded: manifest.counts.excluded,
     nextCommand: `collect-next --run ${runPath}`,
   });
@@ -508,11 +594,22 @@ async function finishRun(
   config: PluginConfig,
 ) {
   await postCollectionStatus(config, manifest, "completed");
+  const checkpointAdvanced = canAdvanceCollectionCheckpoint(manifest.counts);
+  if (checkpointAdvanced) {
+    const state = loadCollectionState(manifest.pluginInstanceId);
+    state.lastSuccessfulRunStartedAt = manifest.createdAt;
+    saveCollectionState(state);
+  }
   const summary = {
     status: "completed",
     periodKey: manifest.period.period_key,
+    collectionStartsAt: manifest.period.starts_at,
+    collectionEndsAt: manifest.period.ends_at,
+    checkpointAdvanced,
+    warnings: checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
     ...manifest.counts,
   };
+  releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
   rmSync(dirname(runPath), { recursive: true, force: true });
   output(summary);
 }
@@ -553,11 +650,10 @@ async function collectNext() {
         continue;
       }
       manifest.counts.eligible += 1;
-      if (
-        !manifest.force &&
-        manifest.knownHashes[job.sessionKey] === job.contentHash
-      ) {
-        manifest.counts.unchanged += 1;
+      const known = manifest.knownSessions[job.sessionKey];
+      if (!manifest.force && known?.contentHash === job.contentHash) {
+        if (known.decision === "accepted") manifest.counts.unchanged += 1;
+        else manifest.counts.cachedIgnored += 1;
         saveRun(absolute, manifest);
         continue;
       }
@@ -594,6 +690,15 @@ function assertImmutableContribution(contribution: any, expected: any) {
     throw new Error("include 结果必须至少包含一条有价值的项目贡献。");
 }
 
+function assertChineseContribution(contribution: any) {
+  const invalid = firstNonChineseContributionField(contribution);
+  if (invalid) {
+    throw Object.assign(new Error(`上传字段 ${invalid} 必须使用中文。`), {
+      code: "CHINESE_OUTPUT_REQUIRED",
+    });
+  }
+}
+
 async function collectSubmit() {
   const runPath = option("run");
   const resultPath = option("result");
@@ -609,8 +714,19 @@ async function collectSubmit() {
   ) as any;
 
   if (result.decision === "ignore") {
+    const state = loadCollectionState(manifest.pluginInstanceId);
+    recordIgnoredSession(
+      state,
+      current.expected.sessionKey,
+      current.expected.contentHash,
+    );
+    saveCollectionState(state);
     removeJobFiles(absolute, current);
     manifest.counts.ignored += 1;
+    manifest.knownSessions[current.expected.sessionKey] = {
+      contentHash: current.expected.contentHash,
+      decision: "ignored",
+    };
     manifest.current = null;
     saveRun(absolute, manifest);
     return output({
@@ -621,6 +737,7 @@ async function collectSubmit() {
   }
 
   assertImmutableContribution(result.contribution, current.expected);
+  assertChineseContribution(result.contribution);
   if (containsSensitive(result.contribution))
     throw Object.assign(new Error("贡献结果包含疑似敏感值，已阻止上传。"), {
       code: "SENSITIVE_EGRESS_REJECTED",
@@ -636,10 +753,15 @@ async function collectSubmit() {
       body: JSON.stringify(result.contribution),
     },
   );
+  const state = loadCollectionState(manifest.pluginInstanceId);
+  removeIgnoredSession(state, result.contribution.sessionKey);
+  saveCollectionState(state);
   removeJobFiles(absolute, current);
   manifest.counts.uploaded += 1;
-  manifest.knownHashes[result.contribution.sessionKey] =
-    result.contribution.contentHash;
+  manifest.knownSessions[result.contribution.sessionKey] = {
+    contentHash: result.contribution.contentHash,
+    decision: "accepted",
+  };
   manifest.current = null;
   saveRun(absolute, manifest);
   output({
@@ -670,6 +792,7 @@ async function status() {
   const config = loadConfig(false);
   if (!config) return output({ status: "not_connected" });
   const policy = await fetchPolicy();
+  const localState = loadCollectionState(config.pluginInstanceId);
   const state = policy.currentPeriod
     ? await authenticatedRequest<{ sessions: unknown[] }>(
         `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`,
@@ -682,6 +805,9 @@ async function status() {
     connectivityStatus: config.connectivityStatus ?? "pending",
     periodKey: policy.currentPeriod?.period_key ?? null,
     acceptedSessionCount: state.sessions.length,
+    ignoredSessionCount: Object.keys(localState.ignoredSessions).length,
+    collectionFloorAt: localState.collectionFloorAt,
+    lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,
     excludedSessionCount: config.excludedSessionIds.length,
     excludedPathCount: config.excludedPaths.length,
   });

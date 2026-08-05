@@ -220,7 +220,7 @@ export function mappedProject(
   if (!cwd) {
     return {
       id: null,
-      name: "Independent work",
+      name: "独立工作",
       matchMethod: "unassigned",
       rootFingerprint: sha256("unassigned"),
     };
@@ -259,7 +259,7 @@ export function mappedProject(
       rootFingerprint,
     };
   }
-  const rootName = basename(discoveredRoot) || "Project";
+  const rootName = basename(discoveredRoot) || "项目";
   return {
     id: null,
     name: rootName,
@@ -315,7 +315,7 @@ export function buildSessionJob(input: {
     userPrompt: turn.userPrompt,
     assistantFinal: turn.assistantFinal,
   }));
-  const title = safeText(input.title?.trim() || "Codex Session", 200);
+  const title = safeText(input.title?.trim() || "Codex 会话", 200);
   const sessionKey = anonymousSessionKey(
     input.pluginInstanceId,
     input.sessionId,
@@ -331,8 +331,8 @@ export function buildSessionJob(input: {
   );
   const observedAt = input.observedAt ?? new Date().toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.3.0" as const,
-    promptVersion: "2026-08-04.session-value.v1",
+    skillVersion: "partner-report-sync/0.4.0" as const,
+    promptVersion: "2026-08-05.zh-session-value.v2",
     schemaVersion: "1.0" as const,
     producer: "codex-skill" as const,
   };
@@ -352,7 +352,15 @@ export function buildSessionJob(input: {
     },
     modelInput: {
       schemaVersion: "1.0",
-      task: "SCREEN_AND_SUMMARIZE_SESSION",
+      task: "筛选并总结当前 Codex Session 的项目贡献",
+      language: "zh-CN",
+      instructions: [
+        "先判断整个 Session 是否包含对映射项目有意义的实际工作，再决定是否提取。",
+        "只依据完整的用户问题和助手最终回答，不推断推理过程、命令、工具调用或文件改动。",
+        "项目目录只提供上下文，不能单独证明 Session 与项目有关。",
+        "标题、摘要和每条贡献正文必须使用简体中文。",
+        "不得返回原始对话、绝对路径、Session 原始标识或凭据。",
+      ],
       period: {
         key: input.period.period_key,
         startsAt: input.period.starts_at,
@@ -397,14 +405,14 @@ export function buildSessionJob(input: {
               observedAt,
               production,
             },
-            title: "Concise work title",
-            summary: "Concise project contribution summary",
+            title: "简洁的中文工作标题",
+            summary: "简洁、准确且有事实依据的中文项目贡献摘要",
             status:
               "discussion | planned | in_progress | awaiting_validation | completed | blocked | cancelled",
             contributions: [
               {
                 kind: "outcome | progress | decision | blocker | next_step",
-                text: "One grounded contribution",
+                text: "一条有事实依据的中文贡献",
                 confidence: "high | medium | low",
               },
             ],
@@ -414,4 +422,20 @@ export function buildSessionJob(input: {
       },
     },
   };
+}
+
+export function firstNonChineseContributionField(contribution: any) {
+  const containsChinese = (value: unknown) =>
+    typeof value === "string" && /[\u3400-\u4dbf\u4e00-\u9fff]/u.test(value);
+  const fields: Array<[string, unknown]> = [
+    ["title", contribution?.title],
+    ["summary", contribution?.summary],
+    ...(Array.isArray(contribution?.contributions)
+      ? contribution.contributions.map((item: any, index: number) => [
+          `contributions[${index}].text`,
+          item?.text,
+        ])
+      : []),
+  ];
+  return fields.find(([, value]) => !containsChinese(value))?.[0] ?? null;
 }

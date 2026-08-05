@@ -12,7 +12,9 @@ Plugin：
 - 通过 Codex App Server 读取 `thread/list` 与 `thread/read(includeTurns)`。
 - 用最长项目根目录匹配 Session；根目录下任意层级子目录都属于同一项目。
 - 只把完整的用户问题和正常 `final_answer` 作为 Session 摘要输入，不维护 Turn 游标。
-- 由当前 Codex Scheduled Task 一次处理一个 Session；无项目价值的 Session 本地舍弃，有价值的 Session 经脱敏和 Schema 校验后立即上传。
+- 首次运行只采集最近 3 天；后续使用插件本地成功游标和 24 小时重叠窗口筛选候选 Session。
+- 由当前 Codex Scheduled Task 一次处理一个 Session；无项目价值的 Session 只保存匿名本地 hash 以防重复提取，有价值的 Session 经脱敏、中文字段和 Schema 校验后立即上传。
+- 使用跨运行租约阻止自动和手动采集并发；已接收 Session 继续由中台 `contentHash` 与幂等键防重。任何 Session 读取或提取失败时都不推进成功游标，下一次继续覆盖旧范围。
 - 不做跨 Session 聚合，不生成工作卡片或 Report，不安装生命周期 Hook，不运行常驻 Runner。
 
 数据中台：
@@ -82,7 +84,7 @@ Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `g
 名称：Partner Report daily collection
 运行于：新聊天
 项目：无
-时间：每天 13:00
+时间：每天 13:30
 时区：Asia/Shanghai（北京时间）
 模型：gpt-5.6-sol
 推理强度：medium
@@ -92,13 +94,15 @@ Prompt：由 Plugin CLI 返回，包含采集边界、数据最小化规则和 a
 
 Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默认任务，并在安全契约升级时只修复 Prompt，不覆盖用户在面板中的时间、模型等配置。Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
 
-Scheduled Task 可能由 Codex 维护一份任务级 `memory.md`，它不是按 Session 生成。Plugin Prompt 要求不主动创建或更新它；若运行时强制写入，只允许保存运行时间、成功或失败状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、端点或标识。
+Scheduled Task 会使用任务级 `memory.md` 延续运行上下文，它不是按 Session 生成。Plugin Prompt 只允许其中保存运行时间、完成/失败/中断状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、hash、端点或标识。memory 只用于运行摘要；自动与手动采集共享的防重和成功游标以 Plugin 本地 `collection-state.json` 及中台状态为准。
+
+Plugin 的 Session 提取指令使用中文，并在上传前强制校验 `title`、`summary` 和 `contributions[].text` 包含中文。JSON 字段名和状态枚举保留英文，以维持 API/Schema 兼容。
 
 手动验证：
 
 ```bash
 node "<PLUGIN_PATH>/dist/cli.mjs" status
-使用 $partner-report-sync 运行一次 daily-collect，并只返回安全摘要。
+使用 $partner-report-sync 运行一次 collect-start，并只返回安全的中文摘要。
 ```
 
 macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTNER_REPORT_ALLOW_FILE_TOKENS=1` 才允许文件凭据回退。
@@ -106,12 +110,14 @@ macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTN
 ## 数据流
 
 ```text
-Codex Scheduled task（默认每天北京时间 13:00、新聊天、无项目；面板可修改）
+Codex Scheduled task（默认每天北京时间 13:30、新聊天、无项目；面板可修改）
   -> 当前任务选择的模型与推理强度
-  -> 项目根目录与子目录 Session 扫描
+  -> 首次最近 3 天，后续按本地成功游标增量扫描
+  -> 本地租约阻止自动与手动并发采集
   -> 过滤为完整 user question + final_answer Turn
-  -> 当前 Scheduled 会话逐 Session 提取，Plugin 逐个校验结构化 Fact
-  -> HTTPS 幂等上传并推进 Complete Turn Cursor
+  -> 已接收或已忽略且 hash 未变化的 Session 直接跳过
+  -> 当前 Scheduled 会话逐 Session 生成中文贡献，Plugin 逐个校验
+  -> HTTPS 幂等上传，完整成功后推进本地运行游标
   -> 中台按 Partner 冻结本周期 Fact
   -> 中台模型跨 Session 聚合 Work Item
   -> Admin Web 模拟 Partner 第一次审核和修改

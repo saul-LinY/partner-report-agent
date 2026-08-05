@@ -3,6 +3,7 @@ import {
   anonymousSessionKey,
   buildSessionJob,
   containsSensitive,
+  firstNonChineseContributionField,
   isPluginAdministrationSession,
   isPluginSystemThread,
   mappedProject,
@@ -81,7 +82,7 @@ describe("project mapping", () => {
   it("keeps a Session without cwd unassigned", () => {
     expect(mappedProject(null, projects)).toMatchObject({
       id: null,
-      name: "Independent work",
+      name: "独立工作",
       matchMethod: "unassigned",
     });
   });
@@ -137,6 +138,14 @@ describe("safe Session input", () => {
       includeOnlyWhenSessionContainsMeaningfulProjectContribution: true,
       projectDirectoryAloneIsNotEvidenceOfRelevance: true,
     });
+    expect(job!.modelInput.language).toBe("zh-CN");
+    expect(job!.modelInput.instructions).toEqual(
+      expect.arrayContaining([expect.stringContaining("必须使用简体中文")]),
+    );
+    expect(job!.expected.production).toMatchObject({
+      skillVersion: "partner-report-sync/0.4.0",
+      promptVersion: "2026-08-05.zh-session-value.v2",
+    });
     const serialized = JSON.stringify(job);
     expect(serialized).not.toContain("raw-codex-session-id");
     expect(serialized).not.toContain("/work/main");
@@ -149,6 +158,23 @@ describe("safe Session input", () => {
     expect(anonymousSessionKey("binding-a", "session")).not.toBe(
       anonymousSessionKey("binding-b", "session"),
     );
+  });
+
+  it("requires Chinese titles, summaries, and contribution text", () => {
+    expect(
+      firstNonChineseContributionField({
+        title: "完成采集改造",
+        summary: "新增本地增量游标和防重状态。",
+        contributions: [{ text: "首次运行只处理最近三天。" }],
+      }),
+    ).toBeNull();
+    expect(
+      firstNonChineseContributionField({
+        title: "Collection update",
+        summary: "新增本地增量游标和防重状态。",
+        contributions: [{ text: "首次运行只处理最近三天。" }],
+      }),
+    ).toBe("title");
   });
 });
 

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { PLUGIN_VERSION } from "./config.js";
 
 type Pending = {
   resolve: (value: any) => void;
@@ -65,7 +66,7 @@ export class CodexAppServer {
       clientInfo: {
         name: "partner_report",
         title: "Partner Report",
-        version: "0.3.0",
+        version: PLUGIN_VERSION,
       },
     });
     this.notify("initialized", {});

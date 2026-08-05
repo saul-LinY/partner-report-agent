@@ -8,16 +8,16 @@ var __export = (target, all) => {
 // src/cli.ts
 import { createHash as createHash2, randomUUID } from "node:crypto";
 import {
-  chmodSync as chmodSync2,
-  existsSync as existsSync3,
+  chmodSync as chmodSync3,
+  existsSync as existsSync4,
   mkdtempSync,
-  readFileSync as readFileSync2,
+  readFileSync as readFileSync3,
   rmSync,
-  unlinkSync,
-  writeFileSync as writeFileSync2
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync3
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { basename as basename2, dirname as dirname2, relative as relative2, resolve as resolve3 } from "node:path";
+import { basename as basename2, dirname as dirname2, relative as relative2, resolve as resolve4 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // ../../packages/contracts/node_modules/zod/v3/external.js
@@ -4077,6 +4077,7 @@ var productionMetadataSchema = external_exports.object({
   skillVersion: external_exports.enum([
     "partner-report-sync/0.2.0",
     "partner-report-sync/0.3.0",
+    "partner-report-sync/0.4.0",
     "partner-report-platform/0.2.0",
     "partner-report-platform/0.3.0"
   ]),
@@ -4369,7 +4370,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-var PLUGIN_VERSION = "0.3.0";
+var PLUGIN_VERSION = "0.4.0";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 function normalizeServerUrl(value, allowInsecureHttp = false) {
@@ -4639,13 +4640,15 @@ async function authenticatedRequest(path, init = {}) {
 var DEFAULT_COLLECTION_MODEL = "gpt-5.6-sol";
 var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
 var SCHEDULED_COLLECTION_PROMPT = [
-  "Use $partner-report-sync to collect eligible Codex Sessions for the current Partner Report period.",
-  "Read one Session at a time through the plugin CLI.",
-  "First judge whether the Session contains meaningful work for its mapped project.",
-  "Discard casual conversation, unrelated topics, low-value chatter, and Sessions without a concrete outcome, progress, decision, blocker, or next step.",
-  "For eligible Sessions, write only the validated SessionExtractionResult requested by the Skill and upload only the SessionContribution.",
-  "Never upload raw transcripts, absolute paths, raw Codex Session IDs, reasoning, tool calls, commands, file changes, or secrets.",
-  "Continue until the CLI reports completed, then return only its safe aggregate summary."
+  "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
+  "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
+  "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 3 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
+  "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
+  "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002",
+  "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
+  "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
+  "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u63D2\u4EF6\u672C\u5730\u72B6\u6001\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
+  "\u6301\u7EED\u6267\u884C\u5230 CLI \u8FD4\u56DE completed\uFF0C\u7136\u540E\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
 ].join(" ");
 var SCHEDULED_COLLECTION_TASK = {
   name: "Partner Report daily collection",
@@ -4660,6 +4663,209 @@ var SCHEDULED_COLLECTION_TASK = {
   notifications: "failures_only",
   prompt: SCHEDULED_COLLECTION_PROMPT
 };
+
+// src/collection-state.ts
+import {
+  chmodSync as chmodSync2,
+  existsSync as existsSync2,
+  readFileSync as readFileSync2,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { resolve as resolve2 } from "node:path";
+var INITIAL_LOOKBACK_DAYS = 3;
+var INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1e3;
+var COLLECTION_LEASE_MS = 30 * 60 * 1e3;
+function statePath(directory) {
+  return resolve2(directory, "collection-state.json");
+}
+function leasePath(directory) {
+  return resolve2(directory, "collection.lock");
+}
+function emptyState(pluginInstanceId) {
+  return {
+    schemaVersion: "1.0",
+    pluginInstanceId,
+    collectionFloorAt: null,
+    lastSuccessfulRunStartedAt: null,
+    ignoredSessions: {}
+  };
+}
+function validIso(value) {
+  return typeof value === "string" && Number.isFinite(new Date(value).getTime());
+}
+function validateState(value, pluginInstanceId) {
+  if (!value || typeof value !== "object")
+    throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u683C\u5F0F\u65E0\u6548\u3002"), {
+      code: "COLLECTION_STATE_INVALID"
+    });
+  const state = value;
+  if (state.pluginInstanceId !== pluginInstanceId)
+    return emptyState(pluginInstanceId);
+  if (state.schemaVersion !== "1.0" || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || !state.ignoredSessions || typeof state.ignoredSessions !== "object") {
+    throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u683C\u5F0F\u65E0\u6548\u3002"), {
+      code: "COLLECTION_STATE_INVALID"
+    });
+  }
+  for (const [sessionKey, ignored] of Object.entries(state.ignoredSessions)) {
+    if (!/^[a-f0-9]{64}$/.test(sessionKey) || !ignored || typeof ignored !== "object" || !/^[a-f0-9]{64}$/.test(ignored.contentHash) || !validIso(ignored.processedAt)) {
+      throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u5305\u542B\u65E0\u6548\u7684\u5FFD\u7565\u8BB0\u5F55\u3002"), {
+        code: "COLLECTION_STATE_INVALID"
+      });
+    }
+  }
+  return state;
+}
+function loadCollectionState(pluginInstanceId, directory = dataDirectory()) {
+  const path = statePath(directory);
+  if (!existsSync2(path)) return emptyState(pluginInstanceId);
+  try {
+    return validateState(
+      JSON.parse(readFileSync2(path, "utf8")),
+      pluginInstanceId
+    );
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
+    throw Object.assign(new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u91C7\u96C6\u72B6\u6001\u3002"), {
+      code: "COLLECTION_STATE_INVALID"
+    });
+  }
+}
+function saveCollectionState(state, directory = dataDirectory()) {
+  const path = statePath(directory);
+  const temporary = resolve2(
+    directory,
+    `.collection-state.${process.pid}.${Date.now()}.tmp`
+  );
+  writeFileSync2(temporary, `${JSON.stringify(state, null, 2)}
+`, {
+    mode: 384
+  });
+  chmodSync2(temporary, 384);
+  renameSync(temporary, path);
+  chmodSync2(path, 384);
+}
+function initializeCollectionFloor(state, periodStartsAt, runStartedAt) {
+  if (state.collectionFloorAt) return state.collectionFloorAt;
+  const floor = Math.max(
+    new Date(periodStartsAt).getTime(),
+    new Date(runStartedAt).getTime() - INITIAL_LOOKBACK_DAYS * 24 * 60 * 60 * 1e3
+  );
+  state.collectionFloorAt = new Date(floor).toISOString();
+  return state.collectionFloorAt;
+}
+function collectionWindow(state, period, runStartedAt) {
+  const periodStart = new Date(period.starts_at).getTime();
+  const runStart = new Date(runStartedAt).getTime();
+  const floor = Math.max(
+    periodStart,
+    new Date(state.collectionFloorAt ?? period.starts_at).getTime()
+  );
+  const scanStart = state.lastSuccessfulRunStartedAt ? Math.max(
+    floor,
+    new Date(state.lastSuccessfulRunStartedAt).getTime() - INCREMENTAL_OVERLAP_MS
+  ) : floor;
+  return {
+    extractionStartsAt: new Date(floor).toISOString(),
+    extractionEndsAt: new Date(
+      Math.min(new Date(period.ends_at).getTime(), runStart)
+    ).toISOString(),
+    scanStartsAt: new Date(scanStart).toISOString(),
+    scanEndsAt: new Date(runStart).toISOString()
+  };
+}
+function threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
+  if (updatedAt == null) return true;
+  const timestamp2 = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
+  return Number.isFinite(timestamp2) && timestamp2 >= new Date(scanStartsAt).getTime() && timestamp2 <= new Date(scanEndsAt).getTime();
+}
+function recordIgnoredSession(state, sessionKey, contentHash, processedAt = (/* @__PURE__ */ new Date()).toISOString()) {
+  state.ignoredSessions[sessionKey] = { contentHash, processedAt };
+}
+function removeIgnoredSession(state, sessionKey) {
+  delete state.ignoredSessions[sessionKey];
+}
+function canAdvanceCollectionCheckpoint(counts) {
+  return counts.failedRead === 0 && counts.failedExtract === 0;
+}
+function writeLease(path, lease, exclusive = false) {
+  writeFileSync2(path, `${JSON.stringify(lease)}
+`, {
+    mode: 384,
+    ...exclusive ? { flag: "wx" } : {}
+  });
+  chmodSync2(path, 384);
+}
+function readLease(path) {
+  if (!existsSync2(path)) return null;
+  try {
+    return JSON.parse(readFileSync2(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function acquireCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ new Date(), directory = dataDirectory()) {
+  const path = leasePath(directory);
+  const existing = readLease(path);
+  if (existing) {
+    const heartbeat = new Date(existing.heartbeatAt).getTime();
+    if (existing.pluginInstanceId === pluginInstanceId && Number.isFinite(heartbeat) && now.getTime() - heartbeat <= COLLECTION_LEASE_MS) {
+      throw Object.assign(
+        new Error("\u5DF2\u6709\u91C7\u96C6\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7B49\u5F85\u5176\u5B8C\u6210\u540E\u518D\u8BD5\u3002"),
+        { code: "COLLECTION_ALREADY_RUNNING" }
+      );
+    }
+    unlinkSync(path);
+  } else if (existsSync2(path)) {
+    const age = now.getTime() - statSync(path).mtimeMs;
+    if (age <= COLLECTION_LEASE_MS) {
+      throw Object.assign(new Error("\u91C7\u96C6\u79DF\u7EA6\u72B6\u6001\u65E0\u6548\u4E14\u5C1A\u672A\u8FC7\u671F\u3002"), {
+        code: "COLLECTION_ALREADY_RUNNING"
+      });
+    }
+    unlinkSync(path);
+  }
+  const timestamp2 = now.toISOString();
+  try {
+    writeLease(
+      path,
+      {
+        schemaVersion: "1.0",
+        pluginInstanceId,
+        runId,
+        acquiredAt: timestamp2,
+        heartbeatAt: timestamp2
+      },
+      true
+    );
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
+      throw Object.assign(new Error("\u5DF2\u6709\u91C7\u96C6\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\u3002"), {
+        code: "COLLECTION_ALREADY_RUNNING"
+      });
+    }
+    throw error;
+  }
+}
+function refreshCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ new Date(), directory = dataDirectory()) {
+  const path = leasePath(directory);
+  const lease = readLease(path);
+  if (!lease || lease.pluginInstanceId !== pluginInstanceId || lease.runId !== runId) {
+    throw Object.assign(new Error("\u5F53\u524D\u91C7\u96C6\u4EFB\u52A1\u5DF2\u5931\u53BB\u8FD0\u884C\u79DF\u7EA6\u3002"), {
+      code: "COLLECTION_LEASE_LOST"
+    });
+  }
+  writeLease(path, { ...lease, heartbeatAt: now.toISOString() });
+}
+function releaseCollectionLease(pluginInstanceId, runId, directory = dataDirectory()) {
+  const path = leasePath(directory);
+  const lease = readLease(path);
+  if (lease?.pluginInstanceId === pluginInstanceId && lease.runId === runId) {
+    unlinkSync(path);
+  }
+}
 
 // src/app-server.ts
 import { spawn } from "node:child_process";
@@ -4722,7 +4928,7 @@ var CodexAppServer = class {
       clientInfo: {
         name: "partner_report",
         title: "Partner Report",
-        version: "0.3.0"
+        version: PLUGIN_VERSION
       }
     });
     this.notify("initialized", {});
@@ -4730,12 +4936,12 @@ var CodexAppServer = class {
   request(method, params, timeoutMs = 3e4) {
     if (!this.process) throw new Error("Codex app-server \u5C1A\u672A\u8FDE\u63A5\u3002");
     const id = this.nextId++;
-    return new Promise((resolve4, reject) => {
+    return new Promise((resolve5, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve4, reject, timer });
+      this.pending.set(id, { resolve: resolve5, reject, timer });
       this.process.stdin.write(`${JSON.stringify({ method, id, params })}
 `);
     });
@@ -4779,8 +4985,8 @@ var CodexAppServer = class {
 
 // src/scan.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync2 } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync3 } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve as resolve3 } from "node:path";
 var secretPatterns = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/g,
   /\bBearer\s+[A-Za-z0-9._~-]{16,}\b/gi,
@@ -4890,13 +5096,13 @@ function isPluginAdministrationSession(turns) {
   return onlyDirectSkillInvocations || mentionsPartnerReport && prompts.every((prompt) => administration.test(prompt));
 }
 function withinPath(candidate, root) {
-  const path = relative(resolve2(root), resolve2(candidate));
+  const path = relative(resolve3(root), resolve3(candidate));
   return path === "" || !path.startsWith("..") && !isAbsolute(path);
 }
 function nearestGitRoot(cwd) {
-  let current = resolve2(cwd);
+  let current = resolve3(cwd);
   for (; ; ) {
-    if (existsSync2(resolve2(current, ".git"))) return current;
+    if (existsSync3(resolve3(current, ".git"))) return current;
     const parent = dirname(current);
     if (parent === current) return null;
     current = parent;
@@ -4906,14 +5112,14 @@ function mappedProject(cwd, projects) {
   if (!cwd) {
     return {
       id: null,
-      name: "Independent work",
+      name: "\u72EC\u7ACB\u5DE5\u4F5C",
       matchMethod: "unassigned",
       rootFingerprint: sha256("unassigned")
     };
   }
-  const absoluteCwd = resolve2(cwd);
+  const absoluteCwd = resolve3(cwd);
   const configuredMatches = projects.flatMap(
-    (project) => (project.allowed_paths ?? []).filter((root) => withinPath(absoluteCwd, root)).map((root) => ({ project, root: resolve2(root) }))
+    (project) => (project.allowed_paths ?? []).filter((root) => withinPath(absoluteCwd, root)).map((root) => ({ project, root: resolve3(root) }))
   ).sort((left, right) => right.root.length - left.root.length);
   const configured = configuredMatches[0];
   if (configured) {
@@ -4937,7 +5143,7 @@ function mappedProject(cwd, projects) {
       rootFingerprint
     };
   }
-  const rootName = basename(discoveredRoot) || "Project";
+  const rootName = basename(discoveredRoot) || "\u9879\u76EE";
   return {
     id: null,
     name: rootName,
@@ -4972,7 +5178,7 @@ function buildSessionJob(input) {
     userPrompt: turn.userPrompt,
     assistantFinal: turn.assistantFinal
   }));
-  const title = safeText(input.title?.trim() || "Codex Session", 200);
+  const title = safeText(input.title?.trim() || "Codex \u4F1A\u8BDD", 200);
   const sessionKey = anonymousSessionKey(
     input.pluginInstanceId,
     input.sessionId
@@ -4988,8 +5194,8 @@ function buildSessionJob(input) {
   );
   const observedAt = input.observedAt ?? (/* @__PURE__ */ new Date()).toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.3.0",
-    promptVersion: "2026-08-04.session-value.v1",
+    skillVersion: "partner-report-sync/0.4.0",
+    promptVersion: "2026-08-05.zh-session-value.v2",
     schemaVersion: "1.0",
     producer: "codex-skill"
   };
@@ -5008,7 +5214,15 @@ function buildSessionJob(input) {
     },
     modelInput: {
       schemaVersion: "1.0",
-      task: "SCREEN_AND_SUMMARIZE_SESSION",
+      task: "\u7B5B\u9009\u5E76\u603B\u7ED3\u5F53\u524D Codex Session \u7684\u9879\u76EE\u8D21\u732E",
+      language: "zh-CN",
+      instructions: [
+        "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF0C\u518D\u51B3\u5B9A\u662F\u5426\u63D0\u53D6\u3002",
+        "\u53EA\u4F9D\u636E\u5B8C\u6574\u7684\u7528\u6237\u95EE\u9898\u548C\u52A9\u624B\u6700\u7EC8\u56DE\u7B54\uFF0C\u4E0D\u63A8\u65AD\u63A8\u7406\u8FC7\u7A0B\u3001\u547D\u4EE4\u3001\u5DE5\u5177\u8C03\u7528\u6216\u6587\u4EF6\u6539\u52A8\u3002",
+        "\u9879\u76EE\u76EE\u5F55\u53EA\u63D0\u4F9B\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u80FD\u5355\u72EC\u8BC1\u660E Session \u4E0E\u9879\u76EE\u6709\u5173\u3002",
+        "\u6807\u9898\u3001\u6458\u8981\u548C\u6BCF\u6761\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u7B80\u4F53\u4E2D\u6587\u3002",
+        "\u4E0D\u5F97\u8FD4\u56DE\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Session \u539F\u59CB\u6807\u8BC6\u6216\u51ED\u636E\u3002"
+      ],
       period: {
         key: input.period.period_key,
         startsAt: input.period.starts_at,
@@ -5052,13 +5266,13 @@ function buildSessionJob(input) {
               observedAt,
               production
             },
-            title: "Concise work title",
-            summary: "Concise project contribution summary",
+            title: "\u7B80\u6D01\u7684\u4E2D\u6587\u5DE5\u4F5C\u6807\u9898",
+            summary: "\u7B80\u6D01\u3001\u51C6\u786E\u4E14\u6709\u4E8B\u5B9E\u4F9D\u636E\u7684\u4E2D\u6587\u9879\u76EE\u8D21\u732E\u6458\u8981",
             status: "discussion | planned | in_progress | awaiting_validation | completed | blocked | cancelled",
             contributions: [
               {
                 kind: "outcome | progress | decision | blocker | next_step",
-                text: "One grounded contribution",
+                text: "\u4E00\u6761\u6709\u4E8B\u5B9E\u4F9D\u636E\u7684\u4E2D\u6587\u8D21\u732E",
                 confidence: "high | medium | low"
               }
             ]
@@ -5068,6 +5282,18 @@ function buildSessionJob(input) {
       }
     }
   };
+}
+function firstNonChineseContributionField(contribution) {
+  const containsChinese = (value) => typeof value === "string" && /[\u3400-\u4dbf\u4e00-\u9fff]/u.test(value);
+  const fields = [
+    ["title", contribution?.title],
+    ["summary", contribution?.summary],
+    ...Array.isArray(contribution?.contributions) ? contribution.contributions.map((item, index) => [
+      `contributions[${index}].text`,
+      item?.text
+    ]) : []
+  ];
+  return fields.find(([, value]) => !containsChinese(value))?.[0] ?? null;
 }
 
 // src/cli.ts
@@ -5243,20 +5469,20 @@ function summaryFromThread(value) {
   };
 }
 function createRun(manifest) {
-  const runDirectory = mkdtempSync(resolve3(tmpdir(), RUN_PREFIX));
-  chmodSync2(runDirectory, 448);
-  const runPath = resolve3(runDirectory, "run.json");
-  writeFileSync2(runPath, `${JSON.stringify(manifest, null, 2)}
+  const runDirectory = mkdtempSync(resolve4(tmpdir(), RUN_PREFIX));
+  chmodSync3(runDirectory, 448);
+  const runPath = resolve4(runDirectory, "run.json");
+  writeFileSync3(runPath, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync2(runPath, 384);
+  chmodSync3(runPath, 384);
   return runPath;
 }
 function assertRunPath(runPath) {
-  const absolute = resolve3(runPath);
+  const absolute = resolve4(runPath);
   const runDirectory = dirname2(absolute);
-  const outsideTemp = relative2(resolve3(tmpdir()), runDirectory).startsWith(
+  const outsideTemp = relative2(resolve4(tmpdir()), runDirectory).startsWith(
     ".."
   );
   if (outsideTemp || !basename2(runDirectory).startsWith(RUN_PREFIX) || basename2(absolute) !== "run.json") {
@@ -5266,37 +5492,38 @@ function assertRunPath(runPath) {
 }
 function readRun(runPath) {
   const absolute = assertRunPath(runPath);
-  const manifest = JSON.parse(readFileSync2(absolute, "utf8"));
+  const manifest = JSON.parse(readFileSync3(absolute, "utf8"));
   const config = loadConfig();
   if (manifest.schemaVersion !== "1.0" || manifest.pluginInstanceId !== config.pluginInstanceId) {
     throw new Error("Run \u6E05\u5355\u65E0\u6548\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002");
   }
+  refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
   return { absolute, manifest };
 }
 function saveRun(runPath, manifest) {
-  writeFileSync2(runPath, `${JSON.stringify(manifest, null, 2)}
+  writeFileSync3(runPath, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync2(runPath, 384);
+  chmodSync3(runPath, 384);
 }
 function removeJobFiles(runPath, current) {
   const runDirectory = dirname2(runPath);
   for (const path of [current.inputPath, current.resultPath]) {
-    if (dirname2(resolve3(path)) !== runDirectory)
+    if (dirname2(resolve4(path)) !== runDirectory)
       throw new Error("Job \u6587\u4EF6\u4E0D\u5C5E\u4E8E\u5F53\u524D Run\u3002");
-    if (existsSync3(path)) unlinkSync(path);
+    if (existsSync4(path)) unlinkSync2(path);
   }
 }
 function writeJob(runPath, jobId, modelInput) {
   const runDirectory = dirname2(runPath);
-  const inputPath = resolve3(runDirectory, `${jobId}-input.json`);
-  const resultPath = resolve3(runDirectory, `${jobId}-result.json`);
-  writeFileSync2(inputPath, `${JSON.stringify(modelInput, null, 2)}
+  const inputPath = resolve4(runDirectory, `${jobId}-input.json`);
+  const resultPath = resolve4(runDirectory, `${jobId}-result.json`);
+  writeFileSync3(inputPath, `${JSON.stringify(modelInput, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync2(inputPath, 384);
+  chmodSync3(inputPath, 384);
   return { inputPath, resultPath };
 }
 async function postCollectionStatus(config, manifest, phase) {
@@ -5307,14 +5534,14 @@ async function postCollectionStatus(config, manifest, phase) {
     eligible: counts.eligible,
     readable: counts.read,
     extracted: counts.uploaded + counts.unchanged,
-    deferred: 0,
+    deferred: counts.outsideWindow,
     failedRead: counts.failedRead,
     failedExtract: counts.failedExtract,
-    excluded: counts.excluded + counts.ignored,
+    excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
     activeAtCutoff: 0,
     hookMissed: 0,
-    warnings: [],
+    warnings: canAdvanceCollectionCheckpoint(counts) ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
     ...lastSyncAt ? { lastSyncAt } : {}
   };
   await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
@@ -5329,7 +5556,7 @@ async function postCollectionStatus(config, manifest, phase) {
       pendingLocalJobs: phase === "completed" ? 0 : manifest.queue.length,
       discoveredCount: counts.discovered,
       eligibleCount: counts.eligible,
-      excludedCount: counts.excluded + counts.ignored,
+      excludedCount: counts.excluded + counts.ignored + counts.cachedIgnored,
       lastScanAt: manifest.createdAt,
       ...lastSyncAt ? { lastSyncAt } : {},
       coverage
@@ -5343,39 +5570,85 @@ async function collectStart() {
     throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
       code: "REPORT_PERIOD_MISSING"
     });
+  const runId = randomUUID();
+  const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
+  acquireCollectionLease(config.pluginInstanceId, runId);
+  let localState;
+  let window;
+  try {
+    localState = loadCollectionState(config.pluginInstanceId);
+    initializeCollectionFloor(
+      localState,
+      policy.currentPeriod.starts_at,
+      runStartedAt
+    );
+    saveCollectionState(localState);
+    window = collectionWindow(localState, policy.currentPeriod, runStartedAt);
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  const effectivePeriod = {
+    period_key: policy.currentPeriod.period_key,
+    starts_at: window.extractionStartsAt,
+    ends_at: window.extractionEndsAt
+  };
   const server = new CodexAppServer();
   let listed;
   try {
     await server.connect();
     listed = await server.listThreads();
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
   } finally {
     server.close();
   }
   const summaries = listed.map(summaryFromThread).filter((value) => Boolean(value));
   const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
   const currentSessionId = process.env.CODEX_THREAD_ID;
-  const queue = summaries.filter(
+  const allowed = summaries.filter(
     (summary) => summary.id !== currentSessionId && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
   );
-  const state = await authenticatedRequest(
-    `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`
+  const queue = flag("force") ? allowed : allowed.filter(
+    (summary) => threadIsInScanWindow(
+      summary.updatedAt,
+      window.scanStartsAt,
+      window.scanEndsAt
+    )
   );
+  let state;
+  try {
+    state = await authenticatedRequest(
+      `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`
+    );
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  const knownSessions = Object.fromEntries(
+    Object.entries(localState.ignoredSessions).map(([sessionKey, ignored]) => [
+      sessionKey,
+      { contentHash: ignored.contentHash, decision: "ignored" }
+    ])
+  );
+  for (const session of state.sessions) {
+    knownSessions[session.sessionKey] = {
+      contentHash: session.contentHash,
+      decision: "accepted"
+    };
+  }
   const manifest = {
     schemaVersion: "1.0",
-    runId: randomUUID(),
+    runId,
     pluginInstanceId: config.pluginInstanceId,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    createdAt: runStartedAt,
     force: flag("force"),
-    period: policy.currentPeriod,
+    period: effectivePeriod,
     projects: policy.projects,
     queue,
     cursor: 0,
-    knownHashes: Object.fromEntries(
-      state.sessions.map((session) => [
-        session.sessionKey,
-        session.contentHash
-      ])
-    ),
+    knownSessions,
     counts: {
       discovered: summaries.length,
       read: 0,
@@ -5383,20 +5656,34 @@ async function collectStart() {
       uploaded: 0,
       ignored: 0,
       unchanged: 0,
-      excluded: summaries.length - queue.length,
+      cachedIgnored: 0,
+      outsideWindow: allowed.length - queue.length,
+      excluded: summaries.length - allowed.length,
       failedRead: 0,
       failedExtract: 0
     },
     current: null
   };
-  const runPath = createRun(manifest);
-  await postCollectionStatus(config, manifest, "started");
+  let runPath = null;
+  try {
+    runPath = createRun(manifest);
+    await postCollectionStatus(config, manifest, "started");
+  } catch (error) {
+    if (runPath) rmSync(dirname2(runPath), { recursive: true, force: true });
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
   output({
     status: "started",
     runPath,
     periodKey: manifest.period.period_key,
+    collectionStartsAt: manifest.period.starts_at,
+    collectionEndsAt: manifest.period.ends_at,
+    scanStartsAt: window.scanStartsAt,
+    scanEndsAt: window.scanEndsAt,
     discovered: manifest.counts.discovered,
     queued: manifest.queue.length,
+    outsideWindow: manifest.counts.outsideWindow,
     excluded: manifest.counts.excluded,
     nextCommand: `collect-next --run ${runPath}`
   });
@@ -5408,7 +5695,7 @@ function currentJobOutput(runPath, current) {
     jobId: current.jobId,
     inputPath: current.inputPath,
     resultPath: current.resultPath,
-    resultSchema: resolve3(
+    resultSchema: resolve4(
       import.meta.dirname,
       "../schemas/session-extraction-result-v1.json"
     ),
@@ -5417,11 +5704,22 @@ function currentJobOutput(runPath, current) {
 }
 async function finishRun(runPath, manifest, config) {
   await postCollectionStatus(config, manifest, "completed");
+  const checkpointAdvanced = canAdvanceCollectionCheckpoint(manifest.counts);
+  if (checkpointAdvanced) {
+    const state = loadCollectionState(manifest.pluginInstanceId);
+    state.lastSuccessfulRunStartedAt = manifest.createdAt;
+    saveCollectionState(state);
+  }
   const summary = {
     status: "completed",
     periodKey: manifest.period.period_key,
+    collectionStartsAt: manifest.period.starts_at,
+    collectionEndsAt: manifest.period.ends_at,
+    checkpointAdvanced,
+    warnings: checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
     ...manifest.counts
   };
+  releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
   rmSync(dirname2(runPath), { recursive: true, force: true });
   output(summary);
 }
@@ -5461,8 +5759,10 @@ async function collectNext() {
         continue;
       }
       manifest.counts.eligible += 1;
-      if (!manifest.force && manifest.knownHashes[job.sessionKey] === job.contentHash) {
-        manifest.counts.unchanged += 1;
+      const known = manifest.knownSessions[job.sessionKey];
+      if (!manifest.force && known?.contentHash === job.contentHash) {
+        if (known.decision === "accepted") manifest.counts.unchanged += 1;
+        else manifest.counts.cachedIgnored += 1;
         saveRun(absolute, manifest);
         continue;
       }
@@ -5496,6 +5796,14 @@ function assertImmutableContribution(contribution, expected) {
   if (contribution.contributions.length === 0)
     throw new Error("include \u7ED3\u679C\u5FC5\u987B\u81F3\u5C11\u5305\u542B\u4E00\u6761\u6709\u4EF7\u503C\u7684\u9879\u76EE\u8D21\u732E\u3002");
 }
+function assertChineseContribution(contribution) {
+  const invalid = firstNonChineseContributionField(contribution);
+  if (invalid) {
+    throw Object.assign(new Error(`\u4E0A\u4F20\u5B57\u6BB5 ${invalid} \u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002`), {
+      code: "CHINESE_OUTPUT_REQUIRED"
+    });
+  }
+}
 async function collectSubmit() {
   const runPath = option("run");
   const resultPath = option("result");
@@ -5504,14 +5812,25 @@ async function collectSubmit() {
   const { absolute, manifest } = readRun(runPath);
   const current = manifest.current;
   if (!current) throw new Error("\u5F53\u524D Run \u6CA1\u6709\u5F85\u63D0\u4EA4 Job\u3002");
-  if (resolve3(resultPath) !== resolve3(current.resultPath))
+  if (resolve4(resultPath) !== resolve4(current.resultPath))
     throw new Error("Result \u8DEF\u5F84\u4E0E\u5F53\u524D Job \u4E0D\u5339\u914D\u3002");
   const result = sessionExtractionResultSchema.parse(
-    JSON.parse(readFileSync2(current.resultPath, "utf8"))
+    JSON.parse(readFileSync3(current.resultPath, "utf8"))
   );
   if (result.decision === "ignore") {
+    const state2 = loadCollectionState(manifest.pluginInstanceId);
+    recordIgnoredSession(
+      state2,
+      current.expected.sessionKey,
+      current.expected.contentHash
+    );
+    saveCollectionState(state2);
     removeJobFiles(absolute, current);
     manifest.counts.ignored += 1;
+    manifest.knownSessions[current.expected.sessionKey] = {
+      contentHash: current.expected.contentHash,
+      decision: "ignored"
+    };
     manifest.current = null;
     saveRun(absolute, manifest);
     return output({
@@ -5521,6 +5840,7 @@ async function collectSubmit() {
     });
   }
   assertImmutableContribution(result.contribution, current.expected);
+  assertChineseContribution(result.contribution);
   if (containsSensitive(result.contribution))
     throw Object.assign(new Error("\u8D21\u732E\u7ED3\u679C\u5305\u542B\u7591\u4F3C\u654F\u611F\u503C\uFF0C\u5DF2\u963B\u6B62\u4E0A\u4F20\u3002"), {
       code: "SENSITIVE_EGRESS_REJECTED"
@@ -5536,9 +5856,15 @@ async function collectSubmit() {
       body: JSON.stringify(result.contribution)
     }
   );
+  const state = loadCollectionState(manifest.pluginInstanceId);
+  removeIgnoredSession(state, result.contribution.sessionKey);
+  saveCollectionState(state);
   removeJobFiles(absolute, current);
   manifest.counts.uploaded += 1;
-  manifest.knownHashes[result.contribution.sessionKey] = result.contribution.contentHash;
+  manifest.knownSessions[result.contribution.sessionKey] = {
+    contentHash: result.contribution.contentHash,
+    decision: "accepted"
+  };
   manifest.current = null;
   saveRun(absolute, manifest);
   output({
@@ -5567,6 +5893,7 @@ async function status() {
   const config = loadConfig(false);
   if (!config) return output({ status: "not_connected" });
   const policy = await fetchPolicy();
+  const localState = loadCollectionState(config.pluginInstanceId);
   const state = policy.currentPeriod ? await authenticatedRequest(
     `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`
   ) : { sessions: [] };
@@ -5577,6 +5904,9 @@ async function status() {
     connectivityStatus: config.connectivityStatus ?? "pending",
     periodKey: policy.currentPeriod?.period_key ?? null,
     acceptedSessionCount: state.sessions.length,
+    ignoredSessionCount: Object.keys(localState.ignoredSessions).length,
+    collectionFloorAt: localState.collectionFloorAt,
+    lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,
     excludedSessionCount: config.excludedSessionIds.length,
     excludedPathCount: config.excludedPaths.length
   });
@@ -5588,7 +5918,7 @@ function configureExclusion(kind, remove = false) {
     throw new Error(
       kind === "session" ? "\u9700\u8981 --session-id <id>\u3002" : "\u9700\u8981 --path <absolute-path>\u3002"
     );
-  const value = kind === "path" ? resolve3(raw) : raw.trim();
+  const value = kind === "path" ? resolve4(raw) : raw.trim();
   const key = kind === "session" ? "excludedSessionIds" : "excludedPaths";
   const current = new Set(config[key] ?? []);
   if (remove) current.delete(value);

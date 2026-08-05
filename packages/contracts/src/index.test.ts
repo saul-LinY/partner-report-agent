@@ -168,8 +168,8 @@ describe("session contribution contract", () => {
       contributions: [],
       observedAt: "2026-08-03T05:00:00.000Z",
       production: {
-        skillVersion: "partner-report-sync/0.3.0",
-        promptVersion: "2026-08-04.session-value.v1",
+        skillVersion: "partner-report-sync/0.4.0",
+        promptVersion: "2026-08-05.zh-session-value.v2",
         schemaVersion: "1.0",
         producer: "codex-skill",
       },
