@@ -24,6 +24,11 @@ import {
   diagnosticErrorMessage,
   validateConnectivityAttempt,
 } from "../connectivity.js";
+import {
+  decideProjectScopes,
+  loadProjectScopePolicy,
+  registerProjectScopeCandidates,
+} from "../project-scope.js";
 
 const deviceStartSchema = z.object({
   deviceName: z.string().min(1).max(120),
@@ -368,6 +373,46 @@ export async function pluginRoutes(app: FastifyInstance) {
       schemaVersions: ["1.0"],
       serverTime: new Date().toISOString(),
     };
+  });
+
+  app.get("/v1/project-scope", async (request) => {
+    const actor = await requirePluginActor(request);
+    return loadProjectScopePolicy(actor);
+  });
+
+  app.post("/v1/project-scope/candidates", async (request) => {
+    const actor = await requirePluginActor(request);
+    const policy = await registerProjectScopeCandidates(actor, request.body);
+    await audit(
+      request,
+      actor,
+      "project_scope.candidates_registered",
+      "plugin_instance",
+      actor.pluginInstanceId,
+      {
+        candidateCount: policy.entries.length,
+        version: policy.version,
+      },
+    );
+    return policy;
+  });
+
+  app.patch("/v1/project-scope", async (request) => {
+    const actor = await requirePluginActor(request);
+    const policy = await decideProjectScopes(
+      actor,
+      actor.pluginInstanceId,
+      request.body,
+    );
+    await audit(
+      request,
+      actor,
+      "project_scope.changed",
+      "plugin_instance",
+      actor.pluginInstanceId,
+      { version: policy.version },
+    );
+    return policy;
   });
 
   app.post(

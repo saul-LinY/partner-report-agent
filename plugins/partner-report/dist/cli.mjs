@@ -8,16 +8,16 @@ var __export = (target, all) => {
 // src/cli.ts
 import { createHash as createHash2, randomUUID } from "node:crypto";
 import {
-  chmodSync as chmodSync3,
-  existsSync as existsSync4,
+  chmodSync as chmodSync4,
+  existsSync as existsSync5,
   mkdtempSync,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync4,
   rmSync,
   unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync3
+  writeFileSync as writeFileSync4
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { basename as basename2, dirname as dirname2, relative as relative2, resolve as resolve4 } from "node:path";
+import { basename as basename3, dirname as dirname3, relative as relative3, resolve as resolve5 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // ../../packages/contracts/node_modules/zod/v3/external.js
@@ -4230,13 +4230,7 @@ var teamReportClaimSchema = external_exports.object({
   individualReportIds: external_exports.array(idSchema).min(1)
 });
 var teamReportSectionSchema = external_exports.object({
-  key: external_exports.enum([
-    "summary",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coverage"
-  ]),
+  key: external_exports.enum(["summary", "project_progress", "risks"]),
   title: external_exports.string().min(1).max(100),
   markdown: external_exports.string().max(16e3),
   claims: external_exports.array(teamReportClaimSchema).default([])
@@ -4245,7 +4239,7 @@ var teamReportResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
   title: external_exports.string().min(1).max(200),
   summary: external_exports.string().min(1).max(1600),
-  sections: external_exports.array(teamReportSectionSchema).length(5),
+  sections: external_exports.array(teamReportSectionSchema).length(3),
   markdown: external_exports.string().min(1).max(8e4),
   missingPartnerIds: external_exports.array(idSchema).default([]),
   qualityWarnings: external_exports.array(external_exports.string()).default([]),
@@ -4377,6 +4371,7 @@ var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 var PERSISTENT_DATA_FILES = [
   "config.json",
   "collection-state.json",
+  "project-scope.json",
   "secrets.json"
 ];
 function normalizeServerUrl(value, allowInsecureHttp = false) {
@@ -5042,12 +5037,12 @@ var CodexAppServer = class {
   request(method, params, timeoutMs = 3e4) {
     if (!this.process) throw new Error("Codex app-server \u5C1A\u672A\u8FDE\u63A5\u3002");
     const id = this.nextId++;
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve5, reject, timer });
+      this.pending.set(id, { resolve: resolve6, reject, timer });
       this.process.stdin.write(`${JSON.stringify({ method, id, params })}
 `);
     });
@@ -5424,6 +5419,145 @@ function firstNonChineseContributionField(contribution) {
   return fields.find(([, value]) => !containsChinese(value))?.[0] ?? null;
 }
 
+// src/project-scope.ts
+import { createHmac, randomBytes } from "node:crypto";
+import {
+  chmodSync as chmodSync3,
+  existsSync as existsSync4,
+  realpathSync,
+  renameSync as renameSync2,
+  writeFileSync as writeFileSync3,
+  readFileSync as readFileSync3
+} from "node:fs";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
+function scopePath() {
+  return resolve4(dataDirectory(), "project-scope.json");
+}
+function canonicalPath(path) {
+  const absolute = resolve4(path);
+  try {
+    return realpathSync.native(absolute);
+  } catch {
+    return absolute;
+  }
+}
+function withinPath2(candidate, root) {
+  const nested = relative2(root, candidate);
+  return nested === "" || !nested.startsWith("..") && !isAbsolute2(nested);
+}
+function outermostGitRoot(cwd) {
+  let current = canonicalPath(cwd);
+  let outermost = null;
+  for (; ; ) {
+    if (existsSync4(resolve4(current, ".git"))) outermost = current;
+    const parent = dirname2(current);
+    if (parent === current) return outermost;
+    current = parent;
+  }
+}
+function newLocalScope(pluginInstanceId) {
+  return {
+    schemaVersion: "1.0",
+    scopeSalt: randomBytes(32).toString("hex"),
+    pluginInstanceId,
+    identityConfirmed: false,
+    version: 0,
+    initialized: false,
+    initializedAt: null,
+    currentPeriod: null,
+    entries: []
+  };
+}
+function loadLocalProjectScope(pluginInstanceId) {
+  const path = scopePath();
+  if (!existsSync4(path)) return newLocalScope(pluginInstanceId);
+  const parsed = JSON.parse(readFileSync3(path, "utf8"));
+  if (parsed.schemaVersion !== "1.0" || parsed.pluginInstanceId !== pluginInstanceId || !/^[a-f0-9]{64}$/.test(parsed.scopeSalt)) {
+    return newLocalScope(pluginInstanceId);
+  }
+  return parsed;
+}
+function saveLocalProjectScope(scope) {
+  const path = scopePath();
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync3(temporary, `${JSON.stringify(scope, null, 2)}
+`, {
+    mode: 384
+  });
+  chmodSync3(temporary, 384);
+  renameSync2(temporary, path);
+  chmodSync3(path, 384);
+}
+function mergeRemoteProjectScope(local, remote) {
+  if (local.pluginInstanceId !== remote.pluginInstanceId)
+    throw new Error("\u9879\u76EE\u6743\u9650\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002");
+  const localRoots = new Map(
+    local.entries.map((entry) => [entry.scopeKey, entry.localRoot])
+  );
+  return {
+    schemaVersion: "1.0",
+    scopeSalt: local.scopeSalt,
+    ...remote,
+    entries: remote.entries.map((entry) => ({
+      ...entry,
+      localRoot: localRoots.get(entry.scopeKey) ?? null
+    }))
+  };
+}
+function anonymousProjectScopeKey(pluginInstanceId, scopeSalt, localRoot) {
+  return createHmac("sha256", scopeSalt).update(`partner-report/project-scope/v1:${pluginInstanceId}:${localRoot}`).digest("hex");
+}
+function discoverProjectScopes(pluginInstanceId, local, summaries) {
+  const knownRoots = local.entries.filter(
+    (entry) => Boolean(entry.localRoot)
+  ).map((entry) => ({ ...entry, localRoot: canonicalPath(entry.localRoot) })).sort((left, right) => right.localRoot.length - left.localRoot.length);
+  const discovered = /* @__PURE__ */ new Map();
+  const threadScopes = /* @__PURE__ */ new Map();
+  for (const summary of summaries) {
+    if (!summary.cwd) continue;
+    const cwd = canonicalPath(summary.cwd);
+    const inherited = knownRoots.find(
+      (entry) => withinPath2(cwd, entry.localRoot)
+    );
+    const localRoot = inherited?.localRoot ?? outermostGitRoot(cwd) ?? cwd;
+    const scopeKey = inherited?.scopeKey ?? anonymousProjectScopeKey(pluginInstanceId, local.scopeSalt, localRoot);
+    const current = discovered.get(scopeKey);
+    discovered.set(scopeKey, {
+      scopeKey,
+      displayName: inherited?.displayName ?? (basename2(localRoot) || "\u672A\u547D\u540D\u9879\u76EE"),
+      localRoot,
+      sessionCount: (current?.sessionCount ?? 0) + 1
+    });
+    threadScopes.set(summary.id, scopeKey);
+  }
+  return { candidates: [...discovered.values()], threadScopes };
+}
+function mergeDiscoveredRoots(local, candidates) {
+  const roots = new Map(
+    candidates.map((candidate) => [candidate.scopeKey, candidate.localRoot])
+  );
+  return {
+    ...local,
+    entries: local.entries.map((entry) => ({
+      ...entry,
+      localRoot: roots.get(entry.scopeKey) ?? entry.localRoot
+    }))
+  };
+}
+function scopeIsActive(entry, now = /* @__PURE__ */ new Date()) {
+  return Boolean(
+    entry?.status === "allowed" && entry.effectiveFrom && new Date(entry.effectiveFrom).getTime() <= now.getTime()
+  );
+}
+function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__PURE__ */ new Date()) {
+  const policies = new Map(entries.map((entry) => [entry.scopeKey, entry]));
+  return summaries.flatMap((summary) => {
+    const scopeKey = threadScopes.get(summary.id);
+    if (!scopeKey || !scopeIsActive(policies.get(scopeKey), now)) return [];
+    return [{ ...summary, scopeKey }];
+  });
+}
+
 // src/cli.ts
 var RUN_PREFIX = "partner-report-run-";
 function option(name, fallback) {
@@ -5462,6 +5596,15 @@ async function fetchPolicy() {
     );
   }
   return policy;
+}
+async function fetchProjectScope() {
+  return authenticatedRequest("/v1/project-scope");
+}
+function cacheRemoteProjectScope(remote) {
+  const local = loadLocalProjectScope(remote.pluginInstanceId);
+  const merged = mergeRemoteProjectScope(local, remote);
+  saveLocalProjectScope(merged);
+  return merged;
 }
 function scheduledTaskConfig() {
   output({
@@ -5597,30 +5740,30 @@ function summaryFromThread(value) {
   };
 }
 function createRun(manifest) {
-  const runDirectory = mkdtempSync(resolve4(tmpdir(), RUN_PREFIX));
-  chmodSync3(runDirectory, 448);
-  const runPath = resolve4(runDirectory, "run.json");
-  writeFileSync3(runPath, `${JSON.stringify(manifest, null, 2)}
+  const runDirectory = mkdtempSync(resolve5(tmpdir(), RUN_PREFIX));
+  chmodSync4(runDirectory, 448);
+  const runPath = resolve5(runDirectory, "run.json");
+  writeFileSync4(runPath, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync3(runPath, 384);
+  chmodSync4(runPath, 384);
   return runPath;
 }
 function assertRunPath(runPath) {
-  const absolute = resolve4(runPath);
-  const runDirectory = dirname2(absolute);
-  const outsideTemp = relative2(resolve4(tmpdir()), runDirectory).startsWith(
+  const absolute = resolve5(runPath);
+  const runDirectory = dirname3(absolute);
+  const outsideTemp = relative3(resolve5(tmpdir()), runDirectory).startsWith(
     ".."
   );
-  if (outsideTemp || !basename2(runDirectory).startsWith(RUN_PREFIX) || basename2(absolute) !== "run.json") {
+  if (outsideTemp || !basename3(runDirectory).startsWith(RUN_PREFIX) || basename3(absolute) !== "run.json") {
     throw new Error("Run \u8DEF\u5F84\u4E0D\u5C5E\u4E8E Partner Report \u4E34\u65F6\u76EE\u5F55\u3002");
   }
   return absolute;
 }
 function readRun(runPath) {
   const absolute = assertRunPath(runPath);
-  const manifest = JSON.parse(readFileSync3(absolute, "utf8"));
+  const manifest = JSON.parse(readFileSync4(absolute, "utf8"));
   const config = loadConfig();
   if (manifest.schemaVersion !== "1.0" || manifest.pluginInstanceId !== config.pluginInstanceId) {
     throw new Error("Run \u6E05\u5355\u65E0\u6548\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002");
@@ -5629,29 +5772,29 @@ function readRun(runPath) {
   return { absolute, manifest };
 }
 function saveRun(runPath, manifest) {
-  writeFileSync3(runPath, `${JSON.stringify(manifest, null, 2)}
+  writeFileSync4(runPath, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync3(runPath, 384);
+  chmodSync4(runPath, 384);
 }
 function removeJobFiles(runPath, current) {
-  const runDirectory = dirname2(runPath);
+  const runDirectory = dirname3(runPath);
   for (const path of [current.inputPath, current.resultPath]) {
-    if (dirname2(resolve4(path)) !== runDirectory)
+    if (dirname3(resolve5(path)) !== runDirectory)
       throw new Error("Job \u6587\u4EF6\u4E0D\u5C5E\u4E8E\u5F53\u524D Run\u3002");
-    if (existsSync4(path)) unlinkSync2(path);
+    if (existsSync5(path)) unlinkSync2(path);
   }
 }
 function writeJob(runPath, jobId, modelInput) {
-  const runDirectory = dirname2(runPath);
-  const inputPath = resolve4(runDirectory, `${jobId}-input.json`);
-  const resultPath = resolve4(runDirectory, `${jobId}-result.json`);
-  writeFileSync3(inputPath, `${JSON.stringify(modelInput, null, 2)}
+  const runDirectory = dirname3(runPath);
+  const inputPath = resolve5(runDirectory, `${jobId}-input.json`);
+  const resultPath = resolve5(runDirectory, `${jobId}-result.json`);
+  writeFileSync4(inputPath, `${JSON.stringify(modelInput, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync3(inputPath, 384);
+  chmodSync4(inputPath, 384);
   return { inputPath, resultPath };
 }
 async function postCollectionStatus(config, manifest, phase) {
@@ -5693,10 +5836,22 @@ async function postCollectionStatus(config, manifest, phase) {
 }
 async function collectStart() {
   const config = loadConfig();
-  const policy = await fetchPolicy();
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope()
+  ]);
+  let localScope = cacheRemoteProjectScope(remoteScope);
   if (!policy.currentPeriod)
     throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
       code: "REPORT_PERIOD_MISSING"
+    });
+  if (!remoteScope.identityConfirmed)
+    return output({
+      status: "feishu_identity_confirmation_required",
+      periodKey: policy.currentPeriod.period_key,
+      read: 0,
+      discovered: 0,
+      message: "\u8BF7\u5148\u5728\u98DE\u4E66\u8EAB\u4EFD\u5361\u4E2D\u786E\u8BA4\u5BA1\u6838\u8EAB\u4EFD\u3002\u786E\u8BA4\u524D\u4E0D\u4F1A\u626B\u63CF\u9879\u76EE\u6216\u8BFB\u53D6 Session \u5185\u5BB9\u3002"
     });
   const runId = randomUUID();
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -5735,16 +5890,64 @@ async function collectStart() {
   const summaries = listed.map(summaryFromThread).filter((value) => Boolean(value));
   const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
   const currentSessionId = process.env.CODEX_THREAD_ID;
-  const allowed = summaries.filter(
+  const metadataEligible = summaries.filter(
     (summary) => summary.id !== currentSessionId && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
   );
-  const queue = flag("force") ? allowed : allowed.filter(
+  const inWindow = flag("force") ? metadataEligible : metadataEligible.filter(
     (summary) => threadIsInScanWindow(
       summary.updatedAt,
       window.scanStartsAt,
       window.scanEndsAt
     )
   );
+  const discovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    inWindow
+  );
+  let registeredScope;
+  try {
+    registeredScope = await authenticatedRequest(
+      "/v1/project-scope/candidates",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          periodKey: policy.currentPeriod.period_key,
+          candidates: discovery.candidates.map((candidate) => ({
+            scopeKey: candidate.scopeKey,
+            displayName: candidate.displayName,
+            sessionCount: candidate.sessionCount
+          }))
+        })
+      }
+    );
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  localScope = mergeDiscoveredRoots(
+    mergeRemoteProjectScope(localScope, registeredScope),
+    discovery.candidates
+  );
+  saveLocalProjectScope(localScope);
+  const queue = authorizedProjectThreads(
+    inWindow,
+    discovery.threadScopes,
+    localScope.entries
+  );
+  if (!localScope.initialized) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    return output({
+      status: "project_scope_approval_required",
+      periodKey: policy.currentPeriod.period_key,
+      policyVersion: localScope.version,
+      pendingProjects: localScope.entries.filter(
+        (entry) => entry.status === "pending"
+      ).length,
+      read: 0,
+      message: "\u9879\u76EE\u91C7\u96C6\u8303\u56F4\u5C1A\u672A\u5BA1\u6279\uFF0C\u672A\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u3002\u8BF7\u5728\u98DE\u4E66\u5361\u7247\u4E2D\u5B8C\u6210\u5BA1\u6279\u3002"
+    });
+  }
   let state;
   try {
     state = await authenticatedRequest(
@@ -5778,8 +5981,8 @@ async function collectStart() {
       ignored: 0,
       unchanged: 0,
       cachedIgnored: 0,
-      outsideWindow: allowed.length - queue.length,
-      excluded: summaries.length - allowed.length,
+      outsideWindow: metadataEligible.length - inWindow.length,
+      excluded: summaries.length - metadataEligible.length + (inWindow.length - queue.length),
       failedRead: 0,
       failedExtract: 0
     },
@@ -5790,7 +5993,7 @@ async function collectStart() {
     runPath = createRun(manifest);
     await postCollectionStatus(config, manifest, "started");
   } catch (error) {
-    if (runPath) rmSync(dirname2(runPath), { recursive: true, force: true });
+    if (runPath) rmSync(dirname3(runPath), { recursive: true, force: true });
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
   }
@@ -5816,7 +6019,7 @@ function currentJobOutput(runPath, current) {
     jobId: current.jobId,
     inputPath: current.inputPath,
     resultPath: current.resultPath,
-    resultSchema: resolve4(
+    resultSchema: resolve5(
       import.meta.dirname,
       "../schemas/session-extraction-result-v1.json"
     ),
@@ -5842,7 +6045,7 @@ async function finishRun(runPath, manifest, config) {
     ...manifest.counts
   };
   releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
-  rmSync(dirname2(runPath), { recursive: true, force: true });
+  rmSync(dirname3(runPath), { recursive: true, force: true });
   output(summary);
 }
 function completionReview(manifest) {
@@ -5971,10 +6174,10 @@ async function collectSubmit() {
   const { absolute, manifest } = readRun(runPath);
   const current = manifest.current;
   if (!current) throw new Error("\u5F53\u524D Run \u6CA1\u6709\u5F85\u63D0\u4EA4 Job\u3002");
-  if (resolve4(resultPath) !== resolve4(current.resultPath))
+  if (resolve5(resultPath) !== resolve5(current.resultPath))
     throw new Error("Result \u8DEF\u5F84\u4E0E\u5F53\u524D Job \u4E0D\u5339\u914D\u3002");
   const result = sessionExtractionResultSchema.parse(
-    JSON.parse(readFileSync3(current.resultPath, "utf8"))
+    JSON.parse(readFileSync4(current.resultPath, "utf8"))
   );
   if (result.decision === "ignore") {
     const state2 = loadCollectionState(manifest.pluginInstanceId);
@@ -6055,7 +6258,11 @@ function collectSkip() {
 async function status() {
   const config = loadConfig(false);
   if (!config) return output({ status: "not_connected" });
-  const policy = await fetchPolicy();
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope()
+  ]);
+  const projectScope = cacheRemoteProjectScope(remoteScope);
   const localState = loadCollectionState(config.pluginInstanceId);
   const state = policy.currentPeriod ? await authenticatedRequest(
     `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`
@@ -6072,7 +6279,81 @@ async function status() {
     collectionFloorAt: localState.collectionFloorAt,
     lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,
     excludedSessionCount: config.excludedSessionIds.length,
-    excludedPathCount: config.excludedPaths.length
+    excludedPathCount: config.excludedPaths.length,
+    projectScopeVersion: projectScope.version,
+    projectScopeInitialized: projectScope.initialized,
+    allowedProjectCount: projectScope.entries.filter(
+      (entry) => scopeIsActive(entry)
+    ).length,
+    pendingProjectCount: projectScope.entries.filter(
+      (entry) => entry.status === "pending"
+    ).length,
+    deniedProjectCount: projectScope.entries.filter(
+      (entry) => entry.status === "denied"
+    ).length
+  });
+}
+async function projectScopeList() {
+  const remote = await fetchProjectScope();
+  const local = cacheRemoteProjectScope(remote);
+  output({
+    status: "project_scope",
+    version: local.version,
+    initialized: local.initialized,
+    projects: local.entries.map((entry) => ({
+      scopeKey: entry.scopeKey,
+      name: entry.displayName,
+      permission: entry.status,
+      active: scopeIsActive(entry),
+      effectiveFrom: entry.effectiveFrom,
+      firstSeenPeriodKey: entry.firstSeenPeriodKey,
+      sessionCount: entry.sessionCount
+    }))
+  });
+}
+async function changeProjectScope(decision) {
+  const remote = await fetchProjectScope();
+  const scopeKey = option("scope-key")?.trim();
+  const projectName = option("project")?.trim().toLocaleLowerCase("zh-CN");
+  let selected = remote.entries.filter((entry) => {
+    if (flag("all-pending")) return entry.status === "pending";
+    if (scopeKey) return entry.scopeKey === scopeKey;
+    if (projectName)
+      return entry.displayName.toLocaleLowerCase("zh-CN") === projectName;
+    return false;
+  });
+  if (!scopeKey && !projectName && !flag("all-pending"))
+    throw new Error(
+      "\u9700\u8981 --project <\u9879\u76EE\u540D>\u3001--scope-key <key> \u6216 --all-pending\u3002"
+    );
+  if (projectName && selected.length > 1)
+    throw new Error(
+      "\u5B58\u5728\u540C\u540D\u9879\u76EE\uFF0C\u8BF7\u5148 project-scope-list\uFF0C\u518D\u7528 --scope-key \u6307\u5B9A\u3002"
+    );
+  if (selected.length === 0) throw new Error("\u6CA1\u6709\u627E\u5230\u5339\u914D\u7684\u9879\u76EE\u6743\u9650\u3002");
+  selected = selected.slice(0, 500);
+  const updated = await authenticatedRequest(
+    "/v1/project-scope",
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        baseVersion: remote.version,
+        decisions: selected.map((entry) => ({
+          scopeKey: entry.scopeKey,
+          decision
+        }))
+      })
+    }
+  );
+  cacheRemoteProjectScope(updated);
+  output({
+    status: "project_scope_updated",
+    decision,
+    version: updated.version,
+    projects: selected.map((entry) => ({
+      scopeKey: entry.scopeKey,
+      name: entry.displayName
+    }))
   });
 }
 function configureExclusion(kind, remove = false) {
@@ -6082,7 +6363,7 @@ function configureExclusion(kind, remove = false) {
     throw new Error(
       kind === "session" ? "\u9700\u8981 --session-id <id>\u3002" : "\u9700\u8981 --path <absolute-path>\u3002"
     );
-  const value = kind === "path" ? resolve4(raw) : raw.trim();
+  const value = kind === "path" ? resolve5(raw) : raw.trim();
   const key = kind === "session" ? "excludedSessionIds" : "excludedPaths";
   const current = new Set(config[key] ?? []);
   if (remove) current.delete(value);
@@ -6106,6 +6387,9 @@ function help() {
       "collect-submit --run <path> --result <path>",
       "collect-skip --run <path> [--error-code <code>]",
       "status",
+      "project-scope-list",
+      "project-scope-allow --project <name>|--scope-key <key>|--all-pending",
+      "project-scope-deny --project <name>|--scope-key <key>|--all-pending",
       "exclude-session --session-id <id>",
       "include-session --session-id <id>",
       "exclude-path --path <absolute-path>",
@@ -6125,6 +6409,9 @@ try {
   else if (command === "collect-submit") await collectSubmit();
   else if (command === "collect-skip") collectSkip();
   else if (command === "status") await status();
+  else if (command === "project-scope-list") await projectScopeList();
+  else if (command === "project-scope-allow") await changeProjectScope("allow");
+  else if (command === "project-scope-deny") await changeProjectScope("deny");
   else if (command === "exclude-session") configureExclusion("session");
   else if (command === "include-session") configureExclusion("session", true);
   else if (command === "exclude-path") configureExclusion("path");

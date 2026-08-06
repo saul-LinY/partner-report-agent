@@ -5,6 +5,7 @@ import {
   renderBindingCard,
   renderReportCard,
   renderReviewCard,
+  renderScopeCard,
   type FeishuCard,
 } from "./cards.js";
 import {
@@ -22,7 +23,7 @@ export type FeishuDeliveryScope = {
   partnerId: string;
 };
 
-export type FeishuDeliveryKind = "binding" | "review" | "report";
+export type FeishuDeliveryKind = "binding" | "scope" | "review" | "report";
 
 export type FeishuDeliveryOutcome = "sent" | "updated" | "deferred" | "skipped";
 
@@ -82,10 +83,24 @@ export type ReportDeliveryView = FeishuDeliveryScope & {
   };
 };
 
+export type ScopeDeliveryView = FeishuDeliveryScope & {
+  aggregateId: string;
+  pluginInstanceId: string;
+  version: number;
+  deviceName: string;
+  periodLabel: string;
+  initial: boolean;
+  projects: Array<{
+    scopeKey: string;
+    displayName: string;
+    sessionCount: number;
+  }>;
+};
+
 export type FeishuActionDelivery = FeishuDeliveryScope & {
   deliveryId: string;
   kind: FeishuDeliveryKind;
-  aggregateType: "partner" | "review" | "individual_report";
+  aggregateType: "partner" | "project_scope" | "review" | "individual_report";
   aggregateId: string;
   messageId: string;
   receiveId: string;
@@ -147,7 +162,7 @@ type MessageClient = Pick<
 
 const emailSchema = z.string().trim().email().max(320);
 const identifierSchema = z.string().trim().min(1).max(256);
-const deliveryKindSchema = z.enum(["binding", "review", "report"]);
+const deliveryKindSchema = z.enum(["binding", "scope", "review", "report"]);
 const webOriginSchema = z
   .string()
   .trim()
@@ -175,6 +190,7 @@ function safeDailyProgress(
 }
 
 function aggregateType(kind: Exclude<FeishuDeliveryKind, "binding">) {
+  if (kind === "scope") return "project_scope";
   return kind === "review" ? "review" : "individual_report";
 }
 
@@ -426,6 +442,68 @@ export class FeishuDeliveryService {
     };
   }
 
+  async loadScopeDeliveryView(
+    scope: FeishuDeliveryScope,
+    pluginInstanceId: string,
+    requestedPeriodKey?: string,
+  ): Promise<ScopeDeliveryView | null> {
+    const rows = await this.database<
+      Array<{
+        plugin_instance_id: string;
+        device_name: string;
+        version: number;
+        initialized: boolean;
+        period_key: string;
+      }>
+    >`
+      select pi.id as plugin_instance_id, pi.device_name, psp.version,
+        psp.initialized, rp.period_key
+      from plugin_instances pi
+      join project_scope_policies psp
+        on psp.plugin_instance_id = pi.id and psp.tenant_id = pi.tenant_id
+      join lateral (
+        select period_key from report_periods
+        where tenant_id = pi.tenant_id and team_id = pi.team_id
+          and (${requestedPeriodKey ?? null}::text is null or period_key = ${requestedPeriodKey ?? null})
+        order by
+          case when starts_at <= now() and ends_at >= now() then 0 else 1 end,
+          starts_at desc
+        limit 1
+      ) rp on true
+      where pi.id = ${pluginInstanceId} and pi.tenant_id = ${scope.tenantId}
+        and pi.team_id = ${scope.teamId} and pi.partner_id = ${scope.partnerId}
+        and pi.status = 'active'
+      limit 1
+    `;
+    const policy = rows[0];
+    if (!policy) return null;
+    const projects = await this.database<
+      Array<{ scope_key: string; display_name: string; session_count: number }>
+    >`
+      select scope_key, display_name, session_count
+      from project_scope_entries
+      where plugin_instance_id = ${pluginInstanceId}
+        and tenant_id = ${scope.tenantId} and status = 'pending'
+      order by first_seen_at asc, display_name asc
+      limit 500
+    `;
+    if (projects.length === 0) return null;
+    return {
+      ...scope,
+      aggregateId: `${pluginInstanceId}:${policy.period_key}`,
+      pluginInstanceId,
+      version: policy.version,
+      deviceName: policy.device_name,
+      periodLabel: policy.period_key,
+      initial: !policy.initialized,
+      projects: projects.map((project) => ({
+        scopeKey: project.scope_key,
+        displayName: project.display_name,
+        sessionCount: project.session_count,
+      })),
+    };
+  }
+
   renderReviewDeliveryCard(
     view: ReviewDeliveryView,
     deliveryId: string,
@@ -462,6 +540,44 @@ export class FeishuDeliveryService {
       periodLabel: view.periodLabel,
       regeneration: view.regeneration,
     });
+  }
+
+  renderScopeDeliveryCard(view: ScopeDeliveryView, deliveryId: string) {
+    return renderScopeCard({
+      deliveryId,
+      aggregateId: view.aggregateId,
+      baseVersion: view.version,
+      deviceName: view.deviceName,
+      periodLabel: view.periodLabel,
+      initial: view.initial,
+      projects: view.projects,
+    });
+  }
+
+  async deliverScope(
+    input: FeishuDeliveryScope & {
+      pluginInstanceId: string;
+      periodKey?: string;
+    },
+  ) {
+    const view = await this.loadScopeDeliveryView(
+      input,
+      input.pluginInstanceId,
+      input.periodKey,
+    );
+    if (!view)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "not_reviewable",
+      } satisfies FeishuDeliveryResult;
+    return this.deliverAggregate(
+      "scope",
+      input,
+      view.aggregateId,
+      view.version,
+      (deliveryId) => this.renderScopeDeliveryCard(view, deliveryId),
+    );
   }
 
   async deliverReview(input: FeishuDeliveryScope & { reviewId: string }) {
@@ -528,8 +644,22 @@ export class FeishuDeliveryService {
     );
   }
 
-  async syncPartnerPendingApprovals(scope: FeishuDeliveryScope) {
-    const [reviews, reports] = await Promise.all([
+  async patchScopeStatus(
+    input: FeishuDeliveryScope & { aggregateId: string; card: FeishuCard },
+  ) {
+    return this.patchAggregateStatus(
+      "scope",
+      input,
+      input.aggregateId,
+      input.card,
+    );
+  }
+
+  async syncPartnerPendingApprovals(
+    scope: FeishuDeliveryScope,
+    requestedPeriodKey?: string,
+  ) {
+    const [reviews, reports, scopes] = await Promise.all([
       this.database<Array<{ id: string }>>`
         select r.id from reviews r
         join report_periods rp
@@ -571,6 +701,29 @@ export class FeishuDeliveryService {
         order by rp.starts_at desc, r.updated_at desc
         limit 1
       `,
+      this.database<Array<{ plugin_instance_id: string; period_key: string }>>`
+        select psp.plugin_instance_id, rp.period_key
+        from project_scope_policies psp
+        join plugin_instances pi on pi.id = psp.plugin_instance_id
+        join lateral (
+          select period_key from report_periods
+          where tenant_id = psp.tenant_id and team_id = psp.team_id
+            and (${requestedPeriodKey ?? null}::text is null or period_key = ${requestedPeriodKey ?? null})
+          order by
+            case when starts_at <= now() and ends_at >= now() then 0 else 1 end,
+            starts_at desc
+          limit 1
+        ) rp on true
+        where psp.tenant_id = ${scope.tenantId} and psp.team_id = ${scope.teamId}
+          and psp.partner_id = ${scope.partnerId} and pi.status = 'active'
+          and exists (
+            select 1 from project_scope_entries pse
+            where pse.plugin_instance_id = psp.plugin_instance_id
+              and pse.status = 'pending'
+          )
+        order by psp.created_at asc
+        limit 20
+      `,
     ]);
 
     const results: FeishuDeliveryResult[] = [];
@@ -581,6 +734,14 @@ export class FeishuDeliveryService {
     if (reports[0])
       results.push(
         await this.deliverReport({ ...scope, reportId: reports[0].id }),
+      );
+    for (const pendingScope of scopes)
+      results.push(
+        await this.deliverScope({
+          ...scope,
+          pluginInstanceId: pendingScope.plugin_instance_id,
+          periodKey: pendingScope.period_key,
+        }),
       );
     return results;
   }
@@ -609,7 +770,8 @@ export class FeishuDeliveryService {
         team_id: string;
         partner_id: string;
         kind: FeishuDeliveryKind;
-        aggregate_type: "partner" | "review" | "individual_report";
+        aggregate_type:
+          "partner" | "project_scope" | "review" | "individual_report";
         aggregate_id: string;
         message_id: string;
         receive_id: string;
@@ -915,7 +1077,7 @@ export class FeishuDeliveryService {
   }
 
   private async deliverAggregate(
-    kind: "review" | "report",
+    kind: "scope" | "review" | "report",
     scope: FeishuDeliveryScope,
     aggregateId: string,
     domainVersion: number,
@@ -991,7 +1153,7 @@ export class FeishuDeliveryService {
   }
 
   private async patchAggregateStatus(
-    kind: "review" | "report",
+    kind: "scope" | "review" | "report",
     scope: FeishuDeliveryScope,
     aggregateId: string,
     card: FeishuCard,
@@ -1041,7 +1203,7 @@ export class FeishuDeliveryService {
   }
 
   private async upsertAggregateDelivery(input: {
-    kind: "review" | "report";
+    kind: "scope" | "review" | "report";
     scope: FeishuDeliveryScope;
     aggregateId: string;
     domainVersion: number;

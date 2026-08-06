@@ -20,6 +20,7 @@ import {
   type FeishuActionValue,
   type FeishuCard,
 } from "./cards.js";
+import { decideProjectScopes } from "../project-scope.js";
 import type { FeishuMessageClient } from "./client.js";
 import type { FeishuConfig } from "./config.js";
 import {
@@ -100,7 +101,7 @@ type OutboxRow = {
 };
 
 type DeliveryRetryRow = FeishuDeliveryScope & {
-  kind: "binding" | "review" | "report";
+  kind: "binding" | "scope" | "review" | "report";
   aggregateId: string;
 };
 
@@ -120,9 +121,20 @@ function callbackResponse(
 
 function expectedDeliveryKind(
   action: FeishuActionValue["action"],
-): "binding" | "review" | "report" {
+): "binding" | "scope" | "review" | "report" {
   if (action === "binding_confirm") return "binding";
+  if (action.startsWith("scope_")) return "scope";
   return action.startsWith("review_") ? "review" : "report";
+}
+
+function parseScopeAggregateId(aggregateId: string) {
+  const separator = aggregateId.indexOf(":");
+  if (separator < 1)
+    throw new ApiError(400, "PROJECT_SCOPE_INVALID", "项目权限卡片无效。");
+  return {
+    pluginInstanceId: aggregateId.slice(0, separator),
+    periodKey: aggregateId.slice(separator + 1),
+  };
 }
 
 function safeRecord(value: unknown): Record<string, unknown> {
@@ -329,7 +341,9 @@ export class FeishuGateway {
                 'individual_report.draft.created',
                 'individual_report.regeneration.requested',
                 'individual_report.submitted',
-                'individual_report.returned_to_items'
+                'individual_report.returned_to_items',
+                'project_scope.candidates.changed',
+                'project_scope.period.review_ready'
               )
             )
           )
@@ -337,7 +351,7 @@ export class FeishuGateway {
             select 1 from feishu_deliveries deferred
             where deferred.tenant_id = outbox_events.tenant_id
               and deferred.aggregate_id = outbox_events.aggregate_id
-              and deferred.kind in ('review', 'report')
+              and deferred.kind in ('scope', 'review', 'report')
               and deferred.status = 'deferred'
               and deferred.receive_id_type = 'email'
               and not exists (
@@ -390,7 +404,7 @@ export class FeishuGateway {
           tenant_id: string;
           team_id: string;
           partner_id: string;
-          kind: "binding" | "review" | "report";
+          kind: "binding" | "scope" | "review" | "report";
           aggregate_id: string;
         }>
       >`
@@ -405,7 +419,7 @@ export class FeishuGateway {
             or (d.status = 'sending' and d.last_attempt_at < now() - interval '2 minutes')
           )
         ) or (
-          d.kind in ('review', 'report') and (
+          d.kind in ('scope', 'review', 'report') and (
             (
               d.status = 'deferred' and exists (
                 select 1 from feishu_partner_bindings b
@@ -425,6 +439,17 @@ export class FeishuGateway {
               where r.id::text = d.aggregate_id and r.tenant_id = d.tenant_id
                 and r.team_id = d.team_id and r.partner_id = d.partner_id
                 and r.state = 'IN_PROGRESS'
+            ))
+            or (d.kind = 'scope' and exists (
+              select 1 from project_scope_policies psp
+              where psp.plugin_instance_id::text = split_part(d.aggregate_id, ':', 1)
+                and psp.tenant_id = d.tenant_id and psp.team_id = d.team_id
+                and psp.partner_id = d.partner_id
+                and exists (
+                  select 1 from project_scope_entries pse
+                  where pse.plugin_instance_id = psp.plugin_instance_id
+                    and pse.status = 'pending'
+                )
             ))
             or (d.kind = 'report' and exists (
               select 1 from individual_reports r
@@ -452,6 +477,11 @@ export class FeishuGateway {
           await this.deliveries.deliverReview({
             ...retry,
             reviewId: retry.aggregateId,
+          });
+        } else if (retry.kind === "scope") {
+          await this.deliveries.deliverScope({
+            ...retry,
+            ...parseScopeAggregateId(retry.aggregateId),
           });
         } else {
           await this.deliveries.deliverReport({
@@ -517,6 +547,80 @@ export class FeishuGateway {
       partnerId: delivery.partnerId,
     };
     const scope: FeishuDeliveryScope = delivery;
+
+    if (event.value.action.startsWith("scope_")) {
+      const aggregate = parseScopeAggregateId(event.value.aggregateId);
+      const view = await this.deliveries.loadScopeDeliveryView(
+        scope,
+        aggregate.pluginInstanceId,
+        aggregate.periodKey,
+      );
+      if (!view)
+        throw new ApiError(
+          409,
+          "PROJECT_SCOPE_ALREADY_REVIEWED",
+          "当前项目权限已经处理完成。",
+        );
+      const selected =
+        event.value.action === "scope_allow_all" ||
+        event.value.action === "scope_deny_all"
+          ? view.projects
+          : view.projects.filter(
+              (project) =>
+                "scopeKey" in event.value &&
+                project.scopeKey === event.value.scopeKey,
+            );
+      if (selected.length === 0)
+        throw new ApiError(
+          404,
+          "PROJECT_SCOPE_NOT_FOUND",
+          "该项目已不在待审批列表中。",
+        );
+      const allow =
+        event.value.action === "scope_allow" ||
+        event.value.action === "scope_allow_all";
+      const result = await decideProjectScopes(
+        actor,
+        aggregate.pluginInstanceId,
+        {
+          baseVersion: event.value.baseVersion,
+          decisions: selected.map((project) => ({
+            scopeKey: project.scopeKey,
+            decision: allow ? "allow" : "deny",
+          })),
+        },
+        this.database,
+      );
+      await this.auditOnce(
+        row.event_id,
+        actor,
+        allow ? "project_scope.allowed" : "project_scope.denied",
+        "plugin_instance",
+        aggregate.pluginInstanceId,
+        {
+          scopeKeys: selected.map((project) => project.scopeKey),
+          version: result.version,
+        },
+      );
+      const refreshed = await this.deliveries.deliverScope({
+        ...scope,
+        pluginInstanceId: aggregate.pluginInstanceId,
+        periodKey: aggregate.periodKey,
+      });
+      if (refreshed.reason === "not_reviewable") {
+        await this.deliveries.patchScopeStatus({
+          ...scope,
+          aggregateId: event.value.aggregateId,
+          card: renderStatusCard({
+            kind: "locked",
+            title: "项目采集范围已确认",
+            message:
+              "权限已同步到 Partner Report。插件下次运行时会自动拉取最新规则。",
+          }),
+        });
+      }
+      return;
+    }
 
     if (
       event.value.action === "review_approve" ||
@@ -818,10 +922,15 @@ export class FeishuGateway {
               ...delivery,
               reviewId: event.value.aggregateId,
             })
-          : await this.deliveries.deliverReport({
-              ...delivery,
-              reportId: event.value.aggregateId,
-            });
+          : kind === "scope"
+            ? await this.deliveries.deliverScope({
+                ...delivery,
+                ...parseScopeAggregateId(event.value.aggregateId),
+              })
+            : await this.deliveries.deliverReport({
+                ...delivery,
+                reportId: event.value.aggregateId,
+              });
       if (result.outcome !== "skipped") return;
     }
 
@@ -840,11 +949,17 @@ export class FeishuGateway {
             reviewId: event.value.aggregateId,
             card,
           })
-        : await this.deliveries.patchReportStatus({
-            ...delivery,
-            reportId: event.value.aggregateId,
-            card,
-          });
+        : kind === "scope"
+          ? await this.deliveries.patchScopeStatus({
+              ...delivery,
+              aggregateId: event.value.aggregateId,
+              card,
+            })
+          : await this.deliveries.patchReportStatus({
+              ...delivery,
+              reportId: event.value.aggregateId,
+              card,
+            });
     if (deliveryNeedsStatusRetry(result)) {
       throw new Error("FEISHU_STATUS_PATCH_DEFERRED");
     }
@@ -860,6 +975,35 @@ export class FeishuGateway {
       await this.deliveries.sendBindingCardForScope(scope);
       // Delivery failures are persisted and retried by retryDueDeliveries.
       return true;
+    }
+
+    if (
+      event.event_type === "project_scope.candidates.changed" ||
+      event.event_type === "project_scope.period.review_ready"
+    ) {
+      const scope = await this.loadPluginScope(
+        event.tenant_id,
+        event.aggregate_id,
+      );
+      if (!scope) return true;
+      const payload = safeRecord(event.payload);
+      const view = await this.deliveries.loadScopeDeliveryView(
+        scope,
+        event.aggregate_id,
+        typeof payload.periodKey === "string" ? payload.periodKey : undefined,
+      );
+      if (!view) return true;
+      if (
+        event.event_type === "project_scope.candidates.changed" &&
+        !view.initial
+      )
+        return true;
+      const result = await this.deliveries.deliverScope({
+        ...scope,
+        pluginInstanceId: event.aggregate_id,
+        periodKey: view.periodLabel,
+      });
+      return !deliveryNeedsStatusRetry(result);
     }
 
     if (
@@ -907,7 +1051,13 @@ export class FeishuGateway {
               : "审核结果已经锁定，个人报告正在生成，完成后会发送新的审核卡片。",
         }),
       });
-      return !deliveryNeedsStatusRetry(result);
+      if (deliveryNeedsStatusRetry(result)) return false;
+      if (event.event_type === "work_items.all_dismissed")
+        await this.deliveries.syncPartnerPendingApprovals(
+          completed,
+          completed.periodKey,
+        );
+      return true;
     }
 
     if (
@@ -937,7 +1087,9 @@ export class FeishuGateway {
         reportId: event.aggregate_id,
         card: renderLockedCard(),
       });
-      return !deliveryNeedsStatusRetry(result);
+      if (deliveryNeedsStatusRetry(result)) return false;
+      await this.deliveries.syncPartnerPendingApprovals(scope, scope.periodKey);
+      return true;
     }
 
     if (event.event_type === "individual_report.returned_to_items") {
@@ -991,15 +1143,46 @@ export class FeishuGateway {
       : null;
   }
 
-  private async loadReviewScope(
+  private async loadPluginScope(
     tenantId: string,
-    reviewId: string,
-  ): Promise<(FeishuDeliveryScope & { reviewId: string }) | null> {
+    pluginInstanceId: string,
+  ): Promise<FeishuDeliveryScope | null> {
     const rows = await this.database<
       Array<{ tenant_id: string; team_id: string; partner_id: string }>
     >`
-      select tenant_id, team_id, partner_id from reviews
-      where id = ${reviewId} and tenant_id = ${tenantId}
+      select tenant_id, team_id, partner_id from plugin_instances
+      where id = ${pluginInstanceId} and tenant_id = ${tenantId}
+        and status = 'active'
+      limit 1
+    `;
+    const row = rows[0];
+    return row
+      ? {
+          tenantId: row.tenant_id,
+          teamId: row.team_id,
+          partnerId: row.partner_id,
+        }
+      : null;
+  }
+
+  private async loadReviewScope(
+    tenantId: string,
+    reviewId: string,
+  ): Promise<
+    (FeishuDeliveryScope & { reviewId: string; periodKey: string }) | null
+  > {
+    const rows = await this.database<
+      Array<{
+        tenant_id: string;
+        team_id: string;
+        partner_id: string;
+        period_key: string;
+      }>
+    >`
+      select r.tenant_id, r.team_id, r.partner_id, rp.period_key
+      from reviews r
+      join report_periods rp on rp.id = r.period_id and rp.tenant_id = r.tenant_id
+      where r.id = ${reviewId} and r.tenant_id = ${tenantId}
       limit 1
     `;
     const row = rows[0];
@@ -1009,6 +1192,7 @@ export class FeishuGateway {
           teamId: row.team_id,
           partnerId: row.partner_id,
           reviewId,
+          periodKey: row.period_key,
         }
       : null;
   }
@@ -1016,18 +1200,24 @@ export class FeishuGateway {
   private async loadSnapshotReviewScope(
     tenantId: string,
     snapshotId: string,
-  ): Promise<(FeishuDeliveryScope & { reviewId: string }) | null> {
+  ): Promise<
+    (FeishuDeliveryScope & { reviewId: string; periodKey: string }) | null
+  > {
     const rows = await this.database<
       Array<{
         tenant_id: string;
         team_id: string;
         partner_id: string;
         review_id: string;
+        period_key: string;
       }>
     >`
-      select tenant_id, team_id, partner_id, review_id
-      from work_item_snapshots
-      where id = ${snapshotId} and tenant_id = ${tenantId}
+      select wis.tenant_id, wis.team_id, wis.partner_id, wis.review_id,
+        rp.period_key
+      from work_item_snapshots wis
+      join reviews r on r.id = wis.review_id and r.tenant_id = wis.tenant_id
+      join report_periods rp on rp.id = r.period_id and rp.tenant_id = r.tenant_id
+      where wis.id = ${snapshotId} and wis.tenant_id = ${tenantId}
       limit 1
     `;
     const row = rows[0];
@@ -1037,6 +1227,7 @@ export class FeishuGateway {
           teamId: row.team_id,
           partnerId: row.partner_id,
           reviewId: row.review_id,
+          periodKey: row.period_key,
         }
       : null;
   }
@@ -1044,12 +1235,21 @@ export class FeishuGateway {
   private async loadReportScope(
     tenantId: string,
     reportId: string,
-  ): Promise<(FeishuDeliveryScope & { reportId: string }) | null> {
+  ): Promise<
+    (FeishuDeliveryScope & { reportId: string; periodKey: string }) | null
+  > {
     const rows = await this.database<
-      Array<{ tenant_id: string; team_id: string; partner_id: string }>
+      Array<{
+        tenant_id: string;
+        team_id: string;
+        partner_id: string;
+        period_key: string;
+      }>
     >`
-      select tenant_id, team_id, partner_id from individual_reports
-      where id = ${reportId} and tenant_id = ${tenantId}
+      select ir.tenant_id, ir.team_id, ir.partner_id, rp.period_key
+      from individual_reports ir
+      join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
+      where ir.id = ${reportId} and ir.tenant_id = ${tenantId}
       limit 1
     `;
     const row = rows[0];
@@ -1059,6 +1259,7 @@ export class FeishuGateway {
           teamId: row.team_id,
           partnerId: row.partner_id,
           reportId,
+          periodKey: row.period_key,
         }
       : null;
   }

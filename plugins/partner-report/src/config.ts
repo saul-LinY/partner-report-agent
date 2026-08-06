@@ -32,6 +32,7 @@ const BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 const PERSISTENT_DATA_FILES = [
   "config.json",
   "collection-state.json",
+  "project-scope.json",
   "secrets.json",
 ] as const;
 

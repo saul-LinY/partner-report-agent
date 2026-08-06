@@ -9,6 +9,7 @@ import {
   renderLockedCard,
   renderReportCard,
   renderReviewCard,
+  renderScopeCard,
   renderStaleCard,
   reviewCardInputSchema,
   truncateCardText,
@@ -108,6 +109,38 @@ describe("Feishu JSON 2.0 cards", () => {
         baseVersion: 1,
       },
     ]);
+  });
+
+  it("renders project scope decisions with versioned item and bulk actions", () => {
+    const scopeKey = "a".repeat(64);
+    const card = renderScopeCard({
+      deliveryId: ids.deliveryId,
+      aggregateId: `${ids.aggregateId}:2026-W32`,
+      baseVersion: 4,
+      deviceName: "Saul MacBook",
+      periodLabel: "2026-W32",
+      initial: false,
+      projects: [{ scopeKey, displayName: "partner-report", sessionCount: 3 }],
+    });
+
+    expect(callbackValues(card)).toEqual([
+      expect.objectContaining({
+        action: "scope_deny",
+        scopeKey,
+        baseVersion: 4,
+      }),
+      expect.objectContaining({
+        action: "scope_allow",
+        scopeKey,
+        baseVersion: 4,
+      }),
+      expect.objectContaining({ action: "scope_deny_all", baseVersion: 4 }),
+      expect.objectContaining({ action: "scope_allow_all", baseVersion: 4 }),
+    ]);
+    expect(JSON.stringify(card)).toContain("下个周期");
+    expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThan(
+      FEISHU_CARD_MAX_JSON_BYTES,
+    );
   });
 
   it("renders one current review item with decision and regeneration actions", () => {

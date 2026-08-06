@@ -83,7 +83,7 @@ Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `g
 使用 $partner-report-sync，把数据中台 https://report-api.example.com 和绑定码 PR-XXXX-XXXX 连接起来。
 ```
 
-绑定成功即按文档中的采集范围默认启用，不再要求单独确认上传授权。Plugin 只读取合格的完整 Turn，只向当前绑定中台上传校验后的结构化 Fact，并继续执行敏感信息过滤和 Session 排除规则。
+绑定成功后先通过飞书确认审核身份和项目采集范围。Plugin 只用 `thread/list` 发现候选项目；项目获准前不调用 `thread/read`、不交给模型，也不上传 Session 内容。首次允许立即生效，后续新增项目汇总审批并从下个周期生效。Plugin 继续执行敏感信息过滤和 Session 排除规则。
 
 当前局域网测试环境使用 HTTP。同事连接时需要明确说明这是可信测试局域网，由 Skill 在连接命令中显式追加 `--allow-insecure-http`。例如：
 
@@ -109,7 +109,7 @@ Prompt：由 Plugin CLI 返回，包含采集边界、数据最小化规则、au
 
 Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默认任务，并在安全契约升级时只修复 Prompt，不覆盖用户在面板中的时间、模型等配置。Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
 
-Scheduled Task 会使用任务级 `memory.md` 延续运行上下文，它不是按 Session 生成。Plugin Prompt 只允许其中保存运行时间、完成/失败/中断状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、hash、端点或标识。memory 只用于运行摘要；自动与手动采集共享的防重和成功游标以用户稳定目录 `~/.partner-report-data/collection-state.json` 及中台状态为准。该文件只保存匿名 Session key、稳定内容 hash、处理时间和聚合游标，不保存原始对话，并在插件更新或重装后继续复用。
+Scheduled Task 会使用任务级 `memory.md` 延续运行上下文，它不是按 Session 生成。Plugin Prompt 只允许其中保存运行时间、完成/失败/中断状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、hash、端点或标识。memory 只用于运行摘要；自动与手动采集共享的防重和成功游标以用户稳定目录 `~/.partner-report-data/collection-state.json` 及中台状态为准。项目权限执行缓存和本机根目录映射保存在同目录的 `project-scope.json`，中台保存版本化的正式规则；两者都不会因插件更新或缓存替换而删除。
 
 Plugin 的 Session 提取指令使用中文，并在上传前强制校验 `title`、`summary` 和 `contributions[].text` 包含中文。JSON 字段名和状态枚举保留英文，以维持 API/Schema 兼容。
 

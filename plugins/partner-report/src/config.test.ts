@@ -57,6 +57,7 @@ describe("persistent plugin data", () => {
     mkdirSync(source);
     writeFileSync(resolve(source, "config.json"), '{"source":"old"}\n');
     writeFileSync(resolve(source, "collection-state.json"), "{}\n");
+    writeFileSync(resolve(source, "project-scope.json"), "{}\n");
     writeFileSync(resolve(source, "collection.lock"), "temporary\n");
     try {
       migratePersistentDataDirectory(source, target);
@@ -65,6 +66,9 @@ describe("persistent plugin data", () => {
       );
       expect(
         readFileSync(resolve(target, "collection-state.json"), "utf8"),
+      ).toContain("{}");
+      expect(
+        readFileSync(resolve(target, "project-scope.json"), "utf8"),
       ).toContain("{}");
       expect(() => readFileSync(resolve(target, "collection.lock"))).toThrow();
     } finally {

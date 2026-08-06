@@ -486,6 +486,78 @@ export const pluginInstances = pgTable(
   ],
 );
 
+export const projectScopePolicies = pgTable(
+  "project_scope_policies",
+  {
+    pluginInstanceId: uuid("plugin_instance_id")
+      .primaryKey()
+      .references(() => pluginInstances.id),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    version: integer("version").notNull().default(1),
+    initialized: boolean("initialized").notNull().default(false),
+    initializedAt: timestamp("initialized_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    index("project_scope_policies_partner_idx").on(
+      table.tenantId,
+      table.partnerId,
+    ),
+  ],
+);
+
+export const projectScopeEntries = pgTable(
+  "project_scope_entries",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id),
+    scopeKey: text("scope_key").notNull(),
+    displayName: text("display_name").notNull(),
+    status: text("status").notNull().default("pending"),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }),
+    firstSeenPeriodKey: text("first_seen_period_key").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    sessionCount: integer("session_count").notNull().default(0),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("project_scope_entries_instance_key_unique").on(
+      table.pluginInstanceId,
+      table.scopeKey,
+    ),
+    index("project_scope_entries_pending_idx").on(
+      table.tenantId,
+      table.partnerId,
+      table.status,
+    ),
+  ],
+);
+
 export const pluginDiagnosticEvents = pgTable(
   "plugin_diagnostic_events",
   {

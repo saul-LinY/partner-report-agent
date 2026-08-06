@@ -52,6 +52,16 @@ import {
   type CollectionPeriod,
   type ProjectPolicy,
 } from "./scan.js";
+import {
+  authorizedProjectThreads,
+  discoverProjectScopes,
+  loadLocalProjectScope,
+  mergeDiscoveredRoots,
+  mergeRemoteProjectScope,
+  saveLocalProjectScope,
+  scopeIsActive,
+  type RemoteProjectScopePolicy,
+} from "./project-scope.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -82,6 +92,8 @@ type ThreadSummary = {
   updatedAt: string | number | null;
 };
 
+type ScopedThreadSummary = ThreadSummary & { scopeKey: string };
+
 type RunCounts = {
   discovered: number;
   read: number;
@@ -111,7 +123,7 @@ type RunManifest = {
   force: boolean;
   period: CollectionPeriod;
   projects: ProjectPolicy[];
-  queue: ThreadSummary[];
+  queue: ScopedThreadSummary[];
   cursor: number;
   knownSessions: Record<string, KnownSession>;
   counts: RunCounts;
@@ -164,6 +176,17 @@ async function fetchPolicy() {
     );
   }
   return policy;
+}
+
+async function fetchProjectScope() {
+  return authenticatedRequest<RemoteProjectScopePolicy>("/v1/project-scope");
+}
+
+function cacheRemoteProjectScope(remote: RemoteProjectScopePolicy) {
+  const local = loadLocalProjectScope(remote.pluginInstanceId);
+  const merged = mergeRemoteProjectScope(local, remote);
+  saveLocalProjectScope(merged);
+  return merged;
 }
 
 function scheduledTaskConfig() {
@@ -440,10 +463,23 @@ async function postCollectionStatus(
 
 async function collectStart() {
   const config = loadConfig()!;
-  const policy = await fetchPolicy();
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  let localScope = cacheRemoteProjectScope(remoteScope);
   if (!policy.currentPeriod)
     throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
       code: "REPORT_PERIOD_MISSING",
+    });
+  if (!remoteScope.identityConfirmed)
+    return output({
+      status: "feishu_identity_confirmation_required",
+      periodKey: policy.currentPeriod.period_key,
+      read: 0,
+      discovered: 0,
+      message:
+        "请先在飞书身份卡中确认审核身份。确认前不会扫描项目或读取 Session 内容。",
     });
   const runId = randomUUID();
   const runStartedAt = new Date().toISOString();
@@ -484,22 +520,72 @@ async function collectStart() {
     .filter((value): value is ThreadSummary => Boolean(value));
   const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
   const currentSessionId = process.env.CODEX_THREAD_ID;
-  const allowed = summaries.filter(
+  const metadataEligible = summaries.filter(
     (summary) =>
       summary.id !== currentSessionId &&
       !excludedSessionIds.has(summary.id) &&
       !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
       !isPluginSystemThread(summary as unknown as Record<string, unknown>),
   );
-  const queue = flag("force")
-    ? allowed
-    : allowed.filter((summary) =>
+  const inWindow = flag("force")
+    ? metadataEligible
+    : metadataEligible.filter((summary) =>
         threadIsInScanWindow(
           summary.updatedAt,
           window.scanStartsAt,
           window.scanEndsAt,
         ),
       );
+  const discovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    inWindow,
+  );
+  let registeredScope: RemoteProjectScopePolicy;
+  try {
+    registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
+      "/v1/project-scope/candidates",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          periodKey: policy.currentPeriod.period_key,
+          candidates: discovery.candidates.map((candidate) => ({
+            scopeKey: candidate.scopeKey,
+            displayName: candidate.displayName,
+            sessionCount: candidate.sessionCount,
+          })),
+        }),
+      },
+    );
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  localScope = mergeDiscoveredRoots(
+    mergeRemoteProjectScope(localScope, registeredScope),
+    discovery.candidates,
+  );
+  saveLocalProjectScope(localScope);
+  const queue: ScopedThreadSummary[] = authorizedProjectThreads(
+    inWindow,
+    discovery.threadScopes,
+    localScope.entries,
+  );
+
+  if (!localScope.initialized) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    return output({
+      status: "project_scope_approval_required",
+      periodKey: policy.currentPeriod.period_key,
+      policyVersion: localScope.version,
+      pendingProjects: localScope.entries.filter(
+        (entry) => entry.status === "pending",
+      ).length,
+      read: 0,
+      message:
+        "项目采集范围尚未审批，未读取任何 Session 内容。请在飞书卡片中完成审批。",
+    });
+  }
   let state: {
     sessions: Array<{ sessionKey: string; contentHash: string }>;
   };
@@ -535,8 +621,11 @@ async function collectStart() {
       ignored: 0,
       unchanged: 0,
       cachedIgnored: 0,
-      outsideWindow: allowed.length - queue.length,
-      excluded: summaries.length - allowed.length,
+      outsideWindow: metadataEligible.length - inWindow.length,
+      excluded:
+        summaries.length -
+        metadataEligible.length +
+        (inWindow.length - queue.length),
       failedRead: 0,
       failedExtract: 0,
     },
@@ -831,7 +920,11 @@ function collectSkip() {
 async function status() {
   const config = loadConfig(false);
   if (!config) return output({ status: "not_connected" });
-  const policy = await fetchPolicy();
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  const projectScope = cacheRemoteProjectScope(remoteScope);
   const localState = loadCollectionState(config.pluginInstanceId);
   const state = policy.currentPeriod
     ? await authenticatedRequest<{ sessions: unknown[] }>(
@@ -851,6 +944,82 @@ async function status() {
     lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,
     excludedSessionCount: config.excludedSessionIds.length,
     excludedPathCount: config.excludedPaths.length,
+    projectScopeVersion: projectScope.version,
+    projectScopeInitialized: projectScope.initialized,
+    allowedProjectCount: projectScope.entries.filter((entry) =>
+      scopeIsActive(entry),
+    ).length,
+    pendingProjectCount: projectScope.entries.filter(
+      (entry) => entry.status === "pending",
+    ).length,
+    deniedProjectCount: projectScope.entries.filter(
+      (entry) => entry.status === "denied",
+    ).length,
+  });
+}
+
+async function projectScopeList() {
+  const remote = await fetchProjectScope();
+  const local = cacheRemoteProjectScope(remote);
+  output({
+    status: "project_scope",
+    version: local.version,
+    initialized: local.initialized,
+    projects: local.entries.map((entry) => ({
+      scopeKey: entry.scopeKey,
+      name: entry.displayName,
+      permission: entry.status,
+      active: scopeIsActive(entry),
+      effectiveFrom: entry.effectiveFrom,
+      firstSeenPeriodKey: entry.firstSeenPeriodKey,
+      sessionCount: entry.sessionCount,
+    })),
+  });
+}
+
+async function changeProjectScope(decision: "allow" | "deny") {
+  const remote = await fetchProjectScope();
+  const scopeKey = option("scope-key")?.trim();
+  const projectName = option("project")?.trim().toLocaleLowerCase("zh-CN");
+  let selected = remote.entries.filter((entry) => {
+    if (flag("all-pending")) return entry.status === "pending";
+    if (scopeKey) return entry.scopeKey === scopeKey;
+    if (projectName)
+      return entry.displayName.toLocaleLowerCase("zh-CN") === projectName;
+    return false;
+  });
+  if (!scopeKey && !projectName && !flag("all-pending"))
+    throw new Error(
+      "需要 --project <项目名>、--scope-key <key> 或 --all-pending。",
+    );
+  if (projectName && selected.length > 1)
+    throw new Error(
+      "存在同名项目，请先 project-scope-list，再用 --scope-key 指定。",
+    );
+  if (selected.length === 0) throw new Error("没有找到匹配的项目权限。");
+  selected = selected.slice(0, 500);
+  const updated = await authenticatedRequest<RemoteProjectScopePolicy>(
+    "/v1/project-scope",
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        baseVersion: remote.version,
+        decisions: selected.map((entry) => ({
+          scopeKey: entry.scopeKey,
+          decision,
+        })),
+      }),
+    },
+  );
+  cacheRemoteProjectScope(updated);
+  output({
+    status: "project_scope_updated",
+    decision,
+    version: updated.version,
+    projects: selected.map((entry) => ({
+      scopeKey: entry.scopeKey,
+      name: entry.displayName,
+    })),
   });
 }
 
@@ -888,6 +1057,9 @@ function help() {
       "collect-submit --run <path> --result <path>",
       "collect-skip --run <path> [--error-code <code>]",
       "status",
+      "project-scope-list",
+      "project-scope-allow --project <name>|--scope-key <key>|--all-pending",
+      "project-scope-deny --project <name>|--scope-key <key>|--all-pending",
       "exclude-session --session-id <id>",
       "include-session --session-id <id>",
       "exclude-path --path <absolute-path>",
@@ -908,6 +1080,9 @@ try {
   else if (command === "collect-submit") await collectSubmit();
   else if (command === "collect-skip") collectSkip();
   else if (command === "status") await status();
+  else if (command === "project-scope-list") await projectScopeList();
+  else if (command === "project-scope-allow") await changeProjectScope("allow");
+  else if (command === "project-scope-deny") await changeProjectScope("deny");
   else if (command === "exclude-session") configureExclusion("session");
   else if (command === "include-session") configureExclusion("session", true);
   else if (command === "exclude-path") configureExclusion("path");

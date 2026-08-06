@@ -41,10 +41,27 @@ const reportActionValueSchema = z
   })
   .strict();
 
+const scopeItemActionValueSchema = z
+  .object({
+    ...actionBase,
+    action: z.enum(["scope_allow", "scope_deny"]),
+    scopeKey: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+const scopeAllActionValueSchema = z
+  .object({
+    ...actionBase,
+    action: z.enum(["scope_allow_all", "scope_deny_all"]),
+  })
+  .strict();
+
 export const feishuActionValueSchema = z.discriminatedUnion("action", [
   bindingActionValueSchema,
   reviewActionValueSchema,
   reportActionValueSchema,
+  scopeItemActionValueSchema,
+  scopeAllActionValueSchema,
 ]);
 
 const regenerationSchema = z
@@ -147,11 +164,35 @@ export const statusCardInputSchema = z
   })
   .strict();
 
+export const scopeCardInputSchema = z
+  .object({
+    deliveryId: opaqueIdSchema,
+    aggregateId: opaqueIdSchema,
+    baseVersion: baseVersionSchema,
+    deviceName: z.string().trim().min(1).max(120),
+    periodLabel: z.string().trim().min(1).max(120).optional(),
+    initial: z.boolean(),
+    projects: z
+      .array(
+        z
+          .object({
+            scopeKey: z.string().regex(/^[a-f0-9]{64}$/),
+            displayName: z.string().trim().min(1).max(120),
+            sessionCount: z.number().int().nonnegative(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(500),
+  })
+  .strict();
+
 export type FeishuActionValue = z.infer<typeof feishuActionValueSchema>;
 export type BindingCardInput = z.input<typeof bindingCardInputSchema>;
 export type ReviewCardInput = z.input<typeof reviewCardInputSchema>;
 export type ReportCardInput = z.input<typeof reportCardInputSchema>;
 export type StatusCardInput = z.input<typeof statusCardInputSchema>;
+export type ScopeCardInput = z.input<typeof scopeCardInputSchema>;
 
 type HeaderTemplate = "blue" | "green" | "red" | "grey";
 
@@ -460,7 +501,7 @@ export function renderBindingCard(rawInput: BindingCardInput): FeishuCard {
     template: "blue",
     elements: [
       markdown(
-        `Partner Report 将把项目卡片和个人报告私发给：\n\n**${recipient}**\n\n确认后，此飞书账号将用于接收和处理对应审核。`,
+        `Partner Report 将把项目卡片和个人报告私发给：\n\n**${recipient}**\n\n确认后，此飞书账号将用于接收和处理对应审核。插件会先上传项目显示名、匿名项目标识、首次发现时间和 Session 数量，用于生成采集范围授权卡；在你允许前不会读取或上传 Session 内容。`,
         "binding_details",
       ),
       callbackButton({
@@ -475,6 +516,109 @@ export function renderBindingCard(rawInput: BindingCardInput): FeishuCard {
       }),
       notation("如账号或邮箱不符，请不要确认并联系管理员。"),
     ],
+  });
+}
+
+export function renderScopeCard(rawInput: ScopeCardInput): FeishuCard {
+  const input = scopeCardInputSchema.parse(rawInput);
+  const baseValue = {
+    deliveryId: input.deliveryId,
+    aggregateId: input.aggregateId,
+    baseVersion: input.baseVersion,
+  };
+  const individuallyReviewable = input.projects.slice(0, 12);
+  const projectSummary = input.projects
+    .map(
+      (project) =>
+        `- **${safeMarkdownText(project.displayName, 100)}**（${project.sessionCount} 个 Session）`,
+    )
+    .join("\n");
+  const elements: FeishuCardElement[] = [
+    markdown(
+      truncateCardText(
+        `${input.initial ? "请选择允许 Partner Report 审核的项目。" : "以下项目是本周期新发现的项目，请确认后续采集范围。"}\n\n${projectSummary}`,
+        FEISHU_CARD_BODY_TEXT_LIMIT,
+      ),
+      "scope_projects",
+    ),
+    notation(
+      input.initial
+        ? "首次授权立即生效；未选择的项目保持待审批且不会读取 Session 内容。"
+        : "本卡片中的新增项目授权从下个周期生效；未处理项目会保持待审批。",
+      "scope_effective_time",
+    ),
+  ];
+
+  for (const project of individuallyReviewable) {
+    elements.push(
+      markdown(
+        `**${safeMarkdownText(project.displayName, 100)}**`,
+        `scope_${project.scopeKey.slice(0, 12)}`,
+      ),
+      buttonRow([
+        callbackButton({
+          elementId: `scope_deny_${project.scopeKey.slice(0, 12)}`,
+          label: "不采集",
+          type: "danger",
+          value: {
+            ...baseValue,
+            action: "scope_deny",
+            scopeKey: project.scopeKey,
+          },
+        }),
+        callbackButton({
+          elementId: `scope_allow_${project.scopeKey.slice(0, 12)}`,
+          label: "允许采集",
+          type: "primary",
+          value: {
+            ...baseValue,
+            action: "scope_allow",
+            scopeKey: project.scopeKey,
+          },
+        }),
+      ]),
+    );
+  }
+  if (input.projects.length > individuallyReviewable.length) {
+    elements.push(
+      notation(
+        `另有 ${input.projects.length - individuallyReviewable.length} 个项目未展开，可使用下方批量操作。`,
+      ),
+    );
+  }
+  elements.push(
+    buttonRow([
+      callbackButton({
+        elementId: "scope_deny_all",
+        label: "全部不采集",
+        type: "danger",
+        value: { ...baseValue, action: "scope_deny_all" },
+        confirm: {
+          title: "确认全部不采集",
+          text: "当前卡片中的全部待审批项目都不会被采集。",
+        },
+      }),
+      callbackButton({
+        elementId: "scope_allow_all",
+        label: "全部允许",
+        type: "primary",
+        value: { ...baseValue, action: "scope_allow_all" },
+        confirm: {
+          title: "确认全部允许",
+          text: input.initial
+            ? "当前卡片中的全部项目将立即允许采集。"
+            : "当前卡片中的全部项目将从下个周期允许采集。",
+        },
+      }),
+    ]),
+  );
+
+  return createCard({
+    title: input.initial ? "确认项目采集范围" : "审批本周期新增项目",
+    subtitle: input.periodLabel ?? input.deviceName,
+    summary: `有 ${input.projects.length} 个项目等待采集授权`,
+    template: "blue",
+    elements,
   });
 }
 

@@ -266,6 +266,67 @@ export async function scheduleDueWeeklyReports(
   return { closedPeriods, aggregationJobs, teamReportJobs };
 }
 
+/** Ensure users with no report/review card still receive pending scope approval. */
+export async function scheduleProjectScopeFallbacks(now = new Date()) {
+  const candidates = await sql<
+    Array<{
+      tenant_id: string;
+      team_id: string;
+      partner_id: string;
+      plugin_instance_id: string;
+      period_key: string;
+    }>
+  >`
+    select psp.tenant_id, psp.team_id, psp.partner_id,
+      psp.plugin_instance_id, rp.period_key
+    from project_scope_policies psp
+    join plugin_instances pi on pi.id = psp.plugin_instance_id
+      and pi.tenant_id = psp.tenant_id and pi.status = 'active'
+    join lateral (
+      select period_key, submission_deadline_at
+      from report_periods
+      where tenant_id = psp.tenant_id and team_id = psp.team_id
+        and status in ('facts_frozen', 'closed')
+        and submission_deadline_at <= ${now.toISOString()}
+      order by starts_at desc
+      limit 1
+    ) rp on true
+    where psp.initialized = true
+      and exists (
+        select 1 from project_scope_entries pse
+        where pse.plugin_instance_id = psp.plugin_instance_id
+          and pse.status = 'pending'
+      )
+      and not exists (
+        select 1 from outbox_events oe
+        where oe.tenant_id = psp.tenant_id
+          and oe.event_type = 'project_scope.period.review_ready'
+          and oe.aggregate_id = psp.plugin_instance_id::text
+          and oe.payload->>'periodKey' = rp.period_key
+      )
+    order by rp.submission_deadline_at, psp.created_at
+    limit 100
+  `;
+  for (const candidate of candidates) {
+    await sql`
+      insert into outbox_events (
+        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+      ) values (
+        ${randomUUID()}, ${candidate.tenant_id},
+        'project_scope.period.review_ready', 'plugin_instance',
+        ${candidate.plugin_instance_id},
+        ${JSON.stringify({
+          teamId: candidate.team_id,
+          partnerId: candidate.partner_id,
+          pluginInstanceId: candidate.plugin_instance_id,
+          periodKey: candidate.period_key,
+        })}::jsonb
+      )
+    `;
+  }
+  return candidates.length;
+}
+
 /** Generate a Team Report once every active Partner has locked their report. */
 export async function scheduleDueTeamReports(onlyPeriodId?: string) {
   const periods = await sql<any[]>`

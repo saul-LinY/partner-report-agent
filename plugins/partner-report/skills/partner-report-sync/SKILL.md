@@ -1,6 +1,6 @@
 ---
 name: partner-report-sync
-description: 连接当前 Codex 与 Partner Report，创建或修复官方定时任务，筛选本地 Codex Session 中有意义的项目贡献并上传中文摘要，管理本地排除项，或检查连接和采集状态。当用户要求连接、配置、采集、同步、排除或检查 Partner Report 时使用。
+description: 连接当前 Codex 与 Partner Report，创建或修复官方定时任务，查询或修改项目采集权限，筛选本地 Codex Session 中有意义的项目贡献并上传中文摘要，管理本地排除项，或检查连接和采集状态。当用户要求连接、配置、授权、采集、同步、排除或检查 Partner Report 时使用。
 ---
 
 # Partner Report 同步
@@ -10,6 +10,8 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 不得直接读取 rollout 或 transcript 文件。不得启动其他模型或执行 `codex exec`；当前聊天或定时任务选择的模型直接完成筛选和摘要。
 
 不得上传原始对话、Codex Session 原始标识、绝对路径、推理、commentary、命令、工具调用、文件改动或凭据。automation memory 不得包含 Session 内容、Fact、证据、端点或标识。
+
+项目采集权限以数据中台为准，本地 `project-scope.json` 只是执行缓存。CLI 可以通过 `thread/list` 读取项目显示名和工作目录等本机元数据来识别权限单元，但未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。候选项目只向中台发送匿名项目键、显示名、首次发现周期和 Session 数量；绝对路径只保存在本机。
 
 ## 定位 CLI
 
@@ -35,6 +37,8 @@ node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <
 
 在 macOS 沙箱环境中，`collect-start`、`collect-submit`、`collect-review`、`status` 等已连接命令需要读取 Keychain。如果当前客户端提供命令权限提升，第一次执行就申请必要权限，不要先进行一次注定失败的无权限探测。`KEYCHAIN_ACCESS_REQUIRED` 表示权限不足，不代表 Token 丢失；不得因此重新绑定或启用明文文件 Token。
 
+连接后会先向 Partner 工作邮箱发送飞书身份确认卡。卡片会说明候选项目最小元数据的用途；用户确认身份后，再通过飞书项目范围卡完成首次授权。首次授权前，定时任务仍可发现候选项目元数据，但不会读取任何 Session 内容。
+
 连接后运行 `scheduled-task-config`。使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。
 
 - 不存在时，严格使用 CLI 返回的全部字段创建任务。
@@ -42,6 +46,25 @@ node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <
 - 不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
 
 首次创建默认使用：新聊天、无项目、每天北京时间 14:30、`gpt-5.5`、轻度推理、所有运行通知。创建后，用户在 Scheduled 面板中的修改始终优先。
+
+## 项目采集权限
+
+用户以自然语言询问当前允许、拒绝或待审批的项目时，运行：
+
+```bash
+node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-list
+```
+
+只按 CLI 返回的项目显示名、状态、生效时间和聚合 Session 数回答，不输出 `scopeKey` 或本机路径，除非存在同名项目且必须请用户区分。用户明确要求修改时，使用精确项目名：
+
+```bash
+node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-allow --project <PROJECT_NAME>
+node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-deny --project <PROJECT_NAME>
+```
+
+同名时先查询，再使用 CLI 返回的 `--scope-key`。只有用户明确说“全部”时才使用 `--all-pending`。所有修改都通过中台版本化 API 完成，再写入本地缓存；不得直接编辑 `project-scope.json`。中台不可达或返回版本冲突时，明确告知修改尚未生效，不得假装只改本地即可。
+
+权限单位只有顶层项目根目录一层：项目内子目录、新 Session 和嵌套 Git 仓库继承同一权限。首次审批的允许项立即生效；首次审批完成后发现的新项目保持 `pending`，本周期内不读取内容，飞书在原有审核链路结束后汇总审批，允许结果从下个周期生效。未处理项目继续保持待审批，后续周期仍可处理。拒绝只阻止未来采集，不删除已经上传的数据。
 
 ## 采集 Session
 
@@ -51,11 +74,16 @@ node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <
 node "<PLUGIN_PATH>/dist/cli.mjs" collect-start
 ```
 
+如果返回 `project_scope_approval_required`，表示候选项目已经登记，但首次飞书授权尚未完成。此状态下 `read` 必须为 `0`，不得继续执行 `collect-next` 或尝试绕过权限；向用户说明需要处理飞书项目范围卡，本次运行以等待授权结束。`--force` 只能扩展时间窗口，绝不能绕过项目权限。
+
+如果返回 `feishu_identity_confirmation_required`，说明用户尚未确认飞书身份卡。此时 CLI 尚未执行项目扫描，`discovered` 和 `read` 都必须为 `0`；向用户说明先确认身份卡，本次运行结束。不得提前登记项目候选或继续采集。
+
 CLI 的本地持久化状态同时服务自动和手动运行：
 
 - 第一次运行只采集运行开始前最近 1 天，并且不早于当前 Report Period 开始时间。
 - 后续运行使用上次完整成功运行的开始时间作为增量游标，并保留 24 小时重叠窗口。
 - 已接收和已忽略 Session 都把匿名 Session key、稳定内容 hash 与处理时间记录在用户稳定数据目录的 `collection-state.json`；Plugin 更新、缓存目录替换或重装不得删除该文件。
+- 项目权限版本、状态和本机根目录映射保存在同一稳定数据目录的 `project-scope.json`；Plugin 更新或缓存替换不得删除。每次采集先从中台拉取最新版本并原子更新该文件。
 - CLI 在把 Session 交给模型前合并本地记录与中台状态。完整问答内容未变化时直接跳过，模型不会再次读取、判断或上传。
 - `contentHash` 只基于当前周期内的完整“用户问题 + 助手最终回答”；标题变化、项目从自动发现变为已登记、项目 ID 或匹配方式变化都不得触发 Revision。
 - 跨运行租约阻止自动任务和手动任务同时提取。
@@ -103,7 +131,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-review --run <RUN_PATH>
 
 `collect-review` 会独立核对队列已清空且不存在当前 Job。审查不通过时返回 `review_failed` 和下一条命令，必须继续执行；只有审查命令返回 `completed` 且不再包含 `nextCommand` 才是终态。最终再检查 `checkpointAdvanced`：为 `true` 才算完整成功；为 `false` 时按失败或部分运行记录，保留 `PARTIAL_COLLECTION_RETRY_REQUIRED`，不得写成功 memory 或推进成功游标。
 
-最终只返回中文的周期 key、采集起止时间、`checkpointAdvanced`、安全 warning 和聚合计数。不得输出 Session 文本、本地文件路径、指纹或标识。`PARTIAL_COLLECTION_RETRY_REQUIRED` 表示本次没有推进成功游标，下一次会继续覆盖旧范围。
+最终只返回中文的周期 key、采集起止时间、`checkpointAdvanced`、安全 warning 和聚合计数。不得输出 Session 文本、本地文件路径、指纹或标识。`PARTIAL_COLLECTION_RETRY_REQUIRED` 表示本次没有推进成功游标，下一次会继续覆盖旧范围。权限待审批的项目数量可以作为安全聚合计数报告，但不得列出本机路径。
 
 CLI 对候选 Session 重新计算采集范围内的完整内容，不维护 Turn 游标。只有 Session 新增或修改完整 Turn 后，其稳定 `contentHash` 才会变化，中台会保存新的当前版本。只向模型提供完整的“用户问题 + 助手最终回答”组合。CLI 升级后的新 hash 口径兼容旧 hash，内容未变时不会因迁移本身触发一次额外 Revision。
 
@@ -135,4 +163,4 @@ node "<PLUGIN_PATH>/dist/cli.mjs" include-path --path <ABSOLUTE_PATH>
 
 ## 状态
 
-用户只询问健康状态时运行 `status`。报告插件版本、连通性、当前周期、中台已接收 Session 数、本地已接收与已忽略 Session 数、采集下界、上次成功运行时间和本地排除数量。当前周期缺失不代表连接失败。
+用户只询问健康状态时运行 `status`。报告插件版本、连通性、当前周期、中台已接收 Session 数、本地已接收与已忽略 Session 数、采集下界、上次成功运行时间、本地排除数量，以及允许、拒绝和待审批项目数量。当前周期缺失不代表连接失败。
