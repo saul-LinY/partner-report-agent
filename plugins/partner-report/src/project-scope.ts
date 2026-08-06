@@ -57,8 +57,8 @@ export type DiscoveredScope = {
   sessionCount: number;
 };
 
-function scopePath() {
-  return resolve(dataDirectory(), "project-scope.json");
+function scopePath(directory = dataDirectory()) {
+  return resolve(directory, "project-scope.json");
 }
 
 function canonicalPath(path: string) {
@@ -100,24 +100,83 @@ function newLocalScope(pluginInstanceId: string): LocalProjectScope {
   };
 }
 
-export function loadLocalProjectScope(
-  pluginInstanceId: string,
-): LocalProjectScope {
-  const path = scopePath();
-  if (!existsSync(path)) return newLocalScope(pluginInstanceId);
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as LocalProjectScope;
-  if (
-    parsed.schemaVersion !== "1.0" ||
-    parsed.pluginInstanceId !== pluginInstanceId ||
-    !/^[a-f0-9]{64}$/.test(parsed.scopeSalt)
-  ) {
-    return newLocalScope(pluginInstanceId);
-  }
-  return parsed;
+export type LocalProjectScopeFileState = "valid" | "missing" | "invalid";
+
+export type LocalProjectScopeInspection = {
+  state: LocalProjectScopeFileState;
+  scope: LocalProjectScope;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function saveLocalProjectScope(scope: LocalProjectScope) {
-  const path = scopePath();
+function isLocalProjectScope(
+  value: unknown,
+  pluginInstanceId: string,
+): value is LocalProjectScope {
+  if (!isRecord(value)) return false;
+  if (
+    value.schemaVersion !== "1.0" ||
+    value.pluginInstanceId !== pluginInstanceId ||
+    typeof value.scopeSalt !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.scopeSalt) ||
+    typeof value.identityConfirmed !== "boolean" ||
+    !Number.isInteger(value.version) ||
+    (value.version as number) < 0 ||
+    typeof value.initialized !== "boolean" ||
+    (value.initializedAt !== null && typeof value.initializedAt !== "string") ||
+    !Array.isArray(value.entries)
+  ) {
+    return false;
+  }
+  return value.entries.every(
+    (entry) =>
+      isRecord(entry) &&
+      typeof entry.scopeKey === "string" &&
+      /^[a-f0-9]{64}$/.test(entry.scopeKey) &&
+      typeof entry.displayName === "string" &&
+      ["pending", "allowed", "denied"].includes(String(entry.status)) &&
+      (entry.effectiveFrom === null ||
+        typeof entry.effectiveFrom === "string") &&
+      typeof entry.firstSeenPeriodKey === "string" &&
+      typeof entry.firstSeenAt === "string" &&
+      typeof entry.lastSeenAt === "string" &&
+      Number.isInteger(entry.sessionCount) &&
+      (entry.sessionCount as number) >= 0 &&
+      (entry.localRoot === null || typeof entry.localRoot === "string"),
+  );
+}
+
+export function inspectLocalProjectScope(
+  pluginInstanceId: string,
+  directory = dataDirectory(),
+): LocalProjectScopeInspection {
+  const path = scopePath(directory);
+  if (!existsSync(path))
+    return { state: "missing", scope: newLocalScope(pluginInstanceId) };
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (isLocalProjectScope(parsed, pluginInstanceId))
+      return { state: "valid", scope: parsed };
+  } catch {
+    // A malformed permission file must trigger a fresh approval, not collection.
+  }
+  return { state: "invalid", scope: newLocalScope(pluginInstanceId) };
+}
+
+export function loadLocalProjectScope(
+  pluginInstanceId: string,
+  directory = dataDirectory(),
+): LocalProjectScope {
+  return inspectLocalProjectScope(pluginInstanceId, directory).scope;
+}
+
+export function saveLocalProjectScope(
+  scope: LocalProjectScope,
+  directory = dataDirectory(),
+) {
+  const path = scopePath(directory);
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(scope, null, 2)}\n`, {
     mode: 0o600,

@@ -2002,6 +2002,112 @@ select:focus {
 .binding-code-copy:hover code {
   text-decoration: underline;
 }
+.scope-loading {
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.scope-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+}
+.scope-summary > div {
+  padding: 12px 16px;
+  border-right: 1px solid var(--line);
+}
+.scope-summary > div:last-child {
+  border-right: 0;
+}
+.scope-summary span,
+.scope-summary strong {
+  display: block;
+}
+.scope-summary span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.scope-summary strong {
+  margin-top: 4px;
+  font-size: 20px;
+}
+.scope-instance-list {
+  border-top: 1px solid var(--line);
+}
+.scope-instance {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.scope-instance-header {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.scope-instance-header strong,
+.scope-instance-header span {
+  display: block;
+}
+.scope-instance-header strong {
+  font-size: 13px;
+}
+.scope-instance-header div > span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.scope-instance-empty {
+  padding: 18px 0;
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+}
+.scope-project-table {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.scope-project-head,
+.scope-project-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 92px 92px 92px 56px;
+  align-items: center;
+  gap: 10px;
+}
+.scope-project-head {
+  min-height: 30px;
+  padding: 0 12px;
+  color: var(--muted);
+  background: var(--surface-alt);
+  font-size: 10px;
+  font-weight: 700;
+}
+.scope-project-row {
+  min-height: 44px;
+  padding: 0 12px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.scope-project-row > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.scope-project-row > span:not(.badge) {
+  color: var(--muted);
+}
+.scope-project-row > span:last-child,
+.scope-project-head > span:last-child {
+  text-align: right;
+}
 .partner-remove-copy {
   color: #43515a;
   line-height: 1.65;
@@ -2793,6 +2899,20 @@ select:focus {
   .plugin-status-row > .plugin-row-actions {
     grid-column: 2 / -1;
     justify-self: start;
+    flex-wrap: wrap;
+  }
+  .scope-summary > div {
+    padding: 10px 12px;
+  }
+  .scope-project-head,
+  .scope-project-row {
+    grid-template-columns: minmax(130px, 1fr) 88px 52px;
+  }
+  .scope-project-head > span:nth-child(3),
+  .scope-project-head > span:nth-child(4),
+  .scope-project-row > span:nth-child(3),
+  .scope-project-row > span:nth-child(4) {
+    display: none;
   }
   .project-review-actions {
     grid-template-columns: 1fr 1fr;

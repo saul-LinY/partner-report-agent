@@ -34,6 +34,8 @@ suite("tenant and role authorization", () => {
     projectA: randomUUID(),
     workItemA: randomUUID(),
     pluginA: randomUUID(),
+    projectScopeAllowedA: randomUUID(),
+    projectScopePendingA: randomUUID(),
     bindingA: randomUUID(),
     feishuBindingA: randomUUID(),
     feishuDeliveryA: randomUUID(),
@@ -72,6 +74,8 @@ suite("tenant and role authorization", () => {
       await tx`insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids) values (${fixture.projectA}, ${fixture.tenantA}, ${fixture.teamA}, 'Fixture Project A', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)`;
       await tx`insert into work_items (id, tenant_id, team_id, partner_id, period_id, review_id, project_id, title, status, fact_ids, payload) values (${fixture.workItemA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.periodA}, ${fixture.reviewA}, ${fixture.projectA}, 'Direct progress item', 'completed', '[]'::jsonb, '{"summary":"Visible in data platform","outcomes":["Done"],"blockers":[],"nextSteps":[],"importance":{"partnerEmphasis":3}}'::jsonb)`;
       await tx`insert into plugin_instances (id, tenant_id, team_id, partner_id, device_name, version, access_token_hash, refresh_token_hash, access_expires_at) values (${fixture.pluginA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'fixture-device', '0.1.0', ${createHash("sha256").update(pluginToken).digest("hex")}, ${createHash("sha256").update(`refresh-${fixture.pluginA}`).digest("hex")}, ${new Date(Date.now() + 3_600_000).toISOString()})`;
+      await tx`insert into project_scope_policies (plugin_instance_id, tenant_id, team_id, partner_id, version, initialized, initialized_at) values (${fixture.pluginA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 3, true, now())`;
+      await tx`insert into project_scope_entries (id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key, display_name, status, effective_from, first_seen_period_key, session_count) values (${fixture.projectScopeAllowedA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, ${"a".repeat(64)}, 'Allowed Fixture Project', 'allowed', now(), 'fixture-current-a', 4), (${fixture.projectScopePendingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, ${"b".repeat(64)}, 'Pending Fixture Project', 'pending', null, 'fixture-current-a', 2)`;
       await tx`insert into plugin_binding_codes (id, tenant_id, team_id, partner_id, code_hash, code_value, code_prefix, label, created_by) values (${fixture.bindingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${createHash("sha256").update(bindingCode).digest("hex")}, ${bindingCode}, 'PR-TEST', 'Fixture Codex', ${fixture.userA})`;
       await tx`insert into feishu_partner_bindings (id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at) values (${fixture.feishuBindingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${feishuAppId}, ${feishuOpenId}, 'active', now())`;
       await tx`insert into feishu_deliveries (id, tenant_id, team_id, partner_id, kind, aggregate_type, aggregate_id, receive_id, receive_id_type, message_id, domain_version, status, idempotency_key, sent_at) values (${fixture.feishuDeliveryA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'review', 'review', ${fixture.reviewA}, ${feishuOpenId}, 'open_id', ${`om_${fixture.feishuDeliveryA}`}, 1, 'sent', ${`review:${feishuAppId}:${fixture.partnerA}:${fixture.reviewA}`}, now())`;
@@ -104,6 +108,8 @@ suite("tenant and role authorization", () => {
       await tx`delete from session_facts where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from session_records where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from collection_runs where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from project_scope_entries where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from project_scope_policies where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from plugin_instances where tenant_id = ${fixture.tenantA} and id != ${fixture.pluginA}`;
       await tx`delete from plugin_instances where id = ${fixture.pluginA}`;
       await tx`delete from work_items where id = ${fixture.workItemA}`;
@@ -569,6 +575,53 @@ suite("tenant and role authorization", () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json().code).toBe("REVIEW_NOT_FOUND");
+  });
+
+  it("lets an Admin inspect only safe project permissions in the current team", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/admin/partners/${fixture.partnerA}/project-scopes`,
+      headers,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      partner: {
+        id: fixture.partnerA,
+        displayName: "Fixture A",
+      },
+      summary: { total: 2, allowed: 1, pending: 1, denied: 0 },
+      instances: expect.arrayContaining([
+        expect.objectContaining({
+          id: fixture.pluginA,
+          deviceName: "fixture-device",
+          policyVersion: 3,
+          initialized: true,
+          projects: [
+            expect.objectContaining({
+              name: "Pending Fixture Project",
+              permission: "pending",
+              sessionCount: 2,
+            }),
+            expect.objectContaining({
+              name: "Allowed Fixture Project",
+              permission: "allowed",
+              sessionCount: 4,
+            }),
+          ],
+        }),
+      ]),
+    });
+    expect(response.body).not.toContain("a".repeat(64));
+    expect(response.body).not.toContain("b".repeat(64));
+    expect(response.body).not.toContain("scopeKey");
+    expect(response.body).not.toContain("localRoot");
+
+    const crossTenant = await app.inject({
+      method: "GET",
+      url: `/v1/admin/partners/${fixture.partnerB}/project-scopes`,
+      headers,
+    });
+    expect(crossTenant.statusCode).toBe(404);
   });
 
   it("does not mutate another tenant's Admin resources", async () => {

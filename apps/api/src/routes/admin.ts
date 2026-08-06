@@ -525,6 +525,109 @@ export async function adminRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get("/v1/admin/partners/:id/project-scopes", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const partners = await sql<
+      Array<{ id: string; display_name: string; email: string }>
+    >`
+      select id, display_name, email from partners
+      where id = ${id} and tenant_id = ${actor.tenantId}
+        and team_id = ${actor.teamId} and status = 'active'
+      limit 1
+    `;
+    const partner = partners[0];
+    if (!partner) throw new ApiError(404, "NOT_FOUND", "Partner 不存在。");
+
+    const [instanceRows, entryRows] = await Promise.all([
+      sql<
+        Array<{
+          id: string;
+          device_name: string;
+          version: string;
+          policy_version: number | null;
+          initialized: boolean | null;
+          initialized_at: Date | null;
+        }>
+      >`
+        select pi.id, pi.device_name, pi.version,
+          psp.version as policy_version, psp.initialized, psp.initialized_at
+        from plugin_instances pi
+        left join project_scope_policies psp
+          on psp.plugin_instance_id = pi.id
+          and psp.tenant_id = pi.tenant_id and psp.team_id = pi.team_id
+          and psp.partner_id = pi.partner_id
+        where pi.tenant_id = ${actor.tenantId} and pi.team_id = ${actor.teamId}
+          and pi.partner_id = ${id} and pi.status = 'active'
+        order by pi.created_at desc
+      `,
+      sql<
+        Array<{
+          plugin_instance_id: string;
+          display_name: string;
+          status: "pending" | "allowed" | "denied";
+          effective_from: Date | null;
+          first_seen_period_key: string;
+          first_seen_at: Date;
+          last_seen_at: Date;
+          session_count: number;
+        }>
+      >`
+        select pse.plugin_instance_id, pse.display_name, pse.status,
+          pse.effective_from, pse.first_seen_period_key, pse.first_seen_at,
+          pse.last_seen_at, pse.session_count
+        from project_scope_entries pse
+        join plugin_instances pi on pi.id = pse.plugin_instance_id
+          and pi.tenant_id = pse.tenant_id and pi.team_id = pse.team_id
+          and pi.partner_id = pse.partner_id and pi.status = 'active'
+        where pse.tenant_id = ${actor.tenantId} and pse.team_id = ${actor.teamId}
+          and pse.partner_id = ${id}
+        order by case pse.status
+          when 'pending' then 0 when 'allowed' then 1 else 2 end,
+          pse.display_name, pse.first_seen_at
+      `,
+    ]);
+
+    const instances = instanceRows.map((instance) => ({
+      id: instance.id,
+      deviceName: instance.device_name,
+      version: instance.version,
+      policyVersion: instance.policy_version ?? 0,
+      initialized: instance.initialized ?? false,
+      initializedAt: instance.initialized_at,
+      projects: entryRows
+        .filter((entry) => entry.plugin_instance_id === instance.id)
+        .map((entry) => ({
+          name: entry.display_name,
+          permission: entry.status,
+          effectiveFrom: entry.effective_from,
+          firstSeenPeriodKey: entry.first_seen_period_key,
+          firstSeenAt: entry.first_seen_at,
+          lastSeenAt: entry.last_seen_at,
+          sessionCount: entry.session_count,
+        })),
+    }));
+    const projects = instances.flatMap((instance) => instance.projects);
+
+    return {
+      partner: {
+        id: partner.id,
+        displayName: partner.display_name,
+        email: partner.email,
+      },
+      summary: {
+        total: projects.length,
+        allowed: projects.filter((project) => project.permission === "allowed")
+          .length,
+        pending: projects.filter((project) => project.permission === "pending")
+          .length,
+        denied: projects.filter((project) => project.permission === "denied")
+          .length,
+      },
+      instances,
+    };
+  });
+
   app.post("/v1/admin/partners", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const input = partnerCreateSchema.parse(request.body);

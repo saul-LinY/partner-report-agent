@@ -55,11 +55,12 @@ import {
 import {
   authorizedProjectThreads,
   discoverProjectScopes,
-  loadLocalProjectScope,
+  inspectLocalProjectScope,
   mergeDiscoveredRoots,
   mergeRemoteProjectScope,
   saveLocalProjectScope,
   scopeIsActive,
+  type LocalProjectScope,
   type RemoteProjectScopePolicy,
 } from "./project-scope.js";
 
@@ -183,10 +184,10 @@ async function fetchProjectScope() {
 }
 
 function cacheRemoteProjectScope(remote: RemoteProjectScopePolicy) {
-  const local = loadLocalProjectScope(remote.pluginInstanceId);
-  const merged = mergeRemoteProjectScope(local, remote);
-  saveLocalProjectScope(merged);
-  return merged;
+  const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
+  const scope = mergeRemoteProjectScope(inspection.scope, remote);
+  if (inspection.state === "valid") saveLocalProjectScope(scope);
+  return { ...inspection, scope };
 }
 
 function scheduledTaskConfig() {
@@ -463,11 +464,12 @@ async function postCollectionStatus(
 
 async function collectStart() {
   const config = loadConfig()!;
+  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  const requiresProjectScopeBootstrap = localInspection.state !== "valid";
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope(),
   ]);
-  let localScope = cacheRemoteProjectScope(remoteScope);
   if (!policy.currentPeriod)
     throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
       code: "REPORT_PERIOD_MISSING",
@@ -477,10 +479,32 @@ async function collectStart() {
       status: "feishu_identity_confirmation_required",
       periodKey: policy.currentPeriod.period_key,
       read: 0,
+      uploaded: 0,
       discovered: 0,
       message:
         "请先在飞书身份卡中确认审核身份。确认前不会扫描项目或读取 Session 内容。",
     });
+  let localScope: LocalProjectScope;
+  if (!requiresProjectScopeBootstrap) {
+    localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
+    saveLocalProjectScope(localScope);
+  } else {
+    const bootstrapScope = await authenticatedRequest<RemoteProjectScopePolicy>(
+      "/v1/project-scope/bootstrap",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          baseVersion: remoteScope.version,
+          reason:
+            localInspection.state === "missing"
+              ? "local_scope_missing"
+              : "local_scope_invalid",
+        }),
+      },
+    );
+    localScope = mergeRemoteProjectScope(localInspection.scope, bootstrapScope);
+    saveLocalProjectScope(localScope);
+  }
   const runId = randomUUID();
   const runStartedAt = new Date().toISOString();
   acquireCollectionLease(config.pluginInstanceId, runId);
@@ -536,10 +560,19 @@ async function collectStart() {
           window.scanEndsAt,
         ),
       );
+  const permissionDiscoverySummaries = requiresProjectScopeBootstrap
+    ? metadataEligible.filter((summary) =>
+        threadIsInScanWindow(
+          summary.updatedAt,
+          policy.currentPeriod!.starts_at,
+          window.scanEndsAt,
+        ),
+      )
+    : inWindow;
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
     localScope,
-    inWindow,
+    permissionDiscoverySummaries,
   );
   let registeredScope: RemoteProjectScopePolicy;
   try {
@@ -582,6 +615,7 @@ async function collectStart() {
         (entry) => entry.status === "pending",
       ).length,
       read: 0,
+      uploaded: 0,
       message:
         "项目采集范围尚未审批，未读取任何 Session 内容。请在飞书卡片中完成审批。",
     });
@@ -944,15 +978,21 @@ async function status() {
     lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,
     excludedSessionCount: config.excludedSessionIds.length,
     excludedPathCount: config.excludedPaths.length,
-    projectScopeVersion: projectScope.version,
-    projectScopeInitialized: projectScope.initialized,
-    allowedProjectCount: projectScope.entries.filter((entry) =>
-      scopeIsActive(entry),
-    ).length,
-    pendingProjectCount: projectScope.entries.filter(
+    projectScopeLocalState: projectScope.state,
+    projectScopeVersion: projectScope.scope.version,
+    projectScopeInitialized:
+      projectScope.state === "valid" && projectScope.scope.initialized,
+    projectScopeRequiresApproval:
+      projectScope.state !== "valid" || !projectScope.scope.initialized,
+    allowedProjectCount:
+      projectScope.state === "valid"
+        ? projectScope.scope.entries.filter((entry) => scopeIsActive(entry))
+            .length
+        : 0,
+    pendingProjectCount: projectScope.scope.entries.filter(
       (entry) => entry.status === "pending",
     ).length,
-    deniedProjectCount: projectScope.entries.filter(
+    deniedProjectCount: projectScope.scope.entries.filter(
       (entry) => entry.status === "denied",
     ).length,
   });
@@ -963,9 +1003,11 @@ async function projectScopeList() {
   const local = cacheRemoteProjectScope(remote);
   output({
     status: "project_scope",
-    version: local.version,
-    initialized: local.initialized,
-    projects: local.entries.map((entry) => ({
+    localState: local.state,
+    version: local.scope.version,
+    initialized: local.scope.initialized,
+    requiresApproval: local.state !== "valid" || !local.scope.initialized,
+    projects: local.scope.entries.map((entry) => ({
       scopeKey: entry.scopeKey,
       name: entry.displayName,
       permission: entry.status,
@@ -978,6 +1020,13 @@ async function projectScopeList() {
 }
 
 async function changeProjectScope(decision: "allow" | "deny") {
+  const config = loadConfig()!;
+  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  if (localInspection.state !== "valid")
+    throw Object.assign(
+      new Error("本地采集权限尚未建立，请先运行采集并在飞书完成首次审批。"),
+      { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" },
+    );
   const remote = await fetchProjectScope();
   const scopeKey = option("scope-key")?.trim();
   const projectName = option("project")?.trim().toLocaleLowerCase("zh-CN");
@@ -1011,7 +1060,9 @@ async function changeProjectScope(decision: "allow" | "deny") {
       }),
     },
   );
-  cacheRemoteProjectScope(updated);
+  saveLocalProjectScope(
+    mergeRemoteProjectScope(localInspection.scope, updated),
+  );
   output({
     status: "project_scope_updated",
     decision,

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,7 +6,9 @@ import {
   anonymousProjectScopeKey,
   authorizedProjectThreads,
   discoverProjectScopes,
+  inspectLocalProjectScope,
   mergeRemoteProjectScope,
+  saveLocalProjectScope,
   scopeIsActive,
   type LocalProjectScope,
 } from "./project-scope.js";
@@ -30,6 +32,35 @@ function localScope(
 }
 
 describe("project scope privacy boundary", () => {
+  it("distinguishes valid, missing, and invalid local permission files", () => {
+    const directory = mkdtempSync(
+      resolve(tmpdir(), "partner-report-scope-file-test-"),
+    );
+    try {
+      expect(inspectLocalProjectScope(pluginInstanceId, directory).state).toBe(
+        "missing",
+      );
+      saveLocalProjectScope(localScope(), directory);
+      expect(
+        inspectLocalProjectScope(pluginInstanceId, directory),
+      ).toMatchObject({ state: "valid", scope: { pluginInstanceId } });
+
+      writeFileSync(resolve(directory, "project-scope.json"), "not-json\n");
+      expect(inspectLocalProjectScope(pluginInstanceId, directory).state).toBe(
+        "invalid",
+      );
+      saveLocalProjectScope(localScope(), directory);
+      expect(
+        inspectLocalProjectScope(
+          "22222222-2222-4222-8222-222222222222",
+          directory,
+        ).state,
+      ).toBe("invalid");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("creates stable, installation-scoped anonymous project keys", () => {
     const root = "/private/work/customer-project";
     const first = anonymousProjectScopeKey(

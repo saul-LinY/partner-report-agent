@@ -143,7 +143,7 @@ describe("safe Session input", () => {
       expect.arrayContaining([expect.stringContaining("必须使用简体中文")]),
     );
     expect(job!.expected.production).toMatchObject({
-      skillVersion: "partner-report-sync/0.4.0",
+      skillVersion: "partner-report-sync/0.4.1",
       promptVersion: "2026-08-05.zh-session-value.v3",
     });
     const serialized = JSON.stringify(job);

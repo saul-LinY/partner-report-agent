@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
+  projectScopeBootstrapSchema,
   projectScopeCandidateBatchSchema,
   projectScopeDecisionSchema,
   projectScopeEffectiveFrom,
 } from "./project-scope.js";
 
 describe("project scope policy", () => {
+  it("requires a versioned local bootstrap reason", () => {
+    expect(
+      projectScopeBootstrapSchema.parse({
+        baseVersion: 1,
+        reason: "local_scope_missing",
+      }),
+    ).toEqual({ baseVersion: 1, reason: "local_scope_missing" });
+    expect(() =>
+      projectScopeBootstrapSchema.parse({
+        baseVersion: 0,
+        reason: "plugin_updated",
+      }),
+    ).toThrow();
+  });
+
   it("accepts only anonymous keys and minimal candidate metadata", () => {
     expect(
       projectScopeCandidateBatchSchema.parse({

@@ -11,7 +11,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 不得上传原始对话、Codex Session 原始标识、绝对路径、推理、commentary、命令、工具调用、文件改动或凭据。automation memory 不得包含 Session 内容、Fact、证据、端点或标识。
 
-项目采集权限以数据中台为准，本地 `project-scope.json` 只是执行缓存。CLI 可以通过 `thread/list` 读取项目显示名和工作目录等本机元数据来识别权限单元，但未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。候选项目只向中台发送匿名项目键、显示名、首次发现周期和 Session 数量；绝对路径只保存在本机。
+项目采集权限的正式规则保存在数据中台，本地 `project-scope.json` 保存执行状态、匿名键盐值和本机目录映射；本地文件是采集前的强制隐私门禁。CLI 可以通过 `thread/list` 读取项目显示名和工作目录等本机元数据来识别权限单元，但未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。候选项目只向中台发送匿名项目键、显示名、首次发现周期和 Session 数量；绝对路径只保存在本机。
 
 ## 定位 CLI
 
@@ -74,7 +74,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-deny --project <PROJECT_NAME>
 node "<PLUGIN_PATH>/dist/cli.mjs" collect-start
 ```
 
-如果返回 `project_scope_approval_required`，表示候选项目已经登记，但首次飞书授权尚未完成。此状态下 `read` 必须为 `0`，不得继续执行 `collect-next` 或尝试绕过权限；向用户说明需要处理飞书项目范围卡，本次运行以等待授权结束。`--force` 只能扩展时间窗口，绝不能绕过项目权限。
+如果返回 `project_scope_approval_required`，表示候选项目已经登记，但首次飞书授权尚未完成；也可能是升级后发现本地权限文件缺失或损坏，已经重新发起审批。此状态下 `read` 必须为 `0`，不得继续执行 `collect-next`、轮询或尝试绕过权限；向用户说明需要处理飞书项目范围卡，本次运行以正常等待状态结束。用户审批后，下一次定时运行会自动拉取权限并采集；用户也可以回到普通 Session 说“继续采集”，发起一次新的手动采集。`--force` 只能扩展时间窗口，绝不能绕过项目权限。
 
 如果返回 `feishu_identity_confirmation_required`，说明用户尚未确认飞书身份卡。此时 CLI 尚未执行项目扫描，`discovered` 和 `read` 都必须为 `0`；向用户说明先确认身份卡，本次运行结束。不得提前登记项目候选或继续采集。
 
@@ -83,7 +83,9 @@ CLI 的本地持久化状态同时服务自动和手动运行：
 - 第一次运行只采集运行开始前最近 1 天，并且不早于当前 Report Period 开始时间。
 - 后续运行使用上次完整成功运行的开始时间作为增量游标，并保留 24 小时重叠窗口。
 - 已接收和已忽略 Session 都把匿名 Session key、稳定内容 hash 与处理时间记录在用户稳定数据目录的 `collection-state.json`；Plugin 更新、缓存目录替换或重装不得删除该文件。
-- 项目权限版本、状态和本机根目录映射保存在同一稳定数据目录的 `project-scope.json`；Plugin 更新或缓存替换不得删除。每次采集先从中台拉取最新版本并原子更新该文件。
+- 项目权限版本、状态、匿名键盐值和本机根目录映射保存在同一稳定数据目录的 `project-scope.json`；正常 Plugin 更新或缓存替换不得删除。每次采集先检查该文件，再从中台拉取最新版本并原子更新。
+- 本地权限文件缺失、JSON 损坏、版本不兼容或不属于当前 Plugin Instance 时，不得用中台旧权限静默恢复。`collect-start` 必须让中台废止旧匿名项目映射，使用新的本地盐值从当前周期的 `thread/list` 元数据登记候选项目并发送首次审批卡；这个扩大范围只用于项目识别，实际内容采集仍遵守原增量窗口，审批前 `thread/read` 和上传都必须为 0。
+- `status` 和 `project-scope-list` 只能查询本地状态与中台规则，不能创建缺失的权限文件。权限文件缺失时，权限修改命令也不能代替首次审批。
 - CLI 在把 Session 交给模型前合并本地记录与中台状态。完整问答内容未变化时直接跳过，模型不会再次读取、判断或上传。
 - `contentHash` 只基于当前周期内的完整“用户问题 + 助手最终回答”；标题变化、项目从自动发现变为已登记、项目 ID 或匹配方式变化都不得触发 Revision。
 - 跨运行租约阻止自动任务和手动任务同时提取。
@@ -163,4 +165,4 @@ node "<PLUGIN_PATH>/dist/cli.mjs" include-path --path <ABSOLUTE_PATH>
 
 ## 状态
 
-用户只询问健康状态时运行 `status`。报告插件版本、连通性、当前周期、中台已接收 Session 数、本地已接收与已忽略 Session 数、采集下界、上次成功运行时间、本地排除数量，以及允许、拒绝和待审批项目数量。当前周期缺失不代表连接失败。
+用户只询问健康状态时运行 `status`。报告插件版本、连通性、当前周期、中台已接收 Session 数、本地已接收与已忽略 Session 数、采集下界、上次成功运行时间、本地排除数量，以及允许、拒绝和待审批项目数量。`projectScopeLocalState` 不是 `valid` 或 `projectScopeRequiresApproval` 为 true 时，必须明确说明采集会先等待飞书审批，不能只按中台旧规则描述为已授权。当前周期缺失不代表连接失败。

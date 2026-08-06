@@ -29,6 +29,8 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("必须使用简体中文");
     expect(skill).toContain("用户稳定数据目录中的 CLI 本地状态和中台状态");
     expect(skill).toContain("所有 `nextCommand` 都必须执行");
+    expect(skill).toContain("本地文件是采集前的强制隐私门禁");
+    expect(skill).toContain("下一次定时运行");
     expect(skill).toContain("终态审查");
     expect(skill).not.toContain("continuation-task-config");
     expect(skill).not.toContain("next-local");

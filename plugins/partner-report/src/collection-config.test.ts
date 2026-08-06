@@ -15,6 +15,8 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("采集和终态审查两个阶段");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-review");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("任何 nextCommand");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("本地项目权限文件缺失");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("正常等待终态");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "checkpointAdvanced 为 true 才记录成功",
     );

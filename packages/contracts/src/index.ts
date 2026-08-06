@@ -20,6 +20,7 @@ export const productionMetadataSchema: z.ZodTypeAny = z.object({
     "partner-report-sync/0.2.0",
     "partner-report-sync/0.3.0",
     "partner-report-sync/0.4.0",
+    "partner-report-sync/0.4.1",
     "partner-report-platform/0.2.0",
     "partner-report-platform/0.3.0",
   ]),

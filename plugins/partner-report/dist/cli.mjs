@@ -4078,6 +4078,7 @@ var productionMetadataSchema = external_exports.object({
     "partner-report-sync/0.2.0",
     "partner-report-sync/0.3.0",
     "partner-report-sync/0.4.0",
+    "partner-report-sync/0.4.1",
     "partner-report-platform/0.2.0",
     "partner-report-platform/0.3.0"
   ]),
@@ -4365,7 +4366,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-var PLUGIN_VERSION = "0.4.0";
+var PLUGIN_VERSION = "0.4.1";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 var PERSISTENT_DATA_FILES = [
@@ -4672,12 +4673,14 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
+  "\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0Ccollect-start \u5FC5\u987B\u6839\u636E\u5F53\u524D\u5468\u671F\u7684 Session \u5143\u6570\u636E\u91CD\u65B0\u53D1\u8D77\u98DE\u4E66\u9879\u76EE\u5BA1\u6279\uFF0C\u5E76\u5728\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u524D\u7ED3\u675F\u672C\u6B21\u8FD0\u884C\uFF1B\u7528\u6237\u5BA1\u6279\u540E\u7531\u4E0B\u4E00\u6B21\u5B9A\u65F6\u8FD0\u884C\u6216\u624B\u52A8\u7EE7\u7EED\u91C7\u96C6\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
   "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002",
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
   "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "CLI \u8FD4\u56DE feishu_identity_confirmation_required \u6216 project_scope_approval_required \u4E14\u6CA1\u6709 nextCommand \u65F6\u5C5E\u4E8E\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF0C\u53EA\u62A5\u544A\u9700\u8981\u5904\u7406\u98DE\u4E66\u5361\u7247\uFF0C\u4E0D\u5F97\u5728\u5F53\u524D\u8FD0\u884C\u4E2D\u8F6E\u8BE2\u6216\u7ED5\u8FC7\u6743\u9650\u3002",
   "\u961F\u5217\u6E05\u7A7A\u540E\u5FC5\u987B\u6267\u884C collect-review\uFF1B\u53EA\u6709\u8BE5\u5BA1\u67E5\u547D\u4EE4\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextCommand \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
   "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 CLI \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
   "\u6700\u7EC8\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
@@ -5314,7 +5317,7 @@ function buildSessionJob(input) {
   );
   const observedAt = input.observedAt ?? (/* @__PURE__ */ new Date()).toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.4.0",
+    skillVersion: "partner-report-sync/0.4.1",
     promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0",
     producer: "codex-skill"
@@ -5430,8 +5433,8 @@ import {
   readFileSync as readFileSync3
 } from "node:fs";
 import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
-function scopePath() {
-  return resolve4(dataDirectory(), "project-scope.json");
+function scopePath(directory = dataDirectory()) {
+  return resolve4(directory, "project-scope.json");
 }
 function canonicalPath(path) {
   const absolute = resolve4(path);
@@ -5468,17 +5471,32 @@ function newLocalScope(pluginInstanceId) {
     entries: []
   };
 }
-function loadLocalProjectScope(pluginInstanceId) {
-  const path = scopePath();
-  if (!existsSync4(path)) return newLocalScope(pluginInstanceId);
-  const parsed = JSON.parse(readFileSync3(path, "utf8"));
-  if (parsed.schemaVersion !== "1.0" || parsed.pluginInstanceId !== pluginInstanceId || !/^[a-f0-9]{64}$/.test(parsed.scopeSalt)) {
-    return newLocalScope(pluginInstanceId);
-  }
-  return parsed;
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function saveLocalProjectScope(scope) {
-  const path = scopePath();
+function isLocalProjectScope(value, pluginInstanceId) {
+  if (!isRecord(value)) return false;
+  if (value.schemaVersion !== "1.0" || value.pluginInstanceId !== pluginInstanceId || typeof value.scopeSalt !== "string" || !/^[a-f0-9]{64}$/.test(value.scopeSalt) || typeof value.identityConfirmed !== "boolean" || !Number.isInteger(value.version) || value.version < 0 || typeof value.initialized !== "boolean" || value.initializedAt !== null && typeof value.initializedAt !== "string" || !Array.isArray(value.entries)) {
+    return false;
+  }
+  return value.entries.every(
+    (entry) => isRecord(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string")
+  );
+}
+function inspectLocalProjectScope(pluginInstanceId, directory = dataDirectory()) {
+  const path = scopePath(directory);
+  if (!existsSync4(path))
+    return { state: "missing", scope: newLocalScope(pluginInstanceId) };
+  try {
+    const parsed = JSON.parse(readFileSync3(path, "utf8"));
+    if (isLocalProjectScope(parsed, pluginInstanceId))
+      return { state: "valid", scope: parsed };
+  } catch {
+  }
+  return { state: "invalid", scope: newLocalScope(pluginInstanceId) };
+}
+function saveLocalProjectScope(scope, directory = dataDirectory()) {
+  const path = scopePath(directory);
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync3(temporary, `${JSON.stringify(scope, null, 2)}
 `, {
@@ -5601,10 +5619,10 @@ async function fetchProjectScope() {
   return authenticatedRequest("/v1/project-scope");
 }
 function cacheRemoteProjectScope(remote) {
-  const local = loadLocalProjectScope(remote.pluginInstanceId);
-  const merged = mergeRemoteProjectScope(local, remote);
-  saveLocalProjectScope(merged);
-  return merged;
+  const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
+  const scope = mergeRemoteProjectScope(inspection.scope, remote);
+  if (inspection.state === "valid") saveLocalProjectScope(scope);
+  return { ...inspection, scope };
 }
 function scheduledTaskConfig() {
   output({
@@ -5836,11 +5854,12 @@ async function postCollectionStatus(config, manifest, phase) {
 }
 async function collectStart() {
   const config = loadConfig();
+  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  const requiresProjectScopeBootstrap = localInspection.state !== "valid";
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope()
   ]);
-  let localScope = cacheRemoteProjectScope(remoteScope);
   if (!policy.currentPeriod)
     throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
       code: "REPORT_PERIOD_MISSING"
@@ -5850,9 +5869,28 @@ async function collectStart() {
       status: "feishu_identity_confirmation_required",
       periodKey: policy.currentPeriod.period_key,
       read: 0,
+      uploaded: 0,
       discovered: 0,
       message: "\u8BF7\u5148\u5728\u98DE\u4E66\u8EAB\u4EFD\u5361\u4E2D\u786E\u8BA4\u5BA1\u6838\u8EAB\u4EFD\u3002\u786E\u8BA4\u524D\u4E0D\u4F1A\u626B\u63CF\u9879\u76EE\u6216\u8BFB\u53D6 Session \u5185\u5BB9\u3002"
     });
+  let localScope;
+  if (!requiresProjectScopeBootstrap) {
+    localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
+    saveLocalProjectScope(localScope);
+  } else {
+    const bootstrapScope = await authenticatedRequest(
+      "/v1/project-scope/bootstrap",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          baseVersion: remoteScope.version,
+          reason: localInspection.state === "missing" ? "local_scope_missing" : "local_scope_invalid"
+        })
+      }
+    );
+    localScope = mergeRemoteProjectScope(localInspection.scope, bootstrapScope);
+    saveLocalProjectScope(localScope);
+  }
   const runId = randomUUID();
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
   acquireCollectionLease(config.pluginInstanceId, runId);
@@ -5900,10 +5938,17 @@ async function collectStart() {
       window.scanEndsAt
     )
   );
+  const permissionDiscoverySummaries = requiresProjectScopeBootstrap ? metadataEligible.filter(
+    (summary) => threadIsInScanWindow(
+      summary.updatedAt,
+      policy.currentPeriod.starts_at,
+      window.scanEndsAt
+    )
+  ) : inWindow;
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
     localScope,
-    inWindow
+    permissionDiscoverySummaries
   );
   let registeredScope;
   try {
@@ -5945,6 +5990,7 @@ async function collectStart() {
         (entry) => entry.status === "pending"
       ).length,
       read: 0,
+      uploaded: 0,
       message: "\u9879\u76EE\u91C7\u96C6\u8303\u56F4\u5C1A\u672A\u5BA1\u6279\uFF0C\u672A\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u3002\u8BF7\u5728\u98DE\u4E66\u5361\u7247\u4E2D\u5B8C\u6210\u5BA1\u6279\u3002"
     });
   }
@@ -6280,15 +6326,15 @@ async function status() {
     lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,
     excludedSessionCount: config.excludedSessionIds.length,
     excludedPathCount: config.excludedPaths.length,
-    projectScopeVersion: projectScope.version,
-    projectScopeInitialized: projectScope.initialized,
-    allowedProjectCount: projectScope.entries.filter(
-      (entry) => scopeIsActive(entry)
-    ).length,
-    pendingProjectCount: projectScope.entries.filter(
+    projectScopeLocalState: projectScope.state,
+    projectScopeVersion: projectScope.scope.version,
+    projectScopeInitialized: projectScope.state === "valid" && projectScope.scope.initialized,
+    projectScopeRequiresApproval: projectScope.state !== "valid" || !projectScope.scope.initialized,
+    allowedProjectCount: projectScope.state === "valid" ? projectScope.scope.entries.filter((entry) => scopeIsActive(entry)).length : 0,
+    pendingProjectCount: projectScope.scope.entries.filter(
       (entry) => entry.status === "pending"
     ).length,
-    deniedProjectCount: projectScope.entries.filter(
+    deniedProjectCount: projectScope.scope.entries.filter(
       (entry) => entry.status === "denied"
     ).length
   });
@@ -6298,9 +6344,11 @@ async function projectScopeList() {
   const local = cacheRemoteProjectScope(remote);
   output({
     status: "project_scope",
-    version: local.version,
-    initialized: local.initialized,
-    projects: local.entries.map((entry) => ({
+    localState: local.state,
+    version: local.scope.version,
+    initialized: local.scope.initialized,
+    requiresApproval: local.state !== "valid" || !local.scope.initialized,
+    projects: local.scope.entries.map((entry) => ({
       scopeKey: entry.scopeKey,
       name: entry.displayName,
       permission: entry.status,
@@ -6312,6 +6360,13 @@ async function projectScopeList() {
   });
 }
 async function changeProjectScope(decision) {
+  const config = loadConfig();
+  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  if (localInspection.state !== "valid")
+    throw Object.assign(
+      new Error("\u672C\u5730\u91C7\u96C6\u6743\u9650\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u91C7\u96C6\u5E76\u5728\u98DE\u4E66\u5B8C\u6210\u9996\u6B21\u5BA1\u6279\u3002"),
+      { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" }
+    );
   const remote = await fetchProjectScope();
   const scopeKey = option("scope-key")?.trim();
   const projectName = option("project")?.trim().toLocaleLowerCase("zh-CN");
@@ -6345,7 +6400,9 @@ async function changeProjectScope(decision) {
       })
     }
   );
-  cacheRemoteProjectScope(updated);
+  saveLocalProjectScope(
+    mergeRemoteProjectScope(localInspection.scope, updated)
+  );
   output({
     status: "project_scope_updated",
     decision,

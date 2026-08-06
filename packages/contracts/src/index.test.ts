@@ -8,6 +8,7 @@ import {
   connectivityTestSchema,
   individualReportResultSchema,
   pluginDiagnosticBatchSchema,
+  productionMetadataSchema,
   sessionContributionSchema,
   sessionExtractionResultSchema,
 } from "./index.js";
@@ -59,6 +60,17 @@ describe("plugin diagnostic contract", () => {
 });
 
 describe("session contribution contract", () => {
+  it("keeps accepting the previous plugin version during rollout", () => {
+    expect(
+      productionMetadataSchema.safeParse({
+        skillVersion: "partner-report-sync/0.4.0",
+        promptVersion: "2026-08-05.zh-session-value.v3",
+        schemaVersion: "1.0",
+        producer: "codex-skill",
+      }).success,
+    ).toBe(true);
+  });
+
   it("accepts an anonymous session-level contribution", () => {
     const base = {
       schemaVersion: "1.0",
@@ -169,7 +181,7 @@ describe("session contribution contract", () => {
       contributions: [],
       observedAt: "2026-08-03T05:00:00.000Z",
       production: {
-        skillVersion: "partner-report-sync/0.4.0",
+        skillVersion: "partner-report-sync/0.4.1",
         promptVersion: "2026-08-05.zh-session-value.v2",
         schemaVersion: "1.0",
         producer: "codex-skill",

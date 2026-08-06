@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Save,
   Server,
+  ShieldCheck,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -82,6 +83,39 @@ type PartnerConnection = {
   feishu?: FeishuConnectionOverview;
 };
 
+type ProjectScopePermission = "pending" | "allowed" | "denied";
+
+type AdminProjectScope = {
+  partner: {
+    id: string;
+    displayName: string;
+    email: string;
+  };
+  summary: {
+    total: number;
+    allowed: number;
+    pending: number;
+    denied: number;
+  };
+  instances: Array<{
+    id: string;
+    deviceName: string;
+    version: string;
+    policyVersion: number;
+    initialized: boolean;
+    initializedAt: string | null;
+    projects: Array<{
+      name: string;
+      permission: ProjectScopePermission;
+      effectiveFrom: string | null;
+      firstSeenPeriodKey: string;
+      firstSeenAt: string;
+      lastSeenAt: string;
+      sessionCount: number;
+    }>;
+  }>;
+};
+
 type Overview = {
   team: any;
   partners: any[];
@@ -145,6 +179,21 @@ const reviewStageLabel: Record<
   completed: "审核完成",
 };
 
+const projectScopeLabel: Record<ProjectScopePermission, string> = {
+  allowed: "允许采集",
+  pending: "待审批",
+  denied: "拒绝采集",
+};
+
+const projectScopeTone: Record<
+  ProjectScopePermission,
+  "success" | "warning" | "neutral"
+> = {
+  allowed: "success",
+  pending: "warning",
+  denied: "neutral",
+};
+
 export function AdminConsole() {
   const query = useQuery({
     queryKey: ["admin-overview"],
@@ -172,6 +221,7 @@ function Operations({ data }: { data: Overview }) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [codeFor, setCodeFor] = useState<any | null>(null);
+  const [scopeFor, setScopeFor] = useState<PartnerConnection | null>(null);
   const [removePartner, setRemovePartner] = useState<any | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const refresh = () =>
@@ -357,6 +407,13 @@ function Operations({ data }: { data: Overview }) {
                   <div className="plugin-row-actions">
                     <Button
                       variant="secondary"
+                      icon={<ShieldCheck size={16} />}
+                      onClick={() => setScopeFor(connection)}
+                    >
+                      采集权限
+                    </Button>
+                    <Button
+                      variant="secondary"
                       icon={<KeyRound size={16} />}
                       disabled={!partner}
                       onClick={() =>
@@ -398,6 +455,12 @@ function Operations({ data }: { data: Overview }) {
           onCreated={refresh}
         />
       )}
+      {scopeFor && (
+        <ProjectScopeModal
+          connection={scopeFor}
+          onClose={() => setScopeFor(null)}
+        />
+      )}
       {removePartner && (
         <RemovePartnerModal
           partner={removePartner}
@@ -410,6 +473,124 @@ function Operations({ data }: { data: Overview }) {
       )}
     </div>
   );
+}
+
+function ProjectScopeModal({
+  connection,
+  onClose,
+}: {
+  connection: PartnerConnection;
+  onClose: () => void;
+}) {
+  const query = useQuery({
+    queryKey: ["admin-project-scopes", connection.partnerId],
+    queryFn: () =>
+      api<AdminProjectScope>(
+        `/v1/admin/partners/${connection.partnerId}/project-scopes`,
+      ),
+  });
+  const data = query.data;
+
+  return (
+    <Modal
+      title={`${connection.partnerName} 的采集权限`}
+      onClose={onClose}
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          关闭
+        </Button>
+      }
+    >
+      {query.isLoading ? (
+        <div className="scope-loading">
+          <RefreshCw className="spin" size={18} />
+          <span>正在加载</span>
+        </div>
+      ) : query.isError ? (
+        <ErrorBanner error={query.error} />
+      ) : data ? (
+        <>
+          <div className="scope-summary" aria-label="项目采集权限汇总">
+            <div>
+              <span>允许采集</span>
+              <strong>{data.summary.allowed}</strong>
+            </div>
+            <div>
+              <span>待审批</span>
+              <strong>{data.summary.pending}</strong>
+            </div>
+            <div>
+              <span>拒绝采集</span>
+              <strong>{data.summary.denied}</strong>
+            </div>
+          </div>
+          {data.instances.length === 0 ? (
+            <EmptyState title="尚未连接插件" />
+          ) : (
+            <div className="scope-instance-list">
+              {data.instances.map((instance) => (
+                <section className="scope-instance" key={instance.id}>
+                  <header className="scope-instance-header">
+                    <div>
+                      <strong>{instance.deviceName}</strong>
+                      <span>
+                        v{instance.version} · 权限版本 {instance.policyVersion}
+                      </span>
+                    </div>
+                    <Badge tone={instance.initialized ? "success" : "warning"}>
+                      {instance.initialized ? "首次审批完成" : "等待首次审批"}
+                    </Badge>
+                  </header>
+                  {instance.projects.length === 0 ? (
+                    <div className="scope-instance-empty">尚未发现项目</div>
+                  ) : (
+                    <div className="scope-project-table">
+                      <div className="scope-project-head" aria-hidden="true">
+                        <span>项目</span>
+                        <span>状态</span>
+                        <span>生效时间</span>
+                        <span>首次发现</span>
+                        <span>Session</span>
+                      </div>
+                      {instance.projects.map((project, index) => (
+                        <div
+                          className="scope-project-row"
+                          key={`${project.name}-${project.firstSeenAt}-${index}`}
+                        >
+                          <strong title={project.name}>{project.name}</strong>
+                          <Badge tone={projectScopeTone[project.permission]}>
+                            {projectScopeLabel[project.permission]}
+                          </Badge>
+                          <span>{formatScopeEffectiveAt(project)}</span>
+                          <span>{project.firstSeenPeriodKey}</span>
+                          <span>{project.sessionCount}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ))}
+            </div>
+          )}
+        </>
+      ) : null}
+    </Modal>
+  );
+}
+
+function formatScopeEffectiveAt(project: {
+  permission: ProjectScopePermission;
+  effectiveFrom: string | null;
+}) {
+  if (project.permission === "pending") return "审批后确定";
+  if (project.permission === "denied" || !project.effectiveFrom) return "--";
+  const effectiveAt = new Date(project.effectiveFrom);
+  const label = effectiveAt.toLocaleDateString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Shanghai",
+  });
+  return effectiveAt.getTime() > Date.now() ? `${label} 生效` : "已生效";
 }
 
 function ScheduleSettings({ team }: { team: any }) {
