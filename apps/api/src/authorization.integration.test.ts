@@ -421,6 +421,107 @@ suite("tenant and role authorization", () => {
     }
   });
 
+  it("recovers an existing plugin through an approved device authorization", async () => {
+    const pluginInstanceId = randomUUID();
+    const policyEntryId = randomUUID();
+    const deviceCode = `recovery-device-${randomUUID()}`;
+    let authorizationId: string | null = null;
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at,
+          connectivity_status, connectivity_challenge_hash,
+          connectivity_challenge_expires_at, connectivity_challenge_consumed_at
+        ) values (
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          'Recovery Self Service Device', '0.4.2', ${createHash("sha256").update("old-access").digest("hex")},
+          ${createHash("sha256").update("old-refresh").digest("hex")}, now() - interval '1 hour',
+          'verified', ${createHash("sha256").update("old-challenge").digest("hex")},
+          now() + interval '5 minutes', now()
+        )
+      `;
+      await tx`
+        insert into project_scope_policies (
+          plugin_instance_id, tenant_id, team_id, partner_id, version, initialized, initialized_at
+        ) values (
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          8, true, now()
+        )
+      `;
+      await tx`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
+          display_name, status, effective_from, first_seen_period_key, session_count
+        ) values (
+          ${policyEntryId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${pluginInstanceId}, ${"d".repeat(64)}, 'Self Service Preserved Project',
+          'allowed', now(), 'fixture-current-a', 5
+        )
+      `;
+    });
+
+    try {
+      const started = await app.inject({
+        method: "POST",
+        url: "/v1/plugin-bindings/recovery-authorizations",
+        payload: {
+          pluginInstanceId,
+          deviceName: "Recovery Self Service Device",
+          pluginVersion: "0.4.3",
+          deviceCode,
+        },
+      });
+      expect(started.statusCode).toBe(200);
+      expect(started.json()).toMatchObject({ status: "pending" });
+      const authorizations = await sql<Array<{ id: string }>>`
+        select id from plugin_device_authorizations
+        where plugin_instance_id = ${pluginInstanceId} and status = 'pending'
+      `;
+      authorizationId = authorizations[0]!.id;
+      await sql`
+        update plugin_device_authorizations set status = 'approved', approved_at = now()
+        where id = ${authorizationId}
+      `;
+
+      const exchanged = await app.inject({
+        method: "POST",
+        url: "/v1/plugin-bindings/device-authorizations/token",
+        payload: { deviceCode },
+      });
+      expect(exchanged.statusCode).toBe(200);
+      expect(exchanged.json().pluginInstanceId).toBe(pluginInstanceId);
+      const connectivity = await app.inject({
+        method: "POST",
+        url: "/v1/plugin-instances/me/connectivity-test",
+        headers: { authorization: `Bearer ${exchanged.json().accessToken}` },
+        payload: {
+          challenge: exchanged.json().challenge,
+          pluginVersion: "0.4.3",
+          clientTime: new Date().toISOString(),
+          capabilityVersion: "1.0",
+        },
+      });
+      expect(connectivity.statusCode).toBe(200);
+      const scopes = await sql<Array<{ status: string; version: number }>>`
+        select pse.status, psp.version from project_scope_entries pse
+        join project_scope_policies psp
+          on psp.plugin_instance_id = pse.plugin_instance_id
+        where pse.id = ${policyEntryId}
+      `;
+      expect(scopes).toEqual([{ status: "allowed", version: 8 }]);
+    } finally {
+      if (authorizationId)
+        await sql`delete from feishu_deliveries where aggregate_id = ${authorizationId}`;
+      await sql`delete from outbox_events where aggregate_id = ${authorizationId}`;
+      await sql`delete from plugin_device_authorizations where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from project_scope_entries where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from audit_events where actor_id = ${pluginInstanceId}`;
+      await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+    }
+  });
+
   it("queues Feishu binding after device authorization token exchange", async () => {
     const authorizationId = randomUUID();
     const deviceCode = `device-authorization-${randomUUID()}`;
@@ -441,7 +542,7 @@ suite("tenant and role authorization", () => {
         url: "/v1/plugin-bindings/device-authorizations/token",
         payload: { deviceCode },
       });
-      expect(response.statusCode).toBe(200);
+      expect(response.statusCode, response.body).toBe(200);
       const result = response.json();
       const events = await sql<any[]>`
         select event_type, aggregate_type, aggregate_id, payload

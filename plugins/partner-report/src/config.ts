@@ -10,7 +10,7 @@ import {
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-export const PLUGIN_VERSION = "0.4.2";
+export const PLUGIN_VERSION = "0.4.3";
 
 export type PluginConfig = {
   serverUrl: string;
@@ -21,6 +21,10 @@ export type PluginConfig = {
   connectivityVerifiedAt?: string;
   pendingConnectivityChallenge?: {
     value: string;
+    expiresAt: string;
+  };
+  pendingAuthRecovery?: {
+    requestedAt: string;
     expiresAt: string;
   };
   excludedSessionIds: string[];
@@ -182,7 +186,9 @@ export function saveConfig(config: PluginConfig) {
   }
 }
 
-function keychainService(instanceId: string, kind: "access" | "refresh") {
+type SecretKind = "access" | "refresh" | "recovery";
+
+function keychainService(instanceId: string, kind: SecretKind) {
   return `partner-report:${instanceId}:${kind}`;
 }
 
@@ -193,11 +199,7 @@ function mayUseFileSecrets() {
   );
 }
 
-function saveFileSecret(
-  instanceId: string,
-  kind: "access" | "refresh",
-  value: string,
-) {
+function saveFileSecret(instanceId: string, kind: SecretKind, value: string) {
   if (!mayUseFileSecrets())
     throw new Error("macOS Keychain 不可用，且未允许文件 Token fallback。");
   const path = fallbackSecretsPath();
@@ -211,7 +213,7 @@ function saveFileSecret(
 
 export function saveSecret(
   instanceId: string,
-  kind: "access" | "refresh",
+  kind: SecretKind,
   value: string,
 ) {
   if (
@@ -241,7 +243,7 @@ export function saveSecret(
   saveFileSecret(instanceId, kind, value);
 }
 
-export function loadSecret(instanceId: string, kind: "access" | "refresh") {
+export function loadSecret(instanceId: string, kind: SecretKind) {
   if (
     process.platform === "darwin" &&
     process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
@@ -282,7 +284,7 @@ export function removeSecrets(instanceId: string) {
     process.platform === "darwin" &&
     process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
   ) {
-    for (const kind of ["access", "refresh"] as const) {
+    for (const kind of ["access", "refresh", "recovery"] as const) {
       try {
         execFileSync(
           "security",
@@ -309,5 +311,38 @@ export function removeSecrets(instanceId: string) {
   >;
   delete secrets[`${instanceId}:access`];
   delete secrets[`${instanceId}:refresh`];
+  delete secrets[`${instanceId}:recovery`];
+  writeFileSync(path, `${JSON.stringify(secrets)}\n`, { mode: 0o600 });
+}
+
+export function removeSecret(instanceId: string, kind: SecretKind) {
+  if (
+    process.platform === "darwin" &&
+    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
+  ) {
+    try {
+      execFileSync(
+        "security",
+        [
+          "delete-generic-password",
+          "-a",
+          "partner-report",
+          "-s",
+          keychainService(instanceId, kind),
+        ],
+        { stdio: "ignore" },
+      );
+    } catch {
+      /* already absent */
+    }
+    return;
+  }
+  const path = fallbackSecretsPath();
+  if (!existsSync(path)) return;
+  const secrets = JSON.parse(readFileSync(path, "utf8")) as Record<
+    string,
+    string
+  >;
+  delete secrets[`${instanceId}:${kind}`];
   writeFileSync(path, `${JSON.stringify(secrets)}\n`, { mode: 0o600 });
 }

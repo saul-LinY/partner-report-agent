@@ -401,6 +401,129 @@ describe("FeishuGateway plugin binding automation", () => {
       await sql`delete from tenants where id = ${tenantId}`;
     }
   });
+
+  it("delivers and confirms a plugin credential recovery card", async () => {
+    const tenantId = randomUUID();
+    const teamId = randomUUID();
+    const partnerId = randomUUID();
+    const pluginInstanceId = randomUUID();
+    const authorizationId = randomUUID();
+    const bindingId = randomUUID();
+    const outboxId = randomUUID();
+    const eventId = randomUUID();
+    const appId = `cli_plugin_recovery_${randomUUID()}`;
+    const openId = `ou_${randomUUID()}`;
+    const messageId = `om_${randomUUID()}`;
+    const sendInteractiveCard = vi.fn(async () => ({ messageId }));
+    const updateInteractiveCard = vi.fn(async () => undefined);
+
+    try {
+      await sql`insert into tenants (id, name) values (${tenantId}, 'Plugin recovery automation')`;
+      await sql`
+        insert into teams (id, tenant_id, name)
+        values (${teamId}, ${tenantId}, 'Plugin recovery automation')
+      `;
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${partnerId}, ${tenantId}, ${teamId}, ${`recovery-${partnerId}@example.com`}, 'Recovery User')
+      `;
+      await sql`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at
+        ) values (
+          ${pluginInstanceId}, ${tenantId}, ${teamId}, ${partnerId},
+          'Recovery MacBook', '0.4.3', 'old-access', 'old-refresh', now()
+        )
+      `;
+      await sql`
+        insert into feishu_partner_bindings (
+          id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
+        ) values (
+          ${bindingId}, ${tenantId}, ${teamId}, ${partnerId}, ${appId},
+          ${openId}, 'active', now()
+        )
+      `;
+      await sql`
+        insert into plugin_device_authorizations (
+          id, device_code_hash, user_code, device_name, plugin_version,
+          tenant_id, team_id, partner_id, plugin_instance_id, expires_at
+        ) values (
+          ${authorizationId}, ${`hash-${authorizationId}`}, ${`USER-${authorizationId}`},
+          'Recovery MacBook', '0.4.3', ${tenantId}, ${teamId}, ${partnerId},
+          ${pluginInstanceId}, now() + interval '7 days'
+        )
+      `;
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${outboxId}, ${tenantId}, 'plugin.binding.recovery.requested',
+          'device_authorization', ${authorizationId}, '{}'::jsonb
+        )
+      `;
+      const service = new FeishuDeliveryService({
+        appId,
+        messageClient: { sendInteractiveCard, updateInteractiveCard },
+      });
+      const gateway = new FeishuGateway(
+        { appId, appSecret: "plugin-recovery-automation-secret" },
+        { updateInteractiveCard },
+        service,
+        { tenantIdFilter: tenantId, reviewDeliveryEnabled: false },
+      );
+
+      await expect(gateway.drainOutbox()).resolves.toBe(1);
+      expect(sendInteractiveCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          receiveId: openId,
+          receiveIdType: "open_id",
+        }),
+      );
+      const deliveries = await sql<Array<{ id: string }>>`
+        select id from feishu_deliveries
+        where tenant_id = ${tenantId} and kind = 'recovery'
+          and aggregate_id = ${authorizationId}
+      `;
+      const deliveryId = deliveries[0]!.id;
+      await expect(
+        gateway.acceptCardAction({
+          event_id: eventId,
+          event_type: "card.action.trigger",
+          app_id: appId,
+          operator: { open_id: openId },
+          action: {
+            value: {
+              deliveryId,
+              aggregateId: authorizationId,
+              baseVersion: 1,
+              action: "recovery_confirm",
+            },
+          },
+          context: { open_message_id: messageId },
+        }),
+      ).resolves.toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+      const states = await sql<Array<{ status: string }>>`
+        select status from plugin_device_authorizations where id = ${authorizationId}
+      `;
+      expect(states).toEqual([{ status: "approved" }]);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+    } finally {
+      await sql`delete from feishu_inbox_events where event_id = ${eventId}`;
+      await sql`delete from audit_events where tenant_id = ${tenantId}`;
+      await sql`delete from outbox_events where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
+      await sql`delete from plugin_device_authorizations where id = ${authorizationId}`;
+      await sql`delete from feishu_partner_bindings where id = ${bindingId}`;
+      await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+      await sql`delete from teams where id = ${teamId}`;
+      await sql`delete from tenants where id = ${tenantId}`;
+    }
+  });
 });
 
 describe("FeishuGateway individual report callback", () => {

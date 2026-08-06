@@ -1,0 +1,2 @@
+ALTER TABLE "plugin_device_authorizations" ADD COLUMN "plugin_instance_id" uuid;--> statement-breakpoint
+CREATE INDEX "device_authorization_plugin_instance_idx" ON "plugin_device_authorizations" USING btree ("plugin_instance_id","status");

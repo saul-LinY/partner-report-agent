@@ -37,7 +37,15 @@ node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <
 
 在 macOS 沙箱环境中，`collect-start`、`collect-submit`、`collect-review`、`status` 等已连接命令需要读取 Keychain。如果当前客户端提供命令权限提升，第一次执行就申请必要权限，不要先进行一次注定失败的无权限探测。`KEYCHAIN_ACCESS_REQUIRED` 表示权限不足，不代表 Token 丢失；不得因此重新绑定或启用明文文件 Token。
 
-`REFRESH_TOKEN_INVALID` 表示本机 Keychain 与中台凭据已经失配，不得反复重试，也不得删除 `project-scope.json`。请 Admin 在人员连接状态中点击“重新绑定”生成一次性恢复码，再使用当前中台地址和恢复码执行 `connect`。恢复码会轮换原 Plugin Instance 的凭据，不创建新实例；原有本地权限文件、中台项目权限和飞书身份确认继续有效，不得重新发起首次项目审批。恢复后用户可以在普通 Session 中说“继续采集”立即开始一次新运行，下一次定时任务也会自动恢复采集。
+`REFRESH_TOKEN_INVALID` 表示本机 Keychain 与中台凭据已经失配。CLI 会自动向当前绑定的飞书账号发送连接恢复确认卡，并返回 `auth_recovery_required`；此时不得反复重试、删除 `project-scope.json` 或读取 Session。用户确认后，下一次定时运行会自动领取新凭据、验证连接并继续采集；用户也可以在普通 Session 中说“继续采集”立即执行。恢复只轮换原 Plugin Instance 的凭据，原有本地权限文件、中台项目权限、飞书身份和采集状态继续有效。只有自动恢复无法发起时，才请 Admin 使用“重新绑定”恢复码作为兜底。
+
+用户指出本地保存的中台地址错误或中台地址已经迁移时，使用以下命令只更新地址并验证连接，不得重新绑定：
+
+```bash
+node "<PLUGIN_PATH>/dist/cli.mjs" server-url-set --server <SERVER_URL>
+```
+
+可信测试局域网的 HTTP 地址仍须显式追加 `--allow-insecure-http`。该命令保留 Plugin Instance、Keychain Token、项目权限和采集状态；若验证时发现凭据失配，会继续进入上述飞书自动恢复链路。
 
 连接后会先向 Partner 工作邮箱发送飞书身份确认卡。卡片会说明候选项目最小元数据的用途；用户确认身份后，再通过飞书项目范围卡完成首次授权。首次授权前，定时任务仍可发现候选项目元数据，但不会读取任何 Session 内容。
 
@@ -79,6 +87,8 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-start
 如果返回 `project_scope_approval_required`，表示候选项目已经登记，但首次飞书授权尚未完成；也可能是升级后发现本地权限文件缺失或损坏，已经重新发起审批。此状态下 `read` 必须为 `0`，不得继续执行 `collect-next`、轮询或尝试绕过权限；向用户说明需要处理飞书项目范围卡，本次运行以正常等待状态结束。用户审批后，下一次定时运行会自动拉取权限并采集；用户也可以回到普通 Session 说“继续采集”，发起一次新的手动采集。`--force` 只能扩展时间窗口，绝不能绕过项目权限。
 
 如果返回 `feishu_identity_confirmation_required`，说明用户尚未确认飞书身份卡。此时 CLI 尚未执行项目扫描，`discovered` 和 `read` 都必须为 `0`；向用户说明先确认身份卡，本次运行结束。不得提前登记项目候选或继续采集。
+
+如果返回 `auth_recovery_required`，说明连接恢复卡已发送或仍在等待飞书确认。本次运行是正常等待态，`discovered`、`read` 和 `uploaded` 必须为 `0`，不得继续执行采集命令或轮询。用户确认后，下一次定时运行会自动恢复并继续；不要求用户重新进入旧 Session。
 
 CLI 的本地持久化状态同时服务自动和手动运行：
 

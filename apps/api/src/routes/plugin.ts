@@ -36,6 +36,11 @@ const deviceStartSchema = z.object({
   pluginVersion: z.string().min(1).max(40),
 });
 
+const recoveryStartSchema = deviceStartSchema.extend({
+  pluginInstanceId: z.string().uuid(),
+  deviceCode: z.string().min(20).max(512),
+});
+
 const deviceTokenSchema = z.object({ deviceCode: z.string().min(20) });
 const refreshSchema = z.object({ refreshToken: z.string().min(20) });
 const claimSchema = z.object({
@@ -115,6 +120,7 @@ export async function pluginRoutes(app: FastifyInstance) {
             connectivity_status = 'pending',
             connectivity_challenge_hash = ${connectivity.challengeHash},
             connectivity_challenge_expires_at = ${connectivity.challengeExpiresAt.toISOString()},
+            connectivity_challenge_consumed_at = null,
             last_connectivity_error_code = null, last_connectivity_error_at = null,
             last_error_code = null, retry_count = 0, updated_at = now()
           where id = ${recoveryInstanceId} and tenant_id = ${row.tenant_id}
@@ -214,6 +220,90 @@ export async function pluginRoutes(app: FastifyInstance) {
     };
   });
 
+  app.post("/v1/plugin-bindings/recovery-authorizations", async (request) => {
+    const input = recoveryStartSchema.parse(request.body);
+    const deviceCodeHash = sha256(input.deviceCode);
+    const existing = await sql<any[]>`
+        select id, status, expires_at from plugin_device_authorizations
+        where device_code_hash = ${deviceCodeHash}
+          and plugin_instance_id = ${input.pluginInstanceId}
+          and status in ('pending', 'approved') and expires_at > now()
+        limit 1
+      `;
+    if (existing[0]) {
+      return {
+        status: existing[0].status ?? "pending",
+        expiresAt: existing[0].expires_at,
+      };
+    }
+
+    const id = randomUUID();
+    const code = userCode();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const created = await sql.begin(async (tx) => {
+      const plugins = await tx<any[]>`
+          select pi.id, pi.tenant_id, pi.team_id, pi.partner_id
+          from plugin_instances pi
+          join feishu_partner_bindings fpb
+            on fpb.tenant_id = pi.tenant_id and fpb.team_id = pi.team_id
+            and fpb.partner_id = pi.partner_id and fpb.status = 'active'
+            and fpb.open_id is not null
+            and fpb.app_id = ${process.env.FEISHU_APP_ID ?? ""}
+          where pi.id = ${input.pluginInstanceId} and pi.status = 'active'
+            and pi.device_name = ${input.deviceName}
+          limit 1
+          for update of pi
+        `;
+      const plugin = plugins[0];
+      if (!plugin) return false;
+      const pending = await tx<Array<{ id: string }>>`
+          select id from plugin_device_authorizations
+          where plugin_instance_id = ${input.pluginInstanceId}
+            and status in ('pending', 'approved') and expires_at > now()
+          limit 1
+          for update
+        `;
+      if (pending[0]) return "already_pending" as const;
+      await tx`
+          insert into plugin_device_authorizations (
+            id, device_code_hash, user_code, device_name, plugin_version,
+            tenant_id, team_id, partner_id, plugin_instance_id, expires_at
+          ) values (
+            ${id}, ${deviceCodeHash}, ${code}, ${input.deviceName},
+            ${input.pluginVersion}, ${plugin.tenant_id}, ${plugin.team_id},
+            ${plugin.partner_id}, ${input.pluginInstanceId}, ${expiresAt.toISOString()}
+          )
+        `;
+      await tx`
+          insert into outbox_events (
+            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+          ) values (
+            ${randomUUID()}, ${plugin.tenant_id},
+            'plugin.binding.recovery.requested', 'device_authorization', ${id},
+            ${JSON.stringify({
+              teamId: plugin.team_id,
+              partnerId: plugin.partner_id,
+              pluginInstanceId: input.pluginInstanceId,
+            })}::jsonb
+          )
+        `;
+      return "created" as const;
+    });
+    if (created === "already_pending")
+      throw new ApiError(
+        409,
+        "PLUGIN_RECOVERY_ALREADY_PENDING",
+        "连接恢复申请已经发送，请先在飞书确认。",
+      );
+    if (created !== "created")
+      throw new ApiError(
+        404,
+        "PLUGIN_RECOVERY_NOT_AVAILABLE",
+        "当前插件连接无法通过飞书恢复。",
+      );
+    return { status: "pending", expiresAt };
+  });
+
   app.post(
     "/v1/plugin-bindings/device-authorizations/:userCode/approve",
     async (request) => {
@@ -293,49 +383,87 @@ export async function pluginRoutes(app: FastifyInstance) {
 
       const accessToken = randomToken();
       const refreshToken = randomToken();
-      const pluginInstanceId = randomUUID();
+      const newPluginInstanceId = randomUUID();
       const expiresAt = accessExpiry();
       const connectivity = issueConnectivityChallenge();
-      await sql.begin(async (tx) => {
-        await tx`
-        insert into plugin_instances (
-          id, tenant_id, team_id, partner_id, device_name, version,
-          access_token_hash, refresh_token_hash, access_expires_at,
-          connectivity_status, connectivity_challenge_hash,
-          connectivity_challenge_expires_at
-        ) values (
-          ${pluginInstanceId}, ${authorization.tenant_id}, ${authorization.team_id}, ${authorization.partner_id},
-          ${authorization.device_name}, ${authorization.plugin_version}, ${sha256(accessToken)},
-          ${sha256(refreshToken)}, ${expiresAt.toISOString()}, 'pending',
-          ${connectivity.challengeHash}, ${connectivity.challengeExpiresAt.toISOString()}
-        )
-      `;
-        await tx`
-        update plugin_device_authorizations set status = 'consumed', consumed_at = now()
-        where id = ${authorization.id} and status = 'approved'
-      `;
+      const pluginInstanceId = await sql.begin(async (tx) => {
+        const claimed = await tx<any[]>`
+          update plugin_device_authorizations set status = 'consumed', consumed_at = now()
+          where id = ${authorization.id} and status = 'approved'
+            and consumed_at is null and expires_at > now()
+          returning *
+        `;
+        const current = claimed[0];
+        if (!current) return null;
+        const recoveryInstanceId = current.plugin_instance_id as string | null;
+        let activatedInstanceId: string = newPluginInstanceId;
+        if (recoveryInstanceId) {
+          const recovered = await tx<{ id: string }[]>`
+            update plugin_instances set
+              device_name = ${current.device_name}, version = ${current.plugin_version},
+              access_token_hash = ${sha256(accessToken)},
+              refresh_token_hash = ${sha256(refreshToken)},
+              access_expires_at = ${expiresAt.toISOString()},
+              connectivity_status = 'pending',
+              connectivity_challenge_hash = ${connectivity.challengeHash},
+              connectivity_challenge_expires_at = ${connectivity.challengeExpiresAt.toISOString()},
+              connectivity_challenge_consumed_at = null,
+              last_connectivity_error_code = null, last_connectivity_error_at = null,
+              last_error_code = null, retry_count = 0, updated_at = now()
+            where id = ${recoveryInstanceId} and tenant_id = ${current.tenant_id}
+              and team_id = ${current.team_id} and partner_id = ${current.partner_id}
+              and status = 'active'
+            returning id
+          `;
+          if (!recovered[0])
+            throw new ApiError(
+              409,
+              "PLUGIN_RECOVERY_NOT_AVAILABLE",
+              "原插件连接已失效，无法恢复。",
+            );
+          activatedInstanceId = recovered[0].id;
+        } else {
+          await tx`
+            insert into plugin_instances (
+              id, tenant_id, team_id, partner_id, device_name, version,
+              access_token_hash, refresh_token_hash, access_expires_at,
+              connectivity_status, connectivity_challenge_hash,
+              connectivity_challenge_expires_at
+            ) values (
+              ${activatedInstanceId}, ${current.tenant_id}, ${current.team_id}, ${current.partner_id},
+              ${current.device_name}, ${current.plugin_version}, ${sha256(accessToken)},
+              ${sha256(refreshToken)}, ${expiresAt.toISOString()}, 'pending',
+              ${connectivity.challengeHash}, ${connectivity.challengeExpiresAt.toISOString()}
+            )
+          `;
+        }
         await tx`
         insert into audit_events (
           id, tenant_id, team_id, actor_type, actor_id, action, target_type, target_id, request_id, metadata
         ) values (
-          ${randomUUID()}, ${authorization.tenant_id}, ${authorization.team_id}, 'plugin', ${pluginInstanceId},
-          'plugin.binding.activated', 'plugin_instance', ${pluginInstanceId}, ${request.id}, '{}'::jsonb
+          ${randomUUID()}, ${current.tenant_id}, ${current.team_id}, 'plugin', ${activatedInstanceId},
+          ${recoveryInstanceId ? "plugin.binding.recovered" : "plugin.binding.activated"},
+          'plugin_instance', ${activatedInstanceId}, ${request.id}, '{}'::jsonb
         )
       `;
-        await tx`
+        if (!recoveryInstanceId)
+          await tx`
         insert into outbox_events (
           id, tenant_id, event_type, aggregate_type, aggregate_id, payload
         ) values (
-          ${randomUUID()}, ${authorization.tenant_id}, 'plugin.binding.claimed',
-          'partner', ${authorization.partner_id},
+          ${randomUUID()}, ${current.tenant_id}, 'plugin.binding.claimed',
+          'partner', ${current.partner_id},
           ${JSON.stringify({
-            teamId: authorization.team_id,
-            partnerId: authorization.partner_id,
-            pluginInstanceId,
+            teamId: current.team_id,
+            partnerId: current.partner_id,
+            pluginInstanceId: activatedInstanceId,
           })}::jsonb
         )
       `;
+        return activatedInstanceId;
       });
+      if (!pluginInstanceId)
+        throw new ApiError(409, "DEVICE_CODE_CONSUMED", "设备授权已使用。");
       return {
         accessToken,
         refreshToken,

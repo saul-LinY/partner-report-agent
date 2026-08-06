@@ -26,6 +26,13 @@ const bindingActionValueSchema = z
   })
   .strict();
 
+const recoveryActionValueSchema = z
+  .object({
+    ...actionBase,
+    action: z.literal("recovery_confirm"),
+  })
+  .strict();
+
 const reviewActionValueSchema = z
   .object({
     ...actionBase,
@@ -58,6 +65,7 @@ const scopeAllActionValueSchema = z
 
 export const feishuActionValueSchema = z.discriminatedUnion("action", [
   bindingActionValueSchema,
+  recoveryActionValueSchema,
   reviewActionValueSchema,
   reportActionValueSchema,
   scopeItemActionValueSchema,
@@ -79,6 +87,16 @@ export const bindingCardInputSchema = z
     baseVersion: baseVersionSchema,
     recipientName: z.string().trim().min(1).max(120).optional(),
     email: z.string().trim().email().max(320),
+  })
+  .strict();
+
+export const recoveryCardInputSchema = z
+  .object({
+    deliveryId: opaqueIdSchema,
+    aggregateId: opaqueIdSchema,
+    baseVersion: baseVersionSchema,
+    deviceName: z.string().trim().min(1).max(120),
+    expiresAt: z.string().datetime(),
   })
   .strict();
 
@@ -189,6 +207,7 @@ export const scopeCardInputSchema = z
 
 export type FeishuActionValue = z.infer<typeof feishuActionValueSchema>;
 export type BindingCardInput = z.input<typeof bindingCardInputSchema>;
+export type RecoveryCardInput = z.input<typeof recoveryCardInputSchema>;
 export type ReviewCardInput = z.input<typeof reviewCardInputSchema>;
 export type ReportCardInput = z.input<typeof reportCardInputSchema>;
 export type StatusCardInput = z.input<typeof statusCardInputSchema>;
@@ -515,6 +534,44 @@ export function renderBindingCard(rawInput: BindingCardInput): FeishuCard {
         },
       }),
       notation("如账号或邮箱不符，请不要确认并联系管理员。"),
+    ],
+  });
+}
+
+export function renderRecoveryCard(rawInput: RecoveryCardInput): FeishuCard {
+  const input = recoveryCardInputSchema.parse(rawInput);
+  const value = feishuActionValueSchema.parse({
+    deliveryId: input.deliveryId,
+    action: "recovery_confirm",
+    aggregateId: input.aggregateId,
+    baseVersion: input.baseVersion,
+  });
+  return createCard({
+    title: "确认恢复 Partner Report 连接",
+    subtitle: input.deviceName,
+    summary: "请确认恢复 Partner Report 插件连接",
+    template: "blue",
+    elements: [
+      markdown(
+        `设备 **${safeMarkdownText(input.deviceName, 120)}** 的连接凭据已失效。确认后只会轮换此设备的连接凭据，原有项目采集权限、飞书身份和采集记录都会保留。`,
+        "recovery_description",
+      ),
+      notation(
+        `申请有效期至 ${safeMarkdownText(input.expiresAt, 80)}。未确认前插件不会读取或上传 Session 内容。`,
+        "recovery_expiry",
+      ),
+      buttonRow([
+        callbackButton({
+          elementId: "recovery_confirm",
+          label: "确认恢复连接",
+          type: "primary",
+          value,
+          confirm: {
+            title: "确认恢复连接",
+            text: "确认后，插件会在下次运行时自动领取新凭据并继续采集。",
+          },
+        }),
+      ]),
     ],
   });
 }

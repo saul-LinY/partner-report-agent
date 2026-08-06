@@ -101,7 +101,7 @@ type OutboxRow = {
 };
 
 type DeliveryRetryRow = FeishuDeliveryScope & {
-  kind: "binding" | "scope" | "review" | "report";
+  kind: "binding" | "recovery" | "scope" | "review" | "report";
   aggregateId: string;
 };
 
@@ -121,8 +121,9 @@ function callbackResponse(
 
 function expectedDeliveryKind(
   action: FeishuActionValue["action"],
-): "binding" | "scope" | "review" | "report" {
+): "binding" | "recovery" | "scope" | "review" | "report" {
   if (action === "binding_confirm") return "binding";
+  if (action === "recovery_confirm") return "recovery";
   if (action.startsWith("scope_")) return "scope";
   return action.startsWith("review_") ? "review" : "report";
 }
@@ -249,7 +250,7 @@ export class FeishuGateway {
     }
     if (
       !this.reviewDeliveryEnabled &&
-      actionValue.data.action !== "binding_confirm"
+      !["binding_confirm", "recovery_confirm"].includes(actionValue.data.action)
     ) {
       return callbackResponse("error", "当前服务仅开放身份绑定。");
     }
@@ -327,7 +328,7 @@ export class FeishuGateway {
           where published_at is null
           and (${this.tenantIdFilter}::uuid is null or tenant_id = ${this.tenantIdFilter})
           and (
-            event_type = 'plugin.binding.claimed'
+            event_type in ('plugin.binding.claimed', 'plugin.binding.recovery.requested')
             or (
               ${this.reviewDeliveryEnabled}
               and event_type in (
@@ -351,7 +352,7 @@ export class FeishuGateway {
             select 1 from feishu_deliveries deferred
             where deferred.tenant_id = outbox_events.tenant_id
               and deferred.aggregate_id = outbox_events.aggregate_id
-              and deferred.kind in ('scope', 'review', 'report')
+              and deferred.kind in ('recovery', 'scope', 'review', 'report')
               and deferred.status = 'deferred'
               and deferred.receive_id_type = 'email'
               and not exists (
@@ -404,14 +405,14 @@ export class FeishuGateway {
           tenant_id: string;
           team_id: string;
           partner_id: string;
-          kind: "binding" | "scope" | "review" | "report";
+          kind: "binding" | "recovery" | "scope" | "review" | "report";
           aggregate_id: string;
         }>
       >`
         select d.tenant_id, d.team_id, d.partner_id, d.kind, d.aggregate_id
         from feishu_deliveries d
         where (${this.tenantIdFilter}::uuid is null or d.tenant_id = ${this.tenantIdFilter})
-        and (${includeReviewDeliveries} or d.kind = 'binding')
+        and (${includeReviewDeliveries} or d.kind in ('binding', 'recovery'))
         and ((
           d.kind = 'binding' and d.message_id is null and (
             d.status = 'pending'
@@ -419,7 +420,7 @@ export class FeishuGateway {
             or (d.status = 'sending' and d.last_attempt_at < now() - interval '2 minutes')
           )
         ) or (
-          d.kind in ('scope', 'review', 'report') and (
+          d.kind in ('recovery', 'scope', 'review', 'report') and (
             (
               d.status = 'deferred' and exists (
                 select 1 from feishu_partner_bindings b
@@ -434,7 +435,14 @@ export class FeishuGateway {
               and d.last_attempt_at < now() - interval '2 minutes'
             )
           ) and (
-            (d.kind = 'review' and exists (
+            (d.kind = 'recovery' and exists (
+              select 1 from plugin_device_authorizations pda
+              where pda.id::text = d.aggregate_id
+                and pda.tenant_id = d.tenant_id and pda.team_id = d.team_id
+                and pda.partner_id = d.partner_id and pda.status = 'pending'
+                and pda.expires_at > now()
+            ))
+            or (d.kind = 'review' and exists (
               select 1 from reviews r
               where r.id::text = d.aggregate_id and r.tenant_id = d.tenant_id
                 and r.team_id = d.team_id and r.partner_id = d.partner_id
@@ -473,6 +481,23 @@ export class FeishuGateway {
         };
         if (retry.kind === "binding") {
           await this.deliveries.sendBindingCardForScope(retry);
+        } else if (retry.kind === "recovery") {
+          const authorizations = await this.database<
+            Array<{ device_name: string; expires_at: Date | string }>
+          >`
+            select device_name, expires_at from plugin_device_authorizations
+            where id = ${retry.aggregateId} and tenant_id = ${retry.tenantId}
+              and team_id = ${retry.teamId} and partner_id = ${retry.partnerId}
+              and status = 'pending' and expires_at > now()
+            limit 1
+          `;
+          if (authorizations[0])
+            await this.deliveries.deliverRecovery({
+              ...retry,
+              authorizationId: retry.aggregateId,
+              deviceName: authorizations[0].device_name,
+              expiresAt: new Date(authorizations[0].expires_at).toISOString(),
+            });
         } else if (retry.kind === "review") {
           await this.deliveries.deliverReview({
             ...retry,
@@ -535,6 +560,11 @@ export class FeishuGateway {
 
     if (event.value.action === "binding_confirm") {
       await this.confirmBinding(row.event_id, event, delivery);
+      return;
+    }
+
+    if (event.value.action === "recovery_confirm") {
+      await this.confirmRecovery(row.event_id, event, delivery);
       return;
     }
 
@@ -888,6 +918,70 @@ export class FeishuGateway {
     }
   }
 
+  private async confirmRecovery(
+    requestId: string,
+    event: StoredCardAction,
+    delivery: FeishuActionDelivery,
+  ): Promise<void> {
+    const actor: DomainActor = {
+      actorType: "feishu",
+      actorId: event.operatorOpenId,
+      userId: delivery.partnerUserId,
+      tenantId: delivery.tenantId,
+      teamId: delivery.teamId,
+      partnerId: delivery.partnerId,
+    };
+    await this.database.begin(async (transaction) => {
+      const rows = await transaction<Array<{ id: string }>>`
+        select pda.id from plugin_device_authorizations pda
+        join plugin_instances pi
+          on pi.id = pda.plugin_instance_id and pi.tenant_id = pda.tenant_id
+          and pi.team_id = pda.team_id and pi.partner_id = pda.partner_id
+          and pi.status = 'active'
+        where pda.id = ${event.value.aggregateId}
+          and pda.tenant_id = ${delivery.tenantId}
+          and pda.team_id = ${delivery.teamId}
+          and pda.partner_id = ${delivery.partnerId}
+          and pda.status = 'pending' and pda.expires_at > now()
+        for update of pda
+      `;
+      if (!rows[0])
+        throw new ApiError(
+          409,
+          "PLUGIN_RECOVERY_EXPIRED",
+          "此连接恢复申请已失效，请等待插件重新发起。",
+        );
+      await transaction`
+        update plugin_device_authorizations set
+          status = 'approved', approved_at = now()
+        where id = ${rows[0].id} and status = 'pending'
+      `;
+      await transaction`
+        update feishu_deliveries set status = 'confirmed', updated_at = now()
+        where id = ${delivery.deliveryId} and tenant_id = ${delivery.tenantId}
+          and team_id = ${delivery.teamId} and partner_id = ${delivery.partnerId}
+      `;
+      await this.insertAudit(
+        transaction,
+        requestId,
+        actor,
+        "plugin.binding.recovery.confirmed",
+        "device_authorization",
+        rows[0].id,
+        {},
+      );
+    });
+    await this.messageClient.updateInteractiveCard({
+      messageId: event.messageId,
+      card: renderStatusCard({
+        kind: "locked",
+        title: "插件连接恢复已确认",
+        message:
+          "新凭据已获授权。插件会在下次定时运行时自动恢复；也可以回到原 Session 说“继续采集”立即执行。",
+      }),
+    });
+  }
+
   private async reflectExpectedError(
     row: InboxRow,
     error: ApiError,
@@ -908,6 +1002,16 @@ export class FeishuGateway {
         messageId: delivery.messageId,
         card: renderErrorCard({ message: error.message }),
       });
+      return;
+    }
+    if (kind === "recovery") {
+      const result = await this.deliveries.patchRecoveryStatus({
+        ...delivery,
+        authorizationId: event.value.aggregateId,
+        card: renderErrorCard({ message: error.message }),
+      });
+      if (deliveryNeedsStatusRetry(result))
+        throw new Error("FEISHU_STATUS_PATCH_DEFERRED");
       return;
     }
 
@@ -975,6 +1079,35 @@ export class FeishuGateway {
       await this.deliveries.sendBindingCardForScope(scope);
       // Delivery failures are persisted and retried by retryDueDeliveries.
       return true;
+    }
+
+    if (event.event_type === "plugin.binding.recovery.requested") {
+      const rows = await this.database<
+        Array<{
+          tenant_id: string;
+          team_id: string;
+          partner_id: string;
+          device_name: string;
+          expires_at: Date | string;
+        }>
+      >`
+        select tenant_id, team_id, partner_id, device_name, expires_at
+        from plugin_device_authorizations
+        where id = ${event.aggregate_id} and tenant_id = ${event.tenant_id}
+          and status = 'pending' and expires_at > now()
+        limit 1
+      `;
+      const authorization = rows[0];
+      if (!authorization) return true;
+      const result = await this.deliveries.deliverRecovery({
+        tenantId: authorization.tenant_id,
+        teamId: authorization.team_id,
+        partnerId: authorization.partner_id,
+        authorizationId: event.aggregate_id,
+        deviceName: authorization.device_name,
+        expiresAt: new Date(authorization.expires_at).toISOString(),
+      });
+      return !deliveryNeedsStatusRetry(result);
     }
 
     if (

@@ -7,6 +7,7 @@ import {
   renderBindingCard,
   renderErrorCard,
   renderLockedCard,
+  renderRecoveryCard,
   renderReportCard,
   renderReviewCard,
   renderScopeCard,
@@ -109,6 +110,26 @@ describe("Feishu JSON 2.0 cards", () => {
         baseVersion: 1,
       },
     ]);
+  });
+
+  it("renders a connection recovery callback without changing permissions", () => {
+    const card = renderRecoveryCard({
+      deliveryId: ids.deliveryId,
+      aggregateId: ids.aggregateId,
+      baseVersion: 1,
+      deviceName: "Saul MacBook",
+      expiresAt: "2026-08-13T12:00:00.000Z",
+    });
+
+    expect(callbackValues(card)).toEqual([
+      {
+        deliveryId: ids.deliveryId,
+        action: "recovery_confirm",
+        aggregateId: ids.aggregateId,
+        baseVersion: 1,
+      },
+    ]);
+    expect(JSON.stringify(card)).toContain("原有项目采集权限");
   });
 
   it("renders project scope decisions with versioned item and bulk actions", () => {

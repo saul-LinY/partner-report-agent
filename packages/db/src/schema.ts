@@ -396,6 +396,7 @@ export const deviceAuthorizations = pgTable(
     tenantId: uuid("tenant_id").references(() => tenants.id),
     teamId: uuid("team_id").references(() => teams.id),
     partnerId: uuid("partner_id").references(() => partners.id),
+    pluginInstanceId: uuid("plugin_instance_id"),
     status: text("status").notNull().default("pending"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
@@ -407,6 +408,10 @@ export const deviceAuthorizations = pgTable(
   (table) => [
     uniqueIndex("device_authorization_code_unique").on(table.deviceCodeHash),
     uniqueIndex("device_authorization_user_code_unique").on(table.userCode),
+    index("device_authorization_plugin_instance_idx").on(
+      table.pluginInstanceId,
+      table.status,
+    ),
   ],
 );
 

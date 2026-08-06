@@ -3,6 +3,7 @@ import { z } from "zod";
 import { sqlClient as defaultDatabase } from "@partner-report/db";
 import {
   renderBindingCard,
+  renderRecoveryCard,
   renderReportCard,
   renderReviewCard,
   renderScopeCard,
@@ -23,7 +24,8 @@ export type FeishuDeliveryScope = {
   partnerId: string;
 };
 
-export type FeishuDeliveryKind = "binding" | "scope" | "review" | "report";
+export type FeishuDeliveryKind =
+  "binding" | "recovery" | "scope" | "review" | "report";
 
 export type FeishuDeliveryOutcome = "sent" | "updated" | "deferred" | "skipped";
 
@@ -100,7 +102,12 @@ export type ScopeDeliveryView = FeishuDeliveryScope & {
 export type FeishuActionDelivery = FeishuDeliveryScope & {
   deliveryId: string;
   kind: FeishuDeliveryKind;
-  aggregateType: "partner" | "project_scope" | "review" | "individual_report";
+  aggregateType:
+    | "partner"
+    | "device_authorization"
+    | "project_scope"
+    | "review"
+    | "individual_report";
   aggregateId: string;
   messageId: string;
   receiveId: string;
@@ -162,7 +169,13 @@ type MessageClient = Pick<
 
 const emailSchema = z.string().trim().email().max(320);
 const identifierSchema = z.string().trim().min(1).max(256);
-const deliveryKindSchema = z.enum(["binding", "scope", "review", "report"]);
+const deliveryKindSchema = z.enum([
+  "binding",
+  "recovery",
+  "scope",
+  "review",
+  "report",
+]);
 const webOriginSchema = z
   .string()
   .trim()
@@ -190,6 +203,7 @@ function safeDailyProgress(
 }
 
 function aggregateType(kind: Exclude<FeishuDeliveryKind, "binding">) {
+  if (kind === "recovery") return "device_authorization";
   if (kind === "scope") return "project_scope";
   return kind === "review" ? "review" : "individual_report";
 }
@@ -580,6 +594,29 @@ export class FeishuDeliveryService {
     );
   }
 
+  async deliverRecovery(
+    input: FeishuDeliveryScope & {
+      authorizationId: string;
+      deviceName: string;
+      expiresAt: string;
+    },
+  ) {
+    return this.deliverAggregate(
+      "recovery",
+      input,
+      input.authorizationId,
+      1,
+      (deliveryId) =>
+        renderRecoveryCard({
+          deliveryId,
+          aggregateId: input.authorizationId,
+          baseVersion: 1,
+          deviceName: input.deviceName,
+          expiresAt: input.expiresAt,
+        }),
+    );
+  }
+
   async deliverReview(input: FeishuDeliveryScope & { reviewId: string }) {
     const view = await this.loadReviewDeliveryView(input, input.reviewId);
     if (!view)
@@ -651,6 +688,20 @@ export class FeishuDeliveryService {
       "scope",
       input,
       input.aggregateId,
+      input.card,
+    );
+  }
+
+  async patchRecoveryStatus(
+    input: FeishuDeliveryScope & {
+      authorizationId: string;
+      card: FeishuCard;
+    },
+  ) {
+    return this.patchAggregateStatus(
+      "recovery",
+      input,
+      input.authorizationId,
       input.card,
     );
   }
@@ -771,7 +822,11 @@ export class FeishuDeliveryService {
         partner_id: string;
         kind: FeishuDeliveryKind;
         aggregate_type:
-          "partner" | "project_scope" | "review" | "individual_report";
+          | "partner"
+          | "device_authorization"
+          | "project_scope"
+          | "review"
+          | "individual_report";
         aggregate_id: string;
         message_id: string;
         receive_id: string;
@@ -1077,7 +1132,7 @@ export class FeishuDeliveryService {
   }
 
   private async deliverAggregate(
-    kind: "scope" | "review" | "report",
+    kind: "recovery" | "scope" | "review" | "report",
     scope: FeishuDeliveryScope,
     aggregateId: string,
     domainVersion: number,
@@ -1153,7 +1208,7 @@ export class FeishuDeliveryService {
   }
 
   private async patchAggregateStatus(
-    kind: "scope" | "review" | "report",
+    kind: "recovery" | "scope" | "review" | "report",
     scope: FeishuDeliveryScope,
     aggregateId: string,
     card: FeishuCard,
@@ -1203,7 +1258,7 @@ export class FeishuDeliveryService {
   }
 
   private async upsertAggregateDelivery(input: {
-    kind: "scope" | "review" | "report";
+    kind: "recovery" | "scope" | "review" | "report";
     scope: FeishuDeliveryScope;
     aggregateId: string;
     domainVersion: number;
