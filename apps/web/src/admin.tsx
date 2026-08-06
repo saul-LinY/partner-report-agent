@@ -14,6 +14,7 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
+import { Link } from "wouter";
 import { api } from "./api.js";
 import { selectCurrentOpenPeriod } from "./period-selection.js";
 import {
@@ -229,6 +230,7 @@ function Operations({ data }: { data: Overview }) {
           label="中台任务异常"
           value={modelFailures}
           tone={modelFailures ? "danger" : undefined}
+          href="/admin/jobs"
         />
       </div>
 
@@ -507,20 +509,29 @@ function Metric({
   label,
   value,
   tone,
+  href,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string | number;
   tone?: string | undefined;
+  href?: string | undefined;
 }) {
-  return (
-    <div className={`ops-metric ${tone ?? ""}`}>
+  const content = (
+    <>
       <span>{icon}</span>
       <div>
         <small>{label}</small>
         <strong>{value}</strong>
       </div>
-    </div>
+    </>
+  );
+  return href ? (
+    <Link className={`ops-metric ops-metric-link ${tone ?? ""}`} href={href}>
+      {content}
+    </Link>
+  ) : (
+    <div className={`ops-metric ${tone ?? ""}`}>{content}</div>
   );
 }
 function formatTime(value: string | null) {

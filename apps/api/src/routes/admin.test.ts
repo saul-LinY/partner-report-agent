@@ -3,10 +3,19 @@ import {
   feishuBindingState,
   feishuConnectionState,
   feishuDeliveryState,
+  nextManualRetryMaxAttempts,
   partnerReviewProgress,
   pluginConnectivityStatus,
   pluginRunStatus,
 } from "./admin.js";
+
+describe("Admin agent job retry", () => {
+  it("preserves the attempt history and grants a fresh retry window", () => {
+    expect(nextManualRetryMaxAttempts(3, 3)).toBe(6);
+    expect(nextManualRetryMaxAttempts(2, 10)).toBe(10);
+    expect(nextManualRetryMaxAttempts(11, 10)).toBe(14);
+  });
+});
 
 const now = new Date("2026-08-02T09:00:00.000Z");
 const base = {

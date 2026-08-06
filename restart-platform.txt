@@ -1,110 +1,48 @@
-Partner Report 中台重启速查
-===========================
+Partner Report 项目启动速查
+============================
 
-仓库目录：
+项目目录：
 
-  /Users/saul/PROJECT/partner-report-agent
-
-
-一、最常用重启流程
-------------------
-
-如果服务本来就是在当前 Terminal 跑的，先按 Ctrl+C 停掉。
-
-然后在 Terminal 里复制执行：
-
-cd /Users/saul/PROJECT/partner-report-agent
-lsof -nP -iTCP:4310 -iTCP:4311 -sTCP:LISTEN
-
-如果上面命令看到 4310 或 4311 被 node / vite 占用，先停止对应 PID：
-
-  kill <PID>
-
-确认端口空了以后继续执行：
-
-docker compose restart postgres
-docker compose ps
-./node_modules/.bin/concurrently -k -n api,web,worker -c cyan,green,yellow "npm run start -w @partner-report/api" "npm run dev -w @partner-report/web" "npm run start -w @partner-report/worker"
-
-说明：
-
-  - 最后一条命令会一直运行，Terminal 需要保持打开。
-  - docker compose ps 里 postgres 状态看到 healthy 就正常。
-  - 不要杀 PostgreSQL 的 Docker 进程；数据库只用 docker compose restart postgres 管理。
-
-正常启动日志会看到：
-
-  VITE ready
-  Web: http://localhost:4311/
-  Web: http://172.20.10.14:4311/
-  API: Server listening at http://127.0.0.1:4310
-  API: Server listening at http://172.20.10.14:4310
-  Worker: Partner Report worker started.
+  cd /Users/saul/PROJECT/partner-report-agent
 
 
-二、健康检查
-------------
-
-新开一个 Terminal 执行：
-
-  curl -sS http://127.0.0.1:4310/health
-  curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4311/
-
-正常结果：
-
-  - API 返回 {"status":"ok", ...}
-  - Web 返回 200
-
-
-三、如果端口被占用
-------------------
-
-最常用流程里已经包含这一步。单独排查时可以用下面命令。
-
-查看占用 4310 / 4311 的进程：
-
-  lsof -nP -iTCP:4310 -iTCP:4311 -sTCP:LISTEN
-
-停止对应的 node / vite 进程：
-
-  kill <PID>
-
-注意：
-
-  - 不要杀 PostgreSQL 的 Docker 进程。
-  - 数据库只用 docker compose restart postgres 管理。
-
-
-四、如果局域网 IP 变化
+首次启动或数据库重建后
 ----------------------
 
-先查看当前 IP：
+npm install
+docker compose up -d postgres
+npm run db:migrate
+npm run db:seed
+npm run dev
 
-  ifconfig | grep "inet 172."
-
-如果 IP 不是 172.20.10.14，更新根目录 .env 里的三项：
-
-  WEB_ORIGIN=http://新的IP:4311
-  VITE_API_URL=http://新的IP:4310
-  PARTNER_REPORT_SERVER_URL=http://新的IP:4310
-
-改完后重新执行“最常用重启流程”。
+`npm run dev` 会同时启动 API、Web 和 Worker，终端需要保持运行。
 
 
-五、常用入口
-------------
+日常启动
+--------
 
-当前局域网入口：
+  docker compose up -d postgres
+  npm run dev
 
-  Web: http://172.20.10.14:4311
-  API: http://172.20.10.14:4310
 
-本机入口：
+访问与检查
+----------
 
   Web: http://127.0.0.1:4311
   API: http://127.0.0.1:4310
+
+  curl -sS http://127.0.0.1:4310/health
+  curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4311/
 
 默认账号：
 
   saul@laien.io
   123456
+
+
+停止项目
+--------
+
+先在运行 `npm run dev` 的终端按 Ctrl+C，再执行：
+
+  docker compose stop postgres

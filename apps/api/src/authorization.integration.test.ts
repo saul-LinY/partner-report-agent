@@ -38,6 +38,8 @@ suite("tenant and role authorization", () => {
     feishuBindingA: randomUUID(),
     feishuDeliveryA: randomUUID(),
     jobA: randomUUID(),
+    retryJobA: randomUUID(),
+    clearJobA: randomUUID(),
     tenantB: randomUUID(),
     teamB: randomUUID(),
     userB: randomUUID(),
@@ -74,6 +76,8 @@ suite("tenant and role authorization", () => {
       await tx`insert into feishu_partner_bindings (id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at) values (${fixture.feishuBindingA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${feishuAppId}, ${feishuOpenId}, 'active', now())`;
       await tx`insert into feishu_deliveries (id, tenant_id, team_id, partner_id, kind, aggregate_type, aggregate_id, receive_id, receive_id_type, message_id, domain_version, status, idempotency_key, sent_at) values (${fixture.feishuDeliveryA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'review', 'review', ${fixture.reviewA}, ${feishuOpenId}, 'open_id', ${`om_${fixture.feishuDeliveryA}`}, 1, 'sent', ${`review:${feishuAppId}:${fixture.partnerA}:${fixture.reviewA}`}, now())`;
       await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, plugin_instance_id, type, status, idempotency_key, input_payload, output_payload, completed_at) values (${fixture.jobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, 'RESCAN_SESSIONS', 'COMPLETED', ${`fixture:${fixture.jobA}`}, '{}'::jsonb, '{"completed":true,"batchIds":[]}'::jsonb, now())`;
+      await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, plugin_instance_id, type, status, idempotency_key, input_payload, attempt_count, max_attempts, error_code, error_message) values (${fixture.retryJobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, 'RESCAN_SESSIONS', 'FAILED', ${`fixture:${fixture.retryJobA}`}, '{}'::jsonb, 3, 3, 'SCAN_FAILED', 'Fixture scan failed')`;
+      await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, type, status, idempotency_key, input_payload, attempt_count, max_attempts, error_code, error_message) values (${fixture.clearJobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'GENERATE_TEAM_REPORT', 'RETRY_WAIT', ${`fixture:${fixture.clearJobA}`}, '{}'::jsonb, 1, 3, 'CENTRAL_GENERATION_FAILED', 'Fixture generation failed')`;
       await tx`insert into report_periods (id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, submission_deadline_at, timezone) values (${fixture.periodB}, ${fixture.tenantB}, ${fixture.teamB}, 'fixture-period', '2026-08-01T00:00:00Z', '2026-08-08T00:00:00Z', '2026-08-08T00:00:00Z', '2026-08-10T02:00:00Z', 'Asia/Shanghai')`;
       await tx`insert into reviews (id, tenant_id, team_id, partner_id, period_id) values (${fixture.reviewB}, ${fixture.tenantB}, ${fixture.teamB}, ${fixture.partnerB}, ${fixture.periodB})`;
       await tx`insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids) values (${fixture.projectB}, ${fixture.tenantB}, ${fixture.teamB}, 'Tenant B Project', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)`;
@@ -584,6 +588,73 @@ suite("tenant and role authorization", () => {
       headers,
     });
     expect(response.statusCode).toBe(404);
+  });
+
+  it("shows failed job context and lets an Admin retry it", async () => {
+    const list = await app.inject({
+      method: "GET",
+      url: "/v1/admin/agent-jobs?status=FAILED",
+      headers,
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toContainEqual(
+      expect.objectContaining({
+        id: fixture.retryJobA,
+        partner_name: "Fixture A",
+        plugin_device_name: "fixture-device",
+        error_code: "SCAN_FAILED",
+        error_message: "Fixture scan failed",
+      }),
+    );
+
+    const retry = await app.inject({
+      method: "POST",
+      url: `/v1/admin/agent-jobs/${fixture.retryJobA}/retry`,
+      headers,
+    });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json()).toMatchObject({
+      id: fixture.retryJobA,
+      status: "PENDING",
+      attempt_count: 3,
+      max_attempts: 6,
+    });
+
+    const repeated = await app.inject({
+      method: "POST",
+      url: `/v1/admin/agent-jobs/${fixture.retryJobA}/retry`,
+      headers,
+    });
+    expect(repeated.statusCode).toBe(409);
+    expect(repeated.json().code).toBe("JOB_NOT_RETRYABLE");
+
+    const crossTenant = await app.inject({
+      method: "POST",
+      url: `/v1/admin/agent-jobs/${fixture.jobB}/retry`,
+      headers,
+    });
+    expect(crossTenant.statusCode).toBe(404);
+
+    const clear = await app.inject({
+      method: "POST",
+      url: `/v1/admin/agent-jobs/${fixture.clearJobA}/clear`,
+      headers,
+    });
+    expect(clear.statusCode).toBe(200);
+    expect(clear.json()).toMatchObject({
+      id: fixture.clearJobA,
+      status: "CANCELLED",
+      error_code: "CENTRAL_GENERATION_FAILED",
+      error_message: "Fixture generation failed",
+    });
+
+    const repeatedClear = await app.inject({
+      method: "POST",
+      url: `/v1/admin/agent-jobs/${fixture.clearJobA}/clear`,
+      headers,
+    });
+    expect(repeatedClear.statusCode).toBe(409);
+    expect(repeatedClear.json().code).toBe("JOB_NOT_CLEARABLE");
   });
 
   it("ingests one Session Contribution idempotently and replaces changed content", async () => {

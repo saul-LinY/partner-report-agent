@@ -17,6 +17,7 @@ import { FactPreviewPage } from "./facts.js";
 import { TeamReportPage } from "./team-reports.js";
 import { ReviewQueuePage } from "./review-queue.js";
 import { ReportArchivePage } from "./report-archive.js";
+import { AgentJobsPage } from "./agent-jobs.js";
 
 export type Me = {
   userId: string;
@@ -75,7 +76,14 @@ function AuthenticatedApp({ me }: { me: Me }) {
           </div>
         </div>
         <nav>
-          <Link className={location === "/admin" ? "active" : ""} href="/admin">
+          <Link
+            className={
+              location === "/admin" || location === "/admin/jobs"
+                ? "active"
+                : ""
+            }
+            href="/admin"
+          >
             <LayoutDashboard size={18} />
             运行总览
           </Link>
@@ -131,6 +139,9 @@ function AuthenticatedApp({ me }: { me: Me }) {
           </Route>
           <Route path="/admin/facts">
             <FactPreviewPage />
+          </Route>
+          <Route path="/admin/jobs">
+            <AgentJobsPage />
           </Route>
           <Route path="/admin/team-reports/:id">
             <TeamReportPage />

@@ -113,6 +113,13 @@ export function pluginConnectivityStatus(row: {
   return "pending";
 }
 
+export function nextManualRetryMaxAttempts(
+  attemptCount: number,
+  maxAttempts: number,
+) {
+  return Math.max(maxAttempts, attemptCount + 3);
+}
+
 export function pluginRunStatus(row: {
   status: string;
   version: string;
@@ -984,13 +991,18 @@ export async function adminRoutes(app: FastifyInstance) {
       })
       .parse(request.query);
     return sql<any[]>`
-      select id, partner_id, plugin_instance_id, type, status, attempt_count, max_attempts,
-        error_code, lease_until, completed_at, created_at, updated_at
-      from agent_jobs
-      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and (${query.status ?? null}::text is null or status = ${query.status ?? null})
-        and (${query.type ?? null}::text is null or type = ${query.type ?? null})
-      order by created_at desc limit 200
+      select aj.id, aj.partner_id, aj.plugin_instance_id, aj.type, aj.status,
+        aj.attempt_count, aj.max_attempts, aj.error_code, aj.error_message,
+        aj.lease_until, aj.completed_at, aj.created_at, aj.updated_at,
+        p.display_name as partner_name, pi.device_name as plugin_device_name
+      from agent_jobs aj
+      left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
+      left join plugin_instances pi on pi.id = aj.plugin_instance_id
+        and pi.tenant_id = aj.tenant_id
+      where aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
+        and (${query.status ?? null}::text is null or aj.status = ${query.status ?? null})
+        and (${query.type ?? null}::text is null or aj.type = ${query.type ?? null})
+      order by aj.updated_at desc limit 200
     `;
   });
 
@@ -998,9 +1010,15 @@ export async function adminRoutes(app: FastifyInstance) {
     const actor = await requireWebActor(request, "admin");
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const rows = await sql<any[]>`
-      select id, partner_id, plugin_instance_id, type, status, attempt_count, max_attempts,
-        error_code, error_message, lease_until, completed_at, created_at, updated_at
-      from agent_jobs where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+      select aj.id, aj.partner_id, aj.plugin_instance_id, aj.type, aj.status,
+        aj.attempt_count, aj.max_attempts, aj.error_code, aj.error_message,
+        aj.lease_until, aj.completed_at, aj.created_at, aj.updated_at,
+        p.display_name as partner_name, pi.device_name as plugin_device_name
+      from agent_jobs aj
+      left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
+      left join plugin_instances pi on pi.id = aj.plugin_instance_id
+        and pi.tenant_id = aj.tenant_id
+      where aj.id = ${id} and aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
     `;
     if (!rows[0]) throw new ApiError(404, "NOT_FOUND", "任务不存在。");
     return rows[0];
@@ -1074,5 +1092,68 @@ export async function adminRoutes(app: FastifyInstance) {
       );
     await audit(request, actor, "agent_job.cancelled", "agent_job", id);
     return { ok: true };
+  });
+
+  app.post("/v1/admin/agent-jobs/:id/retry", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const job = await sql.begin(async (tx) => {
+      const rows = await tx<any[]>`
+        select id, type, status, attempt_count, max_attempts
+        from agent_jobs
+        where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        for update
+      `;
+      const current = rows[0];
+      if (!current) throw new ApiError(404, "NOT_FOUND", "任务不存在。");
+      if (!["FAILED", "RETRY_WAIT"].includes(current.status))
+        throw new ApiError(
+          409,
+          "JOB_NOT_RETRYABLE",
+          "任务当前不处于失败或等待重试状态。",
+        );
+      const maxAttempts = nextManualRetryMaxAttempts(
+        current.attempt_count,
+        current.max_attempts,
+      );
+      const updated = await tx<any[]>`
+        update agent_jobs set status = 'PENDING', max_attempts = ${maxAttempts},
+          lease_token_hash = null, lease_until = null, completed_at = null,
+          updated_at = now()
+        where id = ${id}
+        returning id, type, status, attempt_count, max_attempts, updated_at
+      `;
+      return updated[0];
+    });
+    await audit(request, actor, "agent_job.retry_requested", "agent_job", id, {
+      type: job.type,
+      attemptCount: job.attempt_count,
+      maxAttempts: job.max_attempts,
+    });
+    return job;
+  });
+
+  app.post("/v1/admin/agent-jobs/:id/clear", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const rows = await sql<any[]>`
+      update agent_jobs set status = 'CANCELLED', lease_token_hash = null,
+        lease_until = null, updated_at = now()
+      where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        and status in ('FAILED', 'RETRY_WAIT')
+      returning id, type, status, error_code, error_message, updated_at
+    `;
+    const job = rows[0];
+    if (!job)
+      throw new ApiError(
+        409,
+        "JOB_NOT_CLEARABLE",
+        "任务当前不处于失败或等待重试状态。",
+      );
+    await audit(request, actor, "agent_job.cleared", "agent_job", id, {
+      type: job.type,
+      errorCode: job.error_code,
+    });
+    return job;
   });
 }
