@@ -91,7 +91,7 @@ export async function pluginRoutes(app: FastifyInstance) {
     const normalizedCode = input.bindingCode.trim().toUpperCase();
     const accessToken = randomToken();
     const refreshToken = randomToken();
-    const pluginInstanceId = randomUUID();
+    const newPluginInstanceId = randomUUID();
     const expiresAt = accessExpiry();
     const connectivity = issueConnectivityChallenge();
 
@@ -103,48 +103,81 @@ export async function pluginRoutes(app: FastifyInstance) {
       `;
       const row = rows[0];
       if (!row) return null;
-      await tx`
-        insert into plugin_instances (
-          id, tenant_id, team_id, partner_id, device_name, version,
-          access_token_hash, refresh_token_hash, access_expires_at,
-          connectivity_status, connectivity_challenge_hash,
-          connectivity_challenge_expires_at
-        ) values (
-          ${pluginInstanceId}, ${row.tenant_id}, ${row.team_id}, ${row.partner_id},
-          ${input.deviceName}, ${input.pluginVersion}, ${sha256(accessToken)},
-          ${sha256(refreshToken)}, ${expiresAt.toISOString()}, 'pending',
-          ${connectivity.challengeHash}, ${connectivity.challengeExpiresAt.toISOString()}
-        )
-      `;
+      const recoveryInstanceId = row.plugin_instance_id as string | null;
+      let pluginInstanceId: string = newPluginInstanceId;
+      if (recoveryInstanceId) {
+        const recovered = await tx<{ id: string }[]>`
+          update plugin_instances set
+            device_name = ${input.deviceName}, version = ${input.pluginVersion},
+            access_token_hash = ${sha256(accessToken)},
+            refresh_token_hash = ${sha256(refreshToken)},
+            access_expires_at = ${expiresAt.toISOString()},
+            connectivity_status = 'pending',
+            connectivity_challenge_hash = ${connectivity.challengeHash},
+            connectivity_challenge_expires_at = ${connectivity.challengeExpiresAt.toISOString()},
+            last_connectivity_error_code = null, last_connectivity_error_at = null,
+            last_error_code = null, retry_count = 0, updated_at = now()
+          where id = ${recoveryInstanceId} and tenant_id = ${row.tenant_id}
+            and team_id = ${row.team_id} and partner_id = ${row.partner_id}
+            and status = 'active'
+          returning id
+        `;
+        if (!recovered[0]) return null;
+        pluginInstanceId = recovered[0].id;
+      } else {
+        await tx`
+          insert into plugin_instances (
+            id, tenant_id, team_id, partner_id, device_name, version,
+            access_token_hash, refresh_token_hash, access_expires_at,
+            connectivity_status, connectivity_challenge_hash,
+            connectivity_challenge_expires_at
+          ) values (
+            ${pluginInstanceId}, ${row.tenant_id}, ${row.team_id}, ${row.partner_id},
+            ${input.deviceName}, ${input.pluginVersion}, ${sha256(accessToken)},
+            ${sha256(refreshToken)}, ${expiresAt.toISOString()}, 'pending',
+            ${connectivity.challengeHash}, ${connectivity.challengeExpiresAt.toISOString()}
+          )
+        `;
+      }
       await tx`
         update plugin_binding_codes set status = 'claimed', plugin_instance_id = ${pluginInstanceId},
           claimed_at = now(), last_used_at = now(), updated_at = now()
         where id = ${row.id}
       `;
+      if (recoveryInstanceId) {
+        await tx`
+          update plugin_binding_codes set status = 'revoked', updated_at = now()
+          where plugin_instance_id = ${recoveryInstanceId} and status = 'active'
+            and id <> ${row.id}
+        `;
+      }
       await tx`
         insert into audit_events (
           id, tenant_id, team_id, actor_type, actor_id, action,
           target_type, target_id, request_id, metadata
         ) values (
           ${randomUUID()}, ${row.tenant_id}, ${row.team_id}, 'plugin', ${pluginInstanceId},
-          'plugin.binding.claimed', 'plugin_binding_code', ${row.id}, ${request.id},
+          ${recoveryInstanceId ? "plugin.binding.recovered" : "plugin.binding.claimed"},
+          'plugin_binding_code', ${row.id}, ${request.id},
           ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
         )
       `;
-      await tx`
-        insert into outbox_events (
-          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-        ) values (
-          ${randomUUID()}, ${row.tenant_id}, 'plugin.binding.claimed',
-          'partner', ${row.partner_id},
-          ${JSON.stringify({
-            teamId: row.team_id,
-            partnerId: row.partner_id,
-            pluginInstanceId,
-          })}::jsonb
-        )
-      `;
-      return row;
+      if (!recoveryInstanceId) {
+        await tx`
+          insert into outbox_events (
+            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+          ) values (
+            ${randomUUID()}, ${row.tenant_id}, 'plugin.binding.claimed',
+            'partner', ${row.partner_id},
+            ${JSON.stringify({
+              teamId: row.team_id,
+              partnerId: row.partner_id,
+              pluginInstanceId,
+            })}::jsonb
+          )
+        `;
+      }
+      return { row, pluginInstanceId };
     });
     if (!binding)
       throw new ApiError(400, "BINDING_CODE_INVALID", "绑定码无效或已使用。");
@@ -152,8 +185,8 @@ export async function pluginRoutes(app: FastifyInstance) {
       accessToken,
       refreshToken,
       expiresAt,
-      pluginInstanceId,
-      partnerId: binding.partner_id,
+      pluginInstanceId: binding.pluginInstanceId,
+      partnerId: binding.row.partner_id,
       challenge: connectivity.challenge,
       challengeExpiresAt: connectivity.challengeExpiresAt,
       connectivityStatus: "pending",
@@ -318,10 +351,15 @@ export async function pluginRoutes(app: FastifyInstance) {
 
   app.post("/v1/plugin-bindings/refresh", async (request) => {
     const input = refreshSchema.parse(request.body);
-    const rows = await sql<any[]>`
-      select * from plugin_instances
+    const accessToken = randomToken();
+    const refreshToken = randomToken();
+    const expiresAt = accessExpiry();
+    const rows = await sql<{ id: string }[]>`
+      update plugin_instances set
+        access_token_hash = ${sha256(accessToken)}, refresh_token_hash = ${sha256(refreshToken)},
+        access_expires_at = ${expiresAt.toISOString()}, updated_at = now()
       where refresh_token_hash = ${sha256(input.refreshToken)} and status = 'active'
-      limit 1
+      returning id
     `;
     const plugin = rows[0];
     if (!plugin)
@@ -330,15 +368,6 @@ export async function pluginRoutes(app: FastifyInstance) {
         "REFRESH_TOKEN_INVALID",
         "Refresh Token 无效或已轮换。",
       );
-    const accessToken = randomToken();
-    const refreshToken = randomToken();
-    const expiresAt = accessExpiry();
-    await sql`
-      update plugin_instances set
-        access_token_hash = ${sha256(accessToken)}, refresh_token_hash = ${sha256(refreshToken)},
-        access_expires_at = ${expiresAt.toISOString()}, updated_at = now()
-      where id = ${plugin.id} and refresh_token_hash = ${sha256(input.refreshToken)}
-    `;
     return {
       accessToken,
       refreshToken,

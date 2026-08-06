@@ -59,6 +59,7 @@ const partnerCreateSchema = z.object({
 
 const bindingCodeSchema = z.object({
   label: z.string().min(1).max(120).default("Codex Plugin"),
+  pluginInstanceId: z.string().uuid().optional(),
 });
 
 const templateSchema = z.object({
@@ -480,6 +481,7 @@ export async function adminRoutes(app: FastifyInstance) {
         verifiedAt: plugin?.connectivity_verified_at ?? null,
         lastUploadAt: plugin?.last_sync_at ?? null,
         deviceName: plugin?.device_name ?? null,
+        pluginInstanceId: plugin?.id ?? null,
         version: plugin?.version ?? null,
         reviewProgress: partnerReviewProgress({
           reviewId: partner.review_id ?? null,
@@ -662,14 +664,31 @@ export async function adminRoutes(app: FastifyInstance) {
     `;
     if (!partners[0])
       throw new ApiError(404, "NOT_FOUND", "Partner 不存在或未启用。");
+    if (input.pluginInstanceId) {
+      const instances = await sql<{ id: string }[]>`
+        select id from plugin_instances
+        where id = ${input.pluginInstanceId} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId} and partner_id = ${id}
+          and status = 'active'
+        limit 1
+      `;
+      if (!instances[0])
+        throw new ApiError(
+          404,
+          "PLUGIN_INSTANCE_NOT_FOUND",
+          "要恢复的插件连接不存在或已失效。",
+        );
+    }
     const code = `PR-${userCode()}`;
     const bindingId = randomUUID();
     await sql`
       insert into plugin_binding_codes (
-        id, tenant_id, team_id, partner_id, code_hash, code_value, code_prefix, label, created_by
+        id, tenant_id, team_id, partner_id, code_hash, code_value, code_prefix,
+        label, plugin_instance_id, created_by
       ) values (
         ${bindingId}, ${actor.tenantId}, ${actor.teamId}, ${id}, ${sha256(code)}, ${code},
-        ${code.slice(0, 7)}, ${input.label}, ${actor.userId}
+        ${code.slice(0, 7)}, ${input.label}, ${input.pluginInstanceId ?? null},
+        ${actor.userId}
       )
     `;
     await audit(
@@ -681,6 +700,7 @@ export async function adminRoutes(app: FastifyInstance) {
       {
         partnerId: id,
         label: input.label,
+        recovery: Boolean(input.pluginInstanceId),
       },
     );
     return {
@@ -688,6 +708,7 @@ export async function adminRoutes(app: FastifyInstance) {
       code,
       codePrefix: code.slice(0, 7),
       label: input.label,
+      recovery: Boolean(input.pluginInstanceId),
     };
   });
 

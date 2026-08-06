@@ -72,13 +72,28 @@ async function refresh(config: PluginConfig) {
   return next;
 }
 
+const refreshes = new Map<string, Promise<PluginConfig>>();
+
+function refreshOnce(config: PluginConfig) {
+  const existing = refreshes.get(config.pluginInstanceId);
+  if (existing) return existing;
+
+  const pending = refresh(config).finally(() => {
+    if (refreshes.get(config.pluginInstanceId) === pending) {
+      refreshes.delete(config.pluginInstanceId);
+    }
+  });
+  refreshes.set(config.pluginInstanceId, pending);
+  return pending;
+}
+
 export async function authenticatedRequest<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
   let config = loadConfig()!;
   if (new Date(config.accessExpiresAt).getTime() < Date.now() + 60_000)
-    config = await refresh(config);
+    config = await refreshOnce(config);
   try {
     return await rawRequest<T>(
       config.serverUrl,
@@ -88,7 +103,7 @@ export async function authenticatedRequest<T>(
     );
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 401) throw error;
-    config = await refresh(config);
+    config = await refreshOnce(config);
     return rawRequest<T>(
       config.serverUrl,
       path,

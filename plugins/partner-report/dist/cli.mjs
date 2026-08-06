@@ -4366,7 +4366,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-var PLUGIN_VERSION = "0.4.1";
+var PLUGIN_VERSION = "0.4.2";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 var PERSISTENT_DATA_FILES = [
@@ -4642,10 +4642,22 @@ async function refresh(config) {
   saveConfig(next);
   return next;
 }
+var refreshes = /* @__PURE__ */ new Map();
+function refreshOnce(config) {
+  const existing = refreshes.get(config.pluginInstanceId);
+  if (existing) return existing;
+  const pending = refresh(config).finally(() => {
+    if (refreshes.get(config.pluginInstanceId) === pending) {
+      refreshes.delete(config.pluginInstanceId);
+    }
+  });
+  refreshes.set(config.pluginInstanceId, pending);
+  return pending;
+}
 async function authenticatedRequest(path, init = {}) {
   let config = loadConfig();
   if (new Date(config.accessExpiresAt).getTime() < Date.now() + 6e4)
-    config = await refresh(config);
+    config = await refreshOnce(config);
   try {
     return await rawRequest(
       config.serverUrl,
@@ -4655,7 +4667,7 @@ async function authenticatedRequest(path, init = {}) {
     );
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 401) throw error;
-    config = await refresh(config);
+    config = await refreshOnce(config);
     return rawRequest(
       config.serverUrl,
       path,

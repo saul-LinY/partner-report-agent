@@ -111,6 +111,8 @@ Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默
 
 Scheduled Task 会使用任务级 `memory.md` 延续运行上下文，它不是按 Session 生成。Plugin Prompt 只允许其中保存运行时间、完成/失败/中断状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、hash、端点或标识。memory 只用于运行摘要；自动与手动采集共享的防重和成功游标以用户稳定目录 `~/.partner-report-data/collection-state.json` 及中台状态为准。项目权限执行状态、匿名键盐值和本机根目录映射保存在同目录的 `project-scope.json`，中台保存版本化的正式规则；正常插件更新或缓存替换不会删除这些文件。若升级后的第一次采集发现权限文件缺失、损坏或不属于当前插件实例，CLI 不会用中台旧权限直接恢复，而会废止旧匿名项目映射、重新发送飞书首次审批卡，并在读取 Session 内容前结束本次运行。审批后下一次定时运行会自动采集，也可以在普通 Session 中说“继续采集”立即发起一次新的运行。
 
+若凭据刷新返回 `REFRESH_TOKEN_INVALID`，Admin 可在人员连接状态中点击“重新绑定”生成一次性恢复码。用户使用当前中台地址和恢复码再次连接时会轮换原 Plugin Instance 的凭据，不创建新实例，也不会清空或重新审批既有项目权限。
+
 Plugin 的 Session 提取指令使用中文，并在上传前强制校验 `title`、`summary` 和 `contributions[].text` 包含中文。JSON 字段名和状态枚举保留英文，以维持 API/Schema 兼容。
 
 手动验证：

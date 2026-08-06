@@ -295,6 +295,132 @@ suite("tenant and role authorization", () => {
     expect(reused.json().code).toBe("BINDING_CODE_INVALID");
   });
 
+  it("recovers credentials on the same plugin instance and preserves project scope", async () => {
+    const pluginInstanceId = randomUUID();
+    const projectScopeId = randomUUID();
+    let bindingId: string | null = null;
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at
+        ) values (
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          'Recovery Device', '0.4.1', ${createHash("sha256").update(`old-access-${pluginInstanceId}`).digest("hex")},
+          ${createHash("sha256").update(`old-refresh-${pluginInstanceId}`).digest("hex")},
+          ${new Date(Date.now() - 60_000).toISOString()}
+        )
+      `;
+      await tx`
+        insert into project_scope_policies (
+          plugin_instance_id, tenant_id, team_id, partner_id,
+          version, initialized, initialized_at
+        ) values (
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          4, true, now()
+        )
+      `;
+      await tx`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
+          display_name, status, effective_from, first_seen_period_key, session_count
+        ) values (
+          ${projectScopeId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${pluginInstanceId}, ${"c".repeat(64)}, 'Preserved Recovery Project',
+          'allowed', now(), 'fixture-current-a', 3
+        )
+      `;
+    });
+
+    try {
+      const generated = await app.inject({
+        method: "POST",
+        url: `/v1/admin/partners/${fixture.partnerA}/binding-codes`,
+        headers,
+        payload: {
+          label: "Recovery Code",
+          pluginInstanceId,
+        },
+      });
+      expect(generated.statusCode).toBe(200);
+      bindingId = generated.json().id;
+      expect(generated.json()).toMatchObject({
+        recovery: true,
+        code: expect.any(String),
+      });
+
+      const claimed = await app.inject({
+        method: "POST",
+        url: "/v1/plugin-bindings/claim",
+        payload: {
+          bindingCode: generated.json().code,
+          deviceName: "Recovery Device",
+          pluginVersion: "0.4.2",
+        },
+      });
+      expect(claimed.statusCode).toBe(200);
+      expect(claimed.json().pluginInstanceId).toBe(pluginInstanceId);
+
+      const scopes = await sql<
+        Array<{ status: string; policy_version: number; initialized: boolean }>
+      >`
+        select pse.status, psp.version as policy_version, psp.initialized
+        from project_scope_entries pse
+        join project_scope_policies psp
+          on psp.plugin_instance_id = pse.plugin_instance_id
+        where pse.plugin_instance_id = ${pluginInstanceId}
+          and pse.id = ${projectScopeId}
+      `;
+      expect(scopes).toEqual([
+        { status: "allowed", policy_version: 4, initialized: true },
+      ]);
+
+      const refreshToken = claimed.json().refreshToken as string;
+      const refreshes = await Promise.all([
+        app.inject({
+          method: "POST",
+          url: "/v1/plugin-bindings/refresh",
+          payload: { refreshToken },
+        }),
+        app.inject({
+          method: "POST",
+          url: "/v1/plugin-bindings/refresh",
+          payload: { refreshToken },
+        }),
+      ]);
+      expect(refreshes.map((response) => response.statusCode).sort()).toEqual([
+        200, 401,
+      ]);
+      const successfulRefresh = refreshes.find(
+        (response) => response.statusCode === 200,
+      )!;
+      const followUp = await app.inject({
+        method: "POST",
+        url: "/v1/plugin-bindings/refresh",
+        payload: { refreshToken: successfulRefresh.json().refreshToken },
+      });
+      expect(followUp.statusCode).toBe(200);
+
+      const recoveryOutbox = await sql<Array<{ count: number }>>`
+        select count(*)::int as count from outbox_events
+        where tenant_id = ${fixture.tenantA}
+          and event_type = 'plugin.binding.claimed'
+          and payload->>'pluginInstanceId' = ${pluginInstanceId}
+      `;
+      expect(recoveryOutbox[0]?.count).toBe(0);
+    } finally {
+      await sql.begin(async (tx) => {
+        if (bindingId) {
+          await tx`delete from plugin_binding_codes where id = ${bindingId}`;
+        }
+        await tx`delete from project_scope_entries where plugin_instance_id = ${pluginInstanceId}`;
+        await tx`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
+        await tx`delete from audit_events where actor_id = ${pluginInstanceId} or target_id = ${bindingId}`;
+        await tx`delete from plugin_instances where id = ${pluginInstanceId}`;
+      });
+    }
+  });
+
   it("queues Feishu binding after device authorization token exchange", async () => {
     const authorizationId = randomUUID();
     const deviceCode = `device-authorization-${randomUUID()}`;

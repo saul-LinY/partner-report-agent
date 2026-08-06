@@ -37,6 +37,8 @@ node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <
 
 在 macOS 沙箱环境中，`collect-start`、`collect-submit`、`collect-review`、`status` 等已连接命令需要读取 Keychain。如果当前客户端提供命令权限提升，第一次执行就申请必要权限，不要先进行一次注定失败的无权限探测。`KEYCHAIN_ACCESS_REQUIRED` 表示权限不足，不代表 Token 丢失；不得因此重新绑定或启用明文文件 Token。
 
+`REFRESH_TOKEN_INVALID` 表示本机 Keychain 与中台凭据已经失配，不得反复重试，也不得删除 `project-scope.json`。请 Admin 在人员连接状态中点击“重新绑定”生成一次性恢复码，再使用当前中台地址和恢复码执行 `connect`。恢复码会轮换原 Plugin Instance 的凭据，不创建新实例；原有本地权限文件、中台项目权限和飞书身份确认继续有效，不得重新发起首次项目审批。恢复后用户可以在普通 Session 中说“继续采集”立即开始一次新运行，下一次定时任务也会自动恢复采集。
+
 连接后会先向 Partner 工作邮箱发送飞书身份确认卡。卡片会说明候选项目最小元数据的用途；用户确认身份后，再通过飞书项目范围卡完成首次授权。首次授权前，定时任务仍可发现候选项目元数据，但不会读取任何 Session 内容。
 
 连接后运行 `scheduled-task-config`。使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。

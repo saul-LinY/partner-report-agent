@@ -61,6 +61,7 @@ type PartnerConnection = {
   partnerId: string;
   partnerName: string;
   partnerEmail: string;
+  pluginInstanceId: string | null;
   connectionState: string;
   verifiedAt: string | null;
   lastUploadAt: string | null;
@@ -311,7 +312,7 @@ function Operations({ data }: { data: Overview }) {
               const codes = data.bindingCodes.filter(
                 (code) =>
                   code.partner_id === connection.partnerId &&
-                  code.status !== "revoked" &&
+                  code.status === "active" &&
                   code.code_value,
               );
               const bindingCode = codes[0] ?? null;
@@ -417,10 +418,18 @@ function Operations({ data }: { data: Overview }) {
                       icon={<KeyRound size={16} />}
                       disabled={!partner}
                       onClick={() =>
-                        setCodeFor({ ...partner, existingCode: bindingCode })
+                        setCodeFor({
+                          ...partner,
+                          existingCode: bindingCode,
+                          pluginInstanceId: connection.pluginInstanceId,
+                        })
                       }
                     >
-                      {bindingCode ? "查看绑定码" : "生成绑定码"}
+                      {bindingCode
+                        ? "查看绑定码"
+                        : connection.pluginInstanceId
+                          ? "重新绑定"
+                          : "生成绑定码"}
                     </Button>
                     <button
                       className="icon-button danger"
@@ -815,7 +824,10 @@ function BindingCodeModal({
     mutationFn: () =>
       api<any>(`/v1/admin/partners/${partner.id}/binding-codes`, {
         method: "POST",
-        body: JSON.stringify({ label }),
+        body: JSON.stringify({
+          label,
+          pluginInstanceId: partner.pluginInstanceId ?? undefined,
+        }),
       }),
     onSuccess: (value) => {
       setResult(value);
@@ -831,7 +843,9 @@ function BindingCodeModal({
       title={
         result
           ? `${partner.display_name} 的绑定码`
-          : `为 ${partner.display_name} 生成绑定码`
+          : partner.pluginInstanceId
+            ? `为 ${partner.display_name} 生成重新绑定码`
+            : `为 ${partner.display_name} 生成绑定码`
       }
       onClose={onClose}
       footer={
