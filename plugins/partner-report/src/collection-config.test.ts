@@ -16,7 +16,18 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-review");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("任何 nextCommand");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("本地项目权限文件缺失");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("正常等待终态");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("identity-wait");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("零读取、零上传的普通中断");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("worktree 合并");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "project_scope_approval_required",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "project_scope_card_delivery_pending",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "project_scope_no_candidates",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "checkpointAdvanced 为 true 才记录成功",
     );

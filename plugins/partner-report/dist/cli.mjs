@@ -16,7 +16,7 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync4
 } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { hostname, tmpdir as tmpdir2 } from "node:os";
 import { basename as basename3, dirname as dirname3, relative as relative3, resolve as resolve5 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -4366,7 +4366,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-var PLUGIN_VERSION = "0.4.3";
+var PLUGIN_VERSION = "0.4.4";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 var PERSISTENT_DATA_FILES = [
@@ -4711,14 +4711,20 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
-  "\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0Ccollect-start \u5FC5\u987B\u6839\u636E\u5F53\u524D\u5468\u671F\u7684 Session \u5143\u6570\u636E\u91CD\u65B0\u53D1\u8D77\u98DE\u4E66\u9879\u76EE\u5BA1\u6279\uFF0C\u5E76\u5728\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u524D\u7ED3\u675F\u672C\u6B21\u8FD0\u884C\uFF1B\u7528\u6237\u5BA1\u6279\u540E\u7531\u4E0B\u4E00\u6B21\u5B9A\u65F6\u8FD0\u884C\u6216\u624B\u52A8\u7EE7\u7EED\u91C7\u96C6\u3002",
+  "\u98DE\u4E66\u8EAB\u4EFD\u672A\u786E\u8BA4\u65F6\uFF0Ccollect-start \u4E0D\u5F97\u8C03\u7528 thread/list\u3001thread/read \u6216\u767B\u8BB0\u9879\u76EE\u5019\u9009\uFF1B\u5FC5\u987B\u6301\u7EED\u6267\u884C\u8FD4\u56DE\u7684 identity-wait\uFF0C\u901A\u8FC7\u5E26\u9000\u907F\u7684\u4F4E\u9891\u8F6E\u8BE2\u5728\u5F53\u524D\u4EFB\u52A1\u5185\u7B49\u5F85\uFF0C\u786E\u8BA4\u540E\u81EA\u52A8\u7EE7\u7EED\u9879\u76EE\u53D1\u73B0\u3002",
+  "\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u8EAB\u4EFD\u786E\u8BA4\u540E collect-start \u624D\u80FD\u6839\u636E\u5F53\u524D\u5468\u671F\u7684 Session \u5143\u6570\u636E\u91CD\u65B0\u53D1\u8D77\u98DE\u4E66\u9879\u76EE\u5BA1\u6279\uFF1B\u9879\u76EE\u8303\u56F4\u5361\u53D1\u9001\u6210\u529F\u5E76\u8FD4\u56DE project_scope_approval_required \u540E\uFF0C\u672C\u6B21\u8FD0\u884C\u53EF\u4EE5\u6B63\u5E38\u7ED3\u675F\u3002",
+  "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u548C\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\uFF1B\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u5408\u6CD5\u5355 Session \u9879\u76EE\u548C\u65E0\u6CD5\u5224\u5B9A\u7684 unknown \u76EE\u5F55\u90FD\u4FDD\u7559\u5F85\u4EBA\u5DE5\u5BA1\u6279\u3002",
+  "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
   "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002",
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
-  "CLI \u8FD4\u56DE feishu_identity_confirmation_required \u6216 project_scope_approval_required \u4E14\u6CA1\u6709 nextCommand \u65F6\u5C5E\u4E8E\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF0C\u53EA\u62A5\u544A\u9700\u8981\u5904\u7406\u98DE\u4E66\u5361\u7247\uFF0C\u4E0D\u5F97\u5728\u5F53\u524D\u8FD0\u884C\u4E2D\u8F6E\u8BE2\u6216\u7ED5\u8FC7\u6743\u9650\u3002",
+  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required\u3001feishu_identity_confirmation_required\u3001project_scope_card_delivery_pending \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "identity-wait \u53EA\u80FD\u4F9D\u9644\u5F53\u524D\u4EFB\u52A1\u4F4E\u9891\u7B49\u5F85\uFF1B\u4E0D\u5F97\u521B\u5EFA Hook\u3001\u540E\u53F0 Runner\u3001worktree \u6216\u5E38\u9A7B\u8FDB\u7A0B\u3002\u7F51\u7EDC\u5931\u8D25\u6309 nextCommand \u91CD\u8BD5\uFF0C\u7528\u6237\u53D6\u6D88\u6216 identity_confirmation_wait_timed_out \u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u666E\u901A\u4E2D\u65AD\uFF0C\u4E0D\u5F97\u8BB0\u5F55\u4E3A\u91C7\u96C6\u5931\u8D25\u3002",
+  "project_scope_card_delivery_pending \u5FC5\u987B\u6301\u7EED\u6267\u884C project-scope-card-wait\uFF1B\u53EA\u6709 CLI \u89C2\u5BDF\u5230\u98DE\u4E66\u5361\u7247\u7248\u672C\u5DF2\u6210\u529F\u6295\u9012\u540E\u624D\u4F1A\u8FD4\u56DE project_scope_approval_required\u3002",
+  "CLI \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u786E\u8BA4\u53D1\u9001\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
+  "CLI \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
   "\u961F\u5217\u6E05\u7A7A\u540E\u5FC5\u987B\u6267\u884C collect-review\uFF1B\u53EA\u6709\u8BE5\u5BA1\u67E5\u547D\u4EE4\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextCommand \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
   "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 CLI \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
   "\u6700\u7EC8\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
@@ -5226,6 +5232,25 @@ function isPluginSystemThread(summary) {
   if (!name) return false;
   return name === "partner report daily collection" || name === "\u914D\u7F6E\u63D2\u4EF6\u5B9A\u65F6\u4EFB\u52A1" || name === "\u8FDE\u63A5\u6570\u636E\u4E2D\u53F0\u4E0E\u7ED1\u5B9A\u7801" || name === "\u8FDE\u63A5\u8BBE\u5907\u5230\u672C\u5730\u670D\u52A1" || name === "connect partner report" || name.startsWith("\u67E5\u770B\u5DF2\u5B89\u88C5\u63D2\u4EF6") || name.startsWith("\u8FDE\u63A5\u6570\u636E\u4E2D\u53F0\u4E0E partner-report");
 }
+function isOfficialAutomationThread(summary) {
+  if (summary.ephemeral === true || summary.transient === true) return true;
+  const source = summary.source;
+  const sourceRecord = source && typeof source === "object" ? source : null;
+  const values = [
+    typeof source === "string" ? source : null,
+    summary.sourceKind,
+    summary.source_kind,
+    summary.origin,
+    sourceRecord?.type,
+    sourceRecord?.kind,
+    sourceRecord?.origin
+  ].filter((value) => typeof value === "string").map(
+    (value) => value.trim().toLowerCase().replace(/[-_\s]/g, "")
+  );
+  return values.some(
+    (value) => ["automation", "scheduledtask", "systemtask"].includes(value)
+  );
+}
 function isPluginAdministrationSession(turns) {
   const prompts = turns.map((turn) => turn.userPrompt?.trim()).filter((value) => Boolean(value));
   if (prompts.length === 0) return false;
@@ -5355,7 +5380,7 @@ function buildSessionJob(input) {
   );
   const observedAt = input.observedAt ?? (/* @__PURE__ */ new Date()).toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.4.1",
+    skillVersion: "partner-report-sync/0.4.4",
     promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0",
     producer: "codex-skill"
@@ -5465,11 +5490,13 @@ import { createHmac, randomBytes } from "node:crypto";
 import {
   chmodSync as chmodSync3,
   existsSync as existsSync4,
+  lstatSync,
   realpathSync,
   renameSync as renameSync2,
   writeFileSync as writeFileSync3,
   readFileSync as readFileSync3
 } from "node:fs";
+import { homedir as homedir2, tmpdir } from "node:os";
 import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
 function scopePath(directory = dataDirectory()) {
   return resolve4(directory, "project-scope.json");
@@ -5486,15 +5513,69 @@ function withinPath2(candidate, root) {
   const nested = relative2(root, candidate);
   return nested === "" || !nested.startsWith("..") && !isAbsolute2(nested);
 }
+function linkedWorktreeCommonRoot(markerPath) {
+  try {
+    if (!lstatSync(markerPath).isFile()) return null;
+    const match = /^gitdir:\s*(.+)\s*$/im.exec(
+      readFileSync3(markerPath, "utf8")
+    );
+    if (!match?.[1]) return null;
+    const gitDirectory = canonicalPath(resolve4(dirname2(markerPath), match[1]));
+    const worktreesDirectory = dirname2(dirname2(gitDirectory));
+    if (basename2(worktreesDirectory) !== ".git") return null;
+    return dirname2(worktreesDirectory);
+  } catch {
+    return null;
+  }
+}
 function outermostGitRoot(cwd) {
   let current = canonicalPath(cwd);
   let outermost = null;
   for (; ; ) {
-    if (existsSync4(resolve4(current, ".git"))) outermost = current;
+    const marker = resolve4(current, ".git");
+    if (existsSync4(marker))
+      outermost = linkedWorktreeCommonRoot(marker) ?? current;
     const parent = dirname2(current);
     if (parent === current) return outermost;
     current = parent;
   }
+}
+function defaultTemporaryRoots() {
+  const codexHomes = new Set(
+    [process.env.CODEX_HOME, resolve4(homedir2(), ".codex")].filter(
+      (value) => Boolean(value)
+    )
+  );
+  return [
+    tmpdir(),
+    "/tmp",
+    "/private/tmp",
+    "/var/tmp",
+    "/private/var/tmp",
+    ...[...codexHomes].flatMap((root) => [
+      resolve4(root, "tmp"),
+      resolve4(root, ".tmp"),
+      resolve4(root, "worktrees")
+    ])
+  ].map(canonicalPath);
+}
+function longestContainingRoot(cwd, roots) {
+  return roots.map(canonicalPath).filter((root) => withinPath2(cwd, root)).sort((left, right) => right.length - left.length)[0];
+}
+function classifyProjectEnvironment(summary, options = {}) {
+  if (summary.systemGenerated) return { kind: "temporary", localRoot: null };
+  if (!summary.cwd) return { kind: "unknown", localRoot: null };
+  const cwd = canonicalPath(summary.cwd);
+  if (longestContainingRoot(
+    cwd,
+    options.temporaryRoots ?? defaultTemporaryRoots()
+  ))
+    return { kind: "temporary", localRoot: null };
+  const configured = longestContainingRoot(cwd, options.configuredRoots ?? []);
+  if (configured) return { kind: "configured", localRoot: configured };
+  const gitRoot = outermostGitRoot(cwd);
+  if (gitRoot) return { kind: "git", localRoot: gitRoot };
+  return { kind: "unknown", localRoot: cwd };
 }
 function newLocalScope(pluginInstanceId) {
   return {
@@ -5518,7 +5599,9 @@ function isLocalProjectScope(value, pluginInstanceId) {
     return false;
   }
   return value.entries.every(
-    (entry) => isRecord(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string")
+    (entry) => isRecord(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string") && (entry.environmentKind === void 0 || ["configured", "git", "unknown"].includes(
+      String(entry.environmentKind)
+    ))
   );
 }
 function inspectLocalProjectScope(pluginInstanceId, directory = dataDirectory()) {
@@ -5547,8 +5630,14 @@ function saveLocalProjectScope(scope, directory = dataDirectory()) {
 function mergeRemoteProjectScope(local, remote) {
   if (local.pluginInstanceId !== remote.pluginInstanceId)
     throw new Error("\u9879\u76EE\u6743\u9650\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002");
-  const localRoots = new Map(
-    local.entries.map((entry) => [entry.scopeKey, entry.localRoot])
+  const localMetadata = new Map(
+    local.entries.map((entry) => [
+      entry.scopeKey,
+      {
+        localRoot: entry.localRoot,
+        environmentKind: entry.environmentKind
+      }
+    ])
   );
   return {
     schemaVersion: "1.0",
@@ -5556,48 +5645,94 @@ function mergeRemoteProjectScope(local, remote) {
     ...remote,
     entries: remote.entries.map((entry) => ({
       ...entry,
-      localRoot: localRoots.get(entry.scopeKey) ?? null
+      localRoot: localMetadata.get(entry.scopeKey)?.localRoot ?? null,
+      ...localMetadata.get(entry.scopeKey)?.environmentKind ? {
+        environmentKind: localMetadata.get(entry.scopeKey).environmentKind
+      } : {}
     }))
   };
 }
 function anonymousProjectScopeKey(pluginInstanceId, scopeSalt, localRoot) {
   return createHmac("sha256", scopeSalt).update(`partner-report/project-scope/v1:${pluginInstanceId}:${localRoot}`).digest("hex");
 }
-function discoverProjectScopes(pluginInstanceId, local, summaries) {
+function discoverProjectScopes(pluginInstanceId, local, summaries, options = {}) {
   const knownRoots = local.entries.filter(
     (entry) => Boolean(entry.localRoot)
-  ).map((entry) => ({ ...entry, localRoot: canonicalPath(entry.localRoot) })).sort((left, right) => right.localRoot.length - left.localRoot.length);
+  ).map((entry) => {
+    const localRoot = canonicalPath(entry.localRoot);
+    const environment = classifyProjectEnvironment(
+      { id: entry.scopeKey, cwd: localRoot },
+      options
+    );
+    return {
+      ...entry,
+      localRoot,
+      logicalRoot: environment.localRoot ?? localRoot
+    };
+  }).sort((left, right) => right.localRoot.length - left.localRoot.length);
   const discovered = /* @__PURE__ */ new Map();
   const threadScopes = /* @__PURE__ */ new Map();
   for (const summary of summaries) {
-    if (!summary.cwd) continue;
+    const environment = classifyProjectEnvironment(summary, options);
+    if (!summary.cwd || !environment.localRoot || environment.kind === "temporary")
+      continue;
     const cwd = canonicalPath(summary.cwd);
-    const inherited = knownRoots.find(
+    const pathInherited = knownRoots.find(
       (entry) => withinPath2(cwd, entry.localRoot)
     );
-    const localRoot = inherited?.localRoot ?? outermostGitRoot(cwd) ?? cwd;
+    const logicalMatches = knownRoots.filter(
+      (entry) => entry.logicalRoot === environment.localRoot
+    );
+    const inherited = pathInherited ?? (logicalMatches.length === 1 ? logicalMatches[0] : void 0);
+    const localRoot = inherited && environment.kind === "unknown" ? inherited.localRoot : environment.localRoot;
     const scopeKey = inherited?.scopeKey ?? anonymousProjectScopeKey(pluginInstanceId, local.scopeSalt, localRoot);
     const current = discovered.get(scopeKey);
     discovered.set(scopeKey, {
       scopeKey,
       displayName: inherited?.displayName ?? (basename2(localRoot) || "\u672A\u547D\u540D\u9879\u76EE"),
       localRoot,
-      sessionCount: (current?.sessionCount ?? 0) + 1
+      sessionCount: (current?.sessionCount ?? 0) + 1,
+      environmentKind: environment.kind
     });
     threadScopes.set(summary.id, scopeKey);
   }
   return { candidates: [...discovered.values()], threadScopes };
 }
+function threadMayBeRead(summary, local, options = {}, now = /* @__PURE__ */ new Date()) {
+  if (!scopeIsActive(
+    local.entries.find((entry) => entry.scopeKey === summary.scopeKey),
+    now
+  ))
+    return false;
+  const discovery = discoverProjectScopes(
+    local.pluginInstanceId,
+    local,
+    [summary],
+    options
+  );
+  return discovery.threadScopes.get(summary.id) === summary.scopeKey;
+}
 function mergeDiscoveredRoots(local, candidates) {
   const roots = new Map(
-    candidates.map((candidate) => [candidate.scopeKey, candidate.localRoot])
+    candidates.map((candidate) => [
+      candidate.scopeKey,
+      {
+        localRoot: candidate.localRoot,
+        environmentKind: candidate.environmentKind
+      }
+    ])
   );
   return {
     ...local,
-    entries: local.entries.map((entry) => ({
-      ...entry,
-      localRoot: roots.get(entry.scopeKey) ?? entry.localRoot
-    }))
+    entries: local.entries.map((entry) => {
+      const discovered = roots.get(entry.scopeKey);
+      const environmentKind = discovered?.environmentKind ?? entry.environmentKind;
+      return {
+        ...entry,
+        localRoot: discovered?.localRoot ?? entry.localRoot,
+        ...environmentKind ? { environmentKind } : {}
+      };
+    })
   };
 }
 function scopeIsActive(entry, now = /* @__PURE__ */ new Date()) {
@@ -5614,8 +5749,94 @@ function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__
   });
 }
 
+// src/identity-wait.ts
+function identityConfirmationRequiredState(input) {
+  const nextCommand = [
+    "identity-wait",
+    `--deadline ${Math.trunc(input.deadlineAt)}`,
+    `--attempt ${Math.max(0, Math.trunc(input.attempt ?? 0))}`,
+    `--period-key ${Buffer.from(input.periodKey, "utf8").toString("base64url")}`,
+    ...input.force ? ["--force"] : []
+  ].join(" ");
+  return {
+    status: "feishu_identity_confirmation_required",
+    waiting: true,
+    periodKey: input.periodKey,
+    read: 0,
+    uploaded: 0,
+    discovered: 0,
+    ...input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {},
+    nextCommand,
+    message: "\u8BF7\u5728\u98DE\u4E66\u8EAB\u4EFD\u5361\u4E2D\u786E\u8BA4\u5BA1\u6838\u8EAB\u4EFD\u3002\u5F53\u524D\u4EFB\u52A1\u4F1A\u4F4E\u9891\u7B49\u5F85\uFF0C\u786E\u8BA4\u524D\u4E0D\u4F1A\u626B\u63CF\u9879\u76EE\u6216\u8BFB\u53D6 Session \u5185\u5BB9\u3002"
+  };
+}
+function decodeIdentityWaitPeriod(value) {
+  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return "unknown";
+  try {
+    return Buffer.from(value, "base64url").toString("utf8") || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+var MAX_BACKOFF_MS = 8e3;
+function defaultSleep(milliseconds, signal) {
+  return new Promise((resolve6) => {
+    if (signal?.aborted) return resolve6();
+    const timer = setTimeout(done, milliseconds);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve6();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+function identityWaitBackoff(attempt) {
+  return Math.min(
+    1e3 * 2 ** Math.min(Math.max(attempt, 0), 3),
+    MAX_BACKOFF_MS
+  );
+}
+async function waitForIdentityConfirmation(options) {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? defaultSleep;
+  const segmentEndsAt = Math.min(
+    options.deadlineAt,
+    now() + Math.max(1e3, options.segmentDurationMs)
+  );
+  let attempt = Math.max(0, options.attempt ?? 0);
+  let lastErrorCode = null;
+  while (now() < segmentEndsAt) {
+    if (options.signal?.aborted) return { status: "cancelled", attempt };
+    try {
+      if (await options.check()) return { status: "confirmed", attempt };
+      lastErrorCode = null;
+    } catch (error) {
+      lastErrorCode = options.errorCode?.(error) ?? "IDENTITY_STATUS_UNAVAILABLE";
+    }
+    const remaining = segmentEndsAt - now();
+    if (remaining <= 0) break;
+    await sleep(
+      Math.min(identityWaitBackoff(attempt), remaining),
+      options.signal
+    );
+    attempt += 1;
+  }
+  if (options.signal?.aborted) return { status: "cancelled", attempt };
+  if (now() >= options.deadlineAt)
+    return { status: "timed_out", attempt, lastErrorCode };
+  return { status: "pending", attempt, lastErrorCode };
+}
+async function waitForIdentityAndContinue(options, continueCollection) {
+  const wait = await waitForIdentityConfirmation(options);
+  if (wait.status !== "confirmed") return { continued: false, wait };
+  return { continued: true, wait, value: await continueCollection() };
+}
+
 // src/cli.ts
 var RUN_PREFIX = "partner-report-run-";
+var IDENTITY_WAIT_TOTAL_MS = 10 * 6e4;
+var IDENTITY_WAIT_SEGMENT_MS = 45e3;
 function option(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
   if (index < 0) return fallback;
@@ -5653,8 +5874,11 @@ async function fetchPolicy() {
   }
   return policy;
 }
-async function fetchProjectScope() {
-  return authenticatedRequest("/v1/project-scope");
+async function fetchProjectScope(init = {}) {
+  return authenticatedRequest(
+    "/v1/project-scope",
+    init
+  );
 }
 function cacheRemoteProjectScope(remote) {
   const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
@@ -5923,11 +6147,216 @@ function summaryFromThread(value) {
     id: String(value.id),
     title,
     cwd: typeof value.cwd === "string" ? value.cwd : null,
-    updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? null
+    updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? null,
+    systemGenerated: isPluginSystemThread(value) || isOfficialAutomationThread(value)
   };
 }
+function configuredProjectRoots(projects) {
+  return projects.flatMap((project) => project.allowed_paths ?? []);
+}
+function identityConfirmationRequired(periodKey, deadlineAt = Date.now() + IDENTITY_WAIT_TOTAL_MS, attempt = 0, lastErrorCode = null) {
+  return identityConfirmationRequiredState({
+    periodKey,
+    deadlineAt,
+    attempt,
+    force: flag("force"),
+    lastErrorCode
+  });
+}
+function projectScopeApprovalRequired(periodKey, localScope) {
+  return {
+    status: "project_scope_approval_required",
+    periodKey,
+    policyVersion: localScope.version,
+    pendingProjects: localScope.entries.filter(
+      (entry) => entry.status === "pending"
+    ).length,
+    read: 0,
+    uploaded: 0,
+    message: "\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u53D1\u9001\uFF0C\u9879\u76EE\u91C7\u96C6\u8303\u56F4\u5C1A\u672A\u5BA1\u6279\uFF0C\u672A\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u3002\u8BF7\u5728\u98DE\u4E66\u5361\u7247\u4E2D\u5B8C\u6210\u5BA1\u6279\u3002"
+  };
+}
+function projectScopeCardWaitCommand(input) {
+  return [
+    "project-scope-card-wait",
+    `--period-key ${Buffer.from(input.periodKey, "utf8").toString("base64url")}`,
+    `--version ${input.version}`,
+    `--deadline ${Math.trunc(input.deadlineAt)}`,
+    `--attempt ${Math.max(0, Math.trunc(input.attempt))}`,
+    ...flag("force") ? ["--force"] : []
+  ].join(" ");
+}
+function projectScopeCardDeliveryPending(input) {
+  const deadlineAt = input.deadlineAt ?? Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const attempt = input.attempt ?? 0;
+  return {
+    status: "project_scope_card_delivery_pending",
+    waiting: true,
+    periodKey: input.periodKey,
+    policyVersion: input.version,
+    read: 0,
+    uploaded: 0,
+    ...input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {},
+    nextCommand: projectScopeCardWaitCommand({
+      periodKey: input.periodKey,
+      version: input.version,
+      deadlineAt,
+      attempt
+    }),
+    message: "\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u5E42\u7B49\u767B\u8BB0\uFF0C\u5F53\u524D\u4EFB\u52A1\u6B63\u5728\u7B49\u5F85\u98DE\u4E66\u786E\u8BA4\u6295\u9012\u6210\u529F\u3002"
+  };
+}
+async function fetchProjectScopeCardStatus(periodKey, version, init = {}) {
+  const query = new URLSearchParams({
+    periodKey,
+    version: String(version)
+  });
+  return authenticatedRequest(
+    `/v1/project-scope/card-status?${query.toString()}`,
+    init
+  );
+}
+async function identityWait() {
+  const deadline = Number(option("deadline"));
+  const deadlineAt = Number.isFinite(deadline) ? Math.min(deadline, Date.now() + IDENTITY_WAIT_TOTAL_MS) : Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const attemptValue = Number(option("attempt", "0"));
+  const attempt = Number.isInteger(attemptValue) && attemptValue >= 0 ? attemptValue : 0;
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  try {
+    const flow = await waitForIdentityAndContinue(
+      {
+        check: async () => {
+          const requestTimeoutMs = Math.max(
+            1,
+            Math.min(15e3, deadlineAt - Date.now())
+          );
+          const signal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(requestTimeoutMs)
+          ]);
+          return (await fetchProjectScope({ signal })).identityConfirmed;
+        },
+        deadlineAt,
+        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
+        attempt,
+        signal: controller.signal,
+        errorCode: (error) => error instanceof HttpError ? error.code : "IDENTITY_STATUS_UNAVAILABLE"
+      },
+      collectStart
+    );
+    if (flow.continued) return flow.value;
+    const result = flow.wait;
+    if (result.status === "pending") {
+      return output(
+        identityConfirmationRequired(
+          decodeIdentityWaitPeriod(option("period-key")),
+          deadlineAt,
+          result.attempt,
+          result.lastErrorCode
+        )
+      );
+    }
+    if (result.status === "cancelled")
+      return output({
+        status: "identity_confirmation_wait_cancelled",
+        waiting: false,
+        read: 0,
+        uploaded: 0,
+        discovered: 0,
+        message: "\u5DF2\u53D6\u6D88\u5F53\u524D\u4EFB\u52A1\u5185\u7684\u8EAB\u4EFD\u786E\u8BA4\u7B49\u5F85\uFF0C\u672A\u626B\u63CF\u6216\u8BFB\u53D6 Session\u3002"
+      });
+    return output({
+      status: "identity_confirmation_wait_timed_out",
+      waiting: false,
+      read: 0,
+      uploaded: 0,
+      discovered: 0,
+      ...result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {},
+      message: "\u5F53\u524D\u6267\u884C\u73AF\u5883\u7684\u8EAB\u4EFD\u7B49\u5F85\u65F6\u95F4\u5DF2\u5230\uFF0C\u672A\u626B\u63CF\u6216\u8BFB\u53D6 Session\uFF1B\u4E0B\u6B21\u91C7\u96C6\u4F1A\u7EE7\u7EED\u68C0\u67E5\u3002"
+    });
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    process.removeListener("SIGTERM", cancel);
+  }
+}
+async function projectScopeCardWait() {
+  const periodKey = decodeIdentityWaitPeriod(option("period-key"));
+  const version = Number(option("version"));
+  if (periodKey === "unknown" || !Number.isInteger(version) || version < 1)
+    throw new Error("\u9879\u76EE\u8303\u56F4\u5361\u7B49\u5F85\u53C2\u6570\u65E0\u6548\u3002");
+  const rawDeadline = Number(option("deadline"));
+  const deadlineAt = Number.isFinite(rawDeadline) ? Math.min(rawDeadline, Date.now() + IDENTITY_WAIT_TOTAL_MS) : Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const rawAttempt = Number(option("attempt", "0"));
+  const attempt = Number.isInteger(rawAttempt) && rawAttempt >= 0 ? rawAttempt : 0;
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  try {
+    const flow = await waitForIdentityAndContinue(
+      {
+        check: async () => {
+          const requestTimeoutMs = Math.max(
+            1,
+            Math.min(15e3, deadlineAt - Date.now())
+          );
+          const signal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(requestTimeoutMs)
+          ]);
+          return (await fetchProjectScopeCardStatus(periodKey, version, { signal })).status === "sent";
+        },
+        deadlineAt,
+        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
+        attempt,
+        signal: controller.signal,
+        errorCode: (error) => error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
+      },
+      async () => {
+        const remote = await fetchProjectScope();
+        if (remote.initialized) return collectStart();
+        const local = cacheRemoteProjectScope(remote);
+        return output(projectScopeApprovalRequired(periodKey, local.scope));
+      }
+    );
+    if (flow.continued) return flow.value;
+    const result = flow.wait;
+    if (result.status === "pending")
+      return output(
+        projectScopeCardDeliveryPending({
+          periodKey,
+          version,
+          deadlineAt,
+          attempt: result.attempt,
+          lastErrorCode: result.lastErrorCode
+        })
+      );
+    if (result.status === "cancelled")
+      return output({
+        status: "project_scope_card_wait_cancelled",
+        waiting: false,
+        read: 0,
+        uploaded: 0,
+        message: "\u5DF2\u53D6\u6D88\u9879\u76EE\u8303\u56F4\u5361\u6295\u9012\u7B49\u5F85\uFF0C\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002"
+      });
+    return output({
+      status: "project_scope_card_wait_timed_out",
+      waiting: false,
+      read: 0,
+      uploaded: 0,
+      ...result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {},
+      message: "\u5F53\u524D\u6267\u884C\u73AF\u5883\u7684\u5361\u7247\u6295\u9012\u7B49\u5F85\u65F6\u95F4\u5DF2\u5230\uFF0C\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\uFF1B\u4E0B\u6B21\u91C7\u96C6\u4F1A\u7EE7\u7EED\u68C0\u67E5\u3002"
+    });
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    process.removeListener("SIGTERM", cancel);
+  }
+}
 function createRun(manifest) {
-  const runDirectory = mkdtempSync(resolve5(tmpdir(), RUN_PREFIX));
+  const runDirectory = mkdtempSync(resolve5(tmpdir2(), RUN_PREFIX));
   chmodSync4(runDirectory, 448);
   const runPath = resolve5(runDirectory, "run.json");
   writeFileSync4(runPath, `${JSON.stringify(manifest, null, 2)}
@@ -5940,7 +6369,7 @@ function createRun(manifest) {
 function assertRunPath(runPath) {
   const absolute = resolve5(runPath);
   const runDirectory = dirname3(absolute);
-  const outsideTemp = relative3(resolve5(tmpdir()), runDirectory).startsWith(
+  const outsideTemp = relative3(resolve5(tmpdir2()), runDirectory).startsWith(
     ".."
   );
   if (outsideTemp || !basename3(runDirectory).startsWith(RUN_PREFIX) || basename3(absolute) !== "run.json") {
@@ -6034,14 +6463,9 @@ async function collectStart() {
       code: "REPORT_PERIOD_MISSING"
     });
   if (!remoteScope.identityConfirmed)
-    return output({
-      status: "feishu_identity_confirmation_required",
-      periodKey: policy.currentPeriod.period_key,
-      read: 0,
-      uploaded: 0,
-      discovered: 0,
-      message: "\u8BF7\u5148\u5728\u98DE\u4E66\u8EAB\u4EFD\u5361\u4E2D\u786E\u8BA4\u5BA1\u6838\u8EAB\u4EFD\u3002\u786E\u8BA4\u524D\u4E0D\u4F1A\u626B\u63CF\u9879\u76EE\u6216\u8BFB\u53D6 Session \u5185\u5BB9\u3002"
-    });
+    return output(
+      identityConfirmationRequired(policy.currentPeriod.period_key)
+    );
   let localScope;
   if (!requiresProjectScopeBootstrap) {
     localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
@@ -6117,7 +6541,8 @@ async function collectStart() {
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
     localScope,
-    permissionDiscoverySummaries
+    permissionDiscoverySummaries,
+    { configuredRoots: configuredProjectRoots(policy.projects) }
   );
   let registeredScope;
   try {
@@ -6151,17 +6576,40 @@ async function collectStart() {
   );
   if (!localScope.initialized) {
     releaseCollectionLease(config.pluginInstanceId, runId);
-    return output({
-      status: "project_scope_approval_required",
-      periodKey: policy.currentPeriod.period_key,
+    const pendingProjects = localScope.entries.filter(
+      (entry) => entry.status === "pending"
+    ).length;
+    if (pendingProjects === 0)
+      return output({
+        status: "project_scope_no_candidates",
+        waiting: false,
+        periodKey: policy.currentPeriod.period_key,
+        policyVersion: localScope.version,
+        discovered: 0,
+        read: 0,
+        uploaded: 0,
+        message: "\u8FC7\u6EE4\u4E34\u65F6\u73AF\u5883\u540E\u6CA1\u6709\u9700\u8981\u5BA1\u6279\u7684\u9879\u76EE\uFF0C\u672C\u6B21\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\uFF1B\u540E\u7EED\u5468\u671F\u4F1A\u91CD\u65B0\u53D1\u73B0\u3002"
+      });
+    const cardStatus = await fetchProjectScopeCardStatus(
+      policy.currentPeriod.period_key,
+      localScope.version
+    ).catch((error) => ({
+      status: "pending",
       policyVersion: localScope.version,
-      pendingProjects: localScope.entries.filter(
-        (entry) => entry.status === "pending"
-      ).length,
-      read: 0,
-      uploaded: 0,
-      message: "\u9879\u76EE\u91C7\u96C6\u8303\u56F4\u5C1A\u672A\u5BA1\u6279\uFF0C\u672A\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u3002\u8BF7\u5728\u98DE\u4E66\u5361\u7247\u4E2D\u5B8C\u6210\u5BA1\u6279\u3002"
-    });
+      retryAfterSeconds: 3,
+      lastErrorCode: error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
+    }));
+    if (cardStatus.status !== "sent")
+      return output(
+        projectScopeCardDeliveryPending({
+          periodKey: policy.currentPeriod.period_key,
+          version: localScope.version,
+          lastErrorCode: "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null
+        })
+      );
+    return output(
+      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope)
+    );
   }
   let state;
   try {
@@ -6281,6 +6729,15 @@ async function collectNext() {
     await server.connect();
     while (manifest.cursor < manifest.queue.length) {
       const summary = manifest.queue[manifest.cursor++];
+      const localScope = inspectLocalProjectScope(manifest.pluginInstanceId);
+      if (localScope.state !== "valid" || !threadMayBeRead(summary, localScope.scope, {
+        configuredRoots: configuredProjectRoots(manifest.projects)
+      })) {
+        manifest.counts.excluded += 1;
+        manifest.counts.failedRead += 1;
+        saveRun(absolute, manifest);
+        continue;
+      }
       let thread;
       try {
         thread = await server.readThread(summary.id);
@@ -6609,6 +7066,8 @@ function help() {
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
       "collect-start [--force]",
+      "identity-wait --deadline <epoch-ms> --attempt <number> [--force]",
+      "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
@@ -6629,6 +7088,8 @@ var recoveryAwareCommands = /* @__PURE__ */ new Set([
   "connectivity-test",
   "server-url-set",
   "collect-start",
+  "identity-wait",
+  "project-scope-card-wait",
   "daily-collect",
   "collect-next",
   "collect-review",
@@ -6650,6 +7111,8 @@ async function runCommand() {
   else if (command === "scheduled-task-config") scheduledTaskConfig();
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
+  else if (command === "identity-wait") await identityWait();
+  else if (command === "project-scope-card-wait") await projectScopeCardWait();
   else if (command === "collect-next") await collectNext();
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();

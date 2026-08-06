@@ -2,11 +2,13 @@ import { createHmac, randomBytes } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   realpathSync,
   renameSync,
   writeFileSync,
   readFileSync,
 } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { dataDirectory } from "./config.js";
 
@@ -37,6 +39,7 @@ export type RemoteProjectScopePolicy = {
 
 export type LocalProjectScopeEntry = RemoteProjectScopeEntry & {
   localRoot: string | null;
+  environmentKind?: "configured" | "git" | "unknown";
 };
 
 export type LocalProjectScope = Omit<RemoteProjectScopePolicy, "entries"> & {
@@ -48,6 +51,7 @@ export type LocalProjectScope = Omit<RemoteProjectScopePolicy, "entries"> & {
 export type ScopeThreadSummary = {
   id: string;
   cwd: string | null;
+  systemGenerated?: boolean;
 };
 
 export type DiscoveredScope = {
@@ -55,6 +59,17 @@ export type DiscoveredScope = {
   displayName: string;
   localRoot: string;
   sessionCount: number;
+  environmentKind: "configured" | "git" | "unknown";
+};
+
+export type ProjectEnvironment = {
+  kind: "configured" | "git" | "unknown" | "temporary";
+  localRoot: string | null;
+};
+
+export type ProjectDiscoveryOptions = {
+  configuredRoots?: string[];
+  temporaryRoots?: string[];
 };
 
 function scopePath(directory = dataDirectory()) {
@@ -75,15 +90,81 @@ function withinPath(candidate: string, root: string) {
   return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
 }
 
+function linkedWorktreeCommonRoot(markerPath: string) {
+  try {
+    if (!lstatSync(markerPath).isFile()) return null;
+    const match = /^gitdir:\s*(.+)\s*$/im.exec(
+      readFileSync(markerPath, "utf8"),
+    );
+    if (!match?.[1]) return null;
+    const gitDirectory = canonicalPath(resolve(dirname(markerPath), match[1]));
+    const worktreesDirectory = dirname(dirname(gitDirectory));
+    if (basename(worktreesDirectory) !== ".git") return null;
+    return dirname(worktreesDirectory);
+  } catch {
+    return null;
+  }
+}
+
 function outermostGitRoot(cwd: string) {
   let current = canonicalPath(cwd);
   let outermost: string | null = null;
   for (;;) {
-    if (existsSync(resolve(current, ".git"))) outermost = current;
+    const marker = resolve(current, ".git");
+    if (existsSync(marker))
+      outermost = linkedWorktreeCommonRoot(marker) ?? current;
     const parent = dirname(current);
     if (parent === current) return outermost;
     current = parent;
   }
+}
+
+function defaultTemporaryRoots() {
+  const codexHomes = new Set(
+    [process.env.CODEX_HOME, resolve(homedir(), ".codex")].filter(
+      (value): value is string => Boolean(value),
+    ),
+  );
+  return [
+    tmpdir(),
+    "/tmp",
+    "/private/tmp",
+    "/var/tmp",
+    "/private/var/tmp",
+    ...[...codexHomes].flatMap((root) => [
+      resolve(root, "tmp"),
+      resolve(root, ".tmp"),
+      resolve(root, "worktrees"),
+    ]),
+  ].map(canonicalPath);
+}
+
+function longestContainingRoot(cwd: string, roots: string[]) {
+  return roots
+    .map(canonicalPath)
+    .filter((root) => withinPath(cwd, root))
+    .sort((left, right) => right.length - left.length)[0];
+}
+
+export function classifyProjectEnvironment(
+  summary: ScopeThreadSummary,
+  options: ProjectDiscoveryOptions = {},
+): ProjectEnvironment {
+  if (summary.systemGenerated) return { kind: "temporary", localRoot: null };
+  if (!summary.cwd) return { kind: "unknown", localRoot: null };
+  const cwd = canonicalPath(summary.cwd);
+  if (
+    longestContainingRoot(
+      cwd,
+      options.temporaryRoots ?? defaultTemporaryRoots(),
+    )
+  )
+    return { kind: "temporary", localRoot: null };
+  const configured = longestContainingRoot(cwd, options.configuredRoots ?? []);
+  if (configured) return { kind: "configured", localRoot: configured };
+  const gitRoot = outermostGitRoot(cwd);
+  if (gitRoot) return { kind: "git", localRoot: gitRoot };
+  return { kind: "unknown", localRoot: cwd };
 }
 
 function newLocalScope(pluginInstanceId: string): LocalProjectScope {
@@ -144,7 +225,11 @@ function isLocalProjectScope(
       typeof entry.lastSeenAt === "string" &&
       Number.isInteger(entry.sessionCount) &&
       (entry.sessionCount as number) >= 0 &&
-      (entry.localRoot === null || typeof entry.localRoot === "string"),
+      (entry.localRoot === null || typeof entry.localRoot === "string") &&
+      (entry.environmentKind === undefined ||
+        ["configured", "git", "unknown"].includes(
+          String(entry.environmentKind),
+        )),
   );
 }
 
@@ -192,8 +277,14 @@ export function mergeRemoteProjectScope(
 ): LocalProjectScope {
   if (local.pluginInstanceId !== remote.pluginInstanceId)
     throw new Error("项目权限不属于当前 Plugin Instance。");
-  const localRoots = new Map(
-    local.entries.map((entry) => [entry.scopeKey, entry.localRoot]),
+  const localMetadata = new Map(
+    local.entries.map((entry) => [
+      entry.scopeKey,
+      {
+        localRoot: entry.localRoot,
+        environmentKind: entry.environmentKind,
+      },
+    ]),
   );
   return {
     schemaVersion: "1.0",
@@ -201,7 +292,12 @@ export function mergeRemoteProjectScope(
     ...remote,
     entries: remote.entries.map((entry) => ({
       ...entry,
-      localRoot: localRoots.get(entry.scopeKey) ?? null,
+      localRoot: localMetadata.get(entry.scopeKey)?.localRoot ?? null,
+      ...(localMetadata.get(entry.scopeKey)?.environmentKind
+        ? {
+            environmentKind: localMetadata.get(entry.scopeKey)!.environmentKind,
+          }
+        : {}),
     })),
   };
 }
@@ -220,23 +316,50 @@ export function discoverProjectScopes(
   pluginInstanceId: string,
   local: LocalProjectScope,
   summaries: ScopeThreadSummary[],
+  options: ProjectDiscoveryOptions = {},
 ) {
   const knownRoots = local.entries
     .filter((entry): entry is LocalProjectScopeEntry & { localRoot: string } =>
       Boolean(entry.localRoot),
     )
-    .map((entry) => ({ ...entry, localRoot: canonicalPath(entry.localRoot) }))
+    .map((entry) => {
+      const localRoot = canonicalPath(entry.localRoot);
+      const environment = classifyProjectEnvironment(
+        { id: entry.scopeKey, cwd: localRoot },
+        options,
+      );
+      return {
+        ...entry,
+        localRoot,
+        logicalRoot: environment.localRoot ?? localRoot,
+      };
+    })
     .sort((left, right) => right.localRoot.length - left.localRoot.length);
   const discovered = new Map<string, DiscoveredScope>();
   const threadScopes = new Map<string, string>();
 
   for (const summary of summaries) {
-    if (!summary.cwd) continue;
+    const environment = classifyProjectEnvironment(summary, options);
+    if (
+      !summary.cwd ||
+      !environment.localRoot ||
+      environment.kind === "temporary"
+    )
+      continue;
     const cwd = canonicalPath(summary.cwd);
-    const inherited = knownRoots.find((entry) =>
+    const pathInherited = knownRoots.find((entry) =>
       withinPath(cwd, entry.localRoot),
     );
-    const localRoot = inherited?.localRoot ?? outermostGitRoot(cwd) ?? cwd;
+    const logicalMatches = knownRoots.filter(
+      (entry) => entry.logicalRoot === environment.localRoot,
+    );
+    const inherited =
+      pathInherited ??
+      (logicalMatches.length === 1 ? logicalMatches[0] : undefined);
+    const localRoot =
+      inherited && environment.kind === "unknown"
+        ? inherited.localRoot
+        : environment.localRoot;
     const scopeKey =
       inherited?.scopeKey ??
       anonymousProjectScopeKey(pluginInstanceId, local.scopeSalt, localRoot);
@@ -247,10 +370,33 @@ export function discoverProjectScopes(
         inherited?.displayName ?? (basename(localRoot) || "未命名项目"),
       localRoot,
       sessionCount: (current?.sessionCount ?? 0) + 1,
+      environmentKind: environment.kind,
     });
     threadScopes.set(summary.id, scopeKey);
   }
   return { candidates: [...discovered.values()], threadScopes };
+}
+
+export function threadMayBeRead(
+  summary: ScopeThreadSummary & { scopeKey: string },
+  local: LocalProjectScope,
+  options: ProjectDiscoveryOptions = {},
+  now = new Date(),
+) {
+  if (
+    !scopeIsActive(
+      local.entries.find((entry) => entry.scopeKey === summary.scopeKey),
+      now,
+    )
+  )
+    return false;
+  const discovery = discoverProjectScopes(
+    local.pluginInstanceId,
+    local,
+    [summary],
+    options,
+  );
+  return discovery.threadScopes.get(summary.id) === summary.scopeKey;
 }
 
 export function mergeDiscoveredRoots(
@@ -258,14 +404,26 @@ export function mergeDiscoveredRoots(
   candidates: DiscoveredScope[],
 ) {
   const roots = new Map(
-    candidates.map((candidate) => [candidate.scopeKey, candidate.localRoot]),
+    candidates.map((candidate) => [
+      candidate.scopeKey,
+      {
+        localRoot: candidate.localRoot,
+        environmentKind: candidate.environmentKind,
+      },
+    ]),
   );
   return {
     ...local,
-    entries: local.entries.map((entry) => ({
-      ...entry,
-      localRoot: roots.get(entry.scopeKey) ?? entry.localRoot,
-    })),
+    entries: local.entries.map((entry) => {
+      const discovered = roots.get(entry.scopeKey);
+      const environmentKind =
+        discovered?.environmentKind ?? entry.environmentKind;
+      return {
+        ...entry,
+        localRoot: discovered?.localRoot ?? entry.localRoot,
+        ...(environmentKind ? { environmentKind } : {}),
+      };
+    }),
   };
 }
 

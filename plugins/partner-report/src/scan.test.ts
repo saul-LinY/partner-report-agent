@@ -4,6 +4,7 @@ import {
   buildSessionJob,
   containsSensitive,
   firstNonChineseContributionField,
+  isOfficialAutomationThread,
   isPluginAdministrationSession,
   isPluginSystemThread,
   mappedProject,
@@ -143,7 +144,7 @@ describe("safe Session input", () => {
       expect.arrayContaining([expect.stringContaining("必须使用简体中文")]),
     );
     expect(job!.expected.production).toMatchObject({
-      skillVersion: "partner-report-sync/0.4.1",
+      skillVersion: "partner-report-sync/0.4.4",
       promptVersion: "2026-08-05.zh-session-value.v3",
     });
     const serialized = JSON.stringify(job);
@@ -261,6 +262,12 @@ describe("local filtering", () => {
     expect(
       isPluginSystemThread({ name: "Partner Report daily collection" }),
     ).toBe(true);
+    expect(
+      isOfficialAutomationThread({
+        source: { type: "scheduled_task" },
+      }),
+    ).toBe(true);
+    expect(isOfficialAutomationThread({ source: "appServer" })).toBe(false);
     expect(
       isPluginAdministrationSession([
         {

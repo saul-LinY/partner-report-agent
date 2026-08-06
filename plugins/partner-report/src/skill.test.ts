@@ -29,6 +29,13 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("必须使用简体中文");
     expect(skill).toContain("用户稳定数据目录中的 CLI 本地状态和中台状态");
     expect(skill).toContain("所有 `nextCommand` 都必须执行");
+    expect(skill).toContain("立即执行返回的 `identity-wait`");
+    expect(skill).toContain("持续执行 `project-scope-card-wait`");
+    expect(skill).toContain("`project_scope_no_candidates`");
+    expect(skill).toContain("身份确认前不得调用 `thread/list`");
+    expect(skill).toContain("多个 worktree 归并为一个逻辑项目");
+    expect(skill).toContain("标记为 `unknown`");
+    expect(skill).toContain("零读取、零上传的普通中断");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");
     expect(skill).toContain("下一次定时运行");
     expect(skill).toContain("终态审查");

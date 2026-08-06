@@ -27,6 +27,7 @@ import {
 import {
   beginProjectScopeBootstrap,
   decideProjectScopes,
+  loadProjectScopeCardDeliveryStatus,
   loadProjectScopePolicy,
   registerProjectScopeCandidates,
 } from "../project-scope.js";
@@ -536,6 +537,11 @@ export async function pluginRoutes(app: FastifyInstance) {
   app.get("/v1/project-scope", async (request) => {
     const actor = await requirePluginActor(request);
     return loadProjectScopePolicy(actor);
+  });
+
+  app.get("/v1/project-scope/card-status", async (request) => {
+    const actor = await requirePluginActor(request);
+    return loadProjectScopeCardDeliveryStatus(actor, request.query);
   });
 
   app.post("/v1/project-scope/candidates", async (request) => {

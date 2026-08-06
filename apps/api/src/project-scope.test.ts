@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
   projectScopeBootstrapSchema,
+  projectScopeCardStatusSchema,
   projectScopeCandidateBatchSchema,
   projectScopeDecisionSchema,
   projectScopeEffectiveFrom,
 } from "./project-scope.js";
 
 describe("project scope policy", () => {
+  it("requires a period and policy version for card delivery checks", () => {
+    expect(
+      projectScopeCardStatusSchema.parse({
+        periodKey: "2026-W32",
+        version: "2",
+      }),
+    ).toEqual({ periodKey: "2026-W32", version: 2 });
+  });
+
   it("requires a versioned local bootstrap reason", () => {
     expect(
       projectScopeBootstrapSchema.parse({
@@ -44,6 +54,8 @@ describe("project scope policy", () => {
             displayName: "partner-report",
             sessionCount: 3,
             localRoot: "/Users/example/project",
+            environmentKind: "git",
+            gitCommonDirectory: "/Users/example/project/.git",
           },
         ],
       }),

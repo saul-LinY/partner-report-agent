@@ -1,15 +1,23 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   anonymousProjectScopeKey,
   authorizedProjectThreads,
+  classifyProjectEnvironment,
   discoverProjectScopes,
   inspectLocalProjectScope,
   mergeRemoteProjectScope,
   saveLocalProjectScope,
   scopeIsActive,
+  threadMayBeRead,
   type LocalProjectScope,
 } from "./project-scope.js";
 
@@ -83,10 +91,15 @@ describe("project scope privacy boundary", () => {
     mkdirSync(resolve(root, ".git"));
     mkdirSync(resolve(nested, ".git"), { recursive: true });
     try {
-      const discovery = discoverProjectScopes(pluginInstanceId, localScope(), [
-        { id: "thread-a", cwd: resolve(nested, "src") },
-        { id: "thread-b", cwd: resolve(root, "docs") },
-      ]);
+      const discovery = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [
+          { id: "thread-a", cwd: resolve(nested, "src") },
+          { id: "thread-b", cwd: resolve(root, "docs") },
+        ],
+        { temporaryRoots: [] },
+      );
       expect(discovery.candidates).toHaveLength(1);
       expect(discovery.candidates[0]).toMatchObject({
         localRoot: root,
@@ -197,5 +210,253 @@ describe("project scope privacy boundary", () => {
         new Date("2026-08-06T00:00:00.000Z"),
       ),
     ).toEqual([{ id: "active-thread", scopeKey: activeKey }]);
+  });
+
+  it("filters explicit temporary environments but not a directory name alone", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "partner-report-filter-test-"));
+    const temporary = resolve(root, "system-temp");
+    const namedTmp = resolve(root, "workspace", "tmp");
+    mkdirSync(resolve(temporary, ".git"), { recursive: true });
+    mkdirSync(resolve(namedTmp, ".git"), { recursive: true });
+    try {
+      const discovery = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [
+          { id: "temporary", cwd: temporary },
+          { id: "named-tmp", cwd: namedTmp },
+          { id: "automation", cwd: namedTmp, systemGenerated: true },
+        ],
+        { temporaryRoots: [temporary] },
+      );
+      expect(discovery.threadScopes.has("temporary")).toBe(false);
+      expect(discovery.threadScopes.has("automation")).toBe(false);
+      expect(discovery.threadScopes.has("named-tmp")).toBe(true);
+      expect(discovery.candidates).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a legitimate single-Session Git project for approval", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "partner-report-single-test-"));
+    mkdirSync(resolve(root, ".git"));
+    try {
+      const discovery = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [{ id: "only-session", cwd: root }],
+        { temporaryRoots: [] },
+      );
+      expect(discovery.candidates).toHaveLength(1);
+      expect(discovery.candidates[0]?.sessionCount).toBe(1);
+      expect(discovery.threadScopes.has("only-session")).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a configured non-Git project with one Session for approval", () => {
+    const root = "/workspace/configured-project";
+    const discovery = discoverProjectScopes(
+      pluginInstanceId,
+      localScope(),
+      [{ id: "configured-session", cwd: resolve(root, "src") }],
+      { configuredRoots: [root], temporaryRoots: [] },
+    );
+    expect(discovery.candidates).toEqual([
+      expect.objectContaining({
+        localRoot: root,
+        environmentKind: "configured",
+        sessionCount: 1,
+      }),
+    ]);
+  });
+
+  it("merges linked worktrees into one logical Git project", () => {
+    const base = mkdtempSync(
+      resolve(tmpdir(), "partner-report-worktree-test-"),
+    );
+    const main = resolve(base, "main-project");
+    const linked = resolve(base, "linked-project");
+    const gitDirectory = resolve(main, ".git");
+    const linkedGitDirectory = resolve(gitDirectory, "worktrees", "feature");
+    mkdirSync(linkedGitDirectory, { recursive: true });
+    mkdirSync(linked, { recursive: true });
+    writeFileSync(resolve(linked, ".git"), `gitdir: ${linkedGitDirectory}\n`);
+    try {
+      const discovery = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [
+          { id: "main", cwd: main },
+          { id: "linked", cwd: linked },
+        ],
+        { temporaryRoots: [] },
+      );
+      expect(discovery.candidates).toHaveLength(1);
+      expect(discovery.candidates[0]).toMatchObject({
+        localRoot: realpathSync.native(main),
+        displayName: "main-project",
+        sessionCount: 2,
+      });
+      expect(discovery.threadScopes.get("main")).toBe(
+        discovery.threadScopes.get("linked"),
+      );
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("does not merge same-named directories from different repositories", () => {
+    const base = mkdtempSync(resolve(tmpdir(), "partner-report-name-test-"));
+    const first = resolve(base, "one", "project");
+    const second = resolve(base, "two", "project");
+    mkdirSync(resolve(first, ".git"), { recursive: true });
+    mkdirSync(resolve(second, ".git"), { recursive: true });
+    try {
+      const discovery = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [
+          { id: "first", cwd: first },
+          { id: "second", cwd: second },
+        ],
+        { temporaryRoots: [] },
+      );
+      expect(discovery.candidates).toHaveLength(2);
+      expect(
+        new Set(discovery.candidates.map((item) => item.scopeKey)).size,
+      ).toBe(2);
+      expect(discovery.candidates.map((item) => item.displayName)).toEqual([
+        "project",
+        "project",
+      ]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("marks unclassified directories unknown and blocks reads until approval", () => {
+    const root = "/workspace/unclassified-project";
+    expect(
+      classifyProjectEnvironment(
+        { id: "unknown", cwd: root },
+        { temporaryRoots: [] },
+      ),
+    ).toEqual({ kind: "unknown", localRoot: root });
+    const discovery = discoverProjectScopes(
+      pluginInstanceId,
+      localScope(),
+      [{ id: "unknown", cwd: root }],
+      { temporaryRoots: [] },
+    );
+    const candidate = discovery.candidates[0]!;
+    const pendingScope = localScope([
+      {
+        ...candidate,
+        status: "pending",
+        effectiveFrom: null,
+        firstSeenPeriodKey: "2026-W31",
+        firstSeenAt: "2026-08-01T00:00:00.000Z",
+        lastSeenAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+    expect(
+      threadMayBeRead(
+        { id: "unknown", cwd: root, scopeKey: candidate.scopeKey },
+        pendingScope,
+        { temporaryRoots: [] },
+      ),
+    ).toBe(false);
+    pendingScope.entries[0]!.status = "allowed";
+    pendingScope.entries[0]!.effectiveFrom = "2026-08-01T00:00:00.000Z";
+    expect(
+      threadMayBeRead(
+        { id: "unknown", cwd: root, scopeKey: candidate.scopeKey },
+        pendingScope,
+        { temporaryRoots: [] },
+        new Date("2026-08-06T00:00:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not expand a legacy local permission to a different root", () => {
+    const scopeKey = "f".repeat(64);
+    const legacy = localScope([
+      {
+        scopeKey,
+        displayName: "legacy",
+        status: "allowed",
+        effectiveFrom: "2026-08-01T00:00:00.000Z",
+        firstSeenPeriodKey: "2026-W31",
+        firstSeenAt: "2026-08-01T00:00:00.000Z",
+        lastSeenAt: "2026-08-01T00:00:00.000Z",
+        sessionCount: 1,
+        localRoot: "/workspace/legacy",
+      },
+    ]);
+    expect(
+      threadMayBeRead(
+        {
+          id: "other",
+          cwd: "/workspace/other",
+          scopeKey,
+        },
+        legacy,
+        { temporaryRoots: [] },
+        new Date("2026-08-06T00:00:00.000Z"),
+      ),
+    ).toBe(false);
+  });
+
+  it("migrates one legacy worktree mapping without changing its permission key", () => {
+    const base = mkdtempSync(
+      resolve(tmpdir(), "partner-report-legacy-worktree-"),
+    );
+    const main = resolve(base, "main");
+    const linked = resolve(base, "linked");
+    const linkedGitDirectory = resolve(main, ".git", "worktrees", "legacy");
+    mkdirSync(linkedGitDirectory, { recursive: true });
+    mkdirSync(linked, { recursive: true });
+    writeFileSync(resolve(linked, ".git"), `gitdir: ${linkedGitDirectory}\n`);
+    const legacyKey = anonymousProjectScopeKey(
+      pluginInstanceId,
+      "a".repeat(64),
+      realpathSync.native(linked),
+    );
+    const legacy = localScope([
+      {
+        scopeKey: legacyKey,
+        displayName: "linked",
+        status: "allowed",
+        effectiveFrom: "2026-08-01T00:00:00.000Z",
+        firstSeenPeriodKey: "2026-W31",
+        firstSeenAt: "2026-08-01T00:00:00.000Z",
+        lastSeenAt: "2026-08-01T00:00:00.000Z",
+        sessionCount: 1,
+        localRoot: linked,
+      },
+    ]);
+    try {
+      const discovery = discoverProjectScopes(
+        pluginInstanceId,
+        legacy,
+        [
+          { id: "legacy", cwd: linked },
+          { id: "main", cwd: main },
+        ],
+        { temporaryRoots: [] },
+      );
+      expect(discovery.candidates).toEqual([
+        expect.objectContaining({
+          scopeKey: legacyKey,
+          localRoot: realpathSync.native(main),
+          sessionCount: 2,
+        }),
+      ]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

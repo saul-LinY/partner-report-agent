@@ -11,7 +11,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 不得上传原始对话、Codex Session 原始标识、绝对路径、推理、commentary、命令、工具调用、文件改动或凭据。automation memory 不得包含 Session 内容、Fact、证据、端点或标识。
 
-项目采集权限的正式规则保存在数据中台，本地 `project-scope.json` 保存执行状态、匿名键盐值和本机目录映射；本地文件是采集前的强制隐私门禁。CLI 可以通过 `thread/list` 读取项目显示名和工作目录等本机元数据来识别权限单元，但未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。候选项目只向中台发送匿名项目键、显示名、首次发现周期和 Session 数量；绝对路径只保存在本机。
+项目采集权限的正式规则保存在数据中台，本地 `project-scope.json` 保存执行状态、匿名键盐值、本机目录映射和本地环境分类；本地文件是采集前的强制隐私门禁。飞书身份确认前不得调用 `thread/list`、`thread/read` 或登记候选项目。身份确认后，CLI 才能通过 `thread/list` 在本机过滤临时环境和识别权限单元；未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。候选项目只向中台发送匿名项目键、显示名、首次发现周期和聚合 Session 数量；绝对路径、Git 信息、worktree 信息和 Codex Session 原始标识只保存在本机。
 
 ## 定位 CLI
 
@@ -47,7 +47,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" server-url-set --server <SERVER_URL>
 
 可信测试局域网的 HTTP 地址仍须显式追加 `--allow-insecure-http`。该命令保留 Plugin Instance、Keychain Token、项目权限和采集状态；若验证时发现凭据失配，会继续进入上述飞书自动恢复链路。
 
-连接后会先向 Partner 工作邮箱发送飞书身份确认卡。卡片会说明候选项目最小元数据的用途；用户确认身份后，再通过飞书项目范围卡完成首次授权。首次授权前，定时任务仍可发现候选项目元数据，但不会读取任何 Session 内容。
+连接后会先向 Partner 工作邮箱发送飞书身份确认卡。卡片会说明候选项目最小元数据的用途；用户确认身份前，定时任务保持零项目发现、零读取、零上传。确认后，当前任务自动继续本地项目发现，再通过飞书项目范围卡完成首次授权，不需要用户重新输入命令。
 
 连接后运行 `scheduled-task-config`。使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。
 
@@ -74,7 +74,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-deny --project <PROJECT_NAME>
 
 同名时先查询，再使用 CLI 返回的 `--scope-key`。只有用户明确说“全部”时才使用 `--all-pending`。所有修改都通过中台版本化 API 完成，再写入本地缓存；不得直接编辑 `project-scope.json`。中台不可达或返回版本冲突时，明确告知修改尚未生效，不得假装只改本地即可。
 
-权限单位只有顶层项目根目录一层：项目内子目录、新 Session 和嵌套 Git 仓库继承同一权限。首次审批的允许项立即生效；首次审批完成后发现的新项目保持 `pending`，本周期内不读取内容，飞书在原有审核链路结束后汇总审批，允许结果从下个周期生效。未处理项目继续保持待审批，后续周期仍可处理。拒绝只阻止未来采集，不删除已经上传的数据。
+权限单位只有顶层逻辑项目一层：项目内子目录、新 Session 和嵌套 Git 仓库继承同一权限，同一 Git 仓库的多个 worktree 归并为一个逻辑项目；同名但不同仓库不得合并。系统任务、官方自动化、Codex 临时目录和系统临时目录在候选登记前排除，不得使用 `sessionCount === 1` 或仅凭目录名称判断临时项目。正常 Git 仓库或中台已配置项目即使只有一个 Session 也进入审批；无法可靠分类的目录在本地标记为 `unknown`，保持待审批，授权前不得读取。首次审批的允许项立即生效；首次审批完成后发现的新项目保持 `pending`，本周期内不读取内容，飞书在原有审核链路结束后汇总审批，允许结果从下个周期生效。未处理项目继续保持待审批，后续周期仍可处理。拒绝只阻止未来采集，不删除已经上传的数据。
 
 ## 采集 Session
 
@@ -84,9 +84,13 @@ node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-deny --project <PROJECT_NAME>
 node "<PLUGIN_PATH>/dist/cli.mjs" collect-start
 ```
 
-如果返回 `project_scope_approval_required`，表示候选项目已经登记，但首次飞书授权尚未完成；也可能是升级后发现本地权限文件缺失或损坏，已经重新发起审批。此状态下 `read` 必须为 `0`，不得继续执行 `collect-next`、轮询或尝试绕过权限；向用户说明需要处理飞书项目范围卡，本次运行以正常等待状态结束。用户审批后，下一次定时运行会自动拉取权限并采集；用户也可以回到普通 Session 说“继续采集”，发起一次新的手动采集。`--force` 只能扩展时间窗口，绝不能绕过项目权限。
+如果返回 `project_scope_card_delivery_pending`，表示候选项目已幂等登记，但中台尚未确认对应版本的项目范围卡已经成功发送。此状态带有 `nextCommand`，必须在当前任务内持续执行 `project-scope-card-wait`；该命令只查询投递状态，不得重复登记候选或重复发送卡片。网络重试使用同一聚合键，不会创建第二张卡。
 
-如果返回 `feishu_identity_confirmation_required`，说明用户尚未确认飞书身份卡。此时 CLI 尚未执行项目扫描，`discovered` 和 `read` 都必须为 `0`；向用户说明先确认身份卡，本次运行结束。不得提前登记项目候选或继续采集。
+如果返回 `project_scope_approval_required`，表示项目范围卡已经确认发送，但首次飞书授权尚未完成；也可能是升级后发现本地权限文件缺失或损坏，已经重新发起审批。此状态下 `read` 必须为 `0`，不得继续执行 `collect-next`、轮询或尝试绕过权限；向用户说明需要处理飞书项目范围卡，本次运行可以正常结束。用户审批后，下一次定时运行会自动拉取权限并采集；用户也可以回到普通 Session 说“继续采集”，发起一次新的手动采集。`--force` 只能扩展时间窗口，绝不能绕过项目权限。
+
+如果返回 `project_scope_no_candidates`，表示临时环境过滤后没有需要人工审批的项目，因此不会生成项目范围卡。此状态是零读取、零上传的正常终态；不得等待卡片或把它记录为失败。后续周期发现合法 Git、已配置或 `unknown` 项目时会重新进入审批。
+
+如果返回 `feishu_identity_confirmation_required`，说明用户尚未确认飞书身份卡。此状态是带 `nextCommand` 的非终态：`discovered`、`read` 和 `uploaded` 必须始终为 `0`，立即执行返回的 `identity-wait`，在当前 Codex 任务内以指数退避的低频短轮询等待。身份确认后，等待命令会自动继续 `collect-start`、发现项目并发送项目范围卡，不要求用户再次输入。等待只依附当前任务，不得创建 Hook、后台 Runner、worktree、延续任务或常驻进程。网络错误继续按 `nextCommand` 重试；用户取消或 `identity_confirmation_wait_timed_out` 是零读取、零上传的普通中断，不得记为采集失败。身份确认前绝不能登记候选项目或调用任何 Session 接口。
 
 如果返回 `auth_recovery_required`，说明连接恢复卡已发送或仍在等待飞书确认。本次运行是正常等待态，`discovered`、`read` 和 `uploaded` 必须为 `0`，不得继续执行采集命令或轮询。用户确认后，下一次定时运行会自动恢复并继续；不要求用户重新进入旧 Session。
 
@@ -96,7 +100,7 @@ CLI 的本地持久化状态同时服务自动和手动运行：
 - 后续运行使用上次完整成功运行的开始时间作为增量游标，并保留 24 小时重叠窗口。
 - 已接收和已忽略 Session 都把匿名 Session key、稳定内容 hash 与处理时间记录在用户稳定数据目录的 `collection-state.json`；Plugin 更新、缓存目录替换或重装不得删除该文件。
 - 项目权限版本、状态、匿名键盐值和本机根目录映射保存在同一稳定数据目录的 `project-scope.json`；正常 Plugin 更新或缓存替换不得删除。每次采集先检查该文件，再从中台拉取最新版本并原子更新。
-- 本地权限文件缺失、JSON 损坏、版本不兼容或不属于当前 Plugin Instance 时，不得用中台旧权限静默恢复。`collect-start` 必须让中台废止旧匿名项目映射，使用新的本地盐值从当前周期的 `thread/list` 元数据登记候选项目并发送首次审批卡；这个扩大范围只用于项目识别，实际内容采集仍遵守原增量窗口，审批前 `thread/read` 和上传都必须为 0。
+- 本地权限文件缺失、JSON 损坏、版本不兼容或不属于当前 Plugin Instance 时，不得用中台旧权限静默恢复。飞书身份确认后，`collect-start` 才能让中台废止旧匿名项目映射，使用新的本地盐值从当前周期的 `thread/list` 元数据登记候选项目并发送首次审批卡；这个扩大范围只用于项目识别，实际内容采集仍遵守原增量窗口，审批前 `thread/read` 和上传都必须为 0。
 - `status` 和 `project-scope-list` 只能查询本地状态与中台规则，不能创建缺失的权限文件。权限文件缺失时，权限修改命令也不能代替首次审批。
 - CLI 在把 Session 交给模型前合并本地记录与中台状态。完整问答内容未变化时直接跳过，模型不会再次读取、判断或上传。
 - `contentHash` 只基于当前周期内的完整“用户问题 + 助手最终回答”；标题变化、项目从自动发现变为已登记、项目 ID 或匹配方式变化都不得触发 Revision。
@@ -111,7 +115,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-next --run <RUN_PATH>
 
 `collect-start` 的 `queued` 只是更新时间窗口内的粗筛候选数，不是需要模型处理的数量。不要向用户描述为“待判定项”或“都会处理”；CLI 读取结构化 Turn 并完成本地/中台 hash 比对后，只有内容发生变化且符合输入条件的 Session 才会返回 `job`。
 
-CLI 返回的所有 `nextCommand` 都必须执行。`started`、`job`、`uploaded`、`ignored`、`skipped`、`review_required` 和 `review_failed` 均为非终态；出现其中任何状态时不得总结、更新 memory 为成功或结束任务。Session 数量、已运行时间或已经上传一部分结果都不能作为收尾依据。
+CLI 返回的所有 `nextCommand` 都必须执行，包括身份等待状态返回的 `identity-wait` 和卡片投递等待状态返回的 `project-scope-card-wait`。`feishu_identity_confirmation_required`、`project_scope_card_delivery_pending`、`started`、`job`、`uploaded`、`ignored`、`skipped`、`review_required` 和 `review_failed` 均为非终态；出现其中任何状态时不得总结、更新 memory 为成功或结束任务。Session 数量、已运行时间、普通等待或已经上传一部分结果都不能作为收尾依据。
 
 状态为 `job` 时：
 

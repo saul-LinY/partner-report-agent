@@ -49,6 +49,7 @@ import {
   buildSessionJob,
   containsSensitive,
   firstNonChineseContributionField,
+  isOfficialAutomationThread,
   isPluginSystemThread,
   pathIsExcluded,
   type CollectionPeriod,
@@ -62,9 +63,15 @@ import {
   mergeRemoteProjectScope,
   saveLocalProjectScope,
   scopeIsActive,
+  threadMayBeRead,
   type LocalProjectScope,
   type RemoteProjectScopePolicy,
 } from "./project-scope.js";
+import {
+  decodeIdentityWaitPeriod,
+  identityConfirmationRequiredState,
+  waitForIdentityAndContinue,
+} from "./identity-wait.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -95,11 +102,18 @@ type RecoveryTokenResponse = ConnectivityChallenge & {
   pluginInstanceId: string;
 };
 
+type ProjectScopeCardStatus = {
+  status: "pending" | "sent";
+  policyVersion: number;
+  retryAfterSeconds: number;
+};
+
 type ThreadSummary = {
   id: string;
   title: string | null;
   cwd: string | null;
   updatedAt: string | number | null;
+  systemGenerated?: boolean;
 };
 
 type ScopedThreadSummary = ThreadSummary & { scopeKey: string };
@@ -141,6 +155,8 @@ type RunManifest = {
 };
 
 const RUN_PREFIX = "partner-report-run-";
+const IDENTITY_WAIT_TOTAL_MS = 10 * 60_000;
+const IDENTITY_WAIT_SEGMENT_MS = 45_000;
 
 function option(name: string, fallback?: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -188,8 +204,11 @@ async function fetchPolicy() {
   return policy;
 }
 
-async function fetchProjectScope() {
-  return authenticatedRequest<RemoteProjectScopePolicy>("/v1/project-scope");
+async function fetchProjectScope(init: RequestInit = {}) {
+  return authenticatedRequest<RemoteProjectScopePolicy>(
+    "/v1/project-scope",
+    init,
+  );
 }
 
 function cacheRemoteProjectScope(remote: RemoteProjectScopePolicy) {
@@ -503,7 +522,263 @@ function summaryFromThread(value: any): ThreadSummary | null {
     title,
     cwd: typeof value.cwd === "string" ? value.cwd : null,
     updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? null,
+    systemGenerated:
+      isPluginSystemThread(value as Record<string, unknown>) ||
+      isOfficialAutomationThread(value as Record<string, unknown>),
   };
+}
+
+function configuredProjectRoots(projects: ProjectPolicy[]) {
+  return projects.flatMap((project) => project.allowed_paths ?? []);
+}
+
+function identityConfirmationRequired(
+  periodKey: string,
+  deadlineAt = Date.now() + IDENTITY_WAIT_TOTAL_MS,
+  attempt = 0,
+  lastErrorCode: string | null = null,
+) {
+  return identityConfirmationRequiredState({
+    periodKey,
+    deadlineAt,
+    attempt,
+    force: flag("force"),
+    lastErrorCode,
+  });
+}
+
+function projectScopeApprovalRequired(
+  periodKey: string,
+  localScope: LocalProjectScope,
+) {
+  return {
+    status: "project_scope_approval_required",
+    periodKey,
+    policyVersion: localScope.version,
+    pendingProjects: localScope.entries.filter(
+      (entry) => entry.status === "pending",
+    ).length,
+    read: 0,
+    uploaded: 0,
+    message:
+      "项目范围卡已发送，项目采集范围尚未审批，未读取任何 Session 内容。请在飞书卡片中完成审批。",
+  };
+}
+
+function projectScopeCardWaitCommand(input: {
+  periodKey: string;
+  version: number;
+  deadlineAt: number;
+  attempt: number;
+}) {
+  return [
+    "project-scope-card-wait",
+    `--period-key ${Buffer.from(input.periodKey, "utf8").toString("base64url")}`,
+    `--version ${input.version}`,
+    `--deadline ${Math.trunc(input.deadlineAt)}`,
+    `--attempt ${Math.max(0, Math.trunc(input.attempt))}`,
+    ...(flag("force") ? ["--force"] : []),
+  ].join(" ");
+}
+
+function projectScopeCardDeliveryPending(input: {
+  periodKey: string;
+  version: number;
+  deadlineAt?: number;
+  attempt?: number;
+  lastErrorCode?: string | null;
+}) {
+  const deadlineAt = input.deadlineAt ?? Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const attempt = input.attempt ?? 0;
+  return {
+    status: "project_scope_card_delivery_pending",
+    waiting: true,
+    periodKey: input.periodKey,
+    policyVersion: input.version,
+    read: 0,
+    uploaded: 0,
+    ...(input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {}),
+    nextCommand: projectScopeCardWaitCommand({
+      periodKey: input.periodKey,
+      version: input.version,
+      deadlineAt,
+      attempt,
+    }),
+    message: "项目范围卡已幂等登记，当前任务正在等待飞书确认投递成功。",
+  };
+}
+
+async function fetchProjectScopeCardStatus(
+  periodKey: string,
+  version: number,
+  init: RequestInit = {},
+) {
+  const query = new URLSearchParams({
+    periodKey,
+    version: String(version),
+  });
+  return authenticatedRequest<ProjectScopeCardStatus>(
+    `/v1/project-scope/card-status?${query.toString()}`,
+    init,
+  );
+}
+
+async function identityWait() {
+  const deadline = Number(option("deadline"));
+  const deadlineAt = Number.isFinite(deadline)
+    ? Math.min(deadline, Date.now() + IDENTITY_WAIT_TOTAL_MS)
+    : Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const attemptValue = Number(option("attempt", "0"));
+  const attempt =
+    Number.isInteger(attemptValue) && attemptValue >= 0 ? attemptValue : 0;
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  try {
+    const flow = await waitForIdentityAndContinue(
+      {
+        check: async () => {
+          const requestTimeoutMs = Math.max(
+            1,
+            Math.min(15_000, deadlineAt - Date.now()),
+          );
+          const signal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(requestTimeoutMs),
+          ]);
+          return (await fetchProjectScope({ signal })).identityConfirmed;
+        },
+        deadlineAt,
+        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
+        attempt,
+        signal: controller.signal,
+        errorCode: (error) =>
+          error instanceof HttpError
+            ? error.code
+            : "IDENTITY_STATUS_UNAVAILABLE",
+      },
+      collectStart,
+    );
+    if (flow.continued) return flow.value;
+    const result = flow.wait;
+    if (result.status === "pending") {
+      return output(
+        identityConfirmationRequired(
+          decodeIdentityWaitPeriod(option("period-key")),
+          deadlineAt,
+          result.attempt,
+          result.lastErrorCode,
+        ),
+      );
+    }
+    if (result.status === "cancelled")
+      return output({
+        status: "identity_confirmation_wait_cancelled",
+        waiting: false,
+        read: 0,
+        uploaded: 0,
+        discovered: 0,
+        message: "已取消当前任务内的身份确认等待，未扫描或读取 Session。",
+      });
+    return output({
+      status: "identity_confirmation_wait_timed_out",
+      waiting: false,
+      read: 0,
+      uploaded: 0,
+      discovered: 0,
+      ...(result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {}),
+      message:
+        "当前执行环境的身份等待时间已到，未扫描或读取 Session；下次采集会继续检查。",
+    });
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    process.removeListener("SIGTERM", cancel);
+  }
+}
+
+async function projectScopeCardWait() {
+  const periodKey = decodeIdentityWaitPeriod(option("period-key"));
+  const version = Number(option("version"));
+  if (periodKey === "unknown" || !Number.isInteger(version) || version < 1)
+    throw new Error("项目范围卡等待参数无效。");
+  const rawDeadline = Number(option("deadline"));
+  const deadlineAt = Number.isFinite(rawDeadline)
+    ? Math.min(rawDeadline, Date.now() + IDENTITY_WAIT_TOTAL_MS)
+    : Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const rawAttempt = Number(option("attempt", "0"));
+  const attempt =
+    Number.isInteger(rawAttempt) && rawAttempt >= 0 ? rawAttempt : 0;
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  try {
+    const flow = await waitForIdentityAndContinue(
+      {
+        check: async () => {
+          const requestTimeoutMs = Math.max(
+            1,
+            Math.min(15_000, deadlineAt - Date.now()),
+          );
+          const signal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(requestTimeoutMs),
+          ]);
+          return (
+            (await fetchProjectScopeCardStatus(periodKey, version, { signal }))
+              .status === "sent"
+          );
+        },
+        deadlineAt,
+        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
+        attempt,
+        signal: controller.signal,
+        errorCode: (error) =>
+          error instanceof HttpError
+            ? error.code
+            : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
+      },
+      async () => {
+        const remote = await fetchProjectScope();
+        if (remote.initialized) return collectStart();
+        const local = cacheRemoteProjectScope(remote);
+        return output(projectScopeApprovalRequired(periodKey, local.scope));
+      },
+    );
+    if (flow.continued) return flow.value;
+    const result = flow.wait;
+    if (result.status === "pending")
+      return output(
+        projectScopeCardDeliveryPending({
+          periodKey,
+          version,
+          deadlineAt,
+          attempt: result.attempt,
+          lastErrorCode: result.lastErrorCode,
+        }),
+      );
+    if (result.status === "cancelled")
+      return output({
+        status: "project_scope_card_wait_cancelled",
+        waiting: false,
+        read: 0,
+        uploaded: 0,
+        message: "已取消项目范围卡投递等待，未读取或上传 Session。",
+      });
+    return output({
+      status: "project_scope_card_wait_timed_out",
+      waiting: false,
+      read: 0,
+      uploaded: 0,
+      ...(result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {}),
+      message:
+        "当前执行环境的卡片投递等待时间已到，未读取或上传 Session；下次采集会继续检查。",
+    });
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    process.removeListener("SIGTERM", cancel);
+  }
 }
 
 function createRun(manifest: RunManifest) {
@@ -631,15 +906,9 @@ async function collectStart() {
       code: "REPORT_PERIOD_MISSING",
     });
   if (!remoteScope.identityConfirmed)
-    return output({
-      status: "feishu_identity_confirmation_required",
-      periodKey: policy.currentPeriod.period_key,
-      read: 0,
-      uploaded: 0,
-      discovered: 0,
-      message:
-        "请先在飞书身份卡中确认审核身份。确认前不会扫描项目或读取 Session 内容。",
-    });
+    return output(
+      identityConfirmationRequired(policy.currentPeriod.period_key),
+    );
   let localScope: LocalProjectScope;
   if (!requiresProjectScopeBootstrap) {
     localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
@@ -729,6 +998,7 @@ async function collectStart() {
     config.pluginInstanceId,
     localScope,
     permissionDiscoverySummaries,
+    { configuredRoots: configuredProjectRoots(policy.projects) },
   );
   let registeredScope: RemoteProjectScopePolicy;
   try {
@@ -763,18 +1033,45 @@ async function collectStart() {
 
   if (!localScope.initialized) {
     releaseCollectionLease(config.pluginInstanceId, runId);
-    return output({
-      status: "project_scope_approval_required",
-      periodKey: policy.currentPeriod.period_key,
+    const pendingProjects = localScope.entries.filter(
+      (entry) => entry.status === "pending",
+    ).length;
+    if (pendingProjects === 0)
+      return output({
+        status: "project_scope_no_candidates",
+        waiting: false,
+        periodKey: policy.currentPeriod.period_key,
+        policyVersion: localScope.version,
+        discovered: 0,
+        read: 0,
+        uploaded: 0,
+        message:
+          "过滤临时环境后没有需要审批的项目，本次未读取或上传 Session；后续周期会重新发现。",
+      });
+    const cardStatus = await fetchProjectScopeCardStatus(
+      policy.currentPeriod.period_key,
+      localScope.version,
+    ).catch((error) => ({
+      status: "pending" as const,
       policyVersion: localScope.version,
-      pendingProjects: localScope.entries.filter(
-        (entry) => entry.status === "pending",
-      ).length,
-      read: 0,
-      uploaded: 0,
-      message:
-        "项目采集范围尚未审批，未读取任何 Session 内容。请在飞书卡片中完成审批。",
-    });
+      retryAfterSeconds: 3,
+      lastErrorCode:
+        error instanceof HttpError
+          ? error.code
+          : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
+    }));
+    if (cardStatus.status !== "sent")
+      return output(
+        projectScopeCardDeliveryPending({
+          periodKey: policy.currentPeriod.period_key,
+          version: localScope.version,
+          lastErrorCode:
+            "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null,
+        }),
+      );
+    return output(
+      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
+    );
   }
   let state: {
     sessions: Array<{ sessionKey: string; contentHash: string }>;
@@ -907,6 +1204,18 @@ async function collectNext() {
     await server.connect();
     while (manifest.cursor < manifest.queue.length) {
       const summary = manifest.queue[manifest.cursor++]!;
+      const localScope = inspectLocalProjectScope(manifest.pluginInstanceId);
+      if (
+        localScope.state !== "valid" ||
+        !threadMayBeRead(summary, localScope.scope, {
+          configuredRoots: configuredProjectRoots(manifest.projects),
+        })
+      ) {
+        manifest.counts.excluded += 1;
+        manifest.counts.failedRead += 1;
+        saveRun(absolute, manifest);
+        continue;
+      }
       let thread: any;
       try {
         thread = await server.readThread(summary.id);
@@ -1260,6 +1569,8 @@ function help() {
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
       "collect-start [--force]",
+      "identity-wait --deadline <epoch-ms> --attempt <number> [--force]",
+      "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
@@ -1281,6 +1592,8 @@ const recoveryAwareCommands = new Set([
   "connectivity-test",
   "server-url-set",
   "collect-start",
+  "identity-wait",
+  "project-scope-card-wait",
   "daily-collect",
   "collect-next",
   "collect-review",
@@ -1306,6 +1619,8 @@ async function runCommand() {
   else if (command === "scheduled-task-config") scheduledTaskConfig();
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
+  else if (command === "identity-wait") await identityWait();
+  else if (command === "project-scope-card-wait") await projectScopeCardWait();
   else if (command === "collect-next") await collectNext();
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();

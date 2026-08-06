@@ -178,6 +178,34 @@ export function isPluginSystemThread(summary: Record<string, unknown>) {
   );
 }
 
+export function isOfficialAutomationThread(summary: Record<string, unknown>) {
+  if (summary.ephemeral === true || summary.transient === true) return true;
+  const source = summary.source;
+  const sourceRecord =
+    source && typeof source === "object"
+      ? (source as Record<string, unknown>)
+      : null;
+  const values = [
+    typeof source === "string" ? source : null,
+    summary.sourceKind,
+    summary.source_kind,
+    summary.origin,
+    sourceRecord?.type,
+    sourceRecord?.kind,
+    sourceRecord?.origin,
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) =>
+      value
+        .trim()
+        .toLowerCase()
+        .replace(/[-_\s]/g, ""),
+    );
+  return values.some((value) =>
+    ["automation", "scheduledtask", "systemtask"].includes(value),
+  );
+}
+
 export function isPluginAdministrationSession(turns: ProgressTurn[]) {
   const prompts = turns
     .map((turn) => turn.userPrompt?.trim())
@@ -351,7 +379,7 @@ export function buildSessionJob(input: {
   );
   const observedAt = input.observedAt ?? new Date().toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.4.1" as const,
+    skillVersion: "partner-report-sync/0.4.4" as const,
     promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0" as const,
     producer: "codex-skill" as const,

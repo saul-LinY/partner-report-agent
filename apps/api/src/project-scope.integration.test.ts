@@ -6,6 +6,7 @@ import { FeishuDeliveryService } from "./feishu/delivery.js";
 import {
   beginProjectScopeBootstrap,
   decideProjectScopes,
+  loadProjectScopeCardDeliveryStatus,
   registerProjectScopeCandidates,
 } from "./project-scope.js";
 
@@ -115,6 +116,12 @@ suite("project scope persistence", () => {
         { scopeKey: firstKey, displayName: "first-project", sessionCount: 2 },
       ],
     });
+    await expect(
+      loadProjectScopeCardDeliveryStatus(identity, {
+        periodKey: "scope-period",
+        version: first.version,
+      }),
+    ).resolves.toMatchObject({ status: "pending" });
     expect(first).toMatchObject({ version: 2, initialized: false });
     const messageId = `om_${randomUUID()}`;
     const sendInteractiveCard = vi.fn(async () => ({ messageId }));
@@ -136,6 +143,12 @@ suite("project scope persistence", () => {
       messageId,
       domainVersion: first.version,
     });
+    await expect(
+      loadProjectScopeCardDeliveryStatus(identity, {
+        periodKey: "scope-period",
+        version: first.version,
+      }),
+    ).resolves.toMatchObject({ status: "sent" });
 
     const initialized = await decideProjectScopes(
       actor,
@@ -217,6 +230,12 @@ suite("project scope persistence", () => {
       ],
     });
     await expect(
+      loadProjectScopeCardDeliveryStatus(identity, {
+        periodKey: "scope-period",
+        version: rediscovered.version,
+      }),
+    ).resolves.toMatchObject({ status: "pending" });
+    await expect(
       deliveryService.deliverScope({
         tenantId: fixture.tenantId,
         teamId: fixture.teamId,
@@ -231,6 +250,12 @@ suite("project scope persistence", () => {
     });
     expect(sendInteractiveCard).toHaveBeenCalledTimes(1);
     expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+    await expect(
+      loadProjectScopeCardDeliveryStatus(identity, {
+        periodKey: "scope-period",
+        version: rediscovered.version,
+      }),
+    ).resolves.toMatchObject({ status: "sent" });
 
     const reapproved = await decideProjectScopes(
       actor,
