@@ -237,22 +237,25 @@ export async function registerProjectScopeCandidates(
       "FEISHU_IDENTITY_CONFIRMATION_REQUIRED",
       "请先在飞书中确认审核身份。",
     );
-  if (input.candidates.length === 0)
-    return loadProjectScopePolicy(identity, database);
-
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
-    const existing = await tx<Array<{ scope_key: string }>>`
-      select scope_key from project_scope_entries
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and scope_key in ${tx(input.candidates.map((item) => item.scopeKey))}
-    `;
+    const eligibleCandidates = input.candidates.filter(
+      (candidate) => candidate.sessionCount > 1,
+    );
+    const existing =
+      eligibleCandidates.length > 0
+        ? await tx<Array<{ scope_key: string }>>`
+            select scope_key from project_scope_entries
+            where plugin_instance_id = ${identity.pluginInstanceId}
+              and scope_key in ${tx(eligibleCandidates.map((item) => item.scopeKey))}
+          `
+        : [];
     const existingKeys = new Set(existing.map((item) => item.scope_key));
-    const newCandidates = input.candidates.filter(
+    const newCandidates = eligibleCandidates.filter(
       (candidate) => !existingKeys.has(candidate.scopeKey),
     );
 
-    for (const candidate of input.candidates) {
+    for (const candidate of eligibleCandidates) {
       await tx`
         insert into project_scope_entries (
           id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
@@ -270,7 +273,15 @@ export async function registerProjectScopeCandidates(
       `;
     }
 
-    if (newCandidates.length > 0) {
+    const removedSingleSessionEntries = await tx<Array<{ scope_key: string }>>`
+      delete from project_scope_entries
+      where plugin_instance_id = ${identity.pluginInstanceId}
+        and tenant_id = ${identity.tenantId} and status = 'pending'
+        and session_count = 1
+      returning scope_key
+    `;
+
+    if (newCandidates.length > 0 || removedSingleSessionEntries.length > 0) {
       const versions = await tx<Array<{ version: number }>>`
         update project_scope_policies set version = version + 1, updated_at = now()
         where plugin_instance_id = ${identity.pluginInstanceId}

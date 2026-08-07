@@ -379,7 +379,7 @@ export function buildSessionJob(input: {
   );
   const observedAt = input.observedAt ?? new Date().toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.4.4" as const,
+    skillVersion: "partner-report-sync/0.4.5" as const,
     promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0" as const,
     producer: "codex-skill" as const,

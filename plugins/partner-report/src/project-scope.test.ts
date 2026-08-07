@@ -13,6 +13,7 @@ import {
   authorizedProjectThreads,
   classifyProjectEnvironment,
   discoverProjectScopes,
+  filterSingleSessionProjectScopes,
   inspectLocalProjectScope,
   mergeRemoteProjectScope,
   saveLocalProjectScope,
@@ -238,7 +239,7 @@ describe("project scope privacy boundary", () => {
     }
   });
 
-  it("keeps a legitimate single-Session Git project for approval", () => {
+  it("filters a single-Session Git project after logical aggregation", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-single-test-"));
     mkdirSync(resolve(root, ".git"));
     try {
@@ -248,15 +249,16 @@ describe("project scope privacy boundary", () => {
         [{ id: "only-session", cwd: root }],
         { temporaryRoots: [] },
       );
-      expect(discovery.candidates).toHaveLength(1);
       expect(discovery.candidates[0]?.sessionCount).toBe(1);
-      expect(discovery.threadScopes.has("only-session")).toBe(true);
+      const filtered = filterSingleSessionProjectScopes(discovery);
+      expect(filtered.candidates).toHaveLength(0);
+      expect(filtered.threadScopes.has("only-session")).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("keeps a configured non-Git project with one Session for approval", () => {
+  it("filters a configured non-Git project with one Session", () => {
     const root = "/workspace/configured-project";
     const discovery = discoverProjectScopes(
       pluginInstanceId,
@@ -264,13 +266,14 @@ describe("project scope privacy boundary", () => {
       [{ id: "configured-session", cwd: resolve(root, "src") }],
       { configuredRoots: [root], temporaryRoots: [] },
     );
-    expect(discovery.candidates).toEqual([
-      expect.objectContaining({
-        localRoot: root,
-        environmentKind: "configured",
-        sessionCount: 1,
-      }),
-    ]);
+    expect(discovery.candidates[0]).toMatchObject({
+      localRoot: root,
+      environmentKind: "configured",
+      sessionCount: 1,
+    });
+    expect(filterSingleSessionProjectScopes(discovery)).toMatchObject({
+      candidates: [],
+    });
   });
 
   it("merges linked worktrees into one logical Git project", () => {
@@ -303,6 +306,9 @@ describe("project scope privacy boundary", () => {
       expect(discovery.threadScopes.get("main")).toBe(
         discovery.threadScopes.get("linked"),
       );
+      expect(
+        filterSingleSessionProjectScopes(discovery).candidates,
+      ).toHaveLength(1);
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

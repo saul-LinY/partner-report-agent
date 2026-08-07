@@ -377,6 +377,25 @@ export function discoverProjectScopes(
   return { candidates: [...discovered.values()], threadScopes };
 }
 
+export function filterSingleSessionProjectScopes(
+  discovery: ReturnType<typeof discoverProjectScopes>,
+) {
+  const candidates = discovery.candidates.filter(
+    (candidate) => candidate.sessionCount > 1,
+  );
+  const retainedKeys = new Set(
+    candidates.map((candidate) => candidate.scopeKey),
+  );
+  return {
+    candidates,
+    threadScopes: new Map(
+      [...discovery.threadScopes].filter(([, scopeKey]) =>
+        retainedKeys.has(scopeKey),
+      ),
+    ),
+  };
+}
+
 export function threadMayBeRead(
   summary: ScopeThreadSummary & { scopeKey: string },
   local: LocalProjectScope,

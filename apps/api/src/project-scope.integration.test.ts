@@ -114,6 +114,11 @@ suite("project scope persistence", () => {
       periodKey: "scope-period",
       candidates: [
         { scopeKey: firstKey, displayName: "first-project", sessionCount: 2 },
+        {
+          scopeKey: "d".repeat(64),
+          displayName: "single-session-project",
+          sessionCount: 1,
+        },
       ],
     });
     await expect(
@@ -122,7 +127,11 @@ suite("project scope persistence", () => {
         version: first.version,
       }),
     ).resolves.toMatchObject({ status: "pending" });
-    expect(first).toMatchObject({ version: 2, initialized: false });
+    expect(first).toMatchObject({
+      version: 2,
+      initialized: false,
+      entries: [{ scopeKey: firstKey }],
+    });
     const messageId = `om_${randomUUID()}`;
     const sendInteractiveCard = vi.fn(async () => ({ messageId }));
     const updateInteractiveCard = vi.fn(async () => undefined);
@@ -163,11 +172,31 @@ suite("project scope persistence", () => {
       new Date(initialized.entries[0]!.effectiveFrom!).getTime(),
     ).toBeLessThanOrEqual(Date.now() + 1_000);
 
+    const legacySingleKey = "e".repeat(64);
+    await sql`
+      insert into project_scope_entries (
+        id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
+        display_name, status, first_seen_period_key, session_count
+      ) values (
+        ${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId},
+        ${fixture.partnerId}, ${fixture.pluginInstanceId}, ${legacySingleKey},
+        'legacy-single-session', 'pending', 'scope-period', 1
+      )
+    `;
+    const pruned = await registerProjectScopeCandidates(identity, {
+      periodKey: "scope-period",
+      candidates: [],
+    });
+    expect(pruned.version).toBe(initialized.version + 1);
+    expect(
+      pruned.entries.some((entry) => entry.scopeKey === legacySingleKey),
+    ).toBe(false);
+
     const laterKey = "b".repeat(64);
     const later = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
       candidates: [
-        { scopeKey: laterKey, displayName: "later-project", sessionCount: 1 },
+        { scopeKey: laterKey, displayName: "later-project", sessionCount: 2 },
       ],
     });
     const decided = await decideProjectScopes(actor, fixture.pluginInstanceId, {

@@ -34,6 +34,9 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("`project_scope_no_candidates`");
     expect(skill).toContain("身份确认前不得调用 `thread/list`");
     expect(skill).toContain("多个 worktree 归并为一个逻辑项目");
+    expect(skill).toContain(
+      "`sessionCount === 1` 的逻辑项目统一按临时会话过滤",
+    );
     expect(skill).toContain("标记为 `unknown`");
     expect(skill).toContain("零读取、零上传的普通中断");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");

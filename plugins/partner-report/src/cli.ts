@@ -58,6 +58,7 @@ import {
 import {
   authorizedProjectThreads,
   discoverProjectScopes,
+  filterSingleSessionProjectScopes,
   inspectLocalProjectScope,
   mergeDiscoveredRoots,
   mergeRemoteProjectScope,
@@ -994,11 +995,13 @@ async function collectStart() {
         ),
       )
     : inWindow;
-  const discovery = discoverProjectScopes(
-    config.pluginInstanceId,
-    localScope,
-    permissionDiscoverySummaries,
-    { configuredRoots: configuredProjectRoots(policy.projects) },
+  const discovery = filterSingleSessionProjectScopes(
+    discoverProjectScopes(
+      config.pluginInstanceId,
+      localScope,
+      permissionDiscoverySummaries,
+      { configuredRoots: configuredProjectRoots(policy.projects) },
+    ),
   );
   let registeredScope: RemoteProjectScopePolicy;
   try {

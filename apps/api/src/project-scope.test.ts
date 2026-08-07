@@ -62,6 +62,21 @@ describe("project scope policy", () => {
     ).toThrow();
   });
 
+  it("accepts single-Session metadata for server-side filtering", () => {
+    expect(
+      projectScopeCandidateBatchSchema.parse({
+        periodKey: "2026-W32",
+        candidates: [
+          {
+            scopeKey: "a".repeat(64),
+            displayName: "temporary-candidate",
+            sessionCount: 1,
+          },
+        ],
+      }).candidates,
+    ).toHaveLength(1);
+  });
+
   it("requires optimistic concurrency for decisions", () => {
     expect(() =>
       projectScopeDecisionSchema.parse({

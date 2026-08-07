@@ -316,6 +316,10 @@ function Operations({ data }: { data: Overview }) {
                   code.code_value,
               );
               const bindingCode = codes[0] ?? null;
+              const recoverableInstanceId =
+                connection.connectionState === "expired"
+                  ? null
+                  : connection.pluginInstanceId;
               return (
                 <div className="plugin-status-row" key={connection.partnerId}>
                   <span
@@ -402,7 +406,9 @@ function Operations({ data }: { data: Overview }) {
                         )}
                       </button>
                     ) : (
-                      <strong>尚未生成</strong>
+                      <strong>
+                        {recoverableInstanceId ? "已绑定" : "尚未生成"}
+                      </strong>
                     )}
                   </div>
                   <div className="plugin-row-actions">
@@ -421,14 +427,14 @@ function Operations({ data }: { data: Overview }) {
                         setCodeFor({
                           ...partner,
                           existingCode: bindingCode,
-                          pluginInstanceId: connection.pluginInstanceId,
+                          pluginInstanceId: recoverableInstanceId,
                         })
                       }
                     >
                       {bindingCode
                         ? "查看绑定码"
-                        : connection.pluginInstanceId
-                          ? "重新绑定"
+                        : recoverableInstanceId
+                          ? "恢复连接"
                           : "生成绑定码"}
                     </Button>
                     <button
@@ -844,7 +850,7 @@ function BindingCodeModal({
         result
           ? `${partner.display_name} 的绑定码`
           : partner.pluginInstanceId
-            ? `为 ${partner.display_name} 生成重新绑定码`
+            ? `为 ${partner.display_name} 生成连接恢复码`
             : `为 ${partner.display_name} 生成绑定码`
       }
       onClose={onClose}
@@ -880,13 +886,20 @@ function BindingCodeModal({
           <small>插件安装后使用此码绑定到 {partner.email}</small>
         </div>
       ) : (
-        <Field label="设备标签">
-          <input
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-            autoFocus
-          />
-        </Field>
+        <>
+          {partner.pluginInstanceId && (
+            <p>
+              当前设备已经绑定。只有本机凭据丢失或连接失效时才需要生成恢复码。
+            </p>
+          )}
+          <Field label="设备标签">
+            <input
+              value={label}
+              onChange={(event) => setLabel(event.target.value)}
+              autoFocus
+            />
+          </Field>
+        </>
       )}
     </Modal>
   );
