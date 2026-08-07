@@ -1,168 +1,91 @@
 # Partner Report Agent
 
-Partner Report 是一个 Codex Plugin + 数据中台 MVP：官方 Codex Scheduled Task 读取本地 Session，先舍弃闲聊、无价值和项目无关内容，再把有意义的工作整理为 Session Contribution 并立即上传。数据中台按 Partner 跨 Session 聚合工作卡片、完成 Web 审核并生成 Report。Partner 可以在 Codex Scheduled 面板修改运行时间、模型、推理强度和通知策略。
+## 项目工作流
 
-当前不接入飞书和 Monitor。Web 审核使用真实 Fact、Work Item、Snapshot 和 Report Version，不生成演示假数据。
-
-## 职责边界
-
-Plugin：
-
-- 使用 Admin 为 Partner 工作邮箱生成的绑定码连接中台。
-- 通过 Codex App Server 读取 `thread/list` 与 `thread/read(includeTurns)`。
-- 用最长项目根目录匹配 Session；根目录下任意层级子目录都属于同一项目。
-- 只把完整的用户问题和正常 `final_answer` 作为 Session 摘要输入，不维护 Turn 游标。
-- 首次运行只采集最近 1 天；后续使用插件本地成功游标和 24 小时重叠窗口筛选候选 Session。
-- 由当前 Codex Scheduled Task 一次处理一个 Session；无项目价值的 Session 只保存匿名本地 hash 以防重复提取，有价值的 Session 经脱敏、中文字段和 Schema 校验后立即上传。
-- 使用跨运行租约阻止自动和手动采集并发；已接收 Session 继续由中台 `contentHash` 与幂等键防重。任何 Session 读取或提取失败时都不推进成功游标，下一次继续覆盖旧范围。
-- 不做跨 Session 聚合，不生成工作卡片或 Report，不安装生命周期 Hook，不运行常驻 Runner。
-
-数据中台：
-
-- 以标准化工作邮箱创建 Partner；一个 Partner 可以拥有多个绑定码和 Plugin Instance。
-- 在同一 `partner_id` 下合并多个 Plugin 上传的 Session Contribution，并保持 Tenant/Team/Partner 数据隔离。
-- 周期到达截止时间后直接冻结当前贡献并进行跨 Session 聚合，不等待额外采集宽限期。
-- 保存真实 Work Item，供 Admin 在 Web 中模拟 Partner 完成第一轮确认和修改。
-- 最后一张工作卡片完成审核后，自动冻结不可变 Snapshot 并生成个人 Report 草稿。
-- Team Admin 分别配置工作卡片聚合时间和 Team Report 生成时间；Team Report 不因全员提前提交而提前生成。
-- 归档工作卡片、个人 Report 和 Team Report，并保留每个个人 Report 版本引用的工作卡片版本。
-
-## 本地启动
-
-需要 Node.js 22 和 Docker Desktop。
-
-```bash
-npm ci
-docker compose up -d
-npm run db:migrate
-npm run db:seed
-npm run dev
+```mermaid
+flowchart TD
+    A["Team Admin 创建 Partner<br/>生成绑定码"] --> B["Partner 安装并绑定 Plugin"]
+    B --> C["创建或复用官方 Scheduled Task"]
+    C --> D["飞书身份确认"]
+    D --> E["发现候选项目<br/>仅发送匿名项目元数据"]
+    E --> F{"项目范围已允许?"}
+    F -->|否| G["等待项目审批<br/>不读取 Session"]
+    G -.->|审批后下次运行| E
+    F -->|是| H["Scheduled Task 获取采集租约<br/>按游标和重叠窗口扫描"]
+    H --> I["thread/list + thread/read"]
+    I --> J{"是否为完整问答?"}
+    J -->|否| K["跳过并等待下次运行"]
+    J -->|是| L["单 Session 过滤、提取中文贡献<br/>脱敏与 Schema 校验"]
+    L --> M{"内容是否有价值且未重复?"}
+    M -->|否| N["本地记录匿名 hash<br/>不上传"]
+    M -->|是| O["幂等上传 Session Contribution"]
+    N --> P["终态审查并推进成功游标"]
+    O --> P
+    P --> Q["周期截止：冻结 Fact Snapshot"]
+    Q --> R["中台模型跨 Session 聚合<br/>生成 Work Item 草稿"]
+    R --> S{"第一轮工作事项审核通过?"}
+    S -->|否| T["Admin Web 修改、排除或重新生成"]
+    T --> S
+    S -->|是| U["冻结 Work Item Snapshot"]
+    U --> V["中台模型生成个人 Report 草稿"]
+    V --> W{"第二轮个人报告审核通过?"}
+    W -->|否| X["Admin Web 调整报告<br/>事实错误返回工作事项层"]
+    X --> V
+    W -->|是| Y["锁定个人 Report 版本"]
+    Y --> Z["到 Team Admin 配置时间"]
+    Z --> AA["聚合已锁定个人 Report<br/>标记未提交人员并与上期比较"]
+    AA --> AB["生成、锁定并归档 Team Report"]
 ```
 
-当前这台中台 Mac 的局域网入口：
+### 1. Partner 绑定
 
-```text
-Web：http://172.20.10.14:4311
-API：http://172.20.10.14:4310
-```
+Team Admin 先使用工作邮箱创建 Partner，并为其生成绑定码。Partner 安装 Plugin 后，通过绑定码把本地 Codex 与数据中台连接起来；同一 Partner 可以绑定多个 Plugin Instance，各实例上传的数据最终都归入同一个 Partner。
 
-API 和 Web 监听所有网卡，PostgreSQL 仅监听本机回环地址。局域网 IP 变化后，需要同步更新根目录 `.env` 中的 `WEB_ORIGIN`、`VITE_API_URL` 和 `PARTNER_REPORT_SERVER_URL`，再重启服务。同事设备必须与中台处于同一可信局域网；macOS 防火墙需要允许 Node 接收入站连接。
+绑定完成后，Plugin 创建或复用官方 Codex Scheduled Task。任务默认每天在新聊天中运行，后续以 Partner 在 Codex Scheduled 面板中的时间、模型、推理强度和通知配置为准。
 
-默认本地账号：
+### 2. 身份确认与项目授权
 
-```text
-saul@laien.io
-123456
-```
+Plugin 先通过飞书完成 Partner 身份确认。身份确认前不发现项目、不读取 Session，也不上传数据。
 
-中台模型任务使用 OpenAI-compatible Responses API。服务机密只放在本机 `.env`：
+身份确认后，Plugin 只通过 `thread/list` 发现候选项目，并在本地排除临时目录和系统任务。中台收到的候选信息仅包含匿名项目键、显示名、首次发现周期和 Session 数量，不包含本机绝对路径、Git 信息或 Codex Session 标识。
 
-```bash
-MODEL_API_BASE_URL=http://127.0.0.1:11434
-MODEL_API_KEY=...
-MODEL_REASONING_EFFORT=low
-```
+候选项目通过飞书完成采集范围审批。只有已允许的项目才能调用 `thread/read`、进入模型处理并上传贡献；被拒绝或待审批的项目不会读取内容。首次审批允许的项目立即生效，后续新发现项目的允许结果从下个报告周期生效。
 
-Admin 可在运行总览中为 Team 选择允许的模型。没有 `MODEL_API_KEY` 时，真实 Fact 仍会保存，但中台生成任务会明确标记为 `MODEL_NOT_CONFIGURED`，不会伪造结果。
+### 3. 定时采集与 Session 提取
 
-## 从 GitHub 安装 Plugin
+Scheduled Task 触发后，Plugin 先获取本地租约，避免自动采集与手动采集并发。首次运行只检查最近一天且位于当前报告周期内的 Session；后续从上次完整成功的游标继续扫描，并保留 24 小时重叠窗口以覆盖迟到更新。
 
-仓库包含 Codex Marketplace 清单、Plugin Manifest、Skill、JSON Schema 和已构建 CLI。添加 Marketplace：
+Plugin 对获准项目依次执行 `thread/list` 和 `thread/read(includeTurns)`，只保留完整的“用户问题 + Assistant `final_answer`”问答。中断、取消、失败或没有最终回复的 Turn 不进入提取流程。
 
-```bash
-codex plugin marketplace add saul-LinY/partner-report-agent --ref main
-```
+每个候选 Session 都会根据完整问答计算匿名 Session key 和稳定内容 hash：
 
-然后在 Codex 桌面端打开 `/plugins`，从 `Partner Report Marketplace` 安装 `Partner Report`，并新建会话。
+- 已接收或已忽略且内容未变化的 Session 直接跳过。
+- 内容发生变化的 Session 重新构建并提取当前修订。
+- 无项目价值的 Session 只在本地记录匿名 hash，不上传。
+- 有价值的 Session 由当前 Scheduled Task 选择的模型生成中文标题、摘要和贡献正文，经过脱敏、字段约束和 Schema 校验后立即幂等上传。
 
-Plugin 不提供模型配置。首次创建 Codex 定时任务时默认使用 `gpt-5.5`、`low` 推理；之后 Codex Scheduled 面板是运行时间、模型、推理强度和通知策略的唯一配置来源。定时任务当前选择的模型直接完成 Session 级 Fact 提取，Plugin 不会再启动或指定另一个模型。跨 Session 聚合和 Report 生成仍使用 Admin 在中台选择的模型。
+Plugin 只负责单个 Session 内的事实提取，不在本地进行跨 Session 聚合或生成报告。全部任务处理完后还会执行一次独立终态审查；只有队列清空、没有失败且中台确认完成时才推进成功游标。失败或中断不会推进游标，下次运行会重新覆盖该范围。
 
-在 Admin Web 中先创建 Partner，再生成绑定码。随后在 Codex 中说：
+### 4. 周期冻结与工作事项聚合
 
-```text
-使用 $partner-report-sync，把数据中台 https://report-api.example.com 和绑定码 PR-XXXX-XXXX 连接起来。
-```
+到达工作卡片聚合时间后，中台按 `tenant_id + partner_id + period_id` 冻结本周期 Fact Snapshot。同一 Partner 的多个 Plugin Instance 贡献会在这里合并。
 
-绑定成功后先通过飞书确认审核身份和项目采集范围。Plugin 只用 `thread/list` 发现候选项目；项目获准前不调用 `thread/read`、不交给模型，也不上传 Session 内容。首次允许立即生效，后续新增项目汇总审批并从下个周期生效。Plugin 继续执行敏感信息过滤和 Session 排除规则。
+中台模型基于冻结快照，按项目、工作事项和时间顺序对多个 Session 的事实进行聚类、去重和状态重建，生成可追溯到原始 Fact 的 Work Item 草稿。无法可靠归属项目的事项保持独立，不会为了提高聚合率而强行合并。
 
-当前局域网测试环境使用 HTTP。同事连接时需要明确说明这是可信测试局域网，由 Skill 在连接命令中显式追加 `--allow-insecure-http`。例如：
+### 5. 工作事项审核
 
-```text
-使用 $partner-report-sync，把可信测试局域网的数据中台 http://172.20.10.14:4310 和绑定码 PR-XXXX-XXXX 连接起来，允许局域网 HTTP。
-```
+当前由 Admin 在 Web 中代表 Partner 完成第一轮审核。Admin 可以逐项确认、排除、修改或重新生成工作事项；修改先形成预览，确认后才应用。
 
-HTTP 会明文传输访问令牌和贡献数据，只适合隔离的临时测试网络；跨网络或长期使用应按部署文档配置 HTTPS。
+当最后一项完成审核后，中台冻结不可变的 Work Item Snapshot。若所有事项都被排除，本周期不会继续生成个人报告。
 
-绑定成功后，`$partner-report-sync` 会立即检查 Codex 桌面端的同名 Scheduled task。若不存在则按以下默认值创建；若已存在则保留用户修改过的时间、时区、模型、推理强度、通知、运行位置和项目设置：
+### 6. 个人报告生成与审核
 
-```text
-名称：Partner Report daily collection
-运行于：新聊天
-项目：无
-时间：每天 14:30
-时区：Asia/Shanghai（北京时间）
-模型：gpt-5.5
-推理强度：low
-通知：所有运行
-Prompt：由 Plugin CLI 返回，包含采集边界、数据最小化规则、automation memory 最小化规则和终态审查要求
-```
+Work Item Snapshot 冻结后，中台自动创建生成任务，由中台模型基于已确认的工作事项生成个人 Report 草稿，Plugin 不参与该过程。
 
-Scheduled tasks 仍由 Codex 官方界面管理；Skill 只负责首次创建默认任务，并在安全契约升级时只修复 Prompt，不覆盖用户在面板中的时间、模型等配置。Plugin CLI 不写私有调度器。定时运行依赖电脑开机且 Codex 桌面应用运行。
+Admin 在 Web 中代表 Partner 完成第二轮审核，可以调整报告结构、重点和表达。事实有误时需要回到工作事项层修正；审核通过后，个人 Report 被锁定为不可变版本，并保留其引用的 Work Item Snapshot。
 
-Scheduled Task 会使用任务级 `memory.md` 延续运行上下文，它不是按 Session 生成。Plugin Prompt 只允许其中保存运行时间、完成/失败/中断状态、聚合计数和安全错误码，禁止写入 Session 内容、Fact、证据、hash、端点或标识。memory 只用于运行摘要；自动与手动采集共享的防重和成功游标以用户稳定目录 `~/.partner-report-data/collection-state.json` 及中台状态为准。项目权限执行状态、匿名键盐值和本机根目录映射保存在同目录的 `project-scope.json`，中台保存版本化的正式规则；正常插件更新或缓存替换不会删除这些文件。若升级后的第一次采集发现权限文件缺失、损坏或不属于当前插件实例，CLI 不会用中台旧权限直接恢复，而会废止旧匿名项目映射、重新发送飞书首次审批卡，并在读取 Session 内容前结束本次运行。审批后下一次定时运行会自动采集，也可以在普通 Session 中说“继续采集”立即发起一次新的运行。
+### 7. Team Report 生成与归档
 
-若凭据刷新返回 `REFRESH_TOKEN_INVALID`，插件会向用户已绑定的飞书账号发送恢复确认卡。确认后，下一次定时运行会自动轮换原 Plugin Instance 的凭据并继续，不创建新实例，也不会清空或重新审批既有项目权限。Admin 的“重新绑定”恢复码只作为自动恢复不可用时的兜底。
+Team Report 不会因为所有人提前完成审核而提前生成。只有到达 Team Admin 单独配置的 Team Report 时间后，中台才读取届时已锁定的个人 Report，按项目聚合团队进展，并显式标记未提交人员。
 
-Plugin 的 Session 提取指令使用中文，并在上传前强制校验 `title`、`summary` 和 `contributions[].text` 包含中文。JSON 字段名和状态枚举保留英文，以维持 API/Schema 兼容。
-
-手动验证：
-
-```bash
-node "<PLUGIN_PATH>/dist/cli.mjs" status
-使用 $partner-report-sync 运行一次 collect-start，并只返回安全的中文摘要。
-```
-
-macOS 默认把 Access/Refresh Token 存入 Keychain。只有显式设置 `PARTNER_REPORT_ALLOW_FILE_TOKENS=1` 才允许文件凭据回退。CLI 会把旧版运行时 `PLUGIN_DATA` 中的持久文件迁移到稳定用户目录，不迁移临时 Run 或租约文件。
-
-## 数据流
-
-```text
-Codex Scheduled task（默认每天北京时间 14:30、新聊天、无项目；面板可修改）
-  -> 当前任务选择的模型与推理强度
-  -> 首次最近 1 天，后续按本地成功游标增量扫描
-  -> 本地租约阻止自动与手动并发采集
-  -> 检查本地项目权限文件；缺失或无效时按当前周期元数据登记候选项目并等待飞书审批
-  -> 过滤为完整 user question + final_answer Turn
-  -> 仅按完整问答生成稳定内容 hash，不受标题或项目登记状态变化影响
-  -> 合并本地 accepted/ignored ledger 与中台状态，已处理且内容未变化的 Session 在模型前直接跳过
-  -> 当前 Scheduled 会话逐 Session 生成中文贡献，Plugin 逐个校验
-  -> HTTPS 幂等上传，队列清空后执行独立终态审查
-  -> 审查确认无剩余 Job 且无失败后推进本地运行游标
-  -> 中台按 Partner 冻结本周期 Fact
-  -> 中台模型跨 Session 聚合 Work Item
-  -> Admin Web 模拟 Partner 第一次审核和修改
-  -> 最后一张卡片审核后自动冻结 Work Item Snapshot
-  -> 中台模型自动生成个人 Report
-  -> Admin Web 模拟 Partner 第二次审核并锁定
-  -> 到 Team 配置时间后基于届时已锁定版本生成 Team Report
-```
-
-## 验证
-
-```bash
-npm run typecheck
-npm test
-RUN_DB_TESTS=1 npm test
-npm run build
-```
-
-核心目录：
-
-- `plugins/partner-report`：可安装 Plugin、Skill、CLI 和结构化 Schema
-- `apps/api`：身份、绑定、Fact、审核、报告 API
-- `apps/worker`：周截止调度与中台模型任务
-- `apps/web`：精简 Admin 管理和两轮真实数据审核
-- `packages/contracts`：共享 Zod/JSON Schema
-- `packages/db`：PostgreSQL Schema、迁移和周五周期算法
-
-部署环境变量见 [`.env.example`](.env.example)，产品边界见 [`docs/PRD.md`](docs/PRD.md)。
+中台在团队维度整理成果、风险、依赖和下一步，并与上期报告进行比较，生成并锁定 Team Report。工作事项版本、个人 Report 版本、Team Report 版本及其引用关系都会保留，形成可追溯的报告归档。
