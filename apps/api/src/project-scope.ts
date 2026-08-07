@@ -234,19 +234,10 @@ export async function registerProjectScopeCandidates(
   const input = projectScopeCandidateBatchSchema.parse(rawInput);
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
-    const policyRows = await tx<Array<{ initialized: boolean }>>`
-      select initialized from project_scope_policies
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and tenant_id = ${identity.tenantId}
-        and team_id = ${identity.teamId}
-        and partner_id = ${identity.partnerId}
-      limit 1
-    `;
-    const initialDiscovery =
-      input.initialDiscovery && policyRows[0]?.initialized === false;
-    const eligibleCandidates = initialDiscovery
-      ? input.candidates
-      : input.candidates.filter((candidate) => candidate.sessionCount > 1);
+    // Every real project with a recent Session is a candidate. The previous
+    // later-run "more than one Session" threshold hid legitimate one-session
+    // projects and no longer matches the permission review flow.
+    const eligibleCandidates = input.candidates;
     const existing =
       eligibleCandidates.length > 0
         ? await tx<Array<{ scope_key: string }>>`

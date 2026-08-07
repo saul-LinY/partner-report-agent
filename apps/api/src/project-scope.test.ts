@@ -62,7 +62,7 @@ describe("project scope policy", () => {
     ).toThrow();
   });
 
-  it("accepts single-Session metadata for server-side filtering", () => {
+  it("accepts single-Session metadata as a permission candidate", () => {
     expect(
       projectScopeCandidateBatchSchema.parse({
         periodKey: "2026-W32",
@@ -77,7 +77,7 @@ describe("project scope policy", () => {
     ).toHaveLength(1);
   });
 
-  it("marks the first whitelist discovery explicitly", () => {
+  it("accepts the legacy discovery marker for client compatibility", () => {
     expect(
       projectScopeCandidateBatchSchema.parse({
         periodKey: "2026-W32",

@@ -16,11 +16,14 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-review");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("任何 nextCommand");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("本地项目权限文件缺失");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("绑定命令负责首次项目发现");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("绑定命令负责项目发现");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("重新发送项目范围审核提醒");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("worktree 合并");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "首次白名单项目即使只有 1 个 Session 也可进入审批",
+      "每个真实项目至少 1 个 Session 即可登记",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "本地 allowed/denied 修改会在采集前提交中台",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "project_scope_approval_required",

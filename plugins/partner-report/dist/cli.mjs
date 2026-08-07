@@ -4711,9 +4711,9 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
-  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9996\u6B21\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u53EA\u8BFB\u53D6 thread/list \u5143\u6570\u636E\uFF0C\u6309\u5F53\u524D\u6708\u767D\u540D\u5355\u548C\u6700\u8FD1 7 \u5929\u6D3B\u52A8\u7A97\u53E3\u767B\u8BB0\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
+  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u53EA\u8BFB\u53D6 thread/list \u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u65B0\u5EFA\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
   "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
-  "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u548C\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\uFF1B\u9996\u6B21\u9879\u76EE\u8303\u56F4\u5361\u53EA\u5728\u5DF2\u767B\u8BB0\u9879\u76EE\u6839\u76EE\u5F55\u767D\u540D\u5355\u5185\u7EB3\u5165\u6700\u8FD1 7 \u5929\u6709\u5DF2\u77E5 Session \u6D3B\u52A8\u7684\u9879\u76EE\uFF0C\u767D\u540D\u5355\u5916\u76EE\u5F55\u4E0D\u8FDB\u5165\u9996\u6B21\u5BA1\u6279\uFF1B\u540E\u7EED\u8FD0\u884C\u6309\u539F\u6709\u903B\u8F91\u53D1\u73B0\u65B0\u589E\u9879\u76EE\u3002\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u9996\u6B21\u767D\u540D\u5355\u9879\u76EE\u5373\u4F7F\u53EA\u6709 1 \u4E2A Session \u4E5F\u53EF\u8FDB\u5165\u5BA1\u6279\uFF0C\u540E\u7EED\u65B0\u589E\u9879\u76EE\u4ECD\u6309\u5F52\u5E76\u540E\u8D85\u8FC7 1 \u4E2A Session \u4FDD\u7559\u3002",
+  "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u3001\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\u548C\u5DF2\u5F52\u6863 Session\uFF1B\u6309\u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\uFF0C\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u540C\u540D\u4F46\u4E0D\u540C\u4ED3\u5E93\u5206\u522B\u5904\u7406\u3002\u672A\u9009\u5B9A\u3001\u5F85\u5BA1\u6279\u6216\u62D2\u7EDD\u7684\u9879\u76EE\u4E00\u5F8B\u89C6\u4E3A\u4E34\u65F6\u4F1A\u8BDD\uFF0C\u7981\u6B62\u8BFB\u53D6\u548C\u4E0A\u4F20\u3002project-scope.json \u7684\u672C\u5730 allowed/denied \u4FEE\u6539\u4F1A\u5728\u91C7\u96C6\u524D\u63D0\u4EA4\u4E2D\u53F0\uFF0C\u6309\u7248\u672C\u6821\u9A8C\u6210\u529F\u540E\u624D\u751F\u6548\uFF1B\u51B2\u7A81\u65F6\u505C\u6B62\u91C7\u96C6\u5E76\u8981\u6C42\u5148\u540C\u6B65\u3002",
   "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
   "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002",
@@ -5616,6 +5616,8 @@ function isLocalProjectScope(value, pluginInstanceId) {
   return value.entries.every(
     (entry) => isRecord(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string") && (entry.environmentKind === void 0 || ["configured", "git", "unknown"].includes(
       String(entry.environmentKind)
+    )) && (entry.lastSyncedStatus === void 0 || ["pending", "allowed", "denied"].includes(
+      String(entry.lastSyncedStatus)
     ))
   );
 }
@@ -5661,11 +5663,47 @@ function mergeRemoteProjectScope(local, remote) {
     entries: remote.entries.map((entry) => ({
       ...entry,
       localRoot: localMetadata.get(entry.scopeKey)?.localRoot ?? null,
+      lastSyncedStatus: entry.status,
       ...localMetadata.get(entry.scopeKey)?.environmentKind ? {
         environmentKind: localMetadata.get(entry.scopeKey).environmentKind
       } : {}
     }))
   };
+}
+function inspectLocalProjectScopeChanges(local, remote) {
+  if (local.pluginInstanceId !== remote.pluginInstanceId)
+    return { kind: "conflict", reason: "\u9879\u76EE\u6743\u9650\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002" };
+  if (local.version > remote.version)
+    return { kind: "conflict", reason: "\u672C\u5730\u6743\u9650\u7248\u672C\u9AD8\u4E8E\u4E2D\u53F0\u7248\u672C\u3002" };
+  const localEntries = new Map(
+    local.entries.map((entry) => [entry.scopeKey, entry])
+  );
+  const remoteEntries = new Map(
+    remote.entries.map((entry) => [entry.scopeKey, entry])
+  );
+  if ([...localEntries.keys()].some((scopeKey) => !remoteEntries.has(scopeKey)))
+    return {
+      kind: "conflict",
+      reason: "\u672C\u5730\u6743\u9650\u6587\u4EF6\u4E0D\u80FD\u65B0\u589E\u3001\u5220\u9664\u6216\u4F2A\u9020\u9879\u76EE\u3002"
+    };
+  const decisions = [];
+  for (const remoteEntry of remote.entries) {
+    const localEntry = localEntries.get(remoteEntry.scopeKey);
+    if (!localEntry) continue;
+    if (localEntry.status === remoteEntry.status) continue;
+    const locallyEdited = localEntry.lastSyncedStatus !== void 0 && localEntry.status !== localEntry.lastSyncedStatus;
+    const legacyLocalEdit = localEntry.lastSyncedStatus === void 0 && local.version === remote.version;
+    if (!locallyEdited && !legacyLocalEdit) continue;
+    if (local.version !== remote.version)
+      return { kind: "conflict", reason: "\u4E2D\u53F0\u6743\u9650\u5DF2\u66F4\u65B0\uFF0C\u8BF7\u5148\u540C\u6B65\u6700\u65B0\u7248\u672C\u3002" };
+    if (!["allowed", "denied"].includes(localEntry.status))
+      return { kind: "conflict", reason: "\u672C\u5730\u9879\u76EE\u6743\u9650\u72B6\u6001\u65E0\u6548\u3002" };
+    decisions.push({
+      scopeKey: remoteEntry.scopeKey,
+      decision: localEntry.status === "allowed" ? "allow" : "deny"
+    });
+  }
+  return decisions.length > 0 ? { kind: "changes", decisions } : { kind: "none", decisions: [] };
 }
 function anonymousProjectScopeKey(pluginInstanceId, scopeSalt, localRoot) {
   return createHmac("sha256", scopeSalt).update(`partner-report/project-scope/v1:${pluginInstanceId}:${localRoot}`).digest("hex");
@@ -5689,7 +5727,7 @@ function discoverProjectScopes(pluginInstanceId, local, summaries, options = {})
   const threadScopes = /* @__PURE__ */ new Map();
   for (const summary of summaries) {
     const environment = classifyProjectEnvironment(summary, options);
-    if (!summary.cwd || !environment.localRoot || environment.kind === "temporary" || options.strictConfiguredRoots === true && !longestContainingRoot(summary.cwd, options.configuredRoots ?? []))
+    if (!summary.cwd || !environment.localRoot || environment.kind === "temporary")
       continue;
     const cwd = canonicalPath(summary.cwd);
     const pathInherited = knownRoots.find(
@@ -5712,22 +5750,6 @@ function discoverProjectScopes(pluginInstanceId, local, summaries, options = {})
     threadScopes.set(summary.id, scopeKey);
   }
   return { candidates: [...discovered.values()], threadScopes };
-}
-function filterSingleSessionProjectScopes(discovery) {
-  const candidates = discovery.candidates.filter(
-    (candidate) => candidate.sessionCount > 1
-  );
-  const retainedKeys = new Set(
-    candidates.map((candidate) => candidate.scopeKey)
-  );
-  return {
-    candidates,
-    threadScopes: new Map(
-      [...discovery.threadScopes].filter(
-        ([, scopeKey]) => retainedKeys.has(scopeKey)
-      )
-    )
-  };
 }
 function threadMayBeRead(summary, local, options = {}, now = /* @__PURE__ */ new Date()) {
   if (!scopeIsActive(
@@ -5891,8 +5913,33 @@ async function fetchProjectScope(init = {}) {
 function cacheRemoteProjectScope(remote) {
   const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
   const scope = mergeRemoteProjectScope(inspection.scope, remote);
-  if (inspection.state === "valid") saveLocalProjectScope(scope);
+  if (inspection.state !== "valid") saveLocalProjectScope(scope);
   return { ...inspection, scope };
+}
+async function synchronizeLocalProjectScope(remote, inspection = inspectLocalProjectScope(remote.pluginInstanceId)) {
+  let synchronizedRemote = remote;
+  let changedCount = 0;
+  if (inspection.state === "valid") {
+    const changes = inspectLocalProjectScopeChanges(inspection.scope, remote);
+    if (changes.kind === "conflict")
+      throw Object.assign(new Error(changes.reason), {
+        code: "PROJECT_SCOPE_LOCAL_CONFLICT",
+        currentVersion: remote.version
+      });
+    if (changes.kind === "changes") {
+      synchronizedRemote = await fetchProjectScope({
+        method: "PATCH",
+        body: JSON.stringify({
+          baseVersion: remote.version,
+          decisions: changes.decisions
+        })
+      });
+      changedCount = changes.decisions.length;
+    }
+  }
+  const scope = mergeRemoteProjectScope(inspection.scope, synchronizedRemote);
+  saveLocalProjectScope(scope);
+  return { inspection, remote: synchronizedRemote, scope, changedCount };
 }
 function scheduledTaskConfig() {
   output({
@@ -6124,19 +6171,18 @@ async function discoverProjectScopeAfterBinding() {
   const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
   const currentSessionId = process.env.CODEX_THREAD_ID;
   const metadataEligible = summaries.filter(
-    (summary) => summary.id !== currentSessionId && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
+    (summary) => summary.id !== currentSessionId && !summary.archived && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
   );
   const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
   const permissionDiscoverySummaries = metadataEligible.filter(
-    (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt)
+    (summary) => threadIsInKnownScanWindow(summary.createdAt, scanStartsAt, runStartedAt)
   );
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
     localInspection.scope,
     permissionDiscoverySummaries,
     {
-      configuredRoots: configuredProjectRoots(policy.projects),
-      strictConfiguredRoots: true
+      configuredRoots: configuredProjectRoots(policy.projects)
     }
   );
   const registeredScope = await authenticatedRequest(
@@ -6229,7 +6275,9 @@ function summaryFromThread(value) {
     id: String(value.id),
     title,
     cwd: typeof value.cwd === "string" ? value.cwd : null,
-    updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? null,
+    createdAt: value.createdAt ?? value.created_at ?? null,
+    updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? value.created_at ?? null,
+    archived: value.archived === true || value.isArchived === true || value.archived_at !== null && value.archived_at !== void 0,
     ephemeral: value.ephemeral === true,
     threadSource: typeof value.threadSource === "string" ? value.threadSource : typeof value.thread_source === "string" ? value.thread_source : null,
     systemGenerated: value.ephemeral === true || isPluginSystemThread(value) || isOfficialAutomationThread(value)
@@ -6500,7 +6548,7 @@ async function postCollectionStatus(config, manifest, phase) {
 async function collectStart() {
   const config = loadConfig();
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  const [policy, remoteScope] = await Promise.all([
+  const [policy, fetchedRemoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope()
   ]);
@@ -6508,10 +6556,13 @@ async function collectStart() {
     throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
       code: "REPORT_PERIOD_MISSING"
     });
+  const synchronizedScope = await synchronizeLocalProjectScope(
+    fetchedRemoteScope,
+    localInspection
+  );
+  const remoteScope = synchronizedScope.remote;
   const requiresProjectScopeBootstrap = localInspection.state !== "valid" && !remoteScope.initialized;
-  let localScope;
-  localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
-  saveLocalProjectScope(localScope);
+  let localScope = synchronizedScope.scope;
   if (!remoteScope.initialized && localScope.entries.some((entry) => entry.status === "pending")) {
     return output(
       await projectScopePendingStatus(
@@ -6559,7 +6610,7 @@ async function collectStart() {
   const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
   const currentSessionId = process.env.CODEX_THREAD_ID;
   const metadataEligible = summaries.filter(
-    (summary) => summary.id !== currentSessionId && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
+    (summary) => summary.id !== currentSessionId && !summary.archived && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
   );
   const inWindow = flag("force") ? metadataEligible : metadataEligible.filter(
     (summary) => threadIsInScanWindow(
@@ -6569,24 +6620,23 @@ async function collectStart() {
     )
   );
   const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
-  const permissionDiscoverySummaries = requiresProjectScopeBootstrap ? metadataEligible.filter(
+  const permissionDiscoverySummaries = metadataEligible.filter(
     (summary) => threadIsInKnownScanWindow(
-      summary.updatedAt,
+      summary.createdAt,
       initialProjectScopeStart,
-      window.scanEndsAt
+      runStartedAt
     )
-  ) : inWindow;
+  );
   const configuredRoots = configuredProjectRoots(policy.projects);
   const discoveredScopes = discoverProjectScopes(
     config.pluginInstanceId,
     localScope,
     permissionDiscoverySummaries,
     {
-      configuredRoots,
-      ...requiresProjectScopeBootstrap ? { strictConfiguredRoots: true } : {}
+      configuredRoots
     }
   );
-  const discovery = requiresProjectScopeBootstrap ? discoveredScopes : filterSingleSessionProjectScopes(discoveredScopes);
+  const discovery = discoveredScopes;
   let registeredScope;
   try {
     registeredScope = await authenticatedRequest(
@@ -7001,6 +7051,16 @@ async function projectScopeList() {
     }))
   });
 }
+async function synchronizeProjectScopeCommand() {
+  const remote = await fetchProjectScope();
+  const synchronized = await synchronizeLocalProjectScope(remote);
+  output({
+    status: "project_scope_synced",
+    version: synchronized.remote.version,
+    changedCount: synchronized.changedCount,
+    localState: synchronized.inspection.state
+  });
+}
 async function changeProjectScope(decision) {
   const config = loadConfig();
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
@@ -7089,6 +7149,7 @@ function help() {
       "collect-skip --run <path> [--error-code <code>]",
       "status",
       "project-scope-list",
+      "project-scope-sync",
       "project-scope-allow --project <name>|--scope-key <key>|--all-pending",
       "project-scope-deny --project <name>|--scope-key <key>|--all-pending",
       "exclude-session --session-id <id>",
@@ -7110,6 +7171,7 @@ var recoveryAwareCommands = /* @__PURE__ */ new Set([
   "collect-submit",
   "status",
   "project-scope-list",
+  "project-scope-sync",
   "project-scope-allow",
   "project-scope-deny"
 ]);
@@ -7132,6 +7194,8 @@ async function runCommand() {
   else if (command === "collect-skip") collectSkip();
   else if (command === "status") await status();
   else if (command === "project-scope-list") await projectScopeList();
+  else if (command === "project-scope-sync")
+    await synchronizeProjectScopeCommand();
   else if (command === "project-scope-allow") await changeProjectScope("allow");
   else if (command === "project-scope-deny") await changeProjectScope("deny");
   else if (command === "exclude-session") configureExclusion("session");

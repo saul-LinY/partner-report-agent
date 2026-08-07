@@ -11,7 +11,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 不得上传原始对话、Codex Session 原始标识、绝对路径、推理、commentary、命令、工具调用、文件改动或凭据。automation memory 不得包含 Session 内容、Fact、证据、端点或标识。
 
-项目采集权限的正式规则保存在数据中台，本地 `project-scope.json` 保存执行状态、匿名键盐值、本机目录映射和本地环境分类；本地文件是采集前的强制隐私门禁。绑定命令完成后才允许通过 `thread/list` 读取元数据，按当前月项目根目录白名单和最近 7 天活动窗口登记首次候选并发送项目范围卡；绑定阶段绝不调用 `thread/read`。未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。候选项目只向中台发送匿名项目键、显示名、首次发现周期和聚合 Session 数量；绝对路径、Git 信息、worktree 信息和 Codex Session 原始标识只保存在本机。
+项目采集权限的正式规则保存在数据中台，本地 `project-scope.json` 保存执行状态、匿名键盐值、本机目录映射和本地环境分类；本地文件是采集前的强制隐私门禁。绑定命令完成后才允许通过 `thread/list` 读取元数据，按最近 7 天新建且未归档的 Session 工作目录归并候选并发送项目范围卡；绑定阶段绝不调用 `thread/read`。未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。候选项目只向中台发送匿名项目键、显示名、首次发现周期和聚合 Session 数量；绝对路径、Git 信息、worktree 信息和 Codex Session 原始标识只保存在本机。
 
 ## 定位 CLI
 
@@ -72,9 +72,15 @@ node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-allow --project <PROJECT_NAME>
 node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-deny --project <PROJECT_NAME>
 ```
 
-同名时先查询，再使用 CLI 返回的 `--scope-key`。只有用户明确说“全部”时才使用 `--all-pending`。所有修改都通过中台版本化 API 完成，再写入本地缓存；不得直接编辑 `project-scope.json`。中台不可达或返回版本冲突时，明确告知修改尚未生效，不得假装只改本地即可。
+同名时先查询，再使用 CLI 返回的 `--scope-key`。只有用户明确说“全部”时才使用 `--all-pending`。用户也可以直接把已有项目的 `status` 改成 `allowed` 或 `denied`，然后运行：
 
-权限单位只有顶层逻辑项目一层：项目内子目录、新 Session 和嵌套 Git 仓库继承同一权限，同一 Git 仓库的多个 worktree 归并为一个逻辑项目（再统计 Session）；同名但不同仓库不得合并。系统任务、官方自动化、Codex 临时目录和系统临时目录在候选登记前排除。首次项目范围卡只在中台返回的项目根目录白名单内筛选最近 7 天有已知 Session 活动的项目，不纳入白名单外、时间戳缺失或更早的目录；首次白名单项目即使只有 1 个 Session 也可登记审批。首次权限文件完成后，后续运行按原有逻辑发现新增项目；新增项目需要归并后超过 1 个 Session 才登记。已经存在但尚未审核的 pending 文件夹不会因新增 Session 重复发送审核卡，只保持待审批，用户如需处理可在 Codex/飞书项目权限中手动修改。授权前不得读取。首次审批的允许项立即生效；首次审批完成后发现的新项目保持 `pending`，本周期内不读取内容，允许结果从下个周期生效。拒绝只阻止未来采集，不删除已经上传的数据。
+```bash
+node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-sync
+```
+
+插件会用 `project-scope.json` 中的版本向中台提交变更；中台确认并返回新版本后才写回本地。不得在本地新增、删除或伪造项目，也不得绕过中台直接让本地 `allowed` 生效。中台不可达或返回版本冲突时，明确告知修改尚未生效，不得覆盖本地改动。
+
+权限单位只有顶层逻辑项目一层：项目内子目录、新 Session 和嵌套 Git 仓库继承同一权限，同一 Git 仓库的多个 worktree 归并为一个逻辑项目（再统计 Session）；同名但不同仓库不得合并。系统任务、官方自动化、Codex 临时目录、系统临时目录和已归档 Session 在候选登记前排除。按最近 7 天新建且有工作目录的 Session 归并项目，每个项目至少 1 个 Session 即登记；不依赖 Codex 侧边栏项目列表。已经存在但尚未审核的 pending 项目保持待审批，插件不会读取其 Session。授权前不得读取。首次审批的允许项立即生效；首次审批完成后发现的新项目保持 `pending`，本周期内不读取内容，允许结果从下个周期生效。拒绝只阻止未来采集，不删除已经上传的数据。
 
 ## 采集 Session
 
@@ -86,7 +92,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-start
 
 如果返回 `project_scope_card_delivery_pending`，表示候选项目已幂等登记，但中台尚未确认对应版本的项目范围卡已经成功发送。此状态带有 `nextCommand`，必须在当前任务内持续执行 `project-scope-card-wait`；该命令只查询投递状态，不得重复登记候选或重复发送卡片。网络重试使用同一聚合键，不会创建第二张卡。
 
-- 本地权限文件缺失、JSON 损坏、版本不兼容或不属于当前 Plugin Instance 时，激活阶段先从中台同步当前审批状态；仍有 pending 项目时只重新发送项目范围提醒并结束。只有绑定命令才会使用当前月白名单和最近 7 天的 thread/list 元数据登记首次候选；项目审批前 thread/read 和上传都必须为 0。
+- 本地权限文件缺失、JSON 损坏、版本不兼容或不属于当前 Plugin Instance 时，激活阶段先从中台同步当前审批状态；仍有 pending 项目时只重新发送项目范围提醒并结束。每次激活都用最近 7 天新建且未归档的 thread/list 元数据发现候选；项目审批前 thread/read 和上传都必须为 0。检测到本地 `allowed/denied` 修改时先提交中台，版本冲突则停止采集。
 
 如果返回 `project_scope_no_candidates`，表示临时环境过滤后没有需要人工审批的项目，因此不会生成项目范围卡。此状态是零读取、零上传的正常终态；不得等待卡片或把它记录为失败。后续周期发现合法 Git、已配置或 `unknown` 项目时会重新进入审批。
 
@@ -100,7 +106,7 @@ CLI 的本地持久化状态同时服务自动和手动运行：
 - 后续运行使用上次完整成功运行的开始时间作为增量游标，并保留 24 小时重叠窗口。
 - 已接收和已忽略 Session 都把匿名 Session key、稳定内容 hash 与处理时间记录在用户稳定数据目录的 `collection-state.json`；Plugin 更新、缓存目录替换或重装不得删除该文件。
 - 项目权限版本、状态、匿名键盐值和本机根目录映射保存在同一稳定数据目录的 `project-scope.json`；正常 Plugin 更新或缓存替换不得删除。每次采集先检查该文件，再从中台拉取最新版本并原子更新。
-- 本地权限文件缺失、JSON 损坏、版本不兼容或不属于当前 Plugin Instance 时，激活阶段先从中台同步当前审批状态；仍有 pending 项目时只重新发送项目范围提醒并结束。只有绑定命令才会使用当前月白名单和最近 7 天的 thread/list 元数据登记首次候选；项目审批前 thread/read 和上传都必须为 0。
+- 本地权限文件缺失、JSON 损坏、版本不兼容或不属于当前 Plugin Instance 时，激活阶段先从中台同步当前审批状态；仍有 pending 项目时只重新发送项目范围提醒并结束。每次激活都用最近 7 天新建且未归档的 thread/list 元数据发现候选；项目审批前 thread/read 和上传都必须为 0。检测到本地 `allowed/denied` 修改时先提交中台，版本冲突则停止采集。
 - `status` 和 `project-scope-list` 只能查询本地状态与中台规则，不能创建缺失的权限文件。权限文件缺失时，权限修改命令也不能代替首次审批。
 - CLI 在把 Session 交给模型前合并本地记录与中台状态。完整问答内容未变化时直接跳过，模型不会再次读取、判断或上传。
 - `contentHash` 只基于当前周期内的完整“用户问题 + 助手最终回答”；标题变化、项目从自动发现变为已登记、项目 ID 或匹配方式变化都不得触发 Revision。

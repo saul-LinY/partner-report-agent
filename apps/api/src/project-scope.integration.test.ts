@@ -170,12 +170,21 @@ suite("project scope persistence", () => {
     ).toBe(true);
 
     const laterKey = "b".repeat(64);
+    const laterSingleKey = "f".repeat(64);
     const later = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
       candidates: [
         { scopeKey: laterKey, displayName: "later-project", sessionCount: 2 },
+        {
+          scopeKey: laterSingleKey,
+          displayName: "later-single-project",
+          sessionCount: 1,
+        },
       ],
     });
+    expect(
+      later.entries.some((entry) => entry.scopeKey === laterSingleKey),
+    ).toBe(true);
     const decided = await decideProjectScopes(actor, fixture.pluginInstanceId, {
       baseVersion: later.version,
       decisions: [{ scopeKey: laterKey, decision: "allow" }],

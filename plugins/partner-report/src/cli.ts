@@ -60,8 +60,8 @@ import {
 import {
   authorizedProjectThreads,
   discoverProjectScopes,
-  filterSingleSessionProjectScopes,
   inspectLocalProjectScope,
+  inspectLocalProjectScopeChanges,
   mergeDiscoveredRoots,
   mergeRemoteProjectScope,
   saveLocalProjectScope,
@@ -111,7 +111,9 @@ type ThreadSummary = {
   id: string;
   title: string | null;
   cwd: string | null;
+  createdAt: string | number | null;
   updatedAt: string | number | null;
+  archived: boolean;
   ephemeral?: boolean;
   threadSource?: string | null;
   systemGenerated?: boolean;
@@ -215,8 +217,37 @@ async function fetchProjectScope(init: RequestInit = {}) {
 function cacheRemoteProjectScope(remote: RemoteProjectScopePolicy) {
   const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
   const scope = mergeRemoteProjectScope(inspection.scope, remote);
-  if (inspection.state === "valid") saveLocalProjectScope(scope);
+  if (inspection.state !== "valid") saveLocalProjectScope(scope);
   return { ...inspection, scope };
+}
+
+async function synchronizeLocalProjectScope(
+  remote: RemoteProjectScopePolicy,
+  inspection = inspectLocalProjectScope(remote.pluginInstanceId),
+) {
+  let synchronizedRemote = remote;
+  let changedCount = 0;
+  if (inspection.state === "valid") {
+    const changes = inspectLocalProjectScopeChanges(inspection.scope, remote);
+    if (changes.kind === "conflict")
+      throw Object.assign(new Error(changes.reason), {
+        code: "PROJECT_SCOPE_LOCAL_CONFLICT",
+        currentVersion: remote.version,
+      });
+    if (changes.kind === "changes") {
+      synchronizedRemote = await fetchProjectScope({
+        method: "PATCH",
+        body: JSON.stringify({
+          baseVersion: remote.version,
+          decisions: changes.decisions,
+        }),
+      });
+      changedCount = changes.decisions.length;
+    }
+  }
+  const scope = mergeRemoteProjectScope(inspection.scope, synchronizedRemote);
+  saveLocalProjectScope(scope);
+  return { inspection, remote: synchronizedRemote, scope, changedCount };
 }
 
 function scheduledTaskConfig() {
@@ -489,13 +520,14 @@ async function discoverProjectScopeAfterBinding() {
   const metadataEligible = summaries.filter(
     (summary) =>
       summary.id !== currentSessionId &&
+      !summary.archived &&
       !excludedSessionIds.has(summary.id) &&
       !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
       !isPluginSystemThread(summary as unknown as Record<string, unknown>),
   );
   const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
   const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
-    threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt),
+    threadIsInKnownScanWindow(summary.createdAt, scanStartsAt, runStartedAt),
   );
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
@@ -503,7 +535,6 @@ async function discoverProjectScopeAfterBinding() {
     permissionDiscoverySummaries,
     {
       configuredRoots: configuredProjectRoots(policy.projects),
-      strictConfiguredRoots: true,
     },
   );
   const registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
@@ -608,7 +639,17 @@ function summaryFromThread(value: any): ThreadSummary | null {
     id: String(value.id),
     title,
     cwd: typeof value.cwd === "string" ? value.cwd : null,
-    updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? null,
+    createdAt: value.createdAt ?? value.created_at ?? null,
+    updatedAt:
+      value.updatedAt ??
+      value.updated_at ??
+      value.createdAt ??
+      value.created_at ??
+      null,
+    archived:
+      value.archived === true ||
+      value.isArchived === true ||
+      (value.archived_at !== null && value.archived_at !== undefined),
     ephemeral: value.ephemeral === true,
     threadSource:
       typeof value.threadSource === "string"
@@ -950,7 +991,7 @@ async function postCollectionStatus(
 async function collectStart() {
   const config = loadConfig()!;
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  const [policy, remoteScope] = await Promise.all([
+  const [policy, fetchedRemoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope(),
   ]);
@@ -958,11 +999,14 @@ async function collectStart() {
     throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
       code: "REPORT_PERIOD_MISSING",
     });
+  const synchronizedScope = await synchronizeLocalProjectScope(
+    fetchedRemoteScope,
+    localInspection,
+  );
+  const remoteScope = synchronizedScope.remote;
   const requiresProjectScopeBootstrap =
     localInspection.state !== "valid" && !remoteScope.initialized;
-  let localScope: LocalProjectScope;
-  localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
-  saveLocalProjectScope(localScope);
+  let localScope: LocalProjectScope = synchronizedScope.scope;
 
   if (
     !remoteScope.initialized &&
@@ -1018,6 +1062,7 @@ async function collectStart() {
   const metadataEligible = summaries.filter(
     (summary) =>
       summary.id !== currentSessionId &&
+      !summary.archived &&
       !excludedSessionIds.has(summary.id) &&
       !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
       !isPluginSystemThread(summary as unknown as Record<string, unknown>),
@@ -1032,15 +1077,13 @@ async function collectStart() {
         ),
       );
   const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
-  const permissionDiscoverySummaries = requiresProjectScopeBootstrap
-    ? metadataEligible.filter((summary) =>
-        threadIsInKnownScanWindow(
-          summary.updatedAt,
-          initialProjectScopeStart,
-          window.scanEndsAt,
-        ),
-      )
-    : inWindow;
+  const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
+    threadIsInKnownScanWindow(
+      summary.createdAt,
+      initialProjectScopeStart,
+      runStartedAt,
+    ),
+  );
   const configuredRoots = configuredProjectRoots(policy.projects);
   const discoveredScopes = discoverProjectScopes(
     config.pluginInstanceId,
@@ -1048,12 +1091,9 @@ async function collectStart() {
     permissionDiscoverySummaries,
     {
       configuredRoots,
-      ...(requiresProjectScopeBootstrap ? { strictConfiguredRoots: true } : {}),
     },
   );
-  const discovery = requiresProjectScopeBootstrap
-    ? discoveredScopes
-    : filterSingleSessionProjectScopes(discoveredScopes);
+  const discovery = discoveredScopes;
   let registeredScope: RemoteProjectScopePolicy;
   try {
     registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
@@ -1506,6 +1546,17 @@ async function projectScopeList() {
   });
 }
 
+async function synchronizeProjectScopeCommand() {
+  const remote = await fetchProjectScope();
+  const synchronized = await synchronizeLocalProjectScope(remote);
+  output({
+    status: "project_scope_synced",
+    version: synchronized.remote.version,
+    changedCount: synchronized.changedCount,
+    localState: synchronized.inspection.state,
+  });
+}
+
 async function changeProjectScope(decision: "allow" | "deny") {
   const config = loadConfig()!;
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
@@ -1598,6 +1649,7 @@ function help() {
       "collect-skip --run <path> [--error-code <code>]",
       "status",
       "project-scope-list",
+      "project-scope-sync",
       "project-scope-allow --project <name>|--scope-key <key>|--all-pending",
       "project-scope-deny --project <name>|--scope-key <key>|--all-pending",
       "exclude-session --session-id <id>",
@@ -1620,6 +1672,7 @@ const recoveryAwareCommands = new Set([
   "collect-submit",
   "status",
   "project-scope-list",
+  "project-scope-sync",
   "project-scope-allow",
   "project-scope-deny",
 ]);
@@ -1646,6 +1699,8 @@ async function runCommand() {
   else if (command === "collect-skip") collectSkip();
   else if (command === "status") await status();
   else if (command === "project-scope-list") await projectScopeList();
+  else if (command === "project-scope-sync")
+    await synchronizeProjectScopeCommand();
   else if (command === "project-scope-allow") await changeProjectScope("allow");
   else if (command === "project-scope-deny") await changeProjectScope("deny");
   else if (command === "exclude-session") configureExclusion("session");
