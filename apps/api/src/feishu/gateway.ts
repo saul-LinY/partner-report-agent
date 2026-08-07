@@ -460,7 +460,7 @@ export class FeishuGateway {
                 and r.status in ('REPORT_DRAFT', 'REPORT_REVIEW')
             ))
           )
-        ))
+        )
         order by d.updated_at asc
         limit ${limit}
       `;

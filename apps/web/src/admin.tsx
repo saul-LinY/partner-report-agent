@@ -312,10 +312,12 @@ function Operations({ data }: { data: Overview }) {
               const codes = data.bindingCodes.filter(
                 (code) =>
                   code.partner_id === connection.partnerId &&
-                  code.status === "active" &&
+                  ["active", "claimed"].includes(code.status) &&
                   code.code_value,
               );
               const bindingCode = codes[0] ?? null;
+              const activeBindingCode =
+                codes.find((code) => code.status === "active") ?? null;
               const recoverableInstanceId =
                 connection.connectionState === "expired"
                   ? null
@@ -426,12 +428,12 @@ function Operations({ data }: { data: Overview }) {
                       onClick={() =>
                         setCodeFor({
                           ...partner,
-                          existingCode: bindingCode,
+                          existingCode: activeBindingCode,
                           pluginInstanceId: recoverableInstanceId,
                         })
                       }
                     >
-                      {bindingCode
+                      {activeBindingCode
                         ? "查看绑定码"
                         : recoverableInstanceId
                           ? "恢复连接"
