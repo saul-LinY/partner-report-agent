@@ -232,12 +232,6 @@ export async function registerProjectScopeCandidates(
   database: Database = defaultDatabase,
 ) {
   const input = projectScopeCandidateBatchSchema.parse(rawInput);
-  if (!(await projectScopeIdentityConfirmed(identity, database)))
-    throw new ApiError(
-      428,
-      "FEISHU_IDENTITY_CONFIRMATION_REQUIRED",
-      "请先在飞书中确认审核身份。",
-    );
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
     const policyRows = await tx<Array<{ initialized: boolean }>>`
@@ -316,13 +310,6 @@ export async function beginProjectScopeBootstrap(
   database: Database = defaultDatabase,
 ) {
   const input = projectScopeBootstrapSchema.parse(rawInput);
-  if (!(await projectScopeIdentityConfirmed(identity, database)))
-    throw new ApiError(
-      428,
-      "FEISHU_IDENTITY_CONFIRMATION_REQUIRED",
-      "请先在飞书中确认审核身份。",
-    );
-
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
     const policies = await tx<PolicyRow[]>`

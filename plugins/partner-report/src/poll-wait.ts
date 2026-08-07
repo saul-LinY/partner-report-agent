@@ -1,10 +1,10 @@
-export type IdentityWaitResult =
+export type PollResult =
   | { status: "confirmed"; attempt: number }
   | { status: "pending"; attempt: number; lastErrorCode: string | null }
   | { status: "timed_out"; attempt: number; lastErrorCode: string | null }
   | { status: "cancelled"; attempt: number };
 
-export type IdentityWaitOptions = {
+export type PollOptions = {
   check: () => Promise<boolean>;
   deadlineAt: number;
   segmentDurationMs: number;
@@ -15,35 +15,7 @@ export type IdentityWaitOptions = {
   errorCode?: (error: unknown) => string;
 };
 
-export function identityConfirmationRequiredState(input: {
-  periodKey: string;
-  deadlineAt: number;
-  attempt?: number;
-  force?: boolean;
-  lastErrorCode?: string | null;
-}) {
-  const nextCommand = [
-    "identity-wait",
-    `--deadline ${Math.trunc(input.deadlineAt)}`,
-    `--attempt ${Math.max(0, Math.trunc(input.attempt ?? 0))}`,
-    `--period-key ${Buffer.from(input.periodKey, "utf8").toString("base64url")}`,
-    ...(input.force ? ["--force"] : []),
-  ].join(" ");
-  return {
-    status: "feishu_identity_confirmation_required" as const,
-    waiting: true,
-    periodKey: input.periodKey,
-    read: 0,
-    uploaded: 0,
-    discovered: 0,
-    ...(input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {}),
-    nextCommand,
-    message:
-      "请在飞书身份卡中确认审核身份。当前任务会低频等待，确认前不会扫描项目或读取 Session 内容。",
-  };
-}
-
-export function decodeIdentityWaitPeriod(value: string | undefined) {
+export function decodeWaitPeriod(value: string | undefined) {
   if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return "unknown";
   try {
     return Buffer.from(value, "base64url").toString("utf8") || "unknown";
@@ -67,16 +39,16 @@ function defaultSleep(milliseconds: number, signal?: AbortSignal) {
   });
 }
 
-export function identityWaitBackoff(attempt: number) {
+export function pollBackoff(attempt: number) {
   return Math.min(
     1_000 * 2 ** Math.min(Math.max(attempt, 0), 3),
     MAX_BACKOFF_MS,
   );
 }
 
-export async function waitForIdentityConfirmation(
-  options: IdentityWaitOptions,
-): Promise<IdentityWaitResult> {
+export async function waitForCondition(
+  options: PollOptions,
+): Promise<PollResult> {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
   const segmentEndsAt = Math.min(
@@ -92,16 +64,12 @@ export async function waitForIdentityConfirmation(
       if (await options.check()) return { status: "confirmed", attempt };
       lastErrorCode = null;
     } catch (error) {
-      lastErrorCode =
-        options.errorCode?.(error) ?? "IDENTITY_STATUS_UNAVAILABLE";
+      lastErrorCode = options.errorCode?.(error) ?? "POLL_STATUS_UNAVAILABLE";
     }
 
     const remaining = segmentEndsAt - now();
     if (remaining <= 0) break;
-    await sleep(
-      Math.min(identityWaitBackoff(attempt), remaining),
-      options.signal,
-    );
+    await sleep(Math.min(pollBackoff(attempt), remaining), options.signal);
     attempt += 1;
   }
 
@@ -111,21 +79,14 @@ export async function waitForIdentityConfirmation(
   return { status: "pending", attempt, lastErrorCode };
 }
 
-export async function waitForIdentityAndContinue<T>(
-  options: IdentityWaitOptions,
-  continueCollection: () => Promise<T>,
+export async function waitForConditionAndContinue<T>(
+  options: PollOptions,
+  continueTask: () => Promise<T>,
 ): Promise<
-  | {
-      continued: true;
-      wait: Extract<IdentityWaitResult, { status: "confirmed" }>;
-      value: T;
-    }
-  | {
-      continued: false;
-      wait: Exclude<IdentityWaitResult, { status: "confirmed" }>;
-    }
+  | { continued: true; wait: Extract<PollResult, { status: "confirmed" }>; value: T }
+  | { continued: false; wait: Exclude<PollResult, { status: "confirmed" }> }
 > {
-  const wait = await waitForIdentityConfirmation(options);
+  const wait = await waitForCondition(options);
   if (wait.status !== "confirmed") return { continued: false, wait };
-  return { continued: true, wait, value: await continueCollection() };
+  return { continued: true, wait, value: await continueTask() };
 }

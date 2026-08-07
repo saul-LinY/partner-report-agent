@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sqlClient as defaultDatabase } from "@partner-report/db";
 import {
-  renderBindingCard,
   renderRecoveryCard,
   renderReportCard,
   renderReviewCard,
@@ -167,7 +166,6 @@ type MessageClient = Pick<
   "sendInteractiveCard" | "updateInteractiveCard"
 >;
 
-const emailSchema = z.string().trim().email().max(320);
 const identifierSchema = z.string().trim().min(1).max(256);
 const deliveryKindSchema = z.enum([
   "binding",
@@ -264,29 +262,6 @@ export class FeishuDeliveryService {
       : null;
   }
 
-  async sendBindingCardByEmail(email: string): Promise<FeishuDeliveryResult> {
-    const normalizedEmail = emailSchema.parse(email);
-    const partners = await this.database<PartnerRow[]>`
-      select id, tenant_id, team_id, user_id, email, display_name
-      from partners
-      where lower(email) = lower(${normalizedEmail}) and status = 'active'
-      order by created_at asc
-      limit 2
-    `;
-    if (partners.length === 0)
-      throw new Error("ACTIVE_PARTNER_NOT_FOUND_FOR_EMAIL");
-    if (partners.length !== 1)
-      throw new Error("ACTIVE_PARTNER_EMAIL_AMBIGUOUS");
-    return this.sendBindingCardForPartner(partners[0]!);
-  }
-
-  async sendBindingCardForScope(
-    scope: FeishuDeliveryScope,
-  ): Promise<FeishuDeliveryResult> {
-    const partner = await this.loadScopedPartner(scope);
-    if (!partner) throw new Error("ACTIVE_PARTNER_NOT_FOUND");
-    return this.sendBindingCardForPartner(partner);
-  }
 
   async loadReviewDeliveryView(
     scope: FeishuDeliveryScope,
@@ -871,6 +846,23 @@ export class FeishuDeliveryService {
           row.binding_open_id !== input.operatorOpenId)
       )
         return null;
+    } else if (input.expectedKind === "scope") {
+      if (!input.operatorOpenId) return null;
+      if (row.binding_status === "active") {
+        if (
+          !row.binding_open_id ||
+          row.binding_open_id !== input.operatorOpenId ||
+          row.receive_id_type !== "open_id" ||
+          row.receive_id !== row.binding_open_id
+        )
+          return null;
+      } else if (
+        row.binding_status !== "pending" ||
+        row.receive_id_type !== "email" ||
+        row.receive_id.toLowerCase() !== row.email.toLowerCase()
+      ) {
+        return null;
+      }
     } else {
       if (
         !input.operatorOpenId ||
@@ -916,219 +908,43 @@ export class FeishuDeliveryService {
     return partners[0] ?? null;
   }
 
-  private async sendBindingCardForPartner(
+
+  private async ensurePendingBindingForPartner(
     partner: PartnerRow,
-  ): Promise<FeishuDeliveryResult> {
-    const prepared = await this.database.begin(async (tx) => {
-      const activePartners = await tx<Array<{ id: string }>>`
-        select id from partners
-        where id = ${partner.id} and tenant_id = ${partner.tenant_id}
-          and team_id = ${partner.team_id} and status = 'active'
-        for share
-      `;
-      if (!activePartners[0]) return null;
-
-      const bindings = await tx<BindingRow[]>`
-        insert into feishu_partner_bindings (
-          id, tenant_id, team_id, partner_id, app_id, status
-        ) values (
-          ${randomUUID()}, ${partner.tenant_id}, ${partner.team_id},
-          ${partner.id}, ${this.appId}, 'pending'
-        )
-        on conflict (tenant_id, partner_id, app_id) do update set
-          status = case
-            when feishu_partner_bindings.status = 'active'
-              and feishu_partner_bindings.open_id is not null
-              then 'active'
-            else 'pending'
-          end,
-          open_id = case
-            when feishu_partner_bindings.status = 'active'
-              then feishu_partner_bindings.open_id
-            else null
-          end,
-          union_id = case
-            when feishu_partner_bindings.status = 'active'
-              then feishu_partner_bindings.union_id
-            else null
-          end,
-          tenant_key = case
-            when feishu_partner_bindings.status = 'active'
-              then feishu_partner_bindings.tenant_key
-            else null
-          end,
-          updated_at = now()
-        returning id, status, open_id
-      `;
-      const deliveryId = randomUUID();
-      const bindingIsActive =
-        bindings[0]?.status === "active" && Boolean(bindings[0].open_id);
-      const deliveries = await tx<DeliveryRow[]>`
-        insert into feishu_deliveries (
-          id, tenant_id, team_id, partner_id, kind, aggregate_type,
-          aggregate_id, receive_id, receive_id_type, domain_version,
-          status, idempotency_key
-        ) values (
-          ${deliveryId}, ${partner.tenant_id}, ${partner.team_id}, ${partner.id},
-          'binding', 'partner', ${partner.id}, ${partner.email}, 'email', 1,
-          'pending',
-          ${idempotencyKey(this.appId, "binding", partner.id, partner.id)}
-        )
-        on conflict (tenant_id, idempotency_key) do update set
-          receive_id = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.receive_id
-            else excluded.receive_id
-          end,
-          receive_id_type = case
-            when ${bindingIsActive} then feishu_deliveries.receive_id_type
-            else excluded.receive_id_type
-          end,
-          message_id = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.message_id
-            else null
-          end,
-          domain_version = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.domain_version
-            else null
-          end,
-          status = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.status
-            else 'pending'
-          end,
-          attempt_count = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.attempt_count
-            else feishu_deliveries.attempt_count + 1
-          end,
-          sent_at = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.sent_at
-            else null
-          end,
-          next_retry_at = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.next_retry_at
-            else null
-          end,
-          last_attempt_at = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.last_attempt_at
-            else null
-          end,
-          last_error_code = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.last_error_code
-            else null
-          end,
-          last_error_message = case
-            when ${bindingIsActive}
-              or (
-                lower(feishu_deliveries.receive_id) = lower(excluded.receive_id)
-                and feishu_deliveries.receive_id_type = excluded.receive_id_type
-              )
-              then feishu_deliveries.last_error_message
-            else null
-          end,
-          updated_at = now()
-        returning *
-      `;
-      const delivery = deliveries[0]!;
-      const refreshed = bindingIsActive
-        ? []
-        : await tx<DeliveryRow[]>`
-            update feishu_deliveries set
-              message_id = null, domain_version = null, status = 'pending',
-              attempt_count = attempt_count + 1, sent_at = null,
-              next_retry_at = null, last_attempt_at = null,
-              last_error_code = null, last_error_message = null,
-              updated_at = now()
-            where id = ${delivery.id} and message_id is not null
-              and (sent_at is null or sent_at < now() - interval '13 days')
-            returning *
-          `;
-      return {
-        binding: bindings[0]!,
-        delivery: refreshed[0] ?? delivery,
-      };
-    });
-    if (!prepared)
-      return {
-        outcome: "skipped",
-        deliveryId: null,
-        reason: "not_reviewable",
-      };
-    const { binding, delivery } = prepared;
-
-    if (binding.status === "active" && binding.open_id)
-      return {
-        outcome: "skipped",
-        deliveryId: delivery.id,
-        ...(delivery.message_id ? { messageId: delivery.message_id } : {}),
-        reason: "already_bound",
-      };
-    if (delivery.message_id)
-      return {
-        outcome: "skipped",
-        deliveryId: delivery.id,
-        messageId: delivery.message_id,
-        reason: "already_current",
-      };
-
-    const claimed = await this.claimDelivery(delivery.id, partner, false);
-    if (!claimed)
-      return this.unclaimedResult(delivery.id, {
-        tenantId: partner.tenant_id,
-        teamId: partner.team_id,
-        partnerId: partner.id,
-      });
-    const card = renderBindingCard({
-      deliveryId: claimed.id,
-      aggregateId: partner.id,
-      baseVersion: 1,
-      recipientName: partner.display_name,
-      email: partner.email,
-    });
-    return this.sendClaimedDelivery(claimed, card, 1);
+  ): Promise<BindingRow> {
+    const rows = await this.database<BindingRow[]>`
+      insert into feishu_partner_bindings (
+        id, tenant_id, team_id, partner_id, app_id, status
+      ) values (
+        ${randomUUID()}, ${partner.tenant_id}, ${partner.team_id},
+        ${partner.id}, ${this.appId}, 'pending'
+      )
+      on conflict (tenant_id, partner_id, app_id) do update set
+        status = case
+          when feishu_partner_bindings.status = 'active'
+            and feishu_partner_bindings.open_id is not null
+            then 'active'
+          else 'pending'
+        end,
+        open_id = case
+          when feishu_partner_bindings.status = 'active'
+            then feishu_partner_bindings.open_id
+          else null
+        end,
+        union_id = case
+          when feishu_partner_bindings.status = 'active'
+            then feishu_partner_bindings.union_id
+          else null
+        end,
+        tenant_key = case
+          when feishu_partner_bindings.status = 'active'
+            then feishu_partner_bindings.tenant_key
+          else null
+        end,
+        updated_at = now()
+      returning id, status, open_id
+    `;
+    return rows[0]!;
   }
 
   private async deliverAggregate(
@@ -1154,6 +970,32 @@ export class FeishuDeliveryService {
     `;
     const binding = bindings[0];
     if (!binding?.open_id) {
+      if (kind === "scope") {
+        await this.ensurePendingBindingForPartner(partner);
+        // The first project card is a Feishu card addressed by the Partner's
+        // Feishu account email; its callback supplies the trusted open_id.
+        const delivery = await this.upsertAggregateDelivery({
+          kind,
+          scope,
+          aggregateId,
+          domainVersion,
+          receiveId: partner.email,
+          receiveIdType: "email",
+          deferred: false,
+        });
+        const claimed = await this.claimDelivery(
+          delivery.id,
+          partner,
+          Boolean(delivery.message_id),
+          domainVersion,
+        );
+        if (!claimed)
+          return this.unclaimedResult(delivery.id, scope, domainVersion);
+        const card = render(claimed.id);
+        return claimed.message_id
+          ? this.patchClaimedDelivery(claimed, card, domainVersion)
+          : this.sendClaimedDelivery(claimed, card, domainVersion);
+      }
       const deferred = await this.upsertAggregateDelivery({
         kind,
         scope,
@@ -1163,20 +1005,6 @@ export class FeishuDeliveryService {
         receiveIdType: "email",
         deferred: true,
       });
-      const bindingDelivery = await this.sendBindingCardForPartner(partner);
-      if (bindingDelivery.outcome === "deferred") {
-        return {
-          outcome: "deferred",
-          deliveryId: deferred.id,
-          ...(bindingDelivery.nextRetryAt
-            ? { nextRetryAt: bindingDelivery.nextRetryAt }
-            : {}),
-          reason:
-            bindingDelivery.reason === "delivery_in_progress"
-              ? "binding_delivery_busy"
-              : "binding_delivery_retry",
-        };
-      }
       return {
         outcome: "deferred",
         deliveryId: deferred.id,
@@ -1597,13 +1425,6 @@ export function createFeishuDeliveryService(
     messageClient: createFeishuMessageClient(config),
     ...(process.env.WEB_ORIGIN ? { webOrigin: process.env.WEB_ORIGIN } : {}),
   });
-}
-
-export async function sendBindingCardByEmail(
-  email: string,
-  service: FeishuDeliveryService = createFeishuDeliveryService(),
-) {
-  return service.sendBindingCardByEmail(email);
 }
 
 export async function loadDeliveryForAction(

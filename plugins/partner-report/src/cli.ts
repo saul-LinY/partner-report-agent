@@ -70,11 +70,7 @@ import {
   type LocalProjectScope,
   type RemoteProjectScopePolicy,
 } from "./project-scope.js";
-import {
-  decodeIdentityWaitPeriod,
-  identityConfirmationRequiredState,
-  waitForIdentityAndContinue,
-} from "./identity-wait.js";
+import { decodeWaitPeriod, waitForConditionAndContinue } from "./poll-wait.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -160,8 +156,8 @@ type RunManifest = {
 };
 
 const RUN_PREFIX = "partner-report-run-";
-const IDENTITY_WAIT_TOTAL_MS = 10 * 60_000;
-const IDENTITY_WAIT_SEGMENT_MS = 45_000;
+const POLL_TOTAL_MS = 10 * 60_000;
+const POLL_SEGMENT_MS = 45_000;
 
 function option(name: string, fallback?: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -435,17 +431,102 @@ function connectedOutput(
   partnerId: string,
   deviceName: string,
   connectivity: Record<string, unknown>,
+  projectScope?: Record<string, unknown>,
 ) {
   const config = loadConfig()!;
   output({
-    status: "connected",
+    status: projectScope?.status ?? "connected",
     pluginInstanceId: config.pluginInstanceId,
     partnerId,
     deviceName,
     connectivity,
+    ...(projectScope ?? {}),
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     nextStep: "使用 $partner-report-sync 创建或修复同名 Codex Scheduled Task。",
   });
+}
+
+async function discoverProjectScopeAfterBinding() {
+  const config = loadConfig()!;
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  if (!policy.currentPeriod)
+    throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
+      code: "REPORT_PERIOD_MISSING",
+    });
+  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  if (
+    remoteScope.initialized ||
+    remoteScope.entries.some((entry) => entry.status === "pending")
+  ) {
+    const localScope = mergeRemoteProjectScope(
+      localInspection.scope,
+      remoteScope,
+    );
+    saveLocalProjectScope(localScope);
+    return projectScopePendingStatus(
+      policy.currentPeriod.period_key,
+      localScope,
+    );
+  }
+
+  const runStartedAt = new Date().toISOString();
+  const server = new CodexAppServer();
+  let listed: any[];
+  try {
+    await server.connect();
+    listed = await server.listThreads();
+  } finally {
+    server.close();
+  }
+  const summaries = listed
+    .map(summaryFromThread)
+    .filter((value): value is ThreadSummary => Boolean(value));
+  const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
+  const currentSessionId = process.env.CODEX_THREAD_ID;
+  const metadataEligible = summaries.filter(
+    (summary) =>
+      summary.id !== currentSessionId &&
+      !excludedSessionIds.has(summary.id) &&
+      !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
+      !isPluginSystemThread(summary as unknown as Record<string, unknown>),
+  );
+  const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
+  const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
+    threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt),
+  );
+  const discovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localInspection.scope,
+    permissionDiscoverySummaries,
+    {
+      configuredRoots: configuredProjectRoots(policy.projects),
+      strictConfiguredRoots: true,
+    },
+  );
+  const registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
+    "/v1/project-scope/candidates",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        periodKey: policy.currentPeriod.period_key,
+        initialDiscovery: true,
+        candidates: discovery.candidates.map((candidate) => ({
+          scopeKey: candidate.scopeKey,
+          displayName: candidate.displayName,
+          sessionCount: candidate.sessionCount,
+        })),
+      }),
+    },
+  );
+  const localScope = mergeDiscoveredRoots(
+    mergeRemoteProjectScope(localInspection.scope, registeredScope),
+    discovery.candidates,
+  );
+  saveLocalProjectScope(localScope);
+  return projectScopePendingStatus(policy.currentPeriod.period_key, localScope);
 }
 
 async function connect() {
@@ -495,7 +576,8 @@ async function connect() {
     excludedPaths: existing?.excludedPaths ?? [],
   });
   const connectivity = await performConnectivityTest(tokens);
-  connectedOutput(tokens.partnerId, deviceName, connectivity);
+  const projectScope = await discoverProjectScopeAfterBinding();
+  connectedOutput(tokens.partnerId, deviceName, connectivity, projectScope);
 }
 
 async function connectivityTest() {
@@ -545,21 +627,6 @@ function configuredProjectRoots(projects: ProjectPolicy[]) {
   return projects.flatMap((project) => project.allowed_paths ?? []);
 }
 
-function identityConfirmationRequired(
-  periodKey: string,
-  deadlineAt = Date.now() + IDENTITY_WAIT_TOTAL_MS,
-  attempt = 0,
-  lastErrorCode: string | null = null,
-) {
-  return identityConfirmationRequiredState({
-    periodKey,
-    deadlineAt,
-    attempt,
-    force: flag("force"),
-    lastErrorCode,
-  });
-}
-
 function projectScopeApprovalRequired(
   periodKey: string,
   localScope: LocalProjectScope,
@@ -601,7 +668,7 @@ function projectScopeCardDeliveryPending(input: {
   attempt?: number;
   lastErrorCode?: string | null;
 }) {
-  const deadlineAt = input.deadlineAt ?? Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const deadlineAt = input.deadlineAt ?? Date.now() + POLL_TOTAL_MS;
   const attempt = input.attempt ?? 0;
   return {
     status: "project_scope_card_delivery_pending",
@@ -621,6 +688,54 @@ function projectScopeCardDeliveryPending(input: {
   };
 }
 
+async function projectScopePendingStatus(
+  periodKey: string,
+  localScope: LocalProjectScope,
+  remind = false,
+) {
+  const pendingProjects = localScope.entries.filter(
+    (entry) => entry.status === "pending",
+  ).length;
+  if (pendingProjects === 0)
+    return {
+      status: "project_scope_no_candidates" as const,
+      waiting: false,
+      periodKey,
+      policyVersion: localScope.version,
+      discovered: 0,
+      read: 0,
+      uploaded: 0,
+      message:
+        "过滤临时环境后没有需要审批的项目，本次未读取或上传 Session；后续周期会重新发现。",
+    };
+  if (remind) {
+    await authenticatedRequest("/v1/project-scope/remind", {
+      method: "POST",
+      body: JSON.stringify({ periodKey }),
+    });
+  }
+  const cardStatus = await fetchProjectScopeCardStatus(
+    periodKey,
+    localScope.version,
+  ).catch((error) => ({
+    status: "pending" as const,
+    policyVersion: localScope.version,
+    retryAfterSeconds: 3,
+    lastErrorCode:
+      error instanceof HttpError
+        ? error.code
+        : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
+  }));
+  if (cardStatus.status !== "sent")
+    return projectScopeCardDeliveryPending({
+      periodKey,
+      version: localScope.version,
+      lastErrorCode:
+        "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null,
+    });
+  return projectScopeApprovalRequired(periodKey, localScope);
+}
+
 async function fetchProjectScopeCardStatus(
   periodKey: string,
   version: number,
@@ -636,89 +751,15 @@ async function fetchProjectScopeCardStatus(
   );
 }
 
-async function identityWait() {
-  const deadline = Number(option("deadline"));
-  const deadlineAt = Number.isFinite(deadline)
-    ? Math.min(deadline, Date.now() + IDENTITY_WAIT_TOTAL_MS)
-    : Date.now() + IDENTITY_WAIT_TOTAL_MS;
-  const attemptValue = Number(option("attempt", "0"));
-  const attempt =
-    Number.isInteger(attemptValue) && attemptValue >= 0 ? attemptValue : 0;
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  process.once("SIGINT", cancel);
-  process.once("SIGTERM", cancel);
-  try {
-    const flow = await waitForIdentityAndContinue(
-      {
-        check: async () => {
-          const requestTimeoutMs = Math.max(
-            1,
-            Math.min(15_000, deadlineAt - Date.now()),
-          );
-          const signal = AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(requestTimeoutMs),
-          ]);
-          return (await fetchProjectScope({ signal })).identityConfirmed;
-        },
-        deadlineAt,
-        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
-        attempt,
-        signal: controller.signal,
-        errorCode: (error) =>
-          error instanceof HttpError
-            ? error.code
-            : "IDENTITY_STATUS_UNAVAILABLE",
-      },
-      collectStart,
-    );
-    if (flow.continued) return flow.value;
-    const result = flow.wait;
-    if (result.status === "pending") {
-      return output(
-        identityConfirmationRequired(
-          decodeIdentityWaitPeriod(option("period-key")),
-          deadlineAt,
-          result.attempt,
-          result.lastErrorCode,
-        ),
-      );
-    }
-    if (result.status === "cancelled")
-      return output({
-        status: "identity_confirmation_wait_cancelled",
-        waiting: false,
-        read: 0,
-        uploaded: 0,
-        discovered: 0,
-        message: "已取消当前任务内的身份确认等待，未扫描或读取 Session。",
-      });
-    return output({
-      status: "identity_confirmation_wait_timed_out",
-      waiting: false,
-      read: 0,
-      uploaded: 0,
-      discovered: 0,
-      ...(result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {}),
-      message:
-        "当前执行环境的身份等待时间已到，未扫描或读取 Session；下次采集会继续检查。",
-    });
-  } finally {
-    process.removeListener("SIGINT", cancel);
-    process.removeListener("SIGTERM", cancel);
-  }
-}
-
 async function projectScopeCardWait() {
-  const periodKey = decodeIdentityWaitPeriod(option("period-key"));
+  const periodKey = decodeWaitPeriod(option("period-key"));
   const version = Number(option("version"));
   if (periodKey === "unknown" || !Number.isInteger(version) || version < 1)
     throw new Error("项目范围卡等待参数无效。");
   const rawDeadline = Number(option("deadline"));
   const deadlineAt = Number.isFinite(rawDeadline)
-    ? Math.min(rawDeadline, Date.now() + IDENTITY_WAIT_TOTAL_MS)
-    : Date.now() + IDENTITY_WAIT_TOTAL_MS;
+    ? Math.min(rawDeadline, Date.now() + POLL_TOTAL_MS)
+    : Date.now() + POLL_TOTAL_MS;
   const rawAttempt = Number(option("attempt", "0"));
   const attempt =
     Number.isInteger(rawAttempt) && rawAttempt >= 0 ? rawAttempt : 0;
@@ -727,7 +768,7 @@ async function projectScopeCardWait() {
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
-    const flow = await waitForIdentityAndContinue(
+    const flow = await waitForConditionAndContinue(
       {
         check: async () => {
           const requestTimeoutMs = Math.max(
@@ -744,7 +785,7 @@ async function projectScopeCardWait() {
           );
         },
         deadlineAt,
-        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
+        segmentDurationMs: POLL_SEGMENT_MS,
         attempt,
         signal: controller.signal,
         errorCode: (error) =>
@@ -909,7 +950,6 @@ async function postCollectionStatus(
 async function collectStart() {
   const config = loadConfig()!;
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  const requiresProjectScopeBootstrap = localInspection.state !== "valid";
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope(),
@@ -918,30 +958,23 @@ async function collectStart() {
     throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
       code: "REPORT_PERIOD_MISSING",
     });
-  if (!remoteScope.identityConfirmed)
-    return output(
-      identityConfirmationRequired(policy.currentPeriod.period_key),
-    );
+  const requiresProjectScopeBootstrap =
+    localInspection.state !== "valid" && !remoteScope.initialized;
   let localScope: LocalProjectScope;
-  if (!requiresProjectScopeBootstrap) {
-    localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
-    saveLocalProjectScope(localScope);
-  } else {
-    const bootstrapScope = await authenticatedRequest<RemoteProjectScopePolicy>(
-      "/v1/project-scope/bootstrap",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          baseVersion: remoteScope.version,
-          reason:
-            localInspection.state === "missing"
-              ? "local_scope_missing"
-              : "local_scope_invalid",
-        }),
-      },
+  localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
+  saveLocalProjectScope(localScope);
+
+  if (
+    !remoteScope.initialized &&
+    localScope.entries.some((entry) => entry.status === "pending")
+  ) {
+    return output(
+      await projectScopePendingStatus(
+        policy.currentPeriod.period_key,
+        localScope,
+        true,
+      ),
     );
-    localScope = mergeRemoteProjectScope(localInspection.scope, bootstrapScope);
-    saveLocalProjectScope(localScope);
   }
   const runId = randomUUID();
   const runStartedAt = new Date().toISOString();
@@ -1055,44 +1088,11 @@ async function collectStart() {
 
   if (!localScope.initialized) {
     releaseCollectionLease(config.pluginInstanceId, runId);
-    const pendingProjects = localScope.entries.filter(
-      (entry) => entry.status === "pending",
-    ).length;
-    if (pendingProjects === 0)
-      return output({
-        status: "project_scope_no_candidates",
-        waiting: false,
-        periodKey: policy.currentPeriod.period_key,
-        policyVersion: localScope.version,
-        discovered: 0,
-        read: 0,
-        uploaded: 0,
-        message:
-          "过滤临时环境后没有需要审批的项目，本次未读取或上传 Session；后续周期会重新发现。",
-      });
-    const cardStatus = await fetchProjectScopeCardStatus(
-      policy.currentPeriod.period_key,
-      localScope.version,
-    ).catch((error) => ({
-      status: "pending" as const,
-      policyVersion: localScope.version,
-      retryAfterSeconds: 3,
-      lastErrorCode:
-        error instanceof HttpError
-          ? error.code
-          : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
-    }));
-    if (cardStatus.status !== "sent")
-      return output(
-        projectScopeCardDeliveryPending({
-          periodKey: policy.currentPeriod.period_key,
-          version: localScope.version,
-          lastErrorCode:
-            "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null,
-        }),
-      );
     return output(
-      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
+      await projectScopePendingStatus(
+        policy.currentPeriod.period_key,
+        localScope,
+      ),
     );
   }
   let state: {
@@ -1591,7 +1591,6 @@ function help() {
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
       "collect-start [--force]",
-      "identity-wait --deadline <epoch-ms> --attempt <number> [--force]",
       "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
       "collect-review --run <path>",
@@ -1614,7 +1613,6 @@ const recoveryAwareCommands = new Set([
   "connectivity-test",
   "server-url-set",
   "collect-start",
-  "identity-wait",
   "project-scope-card-wait",
   "daily-collect",
   "collect-next",
@@ -1641,7 +1639,6 @@ async function runCommand() {
   else if (command === "scheduled-task-config") scheduledTaskConfig();
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
-  else if (command === "identity-wait") await identityWait();
   else if (command === "project-scope-card-wait") await projectScopeCardWait();
   else if (command === "collect-next") await collectNext();
   else if (command === "collect-review") await collectReview();

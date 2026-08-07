@@ -86,30 +86,6 @@ suite("project scope persistence", () => {
 
   it("versions candidates and applies first versus later approvals correctly", async () => {
     const firstKey = "a".repeat(64);
-    await expect(
-      registerProjectScopeCandidates(identity, {
-        periodKey: "scope-period",
-        candidates: [
-          { scopeKey: firstKey, displayName: "first-project", sessionCount: 2 },
-        ],
-      }),
-    ).rejects.toMatchObject({
-      code: "FEISHU_IDENTITY_CONFIRMATION_REQUIRED",
-    });
-    await sql`
-      insert into feishu_partner_bindings (
-        id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
-      ) values (
-        ${fixture.feishuBindingId}, ${fixture.tenantId}, ${fixture.teamId},
-        ${fixture.partnerId}, ${feishuAppId}, ${feishuOpenId}, 'active', now()
-      )
-    `;
-    const freshBootstrap = await beginProjectScopeBootstrap(identity, {
-      baseVersion: 1,
-      reason: "local_scope_missing",
-    });
-    expect(freshBootstrap).toMatchObject({ version: 1, initialized: false });
-
     const first = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
       initialDiscovery: true,

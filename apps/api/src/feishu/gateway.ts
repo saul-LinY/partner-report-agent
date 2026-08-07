@@ -328,7 +328,7 @@ export class FeishuGateway {
           where published_at is null
           and (${this.tenantIdFilter}::uuid is null or tenant_id = ${this.tenantIdFilter})
           and (
-            event_type in ('plugin.binding.claimed', 'plugin.binding.recovery.requested')
+            event_type = 'plugin.binding.recovery.requested'
             or (
               ${this.reviewDeliveryEnabled}
               and event_type in (
@@ -412,14 +412,8 @@ export class FeishuGateway {
         select d.tenant_id, d.team_id, d.partner_id, d.kind, d.aggregate_id
         from feishu_deliveries d
         where (${this.tenantIdFilter}::uuid is null or d.tenant_id = ${this.tenantIdFilter})
-        and (${includeReviewDeliveries} or d.kind in ('binding', 'recovery'))
-        and ((
-          d.kind = 'binding' and d.message_id is null and (
-            d.status = 'pending'
-            or (d.status = 'retry_wait' and d.next_retry_at <= now())
-            or (d.status = 'sending' and d.last_attempt_at < now() - interval '2 minutes')
-          )
-        ) or (
+        and (${includeReviewDeliveries} or d.kind = 'recovery')
+        and (
           d.kind in ('recovery', 'scope', 'review', 'report') and (
             (
               d.status = 'deferred' and exists (
@@ -479,9 +473,7 @@ export class FeishuGateway {
           kind: row.kind,
           aggregateId: row.aggregate_id,
         };
-        if (retry.kind === "binding") {
-          await this.deliveries.sendBindingCardForScope(retry);
-        } else if (retry.kind === "recovery") {
+        if (retry.kind === "recovery") {
           const authorizations = await this.database<
             Array<{ device_name: string; expires_at: Date | string }>
           >`
@@ -566,6 +558,13 @@ export class FeishuGateway {
     if (event.value.action === "recovery_confirm") {
       await this.confirmRecovery(row.event_id, event, delivery);
       return;
+    }
+
+    if (
+      event.value.action.startsWith("scope_") &&
+      delivery.bindingStatus !== "active"
+    ) {
+      await this.confirmScopeBinding(row.event_id, event, delivery);
     }
 
     const actor: DomainActor = {
@@ -918,6 +917,85 @@ export class FeishuGateway {
     }
   }
 
+  private async confirmScopeBinding(
+    requestId: string,
+    event: StoredCardAction,
+    delivery: FeishuActionDelivery,
+  ): Promise<void> {
+    const actor: DomainActor = {
+      actorType: "feishu",
+      actorId: event.operatorOpenId,
+      userId: delivery.partnerUserId,
+      tenantId: delivery.tenantId,
+      teamId: delivery.teamId,
+      partnerId: delivery.partnerId,
+    };
+    await this.database.begin(async (transaction) => {
+      const conflicts = await transaction<Array<{ partner_id: string }>>`
+        select partner_id from feishu_partner_bindings
+        where app_id = ${this.config.appId} and open_id = ${event.operatorOpenId}
+          and partner_id <> ${delivery.partnerId}
+        for update
+      `;
+      if (conflicts[0]) {
+        throw new ApiError(
+          409,
+          "FEISHU_ACCOUNT_ALREADY_BOUND",
+          "此飞书账号已经绑定到其他 Partner。",
+        );
+      }
+      const bindings = await transaction<
+        Array<{ status: string; open_id: string | null }>
+      >`
+        select status, open_id from feishu_partner_bindings
+        where id = ${delivery.bindingId} and tenant_id = ${delivery.tenantId}
+          and team_id = ${delivery.teamId} and partner_id = ${delivery.partnerId}
+          and app_id = ${this.config.appId}
+        for update
+      `;
+      const binding = bindings[0];
+      if (!binding)
+        throw new ApiError(
+          404,
+          "FEISHU_BINDING_NOT_FOUND",
+          "项目权限绑定不存在或已经失效。",
+        );
+      if (binding.open_id && binding.open_id !== event.operatorOpenId)
+        throw new ApiError(
+          409,
+          "FEISHU_BINDING_MISMATCH",
+          "此 Partner 已绑定到另一个飞书账号。",
+        );
+      await transaction`
+        update feishu_partner_bindings set
+          open_id = ${event.operatorOpenId},
+          union_id = coalesce(${event.operatorUnionId ?? null}, union_id),
+          tenant_key = coalesce(${event.tenantKey ?? null}, tenant_key),
+          status = 'active', verified_at = coalesce(verified_at, now()),
+          updated_at = now()
+        where id = ${delivery.bindingId} and tenant_id = ${delivery.tenantId}
+          and team_id = ${delivery.teamId} and partner_id = ${delivery.partnerId}
+      `;
+      await transaction`
+        update feishu_deliveries set
+          receive_id = ${event.operatorOpenId}, receive_id_type = 'open_id',
+          status = case when status = 'confirmed' then status else 'sent' end,
+          updated_at = now()
+        where id = ${delivery.deliveryId} and tenant_id = ${delivery.tenantId}
+          and team_id = ${delivery.teamId} and partner_id = ${delivery.partnerId}
+      `;
+      await this.insertAudit(
+        transaction,
+        requestId,
+        actor,
+        "feishu.binding.confirmed_by_project_scope",
+        "partner",
+        delivery.partnerId,
+        { source: "project_scope_card" },
+      );
+    });
+  }
+
   private async confirmRecovery(
     requestId: string,
     event: StoredCardAction,
@@ -1070,17 +1148,6 @@ export class FeishuGateway {
   }
 
   private async processOutboxEvent(event: OutboxRow): Promise<boolean> {
-    if (event.event_type === "plugin.binding.claimed") {
-      const scope = await this.loadPartnerScope(
-        event.tenant_id,
-        event.aggregate_id,
-      );
-      if (!scope) return true;
-      await this.deliveries.sendBindingCardForScope(scope);
-      // Delivery failures are persisted and retried by retryDueDeliveries.
-      return true;
-    }
-
     if (event.event_type === "plugin.binding.recovery.requested") {
       const rows = await this.database<
         Array<{
@@ -1255,34 +1322,14 @@ export class FeishuGateway {
     return true;
   }
 
-  private async loadPartnerScope(
-    tenantId: string,
-    partnerId: string,
-  ): Promise<FeishuDeliveryScope | null> {
-    const rows = await this.database<
-      Array<{ tenant_id: string; team_id: string; partner_id: string }>
-    >`
-      select tenant_id, team_id, id as partner_id from partners
-      where id = ${partnerId} and tenant_id = ${tenantId} and status = 'active'
-      limit 1
-    `;
-    const row = rows[0];
-    return row
-      ? {
-          tenantId: row.tenant_id,
-          teamId: row.team_id,
-          partnerId: row.partner_id,
-        }
-      : null;
-  }
 
-  private async loadPluginScope(
-    tenantId: string,
-    pluginInstanceId: string,
-  ): Promise<FeishuDeliveryScope | null> {
-    const rows = await this.database<
-      Array<{ tenant_id: string; team_id: string; partner_id: string }>
-    >`
+ private async loadPluginScope(
+   tenantId: string,
+   pluginInstanceId: string,
+ ): Promise<FeishuDeliveryScope | null> {
+   const rows = await this.database<
+     Array<{ tenant_id: string; team_id: string; partner_id: string }>
+   >`
       select tenant_id, team_id, partner_id from plugin_instances
       where id = ${pluginInstanceId} and tenant_id = ${tenantId}
         and status = 'active'

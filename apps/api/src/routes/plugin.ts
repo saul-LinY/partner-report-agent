@@ -169,21 +169,6 @@ export async function pluginRoutes(app: FastifyInstance) {
           ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
         )
       `;
-      if (!recoveryInstanceId) {
-        await tx`
-          insert into outbox_events (
-            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-          ) values (
-            ${randomUUID()}, ${row.tenant_id}, 'plugin.binding.claimed',
-            'partner', ${row.partner_id},
-            ${JSON.stringify({
-              teamId: row.team_id,
-              partnerId: row.partner_id,
-              pluginInstanceId,
-            })}::jsonb
-          )
-        `;
-      }
       return { row, pluginInstanceId };
     });
     if (!binding)
@@ -215,7 +200,7 @@ export async function pluginRoutes(app: FastifyInstance) {
     return {
       deviceCode,
       userCode: code,
-      verificationUri: `${process.env.WEB_ORIGIN ?? "http://127.0.0.1:4311"}/connect-plugin?code=${code}`,
+      verificationUri: `${process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311"}/connect-plugin?code=${code}`,
       expiresAt,
       intervalSeconds: 3,
     };
@@ -447,20 +432,6 @@ export async function pluginRoutes(app: FastifyInstance) {
           'plugin_instance', ${activatedInstanceId}, ${request.id}, '{}'::jsonb
         )
       `;
-        if (!recoveryInstanceId)
-          await tx`
-        insert into outbox_events (
-          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-        ) values (
-          ${randomUUID()}, ${current.tenant_id}, 'plugin.binding.claimed',
-          'partner', ${current.partner_id},
-          ${JSON.stringify({
-            teamId: current.team_id,
-            partnerId: current.partner_id,
-            pluginInstanceId: activatedInstanceId,
-          })}::jsonb
-        )
-      `;
         return activatedInstanceId;
       });
       if (!pluginInstanceId)
@@ -559,6 +530,70 @@ export async function pluginRoutes(app: FastifyInstance) {
       },
     );
     return policy;
+  });
+
+  app.post("/v1/project-scope/remind", async (request) => {
+    const actor = await requirePluginActor(request);
+    const input = z
+      .object({ periodKey: z.string().trim().min(1).max(40) })
+      .parse(request.body);
+    const policies = await sql<
+      Array<{ version: number; initialized: boolean; pending_count: number }>
+    >`
+      select psp.version, psp.initialized,
+        count(pse.id)::int as pending_count
+      from project_scope_policies psp
+      left join project_scope_entries pse
+        on pse.plugin_instance_id = psp.plugin_instance_id
+        and pse.tenant_id = psp.tenant_id and pse.status = 'pending'
+      where psp.plugin_instance_id = ${actor.pluginInstanceId}
+        and psp.tenant_id = ${actor.tenantId}
+        and psp.team_id = ${actor.teamId}
+        and psp.partner_id = ${actor.partnerId}
+      group by psp.version, psp.initialized
+      limit 1
+    `;
+    const policy = policies[0];
+    if (!policy || policy.initialized || policy.pending_count < 1)
+      return { reminded: false, policy: await loadProjectScopePolicy(actor) };
+
+    await sql.begin(async (tx) => {
+      const periods = await tx<Array<{ period_key: string }>>`
+        select period_key from report_periods
+        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and period_key = ${input.periodKey}
+          and status = 'open' and starts_at <= now() and ends_at >= now()
+        limit 1
+      `;
+      if (!periods[0])
+        throw new ApiError(404, "REPORT_PERIOD_MISSING", "当前周期不存在或未开放。");
+      const aggregateId = `${actor.pluginInstanceId}:${input.periodKey}`;
+      await tx`
+        update feishu_deliveries set
+          message_id = null, domain_version = null, status = 'pending',
+          sent_at = null, next_retry_at = null, last_attempt_at = null,
+          last_error_code = null, last_error_message = null, updated_at = now()
+        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and partner_id = ${actor.partnerId} and kind = 'scope'
+          and aggregate_type = 'project_scope' and aggregate_id = ${aggregateId}
+      `;
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${actor.tenantId}, 'project_scope.period.review_ready',
+          'plugin_instance', ${actor.pluginInstanceId},
+          ${JSON.stringify({
+            teamId: actor.teamId,
+            partnerId: actor.partnerId,
+            pluginInstanceId: actor.pluginInstanceId,
+            periodKey: input.periodKey,
+            version: policy.version,
+          })}::jsonb
+        )
+      `;
+    });
+    return { reminded: true, policy: await loadProjectScopePolicy(actor) };
   });
 
   app.post("/v1/project-scope/bootstrap", async (request) => {

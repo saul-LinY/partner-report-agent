@@ -900,7 +900,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return {
       id,
       expiresAt,
-      inviteUrl: `${process.env.WEB_ORIGIN ?? "http://127.0.0.1:4311"}/accept-invite?token=${encodeURIComponent(token)}`,
+      inviteUrl: `${process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311"}/accept-invite?token=${encodeURIComponent(token)}`,
     };
   });
 

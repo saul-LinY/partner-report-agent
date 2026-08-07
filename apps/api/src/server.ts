@@ -42,7 +42,7 @@ export async function buildApp(options: { logger?: boolean } = {}) {
 
   await app.register(cookie);
   await app.register(cors, {
-    origin: process.env.WEB_ORIGIN ?? "http://127.0.0.1:4311",
+    origin: process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311",
     credentials: true,
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   });
@@ -50,7 +50,7 @@ export async function buildApp(options: { logger?: boolean } = {}) {
   app.addHook("onRequest", async (request) => {
     if (["POST", "PATCH", "DELETE"].includes(request.method)) {
       const origin = request.headers.origin;
-      const expected = process.env.WEB_ORIGIN ?? "http://127.0.0.1:4311";
+      const expected = process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311";
       if (origin && origin !== expected)
         throw new ApiError(403, "ORIGIN_FORBIDDEN", "请求来源不受信任。");
     }
@@ -116,7 +116,7 @@ export async function buildApp(options: { logger?: boolean } = {}) {
 async function start() {
   const feishuConfig = loadFeishuConfig();
   const app = await buildApp();
-  const host = process.env.API_HOST ?? "127.0.0.1";
+  const host = process.env.API_HOST ?? "0.0.0.0";
   const port = Number(process.env.API_PORT ?? 4310);
   await app.listen({ host, port });
   const feishu = feishuConfig

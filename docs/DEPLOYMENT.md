@@ -9,7 +9,7 @@
 ```dotenv
 NODE_ENV=production
 DATABASE_URL=postgres://<user>:<password>@<postgres-host>:5432/partner_report
-API_HOST=0.0.0.0
+API_HOST=172.20.10.14
 API_PORT=4310
 WEB_ORIGIN=https://report.example.com
 VITE_API_URL=https://report-api.example.com
@@ -27,15 +27,15 @@ PLUGIN_MIN_VERSION=0.1.0
 
 ## 可信局域网联调
 
-临时局域网联调时，API 和 Web 进程应监听 `0.0.0.0`，但公开 URL 必须填写中台 Mac 的实际私有 IP。以下示例假设 IP 为 `192.168.1.100`：
+临时局域网联调时，API 和 Web 进程监听中台 Mac 的局域网地址，公开 URL 使用同一个地址。以下示例使用当前中台地址 `172.20.10.14`：
 
 ```dotenv
 API_HOST=0.0.0.0
 API_PORT=4310
-WEB_ORIGIN=http://192.168.1.100:4311
-VITE_API_URL=http://192.168.1.100:4310
+WEB_ORIGIN=http://172.20.10.14:4311
+VITE_API_URL=http://172.20.10.14:4310
 SESSION_COOKIE_SECURE=false
-PARTNER_REPORT_SERVER_URL=http://192.168.1.100:4310
+PARTNER_REPORT_SERVER_URL=http://172.20.10.14:4310
 ```
 
 局域网 IP 改变后，更新三个公开 URL 并重启 API、Web。Docker Compose 只把 PostgreSQL 发布到 `127.0.0.1:54329`，不得为了插件连接而开放数据库端口。
@@ -44,7 +44,7 @@ Partner 设备连接局域网 HTTP 时必须明确接受明文传输风险：
 
 ```bash
 node "<installed-plugin-path>/dist/cli.mjs" connect \
-  --server http://192.168.1.100:4310 \
+  --server http://172.20.10.14:4310 \
   --binding-code PR-XXXX-XXXX \
   --allow-insecure-http
 ```
@@ -60,7 +60,7 @@ npm run db:seed
 npm run build
 npm run start -w @partner-report/api
 npm run start -w @partner-report/worker
-npm run preview -w @partner-report/web -- --host 0.0.0.0
+npm run preview -w @partner-report/web -- --host 172.20.10.14
 ```
 
 前端是静态构建，也可以直接由 Nginx、Caddy 或对象存储托管。部署完成后先检查 `https://<api-host>/health` 返回 `status: "ok"`。

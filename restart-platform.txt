@@ -28,11 +28,11 @@ npm run dev
 访问与检查
 ----------
 
-  Web: http://127.0.0.1:4311
-  API: http://127.0.0.1:4310
+  Web: http://172.20.10.14:4311
+  API: http://172.20.10.14:4310
 
-  curl -sS http://127.0.0.1:4310/health
-  curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4311/
+  curl -sS http://172.20.10.14:4310/health
+  curl -sS -o /dev/null -w "%{http_code}\n" http://172.20.10.14:4311/
 
 默认账号：
 

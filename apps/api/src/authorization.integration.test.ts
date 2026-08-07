@@ -157,17 +157,7 @@ suite("tenant and role authorization", () => {
         and event_type = 'plugin.binding.claimed'
         and aggregate_id = ${fixture.partnerA}
     `;
-    expect(bindingEvents).toEqual([
-      {
-        aggregate_type: "partner",
-        aggregate_id: fixture.partnerA,
-        payload: {
-          teamId: fixture.teamA,
-          partnerId: fixture.partnerA,
-          pluginInstanceId: claim.json().pluginInstanceId,
-        },
-      },
-    ]);
+    expect(bindingEvents).toEqual([]);
     const pluginHeaders = {
       authorization: `Bearer ${claim.json().accessToken}`,
     };
@@ -551,18 +541,7 @@ suite("tenant and role authorization", () => {
           and event_type = 'plugin.binding.claimed'
           and payload->>'pluginInstanceId' = ${result.pluginInstanceId}
       `;
-      expect(events).toEqual([
-        {
-          event_type: "plugin.binding.claimed",
-          aggregate_type: "partner",
-          aggregate_id: fixture.partnerA,
-          payload: {
-            teamId: fixture.teamA,
-            partnerId: fixture.partnerA,
-            pluginInstanceId: result.pluginInstanceId,
-          },
-        },
-      ]);
+      expect(events).toEqual([]);
     } finally {
       await sql`
         delete from outbox_events

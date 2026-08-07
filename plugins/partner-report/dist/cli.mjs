@@ -4711,8 +4711,8 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
-  "\u98DE\u4E66\u8EAB\u4EFD\u672A\u786E\u8BA4\u65F6\uFF0Ccollect-start \u4E0D\u5F97\u8C03\u7528 thread/list\u3001thread/read \u6216\u767B\u8BB0\u9879\u76EE\u5019\u9009\uFF1B\u5FC5\u987B\u6301\u7EED\u6267\u884C\u8FD4\u56DE\u7684 identity-wait\uFF0C\u901A\u8FC7\u5E26\u9000\u907F\u7684\u4F4E\u9891\u8F6E\u8BE2\u5728\u5F53\u524D\u4EFB\u52A1\u5185\u7B49\u5F85\uFF0C\u786E\u8BA4\u540E\u81EA\u52A8\u7EE7\u7EED\u9879\u76EE\u53D1\u73B0\u3002",
-  "\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u8EAB\u4EFD\u786E\u8BA4\u540E collect-start \u624D\u80FD\u6839\u636E\u5F53\u524D\u5468\u671F\u7684 Session \u5143\u6570\u636E\u91CD\u65B0\u53D1\u8D77\u98DE\u4E66\u9879\u76EE\u5BA1\u6279\uFF1B\u9879\u76EE\u8303\u56F4\u5361\u53D1\u9001\u6210\u529F\u5E76\u8FD4\u56DE project_scope_approval_required \u540E\uFF0C\u672C\u6B21\u8FD0\u884C\u53EF\u4EE5\u6B63\u5E38\u7ED3\u675F\u3002",
+  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9996\u6B21\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u53EA\u8BFB\u53D6 thread/list \u5143\u6570\u636E\uFF0C\u6309\u5F53\u524D\u6708\u767D\u540D\u5355\u548C\u6700\u8FD1 7 \u5929\u6D3B\u52A8\u7A97\u53E3\u767B\u8BB0\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
+  "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
   "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u548C\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\uFF1B\u9996\u6B21\u9879\u76EE\u8303\u56F4\u5361\u53EA\u5728\u5DF2\u767B\u8BB0\u9879\u76EE\u6839\u76EE\u5F55\u767D\u540D\u5355\u5185\u7EB3\u5165\u6700\u8FD1 7 \u5929\u6709\u5DF2\u77E5 Session \u6D3B\u52A8\u7684\u9879\u76EE\uFF0C\u767D\u540D\u5355\u5916\u76EE\u5F55\u4E0D\u8FDB\u5165\u9996\u6B21\u5BA1\u6279\uFF1B\u540E\u7EED\u8FD0\u884C\u6309\u539F\u6709\u903B\u8F91\u53D1\u73B0\u65B0\u589E\u9879\u76EE\u3002\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u9996\u6B21\u767D\u540D\u5355\u9879\u76EE\u5373\u4F7F\u53EA\u6709 1 \u4E2A Session \u4E5F\u53EF\u8FDB\u5165\u5BA1\u6279\uFF0C\u540E\u7EED\u65B0\u589E\u9879\u76EE\u4ECD\u6309\u5F52\u5E76\u540E\u8D85\u8FC7 1 \u4E2A Session \u4FDD\u7559\u3002",
   "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
@@ -4720,8 +4720,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required\u3001feishu_identity_confirmation_required\u3001project_scope_card_delivery_pending \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
-  "identity-wait \u53EA\u80FD\u4F9D\u9644\u5F53\u524D\u4EFB\u52A1\u4F4E\u9891\u7B49\u5F85\uFF1B\u4E0D\u5F97\u521B\u5EFA Hook\u3001\u540E\u53F0 Runner\u3001worktree \u6216\u5E38\u9A7B\u8FDB\u7A0B\u3002\u7F51\u7EDC\u5931\u8D25\u6309 nextCommand \u91CD\u8BD5\uFF0C\u7528\u6237\u53D6\u6D88\u6216 identity_confirmation_wait_timed_out \u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u666E\u901A\u4E2D\u65AD\uFF0C\u4E0D\u5F97\u8BB0\u5F55\u4E3A\u91C7\u96C6\u5931\u8D25\u3002",
+  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required\u3001project_scope_card_delivery_pending \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
   "project_scope_card_delivery_pending \u5FC5\u987B\u6301\u7EED\u6267\u884C project-scope-card-wait\uFF1B\u53EA\u6709 CLI \u89C2\u5BDF\u5230\u98DE\u4E66\u5361\u7247\u7248\u672C\u5DF2\u6210\u529F\u6295\u9012\u540E\u624D\u4F1A\u8FD4\u56DE project_scope_approval_required\u3002",
   "CLI \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u786E\u8BA4\u53D1\u9001\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
   "CLI \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
@@ -5781,28 +5780,8 @@ function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__
   });
 }
 
-// src/identity-wait.ts
-function identityConfirmationRequiredState(input) {
-  const nextCommand = [
-    "identity-wait",
-    `--deadline ${Math.trunc(input.deadlineAt)}`,
-    `--attempt ${Math.max(0, Math.trunc(input.attempt ?? 0))}`,
-    `--period-key ${Buffer.from(input.periodKey, "utf8").toString("base64url")}`,
-    ...input.force ? ["--force"] : []
-  ].join(" ");
-  return {
-    status: "feishu_identity_confirmation_required",
-    waiting: true,
-    periodKey: input.periodKey,
-    read: 0,
-    uploaded: 0,
-    discovered: 0,
-    ...input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {},
-    nextCommand,
-    message: "\u8BF7\u5728\u98DE\u4E66\u8EAB\u4EFD\u5361\u4E2D\u786E\u8BA4\u5BA1\u6838\u8EAB\u4EFD\u3002\u5F53\u524D\u4EFB\u52A1\u4F1A\u4F4E\u9891\u7B49\u5F85\uFF0C\u786E\u8BA4\u524D\u4E0D\u4F1A\u626B\u63CF\u9879\u76EE\u6216\u8BFB\u53D6 Session \u5185\u5BB9\u3002"
-  };
-}
-function decodeIdentityWaitPeriod(value) {
+// src/poll-wait.ts
+function decodeWaitPeriod(value) {
   if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return "unknown";
   try {
     return Buffer.from(value, "base64url").toString("utf8") || "unknown";
@@ -5823,13 +5802,13 @@ function defaultSleep(milliseconds, signal) {
     signal?.addEventListener("abort", done, { once: true });
   });
 }
-function identityWaitBackoff(attempt) {
+function pollBackoff(attempt) {
   return Math.min(
     1e3 * 2 ** Math.min(Math.max(attempt, 0), 3),
     MAX_BACKOFF_MS
   );
 }
-async function waitForIdentityConfirmation(options) {
+async function waitForCondition(options) {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
   const segmentEndsAt = Math.min(
@@ -5844,14 +5823,11 @@ async function waitForIdentityConfirmation(options) {
       if (await options.check()) return { status: "confirmed", attempt };
       lastErrorCode = null;
     } catch (error) {
-      lastErrorCode = options.errorCode?.(error) ?? "IDENTITY_STATUS_UNAVAILABLE";
+      lastErrorCode = options.errorCode?.(error) ?? "POLL_STATUS_UNAVAILABLE";
     }
     const remaining = segmentEndsAt - now();
     if (remaining <= 0) break;
-    await sleep(
-      Math.min(identityWaitBackoff(attempt), remaining),
-      options.signal
-    );
+    await sleep(Math.min(pollBackoff(attempt), remaining), options.signal);
     attempt += 1;
   }
   if (options.signal?.aborted) return { status: "cancelled", attempt };
@@ -5859,16 +5835,16 @@ async function waitForIdentityConfirmation(options) {
     return { status: "timed_out", attempt, lastErrorCode };
   return { status: "pending", attempt, lastErrorCode };
 }
-async function waitForIdentityAndContinue(options, continueCollection) {
-  const wait = await waitForIdentityConfirmation(options);
+async function waitForConditionAndContinue(options, continueTask) {
+  const wait = await waitForCondition(options);
   if (wait.status !== "confirmed") return { continued: false, wait };
-  return { continued: true, wait, value: await continueCollection() };
+  return { continued: true, wait, value: await continueTask() };
 }
 
 // src/cli.ts
 var RUN_PREFIX = "partner-report-run-";
-var IDENTITY_WAIT_TOTAL_MS = 10 * 6e4;
-var IDENTITY_WAIT_SEGMENT_MS = 45e3;
+var POLL_TOTAL_MS = 10 * 6e4;
+var POLL_SEGMENT_MS = 45e3;
 function option(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
   if (index < 0) return fallback;
@@ -6100,17 +6076,90 @@ async function resumeAuthRecovery() {
   await performConnectivityTest(tokens);
   return "continue";
 }
-function connectedOutput(partnerId, deviceName, connectivity) {
+function connectedOutput(partnerId, deviceName, connectivity, projectScope) {
   const config = loadConfig();
   output({
-    status: "connected",
+    status: projectScope?.status ?? "connected",
     pluginInstanceId: config.pluginInstanceId,
     partnerId,
     deviceName,
     connectivity,
+    ...projectScope ?? {},
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     nextStep: "\u4F7F\u7528 $partner-report-sync \u521B\u5EFA\u6216\u4FEE\u590D\u540C\u540D Codex Scheduled Task\u3002"
   });
+}
+async function discoverProjectScopeAfterBinding() {
+  const config = loadConfig();
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope()
+  ]);
+  if (!policy.currentPeriod)
+    throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
+      code: "REPORT_PERIOD_MISSING"
+    });
+  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  if (remoteScope.initialized || remoteScope.entries.some((entry) => entry.status === "pending")) {
+    const localScope2 = mergeRemoteProjectScope(
+      localInspection.scope,
+      remoteScope
+    );
+    saveLocalProjectScope(localScope2);
+    return projectScopePendingStatus(
+      policy.currentPeriod.period_key,
+      localScope2
+    );
+  }
+  const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const server = new CodexAppServer();
+  let listed;
+  try {
+    await server.connect();
+    listed = await server.listThreads();
+  } finally {
+    server.close();
+  }
+  const summaries = listed.map(summaryFromThread).filter((value) => Boolean(value));
+  const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
+  const currentSessionId = process.env.CODEX_THREAD_ID;
+  const metadataEligible = summaries.filter(
+    (summary) => summary.id !== currentSessionId && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
+  );
+  const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
+  const permissionDiscoverySummaries = metadataEligible.filter(
+    (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt)
+  );
+  const discovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localInspection.scope,
+    permissionDiscoverySummaries,
+    {
+      configuredRoots: configuredProjectRoots(policy.projects),
+      strictConfiguredRoots: true
+    }
+  );
+  const registeredScope = await authenticatedRequest(
+    "/v1/project-scope/candidates",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        periodKey: policy.currentPeriod.period_key,
+        initialDiscovery: true,
+        candidates: discovery.candidates.map((candidate) => ({
+          scopeKey: candidate.scopeKey,
+          displayName: candidate.displayName,
+          sessionCount: candidate.sessionCount
+        }))
+      })
+    }
+  );
+  const localScope = mergeDiscoveredRoots(
+    mergeRemoteProjectScope(localInspection.scope, registeredScope),
+    discovery.candidates
+  );
+  saveLocalProjectScope(localScope);
+  return projectScopePendingStatus(policy.currentPeriod.period_key, localScope);
 }
 async function connect() {
   const requestedServerUrl = option("server") ?? process.env.PARTNER_REPORT_SERVER_URL;
@@ -6157,7 +6206,8 @@ async function connect() {
     excludedPaths: existing?.excludedPaths ?? []
   });
   const connectivity = await performConnectivityTest(tokens);
-  connectedOutput(tokens.partnerId, deviceName, connectivity);
+  const projectScope = await discoverProjectScopeAfterBinding();
+  connectedOutput(tokens.partnerId, deviceName, connectivity, projectScope);
 }
 async function connectivityTest() {
   const config = loadConfig();
@@ -6188,15 +6238,6 @@ function summaryFromThread(value) {
 function configuredProjectRoots(projects) {
   return projects.flatMap((project) => project.allowed_paths ?? []);
 }
-function identityConfirmationRequired(periodKey, deadlineAt = Date.now() + IDENTITY_WAIT_TOTAL_MS, attempt = 0, lastErrorCode = null) {
-  return identityConfirmationRequiredState({
-    periodKey,
-    deadlineAt,
-    attempt,
-    force: flag("force"),
-    lastErrorCode
-  });
-}
 function projectScopeApprovalRequired(periodKey, localScope) {
   return {
     status: "project_scope_approval_required",
@@ -6221,7 +6262,7 @@ function projectScopeCardWaitCommand(input) {
   ].join(" ");
 }
 function projectScopeCardDeliveryPending(input) {
-  const deadlineAt = input.deadlineAt ?? Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const deadlineAt = input.deadlineAt ?? Date.now() + POLL_TOTAL_MS;
   const attempt = input.attempt ?? 0;
   return {
     status: "project_scope_card_delivery_pending",
@@ -6240,6 +6281,44 @@ function projectScopeCardDeliveryPending(input) {
     message: "\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u5E42\u7B49\u767B\u8BB0\uFF0C\u5F53\u524D\u4EFB\u52A1\u6B63\u5728\u7B49\u5F85\u98DE\u4E66\u786E\u8BA4\u6295\u9012\u6210\u529F\u3002"
   };
 }
+async function projectScopePendingStatus(periodKey, localScope, remind = false) {
+  const pendingProjects = localScope.entries.filter(
+    (entry) => entry.status === "pending"
+  ).length;
+  if (pendingProjects === 0)
+    return {
+      status: "project_scope_no_candidates",
+      waiting: false,
+      periodKey,
+      policyVersion: localScope.version,
+      discovered: 0,
+      read: 0,
+      uploaded: 0,
+      message: "\u8FC7\u6EE4\u4E34\u65F6\u73AF\u5883\u540E\u6CA1\u6709\u9700\u8981\u5BA1\u6279\u7684\u9879\u76EE\uFF0C\u672C\u6B21\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\uFF1B\u540E\u7EED\u5468\u671F\u4F1A\u91CD\u65B0\u53D1\u73B0\u3002"
+    };
+  if (remind) {
+    await authenticatedRequest("/v1/project-scope/remind", {
+      method: "POST",
+      body: JSON.stringify({ periodKey })
+    });
+  }
+  const cardStatus = await fetchProjectScopeCardStatus(
+    periodKey,
+    localScope.version
+  ).catch((error) => ({
+    status: "pending",
+    policyVersion: localScope.version,
+    retryAfterSeconds: 3,
+    lastErrorCode: error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
+  }));
+  if (cardStatus.status !== "sent")
+    return projectScopeCardDeliveryPending({
+      periodKey,
+      version: localScope.version,
+      lastErrorCode: "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null
+    });
+  return projectScopeApprovalRequired(periodKey, localScope);
+}
 async function fetchProjectScopeCardStatus(periodKey, version, init = {}) {
   const query = new URLSearchParams({
     periodKey,
@@ -6250,79 +6329,13 @@ async function fetchProjectScopeCardStatus(periodKey, version, init = {}) {
     init
   );
 }
-async function identityWait() {
-  const deadline = Number(option("deadline"));
-  const deadlineAt = Number.isFinite(deadline) ? Math.min(deadline, Date.now() + IDENTITY_WAIT_TOTAL_MS) : Date.now() + IDENTITY_WAIT_TOTAL_MS;
-  const attemptValue = Number(option("attempt", "0"));
-  const attempt = Number.isInteger(attemptValue) && attemptValue >= 0 ? attemptValue : 0;
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  process.once("SIGINT", cancel);
-  process.once("SIGTERM", cancel);
-  try {
-    const flow = await waitForIdentityAndContinue(
-      {
-        check: async () => {
-          const requestTimeoutMs = Math.max(
-            1,
-            Math.min(15e3, deadlineAt - Date.now())
-          );
-          const signal = AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(requestTimeoutMs)
-          ]);
-          return (await fetchProjectScope({ signal })).identityConfirmed;
-        },
-        deadlineAt,
-        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
-        attempt,
-        signal: controller.signal,
-        errorCode: (error) => error instanceof HttpError ? error.code : "IDENTITY_STATUS_UNAVAILABLE"
-      },
-      collectStart
-    );
-    if (flow.continued) return flow.value;
-    const result = flow.wait;
-    if (result.status === "pending") {
-      return output(
-        identityConfirmationRequired(
-          decodeIdentityWaitPeriod(option("period-key")),
-          deadlineAt,
-          result.attempt,
-          result.lastErrorCode
-        )
-      );
-    }
-    if (result.status === "cancelled")
-      return output({
-        status: "identity_confirmation_wait_cancelled",
-        waiting: false,
-        read: 0,
-        uploaded: 0,
-        discovered: 0,
-        message: "\u5DF2\u53D6\u6D88\u5F53\u524D\u4EFB\u52A1\u5185\u7684\u8EAB\u4EFD\u786E\u8BA4\u7B49\u5F85\uFF0C\u672A\u626B\u63CF\u6216\u8BFB\u53D6 Session\u3002"
-      });
-    return output({
-      status: "identity_confirmation_wait_timed_out",
-      waiting: false,
-      read: 0,
-      uploaded: 0,
-      discovered: 0,
-      ...result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {},
-      message: "\u5F53\u524D\u6267\u884C\u73AF\u5883\u7684\u8EAB\u4EFD\u7B49\u5F85\u65F6\u95F4\u5DF2\u5230\uFF0C\u672A\u626B\u63CF\u6216\u8BFB\u53D6 Session\uFF1B\u4E0B\u6B21\u91C7\u96C6\u4F1A\u7EE7\u7EED\u68C0\u67E5\u3002"
-    });
-  } finally {
-    process.removeListener("SIGINT", cancel);
-    process.removeListener("SIGTERM", cancel);
-  }
-}
 async function projectScopeCardWait() {
-  const periodKey = decodeIdentityWaitPeriod(option("period-key"));
+  const periodKey = decodeWaitPeriod(option("period-key"));
   const version = Number(option("version"));
   if (periodKey === "unknown" || !Number.isInteger(version) || version < 1)
     throw new Error("\u9879\u76EE\u8303\u56F4\u5361\u7B49\u5F85\u53C2\u6570\u65E0\u6548\u3002");
   const rawDeadline = Number(option("deadline"));
-  const deadlineAt = Number.isFinite(rawDeadline) ? Math.min(rawDeadline, Date.now() + IDENTITY_WAIT_TOTAL_MS) : Date.now() + IDENTITY_WAIT_TOTAL_MS;
+  const deadlineAt = Number.isFinite(rawDeadline) ? Math.min(rawDeadline, Date.now() + POLL_TOTAL_MS) : Date.now() + POLL_TOTAL_MS;
   const rawAttempt = Number(option("attempt", "0"));
   const attempt = Number.isInteger(rawAttempt) && rawAttempt >= 0 ? rawAttempt : 0;
   const controller = new AbortController();
@@ -6330,7 +6343,7 @@ async function projectScopeCardWait() {
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
-    const flow = await waitForIdentityAndContinue(
+    const flow = await waitForConditionAndContinue(
       {
         check: async () => {
           const requestTimeoutMs = Math.max(
@@ -6344,7 +6357,7 @@ async function projectScopeCardWait() {
           return (await fetchProjectScopeCardStatus(periodKey, version, { signal })).status === "sent";
         },
         deadlineAt,
-        segmentDurationMs: IDENTITY_WAIT_SEGMENT_MS,
+        segmentDurationMs: POLL_SEGMENT_MS,
         attempt,
         signal: controller.signal,
         errorCode: (error) => error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
@@ -6487,7 +6500,6 @@ async function postCollectionStatus(config, manifest, phase) {
 async function collectStart() {
   const config = loadConfig();
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  const requiresProjectScopeBootstrap = localInspection.state !== "valid";
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope()
@@ -6496,27 +6508,18 @@ async function collectStart() {
     throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
       code: "REPORT_PERIOD_MISSING"
     });
-  if (!remoteScope.identityConfirmed)
-    return output(
-      identityConfirmationRequired(policy.currentPeriod.period_key)
-    );
+  const requiresProjectScopeBootstrap = localInspection.state !== "valid" && !remoteScope.initialized;
   let localScope;
-  if (!requiresProjectScopeBootstrap) {
-    localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
-    saveLocalProjectScope(localScope);
-  } else {
-    const bootstrapScope = await authenticatedRequest(
-      "/v1/project-scope/bootstrap",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          baseVersion: remoteScope.version,
-          reason: localInspection.state === "missing" ? "local_scope_missing" : "local_scope_invalid"
-        })
-      }
+  localScope = mergeRemoteProjectScope(localInspection.scope, remoteScope);
+  saveLocalProjectScope(localScope);
+  if (!remoteScope.initialized && localScope.entries.some((entry) => entry.status === "pending")) {
+    return output(
+      await projectScopePendingStatus(
+        policy.currentPeriod.period_key,
+        localScope,
+        true
+      )
     );
-    localScope = mergeRemoteProjectScope(localInspection.scope, bootstrapScope);
-    saveLocalProjectScope(localScope);
   }
   const runId = randomUUID();
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -6617,39 +6620,11 @@ async function collectStart() {
   );
   if (!localScope.initialized) {
     releaseCollectionLease(config.pluginInstanceId, runId);
-    const pendingProjects = localScope.entries.filter(
-      (entry) => entry.status === "pending"
-    ).length;
-    if (pendingProjects === 0)
-      return output({
-        status: "project_scope_no_candidates",
-        waiting: false,
-        periodKey: policy.currentPeriod.period_key,
-        policyVersion: localScope.version,
-        discovered: 0,
-        read: 0,
-        uploaded: 0,
-        message: "\u8FC7\u6EE4\u4E34\u65F6\u73AF\u5883\u540E\u6CA1\u6709\u9700\u8981\u5BA1\u6279\u7684\u9879\u76EE\uFF0C\u672C\u6B21\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\uFF1B\u540E\u7EED\u5468\u671F\u4F1A\u91CD\u65B0\u53D1\u73B0\u3002"
-      });
-    const cardStatus = await fetchProjectScopeCardStatus(
-      policy.currentPeriod.period_key,
-      localScope.version
-    ).catch((error) => ({
-      status: "pending",
-      policyVersion: localScope.version,
-      retryAfterSeconds: 3,
-      lastErrorCode: error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
-    }));
-    if (cardStatus.status !== "sent")
-      return output(
-        projectScopeCardDeliveryPending({
-          periodKey: policy.currentPeriod.period_key,
-          version: localScope.version,
-          lastErrorCode: "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null
-        })
-      );
     return output(
-      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope)
+      await projectScopePendingStatus(
+        policy.currentPeriod.period_key,
+        localScope
+      )
     );
   }
   let state;
@@ -7107,7 +7082,6 @@ function help() {
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
       "collect-start [--force]",
-      "identity-wait --deadline <epoch-ms> --attempt <number> [--force]",
       "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
       "collect-review --run <path>",
@@ -7129,7 +7103,6 @@ var recoveryAwareCommands = /* @__PURE__ */ new Set([
   "connectivity-test",
   "server-url-set",
   "collect-start",
-  "identity-wait",
   "project-scope-card-wait",
   "daily-collect",
   "collect-next",
@@ -7152,7 +7125,6 @@ async function runCommand() {
   else if (command === "scheduled-task-config") scheduledTaskConfig();
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
-  else if (command === "identity-wait") await identityWait();
   else if (command === "project-scope-card-wait") await projectScopeCardWait();
   else if (command === "collect-next") await collectNext();
   else if (command === "collect-review") await collectReview();

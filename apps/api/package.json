@@ -6,7 +6,6 @@
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",
     "dev": "node --env-file-if-exists=../../.env --watch --import tsx src/server.ts",
-    "feishu:bind": "node --env-file-if-exists=../../.env --import tsx src/feishu/send-binding.ts",
     "start": "node --env-file-if-exists=../../.env --import tsx src/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
