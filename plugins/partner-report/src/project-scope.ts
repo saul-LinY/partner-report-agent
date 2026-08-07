@@ -70,6 +70,7 @@ export type ProjectEnvironment = {
 export type ProjectDiscoveryOptions = {
   configuredRoots?: string[];
   temporaryRoots?: string[];
+  strictConfiguredRoots?: boolean;
 };
 
 function scopePath(directory = dataDirectory()) {
@@ -131,6 +132,7 @@ function defaultTemporaryRoots() {
     "/private/tmp",
     "/var/tmp",
     "/private/var/tmp",
+    resolve(homedir(), "Documents", "Codex"),
     ...[...codexHomes].flatMap((root) => [
       resolve(root, "tmp"),
       resolve(root, ".tmp"),
@@ -343,7 +345,9 @@ export function discoverProjectScopes(
     if (
       !summary.cwd ||
       !environment.localRoot ||
-      environment.kind === "temporary"
+      environment.kind === "temporary" ||
+      (options.strictConfiguredRoots === true &&
+        !longestContainingRoot(summary.cwd, options.configuredRoots ?? []))
     )
       continue;
     const cwd = canonicalPath(summary.cwd);

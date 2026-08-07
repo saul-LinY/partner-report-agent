@@ -20,7 +20,7 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("零读取、零上传的普通中断");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("worktree 合并");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "只有 1 个 Session 的逻辑项目按临时会话过滤",
+      "首次白名单项目即使只有 1 个 Session 也可进入审批",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "project_scope_approval_required",

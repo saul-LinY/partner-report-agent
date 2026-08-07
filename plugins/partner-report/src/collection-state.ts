@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { dataDirectory } from "./config.js";
 
 export const INITIAL_LOOKBACK_DAYS = 1;
+export const INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 export const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1_000;
 export const COLLECTION_LEASE_MS = 30 * 60 * 1_000;
 
@@ -198,6 +199,34 @@ export function threadIsInScanWindow(
     Number.isFinite(timestamp) &&
     timestamp >= new Date(scanStartsAt).getTime() &&
     timestamp <= new Date(scanEndsAt).getTime()
+  );
+}
+
+export function currentMonthStartAt(runStartedAt: string) {
+  const runStart = new Date(runStartedAt);
+  if (!Number.isFinite(runStart.getTime()))
+    throw new Error("采集开始时间无效，无法计算当前月份。");
+  return new Date(runStart.getFullYear(), runStart.getMonth(), 1).toISOString();
+}
+
+export function initialProjectScopeStartAt(runStartedAt: string) {
+  const runStart = new Date(runStartedAt);
+  if (!Number.isFinite(runStart.getTime()))
+    throw new Error("项目审核开始时间无效，无法计算最近一周。");
+  return new Date(
+    runStart.getTime() -
+      INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS * 24 * 60 * 60 * 1_000,
+  ).toISOString();
+}
+
+export function threadIsInKnownScanWindow(
+  updatedAt: string | number | null,
+  scanStartsAt: string,
+  scanEndsAt: string,
+) {
+  return (
+    updatedAt !== null &&
+    threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt)
   );
 }
 

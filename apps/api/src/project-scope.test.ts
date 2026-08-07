@@ -77,6 +77,22 @@ describe("project scope policy", () => {
     ).toHaveLength(1);
   });
 
+  it("marks the first whitelist discovery explicitly", () => {
+    expect(
+      projectScopeCandidateBatchSchema.parse({
+        periodKey: "2026-W32",
+        initialDiscovery: true,
+        candidates: [
+          {
+            scopeKey: "a".repeat(64),
+            displayName: "known-project",
+            sessionCount: 1,
+          },
+        ],
+      }).initialDiscovery,
+    ).toBe(true);
+  });
+
   it("requires optimistic concurrency for decisions", () => {
     expect(() =>
       projectScopeDecisionSchema.parse({

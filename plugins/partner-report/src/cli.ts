@@ -34,6 +34,7 @@ import {
   acquireCollectionLease,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
+  initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
   recordAcceptedSession,
@@ -42,6 +43,7 @@ import {
   releaseCollectionLease,
   reviewCollectionCompletion,
   saveCollectionState,
+  threadIsInKnownScanWindow,
   threadIsInScanWindow,
 } from "./collection-state.js";
 import { CodexAppServer } from "./app-server.js";
@@ -114,6 +116,8 @@ type ThreadSummary = {
   title: string | null;
   cwd: string | null;
   updatedAt: string | number | null;
+  ephemeral?: boolean;
+  threadSource?: string | null;
   systemGenerated?: boolean;
 };
 
@@ -523,7 +527,15 @@ function summaryFromThread(value: any): ThreadSummary | null {
     title,
     cwd: typeof value.cwd === "string" ? value.cwd : null,
     updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? null,
+    ephemeral: value.ephemeral === true,
+    threadSource:
+      typeof value.threadSource === "string"
+        ? value.threadSource
+        : typeof value.thread_source === "string"
+          ? value.thread_source
+          : null,
     systemGenerated:
+      value.ephemeral === true ||
       isPluginSystemThread(value as Record<string, unknown>) ||
       isOfficialAutomationThread(value as Record<string, unknown>),
   };
@@ -986,23 +998,29 @@ async function collectStart() {
           window.scanEndsAt,
         ),
       );
+  const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
   const permissionDiscoverySummaries = requiresProjectScopeBootstrap
     ? metadataEligible.filter((summary) =>
-        threadIsInScanWindow(
+        threadIsInKnownScanWindow(
           summary.updatedAt,
-          policy.currentPeriod!.starts_at,
+          initialProjectScopeStart,
           window.scanEndsAt,
         ),
       )
     : inWindow;
-  const discovery = filterSingleSessionProjectScopes(
-    discoverProjectScopes(
-      config.pluginInstanceId,
-      localScope,
-      permissionDiscoverySummaries,
-      { configuredRoots: configuredProjectRoots(policy.projects) },
-    ),
+  const configuredRoots = configuredProjectRoots(policy.projects);
+  const discoveredScopes = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    permissionDiscoverySummaries,
+    {
+      configuredRoots,
+      ...(requiresProjectScopeBootstrap ? { strictConfiguredRoots: true } : {}),
+    },
   );
+  const discovery = requiresProjectScopeBootstrap
+    ? discoveredScopes
+    : filterSingleSessionProjectScopes(discoveredScopes);
   let registeredScope: RemoteProjectScopePolicy;
   try {
     registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
@@ -1011,6 +1029,7 @@ async function collectStart() {
         method: "POST",
         body: JSON.stringify({
           periodKey: policy.currentPeriod.period_key,
+          initialDiscovery: requiresProjectScopeBootstrap,
           candidates: discovery.candidates.map((candidate) => ({
             scopeKey: candidate.scopeKey,
             displayName: candidate.displayName,

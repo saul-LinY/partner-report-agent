@@ -4713,7 +4713,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
   "\u98DE\u4E66\u8EAB\u4EFD\u672A\u786E\u8BA4\u65F6\uFF0Ccollect-start \u4E0D\u5F97\u8C03\u7528 thread/list\u3001thread/read \u6216\u767B\u8BB0\u9879\u76EE\u5019\u9009\uFF1B\u5FC5\u987B\u6301\u7EED\u6267\u884C\u8FD4\u56DE\u7684 identity-wait\uFF0C\u901A\u8FC7\u5E26\u9000\u907F\u7684\u4F4E\u9891\u8F6E\u8BE2\u5728\u5F53\u524D\u4EFB\u52A1\u5185\u7B49\u5F85\uFF0C\u786E\u8BA4\u540E\u81EA\u52A8\u7EE7\u7EED\u9879\u76EE\u53D1\u73B0\u3002",
   "\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u8EAB\u4EFD\u786E\u8BA4\u540E collect-start \u624D\u80FD\u6839\u636E\u5F53\u524D\u5468\u671F\u7684 Session \u5143\u6570\u636E\u91CD\u65B0\u53D1\u8D77\u98DE\u4E66\u9879\u76EE\u5BA1\u6279\uFF1B\u9879\u76EE\u8303\u56F4\u5361\u53D1\u9001\u6210\u529F\u5E76\u8FD4\u56DE project_scope_approval_required \u540E\uFF0C\u672C\u6B21\u8FD0\u884C\u53EF\u4EE5\u6B63\u5E38\u7ED3\u675F\u3002",
-  "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u548C\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\uFF1B\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u5F52\u5E76\u540E\u53EA\u6709 1 \u4E2A Session \u7684\u903B\u8F91\u9879\u76EE\u6309\u4E34\u65F6\u4F1A\u8BDD\u8FC7\u6EE4\uFF0C\u8D85\u8FC7 1 \u4E2A Session \u4E14\u65E0\u6CD5\u5224\u5B9A\u7684 unknown \u76EE\u5F55\u4FDD\u7559\u5F85\u4EBA\u5DE5\u5BA1\u6279\u3002",
+  "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u548C\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\uFF1B\u9996\u6B21\u9879\u76EE\u8303\u56F4\u5361\u53EA\u5728\u5DF2\u767B\u8BB0\u9879\u76EE\u6839\u76EE\u5F55\u767D\u540D\u5355\u5185\u7EB3\u5165\u6700\u8FD1 7 \u5929\u6709\u5DF2\u77E5 Session \u6D3B\u52A8\u7684\u9879\u76EE\uFF0C\u767D\u540D\u5355\u5916\u76EE\u5F55\u4E0D\u8FDB\u5165\u9996\u6B21\u5BA1\u6279\uFF1B\u540E\u7EED\u8FD0\u884C\u6309\u539F\u6709\u903B\u8F91\u53D1\u73B0\u65B0\u589E\u9879\u76EE\u3002\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u9996\u6B21\u767D\u540D\u5355\u9879\u76EE\u5373\u4F7F\u53EA\u6709 1 \u4E2A Session \u4E5F\u53EF\u8FDB\u5165\u5BA1\u6279\uFF0C\u540E\u7EED\u65B0\u589E\u9879\u76EE\u4ECD\u6309\u5F52\u5E76\u540E\u8D85\u8FC7 1 \u4E2A Session \u4FDD\u7559\u3002",
   "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
   "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002",
@@ -4800,6 +4800,7 @@ import {
 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 var INITIAL_LOOKBACK_DAYS = 1;
+var INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 var INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1e3;
 var COLLECTION_LEASE_MS = 30 * 60 * 1e3;
 function statePath(directory) {
@@ -4908,6 +4909,17 @@ function threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
   if (updatedAt == null) return true;
   const timestamp2 = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
   return Number.isFinite(timestamp2) && timestamp2 >= new Date(scanStartsAt).getTime() && timestamp2 <= new Date(scanEndsAt).getTime();
+}
+function initialProjectScopeStartAt(runStartedAt) {
+  const runStart = new Date(runStartedAt);
+  if (!Number.isFinite(runStart.getTime()))
+    throw new Error("\u9879\u76EE\u5BA1\u6838\u5F00\u59CB\u65F6\u95F4\u65E0\u6548\uFF0C\u65E0\u6CD5\u8BA1\u7B97\u6700\u8FD1\u4E00\u5468\u3002");
+  return new Date(
+    runStart.getTime() - INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS * 24 * 60 * 60 * 1e3
+  ).toISOString();
+}
+function threadIsInKnownScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
+  return updatedAt !== null && threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt);
 }
 function recordIgnoredSession(state, sessionKey, contentHash, processedAt = (/* @__PURE__ */ new Date()).toISOString()) {
   const existing = state.ignoredSessions[sessionKey];
@@ -5234,6 +5246,9 @@ function isPluginSystemThread(summary) {
 }
 function isOfficialAutomationThread(summary) {
   if (summary.ephemeral === true || summary.transient === true) return true;
+  const threadSource = [summary.threadSource, summary.thread_source].find((value) => typeof value === "string")?.trim().toLowerCase().replace(/[-_\s]/g, "");
+  if (threadSource === "automation" || threadSource === "scheduledtask" || threadSource === "systemtask")
+    return true;
   const source = summary.source;
   const sourceRecord = source && typeof source === "object" ? source : null;
   const values = [
@@ -5552,6 +5567,7 @@ function defaultTemporaryRoots() {
     "/private/tmp",
     "/var/tmp",
     "/private/var/tmp",
+    resolve4(homedir2(), "Documents", "Codex"),
     ...[...codexHomes].flatMap((root) => [
       resolve4(root, "tmp"),
       resolve4(root, ".tmp"),
@@ -5674,7 +5690,7 @@ function discoverProjectScopes(pluginInstanceId, local, summaries, options = {})
   const threadScopes = /* @__PURE__ */ new Map();
   for (const summary of summaries) {
     const environment = classifyProjectEnvironment(summary, options);
-    if (!summary.cwd || !environment.localRoot || environment.kind === "temporary")
+    if (!summary.cwd || !environment.localRoot || environment.kind === "temporary" || options.strictConfiguredRoots === true && !longestContainingRoot(summary.cwd, options.configuredRoots ?? []))
       continue;
     const cwd = canonicalPath(summary.cwd);
     const pathInherited = knownRoots.find(
@@ -6164,7 +6180,9 @@ function summaryFromThread(value) {
     title,
     cwd: typeof value.cwd === "string" ? value.cwd : null,
     updatedAt: value.updatedAt ?? value.updated_at ?? value.createdAt ?? null,
-    systemGenerated: isPluginSystemThread(value) || isOfficialAutomationThread(value)
+    ephemeral: value.ephemeral === true,
+    threadSource: typeof value.threadSource === "string" ? value.threadSource : typeof value.thread_source === "string" ? value.thread_source : null,
+    systemGenerated: value.ephemeral === true || isPluginSystemThread(value) || isOfficialAutomationThread(value)
   };
 }
 function configuredProjectRoots(projects) {
@@ -6547,21 +6565,25 @@ async function collectStart() {
       window.scanEndsAt
     )
   );
+  const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
   const permissionDiscoverySummaries = requiresProjectScopeBootstrap ? metadataEligible.filter(
-    (summary) => threadIsInScanWindow(
+    (summary) => threadIsInKnownScanWindow(
       summary.updatedAt,
-      policy.currentPeriod.starts_at,
+      initialProjectScopeStart,
       window.scanEndsAt
     )
   ) : inWindow;
-  const discovery = filterSingleSessionProjectScopes(
-    discoverProjectScopes(
-      config.pluginInstanceId,
-      localScope,
-      permissionDiscoverySummaries,
-      { configuredRoots: configuredProjectRoots(policy.projects) }
-    )
+  const configuredRoots = configuredProjectRoots(policy.projects);
+  const discoveredScopes = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    permissionDiscoverySummaries,
+    {
+      configuredRoots,
+      ...requiresProjectScopeBootstrap ? { strictConfiguredRoots: true } : {}
+    }
   );
+  const discovery = requiresProjectScopeBootstrap ? discoveredScopes : filterSingleSessionProjectScopes(discoveredScopes);
   let registeredScope;
   try {
     registeredScope = await authenticatedRequest(
@@ -6570,6 +6592,7 @@ async function collectStart() {
         method: "POST",
         body: JSON.stringify({
           periodKey: policy.currentPeriod.period_key,
+          initialDiscovery: requiresProjectScopeBootstrap,
           candidates: discovery.candidates.map((candidate) => ({
             scopeKey: candidate.scopeKey,
             displayName: candidate.displayName,

@@ -180,6 +180,17 @@ export function isPluginSystemThread(summary: Record<string, unknown>) {
 
 export function isOfficialAutomationThread(summary: Record<string, unknown>) {
   if (summary.ephemeral === true || summary.transient === true) return true;
+  const threadSource = [summary.threadSource, summary.thread_source]
+    .find((value) => typeof value === "string")
+    ?.trim()
+    .toLowerCase()
+    .replace(/[-_\s]/g, "");
+  if (
+    threadSource === "automation" ||
+    threadSource === "scheduledtask" ||
+    threadSource === "systemtask"
+  )
+    return true;
   const source = summary.source;
   const sourceRecord =
     source && typeof source === "object"

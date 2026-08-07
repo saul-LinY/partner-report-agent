@@ -8,6 +8,7 @@ type Database = typeof defaultDatabase;
 export const projectScopeCandidateBatchSchema = z
   .object({
     periodKey: z.string().trim().min(1).max(120),
+    initialDiscovery: z.boolean().default(false),
     candidates: z
       .array(
         z
@@ -239,9 +240,19 @@ export async function registerProjectScopeCandidates(
     );
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
-    const eligibleCandidates = input.candidates.filter(
-      (candidate) => candidate.sessionCount > 1,
-    );
+    const policyRows = await tx<Array<{ initialized: boolean }>>`
+      select initialized from project_scope_policies
+      where plugin_instance_id = ${identity.pluginInstanceId}
+        and tenant_id = ${identity.tenantId}
+        and team_id = ${identity.teamId}
+        and partner_id = ${identity.partnerId}
+      limit 1
+    `;
+    const initialDiscovery =
+      input.initialDiscovery && policyRows[0]?.initialized === false;
+    const eligibleCandidates = initialDiscovery
+      ? input.candidates
+      : input.candidates.filter((candidate) => candidate.sessionCount > 1);
     const existing =
       eligibleCandidates.length > 0
         ? await tx<Array<{ scope_key: string }>>`
@@ -273,15 +284,7 @@ export async function registerProjectScopeCandidates(
       `;
     }
 
-    const removedSingleSessionEntries = await tx<Array<{ scope_key: string }>>`
-      delete from project_scope_entries
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and tenant_id = ${identity.tenantId} and status = 'pending'
-        and session_count = 1
-      returning scope_key
-    `;
-
-    if (newCandidates.length > 0 || removedSingleSessionEntries.length > 0) {
+    if (newCandidates.length > 0) {
       const versions = await tx<Array<{ version: number }>>`
         update project_scope_policies set version = version + 1, updated_at = now()
         where plugin_instance_id = ${identity.pluginInstanceId}

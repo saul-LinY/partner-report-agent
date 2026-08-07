@@ -112,6 +112,7 @@ suite("project scope persistence", () => {
 
     const first = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
+      initialDiscovery: true,
       candidates: [
         { scopeKey: firstKey, displayName: "first-project", sessionCount: 2 },
         {
@@ -130,7 +131,7 @@ suite("project scope persistence", () => {
     expect(first).toMatchObject({
       version: 2,
       initialized: false,
-      entries: [{ scopeKey: firstKey }],
+      entries: [{ scopeKey: firstKey }, { scopeKey: "d".repeat(64) }],
     });
     const messageId = `om_${randomUUID()}`;
     const sendInteractiveCard = vi.fn(async () => ({ messageId }));
@@ -183,14 +184,14 @@ suite("project scope persistence", () => {
         'legacy-single-session', 'pending', 'scope-period', 1
       )
     `;
-    const pruned = await registerProjectScopeCandidates(identity, {
+    const preserved = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
       candidates: [],
     });
-    expect(pruned.version).toBe(initialized.version + 1);
+    expect(preserved.version).toBe(initialized.version);
     expect(
-      pruned.entries.some((entry) => entry.scopeKey === legacySingleKey),
-    ).toBe(false);
+      preserved.entries.some((entry) => entry.scopeKey === legacySingleKey),
+    ).toBe(true);
 
     const laterKey = "b".repeat(64);
     const later = await registerProjectScopeCandidates(identity, {

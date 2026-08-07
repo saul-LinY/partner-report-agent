@@ -34,10 +34,10 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("`project_scope_no_candidates`");
     expect(skill).toContain("身份确认前不得调用 `thread/list`");
     expect(skill).toContain("多个 worktree 归并为一个逻辑项目");
-    expect(skill).toContain(
-      "`sessionCount === 1` 的逻辑项目统一按临时会话过滤",
-    );
-    expect(skill).toContain("标记为 `unknown`");
+    expect(skill).toContain("首次白名单项目即使只有 1 个 Session 也可登记审批");
+    expect(skill).toContain("最近 7 天有已知 Session 活动");
+    expect(skill).toContain("项目根目录白名单");
+    expect(skill).toContain("pending 文件夹不会因新增 Session 重复发送审核卡");
     expect(skill).toContain("零读取、零上传的普通中断");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");
     expect(skill).toContain("下一次定时运行");

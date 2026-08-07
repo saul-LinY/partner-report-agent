@@ -6,6 +6,8 @@ import {
   acquireCollectionLease,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
+  currentMonthStartAt,
+  initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
   recordAcceptedSession,
@@ -14,6 +16,7 @@ import {
   releaseCollectionLease,
   reviewCollectionCompletion,
   saveCollectionState,
+  threadIsInKnownScanWindow,
   threadIsInScanWindow,
 } from "./collection-state.js";
 
@@ -157,6 +160,39 @@ describe("collection state", () => {
         "2026-08-05T02:00:00.000Z",
       ),
     ).toBe(true);
+  });
+
+  it("limits first project discovery to the current local calendar month", () => {
+    expect(currentMonthStartAt("2026-08-07T11:46:00+08:00")).toBe(
+      new Date(2026, 7, 1).toISOString(),
+    );
+    expect(
+      threadIsInKnownScanWindow(
+        "2026-07-31T23:59:59.000Z",
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-07T04:00:00.000Z",
+      ),
+    ).toBe(false);
+    expect(
+      threadIsInKnownScanWindow(
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-07T04:00:00.000Z",
+      ),
+    ).toBe(true);
+    expect(
+      threadIsInKnownScanWindow(
+        null,
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-07T04:00:00.000Z",
+      ),
+    ).toBe(false);
+  });
+
+  it("limits first project discovery to the previous seven days", () => {
+    expect(initialProjectScopeStartAt("2026-08-07T11:46:00+08:00")).toBe(
+      "2026-07-31T03:46:00.000Z",
+    );
   });
 
   it("advances the checkpoint only when every candidate was handled", () => {

@@ -267,6 +267,10 @@ describe("local filtering", () => {
         source: { type: "scheduled_task" },
       }),
     ).toBe(true);
+    expect(isOfficialAutomationThread({ thread_source: "automation" })).toBe(
+      true,
+    );
+    expect(isOfficialAutomationThread({ ephemeral: true })).toBe(true);
     expect(isOfficialAutomationThread({ source: "appServer" })).toBe(false);
     expect(
       isPluginAdministrationSession([

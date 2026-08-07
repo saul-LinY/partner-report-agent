@@ -5,7 +5,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -239,6 +239,15 @@ describe("project scope privacy boundary", () => {
     }
   });
 
+  it("filters the standard Codex Documents workspace by default", () => {
+    expect(
+      classifyProjectEnvironment({
+        id: "codex-workspace",
+        cwd: resolve(homedir(), "Documents", "Codex", "2026-08-07", "run"),
+      }),
+    ).toEqual({ kind: "temporary", localRoot: null });
+  });
+
   it("filters a single-Session Git project after logical aggregation", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-single-test-"));
     mkdirSync(resolve(root, ".git"));
@@ -274,6 +283,30 @@ describe("project scope privacy boundary", () => {
     expect(filterSingleSessionProjectScopes(discovery)).toMatchObject({
       candidates: [],
     });
+  });
+
+  it("uses configured roots as a strict initial project whitelist", () => {
+    const allowedRoot = "/workspace/allowed-project";
+    const discovery = discoverProjectScopes(
+      pluginInstanceId,
+      localScope(),
+      [
+        { id: "allowed", cwd: resolve(allowedRoot, "src") },
+        { id: "outside", cwd: "/workspace/unlisted-project" },
+      ],
+      {
+        configuredRoots: [allowedRoot],
+        strictConfiguredRoots: true,
+        temporaryRoots: [],
+      },
+    );
+    expect(discovery.candidates).toHaveLength(1);
+    expect(discovery.candidates[0]).toMatchObject({
+      localRoot: allowedRoot,
+      environmentKind: "configured",
+      sessionCount: 1,
+    });
+    expect(discovery.threadScopes.has("outside")).toBe(false);
   });
 
   it("merges linked worktrees into one logical Git project", () => {
