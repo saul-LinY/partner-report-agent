@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   SCHEDULED_COLLECTION_PROMPT,
+  SCHEDULED_COLLECTION_PROMPT_CHECK,
   SCHEDULED_COLLECTION_TASK,
 } from "./collection-config.js";
 
 describe("scheduled collection prompt", () => {
   it("uses Chinese instructions and documents the safe memory boundary", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("首次运行只采集最近 1 天");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "只在 Prompt 不一致时更新 Prompt，不得比较或修改其他任务配置",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("必须使用中文");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("automation memory");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
@@ -53,6 +57,17 @@ describe("scheduled collection prompt", () => {
       model: "gpt-5.5",
       reasoningEffort: "low",
       notifications: "all_runs",
+    });
+  });
+
+  it("checks and repairs only the prompt once per skill run", () => {
+    expect(SCHEDULED_COLLECTION_PROMPT_CHECK).toEqual({
+      frequency: "once_per_skill_run",
+      timing: "before_first_business_command",
+      compareFields: ["prompt"],
+      updateFields: ["prompt"],
+      preserveOtherConfiguration: true,
+      failureMode: "stop",
     });
   });
 });

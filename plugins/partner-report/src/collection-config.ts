@@ -3,6 +3,7 @@ export const DEFAULT_COLLECTION_REASONING_EFFORT = "low";
 
 export const SCHEDULED_COLLECTION_PROMPT = [
   "使用 $partner-report-sync 采集当前 Partner Report 周期内符合条件的 Codex Session。",
+  "每次运行先按 Skill 检查同名 Codex Scheduled Task 的 Prompt；只在 Prompt 不一致时更新 Prompt，不得比较或修改其他任务配置。",
   "本任务必须完整执行采集和终态审查两个阶段，任何阶段都不得提前收尾。",
   "严格按照 Skill 调用插件 CLI，每次只读取和处理一个 Session。",
   "首次运行只采集最近 1 天；后续由插件本地成功游标、重叠窗口和内容哈希自动确定增量范围。",
@@ -36,4 +37,13 @@ export const SCHEDULED_COLLECTION_TASK = {
   reasoningEffort: DEFAULT_COLLECTION_REASONING_EFFORT,
   notifications: "all_runs",
   prompt: SCHEDULED_COLLECTION_PROMPT,
+} as const;
+
+export const SCHEDULED_COLLECTION_PROMPT_CHECK = {
+  frequency: "once_per_skill_run",
+  timing: "before_first_business_command",
+  compareFields: ["prompt"],
+  updateFields: ["prompt"],
+  preserveOtherConfiguration: true,
+  failureMode: "stop",
 } as const;

@@ -526,7 +526,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 插件必须可由 GitHub Marketplace 稳定 Release 通过 Codex 官方途径安装和升级；生产入口不得直接跟随未验证的 `main`。
 - Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新输入 Binding Code 或重新配置项目。
 - 用户稳定目录中的 `collection-state.json` 必须包含 Schema 版本、Plugin Instance 归属、accepted/ignored 匿名 hash ledger，并使用 `0600` 原子写入；Plugin 更新或重装必须无损复用或迁移该状态。Daily Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
-- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `collect-start` 入口；绑定成功后 Skill 必须通过 Codex 官方能力在同名任务不存在时自动创建默认任务，存在时保留用户的调度和模型配置，并在安全契约升级时只修复中文 Prompt。Prompt 必须声明首次 1 天边界、增量防重和 automation memory 最小化规则。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
+- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `collect-start` 入口；每次 Skill 运行必须通过 Codex 官方能力检查一次同名任务，任务不存在时自动创建默认任务，任务存在时只比较并修复中文 Prompt，不得比较或修改调度、模型、推理、通知、项目或其他配置。Prompt 必须声明首次 1 天边界、增量防重和 automation memory 最小化规则。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
 - Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
 - Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。
 - Admin 页面必须完整展示新生成的 Binding Code，并提供一键复制；关闭生成弹窗后仍可在对应 Partner 下查看和复制。Binding Code 不得通过 Partner、Plugin 或公开接口返回。

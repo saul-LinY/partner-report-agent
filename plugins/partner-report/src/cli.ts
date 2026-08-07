@@ -24,7 +24,10 @@ import {
   type PluginConfig,
 } from "./config.js";
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
-import { SCHEDULED_COLLECTION_TASK } from "./collection-config.js";
+import {
+  SCHEDULED_COLLECTION_PROMPT_CHECK,
+  SCHEDULED_COLLECTION_TASK,
+} from "./collection-config.js";
 import {
   buildKnownSessionIndex,
   matchingKnownDecision,
@@ -254,6 +257,7 @@ function scheduledTaskConfig() {
   output({
     status: "scheduled_task_config",
     scheduledTask: SCHEDULED_COLLECTION_TASK,
+    promptCheck: SCHEDULED_COLLECTION_PROMPT_CHECK,
     setupMode: "create_if_missing_or_repair_prompt_only",
   });
 }
@@ -473,7 +477,9 @@ function connectedOutput(
     connectivity,
     ...(projectScope ?? {}),
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    nextStep: "使用 $partner-report-sync 创建或修复同名 Codex Scheduled Task。",
+    promptCheck: SCHEDULED_COLLECTION_PROMPT_CHECK,
+    nextStep:
+      "使用 $partner-report-sync 检查同名 Codex Scheduled Task；存在时只修复 Prompt。",
   });
 }
 

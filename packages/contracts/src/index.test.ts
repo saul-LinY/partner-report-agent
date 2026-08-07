@@ -60,15 +60,35 @@ describe("plugin diagnostic contract", () => {
 });
 
 describe("session contribution contract", () => {
-  it("keeps accepting the previous plugin version during rollout", () => {
-    expect(
-      productionMetadataSchema.safeParse({
-        skillVersion: "partner-report-sync/0.4.0",
-        promptVersion: "2026-08-05.zh-session-value.v3",
-        schemaVersion: "1.0",
-        producer: "codex-skill",
-      }).success,
-    ).toBe(true);
+  it("accepts valid producer versions without a per-release allowlist", () => {
+    const metadata = {
+      promptVersion: "2026-08-05.zh-session-value.v3",
+      schemaVersion: "1.0",
+      producer: "codex-skill",
+    };
+
+    for (const skillVersion of [
+      "partner-report-sync/0.4.0",
+      "partner-report-sync/0.4.5",
+      "partner-report-sync/1.0.0",
+      "partner-report-platform/0.3.0",
+    ]) {
+      expect(
+        productionMetadataSchema.safeParse({ ...metadata, skillVersion })
+          .success,
+      ).toBe(true);
+    }
+
+    for (const skillVersion of [
+      "partner-report-sync/0.4",
+      "partner-report-sync/latest",
+      "other-plugin/0.4.5",
+    ]) {
+      expect(
+        productionMetadataSchema.safeParse({ ...metadata, skillVersion })
+          .success,
+      ).toBe(false);
+    }
   });
 
   it("accepts an anonymous session-level contribution", () => {

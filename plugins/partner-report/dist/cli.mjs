@@ -4074,14 +4074,10 @@ var workStatusSchema = external_exports.enum([
   "cancelled"
 ]);
 var productionMetadataSchema = external_exports.object({
-  skillVersion: external_exports.enum([
-    "partner-report-sync/0.2.0",
-    "partner-report-sync/0.3.0",
-    "partner-report-sync/0.4.0",
-    "partner-report-sync/0.4.1",
-    "partner-report-platform/0.2.0",
-    "partner-report-platform/0.3.0"
-  ]),
+  // schemaVersion gates payload compatibility; skillVersion is provenance.
+  skillVersion: external_exports.string().regex(
+    /^partner-report-(sync|platform)\/(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
+  ),
   promptVersion: external_exports.string().min(1).max(80),
   schemaVersion: external_exports.literal("1.0"),
   producer: external_exports.enum(["codex-skill", "data-platform"]),
@@ -4708,6 +4704,7 @@ var DEFAULT_COLLECTION_MODEL = "gpt-5.5";
 var DEFAULT_COLLECTION_REASONING_EFFORT = "low";
 var SCHEDULED_COLLECTION_PROMPT = [
   "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
+  "\u6BCF\u6B21\u8FD0\u884C\u5148\u6309 Skill \u68C0\u67E5\u540C\u540D Codex Scheduled Task \u7684 Prompt\uFF1B\u53EA\u5728 Prompt \u4E0D\u4E00\u81F4\u65F6\u66F4\u65B0 Prompt\uFF0C\u4E0D\u5F97\u6BD4\u8F83\u6216\u4FEE\u6539\u5176\u4ED6\u4EFB\u52A1\u914D\u7F6E\u3002",
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
@@ -4740,6 +4737,14 @@ var SCHEDULED_COLLECTION_TASK = {
   reasoningEffort: DEFAULT_COLLECTION_REASONING_EFFORT,
   notifications: "all_runs",
   prompt: SCHEDULED_COLLECTION_PROMPT
+};
+var SCHEDULED_COLLECTION_PROMPT_CHECK = {
+  frequency: "once_per_skill_run",
+  timing: "before_first_business_command",
+  compareFields: ["prompt"],
+  updateFields: ["prompt"],
+  preserveOtherConfiguration: true,
+  failureMode: "stop"
 };
 
 // src/collection-dedup.ts
@@ -5394,7 +5399,7 @@ function buildSessionJob(input) {
   );
   const observedAt = input.observedAt ?? (/* @__PURE__ */ new Date()).toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.4.5",
+    skillVersion: `partner-report-sync/${PLUGIN_VERSION}`,
     promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0",
     producer: "codex-skill"
@@ -5945,6 +5950,7 @@ function scheduledTaskConfig() {
   output({
     status: "scheduled_task_config",
     scheduledTask: SCHEDULED_COLLECTION_TASK,
+    promptCheck: SCHEDULED_COLLECTION_PROMPT_CHECK,
     setupMode: "create_if_missing_or_repair_prompt_only"
   });
 }
@@ -6133,7 +6139,8 @@ function connectedOutput(partnerId, deviceName, connectivity, projectScope) {
     connectivity,
     ...projectScope ?? {},
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    nextStep: "\u4F7F\u7528 $partner-report-sync \u521B\u5EFA\u6216\u4FEE\u590D\u540C\u540D Codex Scheduled Task\u3002"
+    promptCheck: SCHEDULED_COLLECTION_PROMPT_CHECK,
+    nextStep: "\u4F7F\u7528 $partner-report-sync \u68C0\u67E5\u540C\u540D Codex Scheduled Task\uFF1B\u5B58\u5728\u65F6\u53EA\u4FEE\u590D Prompt\u3002"
   });
 }
 async function discoverProjectScopeAfterBinding() {

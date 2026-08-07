@@ -16,14 +16,12 @@ export const workStatusSchema: z.ZodTypeAny = z.enum([
 ]);
 
 export const productionMetadataSchema: z.ZodTypeAny = z.object({
-  skillVersion: z.enum([
-    "partner-report-sync/0.2.0",
-    "partner-report-sync/0.3.0",
-    "partner-report-sync/0.4.0",
-    "partner-report-sync/0.4.1",
-    "partner-report-platform/0.2.0",
-    "partner-report-platform/0.3.0",
-  ]),
+  // schemaVersion gates payload compatibility; skillVersion is provenance.
+  skillVersion: z
+    .string()
+    .regex(
+      /^partner-report-(sync|platform)\/(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/,
+    ),
   promptVersion: z.string().min(1).max(80),
   schemaVersion: z.literal("1.0"),
   producer: z.enum(["codex-skill", "data-platform"]),

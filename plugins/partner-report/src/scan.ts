@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { PLUGIN_VERSION } from "./config.js";
 
 export type ProjectPolicy = {
   id: string;
@@ -390,7 +391,7 @@ export function buildSessionJob(input: {
   );
   const observedAt = input.observedAt ?? new Date().toISOString();
   const production = {
-    skillVersion: "partner-report-sync/0.4.5" as const,
+    skillVersion: `partner-report-sync/${PLUGIN_VERSION}`,
     promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0" as const,
     producer: "codex-skill" as const,

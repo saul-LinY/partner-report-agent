@@ -1,8 +1,24 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { PLUGIN_VERSION } from "./config.js";
 
 describe("partner report skill packaging", () => {
+  it("keeps package and plugin manifest versions aligned", () => {
+    const packageManifest = JSON.parse(
+      readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8"),
+    );
+    const pluginManifest = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, "../.codex-plugin/plugin.json"),
+        "utf8",
+      ),
+    );
+
+    expect(packageManifest.version).toBe(PLUGIN_VERSION);
+    expect(pluginManifest.version.split("+")[0]).toBe(PLUGIN_VERSION);
+  });
+
   it("documents the Session-level value screening workflow", () => {
     const skill = readFileSync(
       resolve(import.meta.dirname, "../skills/partner-report-sync/SKILL.md"),
@@ -13,6 +29,12 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("source.path");
     expect(skill).toContain("不要比较、解释或向用户展示 Skill 缓存路径");
     expect(skill).toContain('node "<PLUGIN_PATH>/dist/cli.mjs"');
+    expect(skill).toContain("每次进入本 Skill 的一次运行");
+    expect(skill).toContain("必须检查一次且只检查一次定时任务 Prompt");
+    expect(skill).toContain("不一致时只提交 `prompt` 字段更新");
+    expect(skill).toContain("不比较、不解释、不修复 destination");
+    expect(skill).toContain("检查或更新失败时，停止本次业务操作");
+    expect(skill).toContain("后续执行 `nextCommand` 时不得重复检查");
     expect(skill).toContain("collect-start");
     expect(skill).toContain("collect-next --run");
     expect(skill).toContain("collect-review --run");

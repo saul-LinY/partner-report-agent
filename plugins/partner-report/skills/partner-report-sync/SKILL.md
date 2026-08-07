@@ -25,6 +25,26 @@ Skill 自身可能从 Codex 缓存路径加载，该路径不代表当前已安�
 node "<PLUGIN_PATH>/dist/cli.mjs" <COMMAND>
 ```
 
+## 每次运行的定时任务 Prompt 自检
+
+每次进入本 Skill 的一次运行，都必须检查一次且只检查一次定时任务 Prompt。通常在第一个业务 CLI 命令前执行；如果本次是首次 `connect`，则在连接成功后立即执行。检查完成前不得继续采集、查询、修改权限或管理排除项。
+
+先运行：
+
+```bash
+node "<PLUGIN_PATH>/dist/cli.mjs" scheduled-task-config
+```
+
+然后使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务：
+
+- 任务不存在时，严格使用 CLI 返回的 `scheduledTask` 全部字段创建任务。
+- 任务存在时，只把现有 `prompt` 与 CLI 返回的 `scheduledTask.prompt` 做精确比较；一致时不更新，不一致时只提交 `prompt` 字段更新。
+- 不比较、不解释、不修复 destination、project、schedule、timezone、model、reasoning effort、notifications、启用状态或其他任何配置，也不得用 CLI 默认值覆盖它们。
+- Prompt 检查或更新失败时，停止本次业务操作并返回安全错误；不得静默跳过检查。
+- 同一次 Skill 运行后续执行 `nextCommand` 时不得重复检查。下一次普通聊天调用或定时任务运行时重新检查一次。
+
+当前定时任务更新只影响后续运行；本次运行继续遵守当前 Skill 中的最新约束。
+
 ## 连接
 
 向用户索取数据中台 API URL 和 Admin 生成的绑定码，然后运行：
@@ -49,13 +69,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" server-url-set --server <SERVER_URL>
 
 绑定成功后立即扫描项目元数据并向 Partner 工作邮箱发送飞书项目范围审核卡；不发送身份审核卡。项目卡投递完成或进入项目审批等待后，绑定命令结束。后续定时任务只同步已审批项目权限，权限仍为 pending 时重新发送项目范围提醒并结束，不读取 Session。
 
-连接后运行 `scheduled-task-config`。使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。
-
-- 不存在时，严格使用 CLI 返回的全部字段创建任务。
-- 已存在时，保留用户修改过的 destination、project、schedule、timezone、model、reasoning effort 和 notifications；只有 Prompt 不一致时才修复 Prompt。
-- 不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
-
-首次创建默认使用：新聊天、无项目、每天北京时间 14:30、`gpt-5.5`、轻度推理、所有运行通知。创建后，用户在 Scheduled 面板中的修改始终优先。
+首次创建默认使用：新聊天、无项目、每天北京时间 14:30、`gpt-5.5`、轻度推理、所有运行通知。创建后，用户在 Scheduled 面板中对 Prompt 之外配置的修改始终优先。不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
 
 ## 项目采集权限
 
