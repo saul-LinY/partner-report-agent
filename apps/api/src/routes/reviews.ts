@@ -303,7 +303,6 @@ export async function completeReview(
           fact.payload.completionSupport === "evidence" ||
           fact.payload.factOrigin === "partner_supplied" ||
           (fact.payload.recordType === "session_contribution" &&
-            fact.payload.status === "completed" &&
             Array.isArray(fact.payload.contributions) &&
             fact.payload.contributions.some(
               (contribution: Record<string, unknown>) =>

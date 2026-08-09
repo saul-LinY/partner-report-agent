@@ -149,4 +149,48 @@ suite("weekly report scheduling", () => {
     `;
     expect(periods).toEqual([{ period_key: "2026-W32", status: "open" }]);
   });
+
+  it("creates the next period when a schedule change reuses the same week key", async () => {
+    const rows = await sql<Array<{ id: string }>>`
+      update report_periods set
+        ends_at = '2026-08-09T10:35:00.000Z',
+        cutoff_at = '2026-08-09T10:35:00.000Z',
+        submission_deadline_at = '2026-08-09T10:35:00.000Z'
+      where team_id = ${fixture.team} and period_key = '2026-W32'
+      returning id
+    `;
+    await sql`
+      update teams set period_rule = ${JSON.stringify({
+        frequency: "weekly",
+        weekStartsOn: 1,
+        factCutoffWeekday: 7,
+        factCutoffTime: "18:35",
+      })}::jsonb
+      where id = ${fixture.team}
+    `;
+
+    const result = await scheduleDueWeeklyReports(
+      new Date("2026-08-09T10:35:00.000Z"),
+      rows[0]!.id,
+    );
+    expect(result.closedPeriods).toBe(1);
+
+    const periods = await sql<any[]>`
+      select period_key, starts_at, cutoff_at, status
+      from report_periods
+      where team_id = ${fixture.team} and status = 'open'
+      order by starts_at desc
+    `;
+    expect(periods).toHaveLength(1);
+    expect(periods[0]).toMatchObject({
+      period_key: "2026-W32-20260809T103500Z",
+      status: "open",
+    });
+    expect(new Date(periods[0].starts_at).toISOString()).toBe(
+      "2026-08-09T10:35:00.000Z",
+    );
+    expect(new Date(periods[0].cutoff_at).toISOString()).toBe(
+      "2026-08-16T10:35:00.000Z",
+    );
+  });
 });

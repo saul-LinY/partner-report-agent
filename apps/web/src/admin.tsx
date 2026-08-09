@@ -285,7 +285,7 @@ function Operations({ data }: { data: Overview }) {
         />
       </div>
 
-      <ScheduleSettings team={data.team} />
+      <ScheduleSettings team={data.team} openPeriod={openPeriod} />
 
       <section className="section-block">
         <div className="section-heading">
@@ -315,9 +315,9 @@ function Operations({ data }: { data: Overview }) {
                   ["active", "claimed"].includes(code.status) &&
                   code.code_value,
               );
-              const bindingCode = codes[0] ?? null;
               const activeBindingCode =
                 codes.find((code) => code.status === "active") ?? null;
+              const bindingCode = activeBindingCode ?? codes[0] ?? null;
               const recoverableInstanceId =
                 connection.connectionState === "expired"
                   ? null
@@ -327,9 +327,34 @@ function Operations({ data }: { data: Overview }) {
                   <span
                     className={`health-dot health-${connection.connectionState}`}
                   />
-                  <div>
+                  <div className="plugin-person-cell">
                     <strong>{connection.partnerName}</strong>
                     <span>{connection.partnerEmail}</span>
+                  </div>
+                  <div className="binding-code-cell">
+                    <span className="cell-label">绑定码</span>
+                    {bindingCode ? (
+                      <button
+                        className="binding-code-copy"
+                        type="button"
+                        title="复制绑定码"
+                        aria-label={`复制 ${connection.partnerName} 的绑定码`}
+                        onClick={async () => {
+                          await copyText(bindingCode.code_value);
+                          setCopiedCodeId(bindingCode.id);
+                          window.setTimeout(() => setCopiedCodeId(null), 1600);
+                        }}
+                      >
+                        <code>{bindingCode.code_value}</code>
+                        {copiedCodeId === bindingCode.id ? (
+                          <Check size={13} />
+                        ) : (
+                          <Copy size={13} />
+                        )}
+                      </button>
+                    ) : (
+                      <strong>--</strong>
+                    )}
                   </div>
                   <div className="plugin-state-badges">
                     <Badge tone={statusTone[connection.connectionState]}>
@@ -346,6 +371,9 @@ function Operations({ data }: { data: Overview }) {
                         connection.feishu?.state ?? "not_connected"
                       ] ?? "飞书 · 状态未知"}
                     </Badge>
+                    <span className="plugin-tested-at">
+                      测试 {formatTime(connection.verifiedAt)}
+                    </span>
                   </div>
                   <div
                     className="review-progress-cell"
@@ -370,16 +398,12 @@ function Operations({ data }: { data: Overview }) {
                       {connection.reviewProgress.periodKey ?? "当前无周期"}
                     </span>
                   </div>
-                  <div>
-                    <span className="cell-label">连接测试</span>
-                    <strong>{formatTime(connection.verifiedAt)}</strong>
-                  </div>
-                  <div>
+                  <div className="plugin-upload-cell">
                     <span className="cell-label">最近上传</span>
                     <strong>{formatTime(connection.lastUploadAt)}</strong>
                   </div>
                   <div className="plugin-device-cell">
-                    <span className="cell-label">插件</span>
+                    <span className="cell-label">插件设备</span>
                     <strong title={connection.deviceName ?? undefined}>
                       {connection.deviceName ?? "--"}
                     </strong>
@@ -388,30 +412,6 @@ function Operations({ data }: { data: Overview }) {
                         ? `v${connection.version}`
                         : "尚未配置"}
                     </span>
-                  </div>
-                  <div className="binding-code-cell">
-                    <span className="cell-label">绑定码</span>
-                    {bindingCode ? (
-                      <button
-                        className="binding-code-copy"
-                        title="复制绑定码"
-                        onClick={async () => {
-                          await copyText(bindingCode.code_value);
-                          setCopiedCodeId(bindingCode.id);
-                        }}
-                      >
-                        <code>{bindingCode.code_value}</code>
-                        {copiedCodeId === bindingCode.id ? (
-                          <Check size={13} />
-                        ) : (
-                          <Copy size={13} />
-                        )}
-                      </button>
-                    ) : (
-                      <strong>
-                        {recoverableInstanceId ? "已绑定" : "尚未生成"}
-                      </strong>
-                    )}
                   </div>
                   <div className="plugin-row-actions">
                     <Button
@@ -610,7 +610,13 @@ function formatScopeEffectiveAt(project: {
   return effectiveAt.getTime() > Date.now() ? `${label} 生效` : "已生效";
 }
 
-function ScheduleSettings({ team }: { team: any }) {
+function ScheduleSettings({
+  team,
+  openPeriod,
+}: {
+  team: any;
+  openPeriod: any | null;
+}) {
   const queryClient = useQueryClient();
   const defaults = team.period_rule ?? {};
   const [cutoffDay, setCutoffDay] = useState(
@@ -651,7 +657,11 @@ function ScheduleSettings({ team }: { team: any }) {
         <div className="schedule-setting">
           <div className="schedule-setting-title">
             <strong>工作卡片聚合</strong>
-            <span>冻结本期贡献并生成项目卡片</span>
+            <span>
+              {openPeriod
+                ? `下次执行 ${formatFullTime(openPeriod.cutoff_at)}`
+                : "等待开放周期"}
+            </span>
           </div>
           <Field label="每周">
             <select
@@ -661,7 +671,7 @@ function ScheduleSettings({ team }: { team: any }) {
               {weekdayOptions()}
             </select>
           </Field>
-          <Field label="开始时间">
+          <Field label="聚合时间">
             <input
               type="time"
               value={cutoffTime}

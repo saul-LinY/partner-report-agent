@@ -59,12 +59,7 @@
               "maxLength": 120
             }
           },
-          "required": [
-            "id",
-            "name",
-            "matchMethod",
-            "rootFingerprint"
-          ],
+          "required": ["id", "name", "matchMethod", "rootFingerprint"],
           "additionalProperties": false
         },
         "activity": {
@@ -78,10 +73,7 @@
               "$ref": "#/definitions/SessionContributionV1/properties/activity/properties/startedAt"
             }
           },
-          "required": [
-            "startedAt",
-            "endedAt"
-          ],
+          "required": ["startedAt", "endedAt"],
           "additionalProperties": false
         },
         "title": {
@@ -93,18 +85,6 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 1600
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "discussion",
-            "planned",
-            "in_progress",
-            "awaiting_validation",
-            "completed",
-            "blocked",
-            "cancelled"
-          ]
         },
         "contributions": {
           "type": "array",
@@ -128,18 +108,10 @@
               },
               "confidence": {
                 "type": "string",
-                "enum": [
-                  "high",
-                  "medium",
-                  "low"
-                ]
+                "enum": ["high", "medium", "low"]
               }
             },
-            "required": [
-              "kind",
-              "text",
-              "confidence"
-            ],
+            "required": ["kind", "text", "confidence"],
             "additionalProperties": false
           },
           "minItems": 1,
@@ -166,10 +138,7 @@
             },
             "producer": {
               "type": "string",
-              "enum": [
-                "codex-skill",
-                "data-platform"
-              ]
+              "enum": ["codex-skill", "data-platform"]
             },
             "modelVersion": {
               "type": "string",
@@ -194,7 +163,6 @@
         "activity",
         "title",
         "summary",
-        "status",
         "contributions",
         "observedAt",
         "production"

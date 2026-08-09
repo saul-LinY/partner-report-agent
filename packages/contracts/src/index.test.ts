@@ -9,6 +9,7 @@ import {
   individualReportResultSchema,
   pluginDiagnosticBatchSchema,
   productionMetadataSchema,
+  sessionContributionIngestSchema,
   sessionContributionSchema,
   sessionExtractionResultSchema,
 } from "./index.js";
@@ -104,7 +105,6 @@ describe("session contribution contract", () => {
       },
       title: "重构采集插件",
       summary: "把采集粒度调整为 Session。",
-      status: "in_progress",
       contributions: [
         { kind: "decision", text: "使用 Session 级摘要。", confidence: "high" },
       ],
@@ -115,17 +115,30 @@ describe("session contribution contract", () => {
         producer: "codex-skill",
       },
     };
+    const contribution = {
+      ...base,
+      project: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "partner-report-agent",
+        matchMethod: "descendant_path",
+        rootFingerprint: "c".repeat(64),
+      },
+    };
+    expect(sessionContributionSchema.safeParse(contribution).success).toBe(
+      true,
+    );
     expect(
       sessionContributionSchema.safeParse({
-        ...base,
-        project: {
-          id: "11111111-1111-4111-8111-111111111111",
-          name: "partner-report-agent",
-          matchMethod: "descendant_path",
-          rootFingerprint: "c".repeat(64),
-        },
+        ...contribution,
+        status: "completed",
       }).success,
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      sessionContributionIngestSchema.parse({
+        ...contribution,
+        status: "completed",
+      }),
+    ).not.toHaveProperty("status");
   });
 
   it("requires safe project discovery metadata and ordered activity", () => {
@@ -141,7 +154,6 @@ describe("session contribution contract", () => {
       },
       title: "重构采集插件",
       summary: "Session 摘要。",
-      status: "in_progress",
       contributions: [],
       production: {
         skillVersion: "partner-report-sync/0.3.0",

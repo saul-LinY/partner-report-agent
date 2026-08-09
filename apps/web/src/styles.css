@@ -1904,15 +1904,22 @@ select:focus {
   gap: 7px;
 }
 .plugin-status-row {
-  min-height: 66px;
+  min-height: 84px;
+  padding: 12px 0;
   display: grid;
   grid-template-columns:
-    10px minmax(160px, 1fr) minmax(76px, auto)
-    minmax(140px, 0.75fr) repeat(4, minmax(96px, 0.6fr))
-    auto;
+    10px minmax(150px, 1fr) minmax(110px, 0.65fr)
+    minmax(100px, 0.65fr) minmax(120px, 0.8fr)
+    minmax(95px, 0.55fr) minmax(120px, 0.65fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   border-bottom: 1px solid var(--line);
+}
+.plugin-person-cell span,
+.plugin-tested-at,
+.plugin-device-cell > span:last-child {
+  color: var(--muted);
+  font-size: 10px;
 }
 .plugin-state-badges {
   display: grid;
@@ -1920,6 +1927,10 @@ select:focus {
   gap: 5px;
 }
 .plugin-state-badges .badge {
+  white-space: nowrap;
+}
+.plugin-state-badges .plugin-tested-at {
+  margin-top: 1px;
   white-space: nowrap;
 }
 .plugin-status-row > div strong,
@@ -1936,6 +1947,9 @@ select:focus {
 }
 .plugin-status-row > div span {
   margin-top: 3px;
+}
+.plugin-upload-cell strong {
+  font-size: 12px;
 }
 .review-progress-value {
   display: flex !important;
@@ -1977,6 +1991,10 @@ select:focus {
   justify-content: flex-end;
   gap: 7px;
 }
+.plugin-row-actions .button {
+  min-width: 104px;
+  padding-inline: 12px;
+}
 .plugin-row-actions .button span {
   display: inline;
   margin-top: 0;
@@ -1991,6 +2009,9 @@ select:focus {
   color: var(--accent);
   background: transparent;
   cursor: pointer;
+}
+.binding-code-cell {
+  min-width: 0;
 }
 .binding-code-copy code {
   color: inherit;
@@ -2297,11 +2318,6 @@ select:focus {
   margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
-}
-.fact-badges {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
 }
 .fact-columns {
   margin: 14px 0;
@@ -2670,7 +2686,36 @@ select:focus {
   font-size: 10px;
 }
 
+@media (max-width: 1280px) {
+  .plugin-status-row {
+    grid-template-columns:
+      10px minmax(110px, 1fr) minmax(108px, auto)
+      minmax(88px, auto) minmax(90px, 0.7fr) minmax(82px, 0.55fr) auto;
+    align-items: center;
+    gap: 9px;
+  }
+  .plugin-status-row > .plugin-device-cell {
+    display: none;
+  }
+  .plugin-row-actions .button {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+  .plugin-row-actions {
+    gap: 5px;
+  }
+}
+
 @media (max-width: 1050px) {
+  .plugin-status-row {
+    grid-template-columns:
+      10px minmax(110px, 1fr) minmax(108px, auto)
+      minmax(88px, auto) minmax(90px, 0.7fr) auto;
+    gap: 8px;
+  }
+  .plugin-status-row > .plugin-upload-cell {
+    display: none;
+  }
   .ops-metrics {
     grid-template-columns: 1fr 1fr;
   }
@@ -2695,14 +2740,6 @@ select:focus {
   .schedule-settings-grid > .button {
     grid-column: 1 / -1;
     justify-self: end;
-  }
-  .plugin-status-row {
-    grid-template-columns:
-      10px 1fr auto minmax(140px, 0.75fr) repeat(2, minmax(100px, 0.6fr))
-      minmax(120px, 0.6fr) auto;
-  }
-  .plugin-status-row > .plugin-device-cell {
-    display: none;
   }
   .status-strip,
   .admin-summary {
@@ -2782,9 +2819,6 @@ select:focus {
   }
   .fact-row-head {
     display: block;
-  }
-  .fact-badges {
-    margin-top: 10px;
   }
   .team-report-versions {
     display: flex;
@@ -2887,17 +2921,29 @@ select:focus {
     padding: 12px 0;
     grid-template-columns: 10px 1fr auto;
   }
-  .plugin-status-row
-    > div:not(:first-of-type):not(.plugin-state-badges):not(
-      .plugin-row-actions
-    ):not(.review-progress-cell) {
+  .plugin-status-row > .plugin-upload-cell,
+  .plugin-status-row > .plugin-device-cell {
     display: none;
+  }
+  .plugin-status-row > .plugin-state-badges {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .plugin-status-row > .plugin-person-cell {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .plugin-status-row > .binding-code-cell {
+    grid-column: 2 / -1;
+    grid-row: 2;
   }
   .plugin-status-row > .review-progress-cell {
     grid-column: 2 / -1;
+    grid-row: 3;
   }
   .plugin-status-row > .plugin-row-actions {
     grid-column: 2 / -1;
+    grid-row: 4;
     justify-self: start;
     flex-wrap: wrap;
   }

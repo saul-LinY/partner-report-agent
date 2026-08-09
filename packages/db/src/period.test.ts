@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { weeklyPeriodAt } from "./period.js";
+import { weeklyPeriodAt, weeklyPeriodKeyCandidates } from "./period.js";
 
 describe("weeklyPeriodAt", () => {
   it("uses Friday 14:00 through the next Friday 14:00 in Asia/Shanghai", () => {
@@ -47,5 +47,14 @@ describe("weeklyPeriodAt", () => {
     );
     expect(period.endsAt.toISOString()).toBe("2026-08-05T10:30:00.000Z");
     expect(period.submissionDeadlineAt).toEqual(period.endsAt);
+  });
+
+  it("provides a stable fallback key when a changed schedule reuses a week key", () => {
+    expect(
+      weeklyPeriodKeyCandidates({
+        periodKey: "2026-W32",
+        startsAt: new Date("2026-08-09T10:35:00.000Z"),
+      }),
+    ).toEqual(["2026-W32", "2026-W32-20260809T103500Z"]);
   });
 });

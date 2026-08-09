@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Filter, RefreshCw } from "lucide-react";
 import { api } from "./api.js";
-import { Badge, Button, EmptyState, ErrorBanner, Field } from "./components.js";
+import { Button, EmptyState, ErrorBanner, Field } from "./components.js";
 
 type FactPage = {
   items: Array<{
@@ -26,16 +26,6 @@ type Overview = {
   partners: Array<{ id: string; display_name: string }>;
   periods: Array<{ id: string; period_key: string }>;
   projects: Array<{ id: string; name: string }>;
-};
-
-const statusLabels: Record<string, string> = {
-  discussion: "讨论中",
-  planned: "已计划",
-  in_progress: "进行中",
-  awaiting_validation: "待验证",
-  completed: "已完成",
-  blocked: "阻塞",
-  cancelled: "已取消",
 };
 
 export function FactPreviewPage() {
@@ -176,19 +166,6 @@ export function FactPreviewPage() {
                     <span>
                       {row.partner_name} · {row.period_key} · {projectName}
                     </span>
-                  </div>
-                  <div className="fact-badges">
-                    <Badge
-                      tone={
-                        fact.status === "blocked"
-                          ? "danger"
-                          : fact.status === "completed"
-                            ? "success"
-                            : "info"
-                      }
-                    >
-                      {statusLabels[fact.status] ?? fact.status}
-                    </Badge>
                   </div>
                 </div>
                 <p className="fact-summary">{factSummary(fact)}</p>

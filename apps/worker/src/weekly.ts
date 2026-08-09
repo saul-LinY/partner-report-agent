@@ -3,6 +3,7 @@ import {
   DEFAULT_WEEKLY_PERIOD_RULE,
   sqlClient as sql,
   weeklyPeriodAt,
+  weeklyPeriodKeyCandidates,
   type WeeklyPeriodRule,
 } from "@partner-report/db";
 
@@ -115,18 +116,37 @@ export async function ensureCurrentWeeklyPeriods(
       team.timezone,
       team.period_rule ?? DEFAULT_WEEKLY_PERIOD_RULE,
     );
-    const inserted = await sql<{ id: string }[]>`
-      insert into report_periods (
-        id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
-        submission_deadline_at, timezone, status, template_id
-      ) values (
-        ${randomUUID()}, ${team.tenant_id}, ${team.team_id}, ${period.periodKey},
-        ${period.startsAt.toISOString()}, ${period.endsAt.toISOString()},
-        ${period.cutoffAt.toISOString()}, ${period.submissionDeadlineAt.toISOString()},
-        ${team.timezone}, 'open', ${team.template_id}
-      ) on conflict (tenant_id, team_id, period_key) do nothing returning id
+    const existingOpen = await sql<{ id: string }[]>`
+      select id from report_periods
+      where tenant_id = ${team.tenant_id} and team_id = ${team.team_id}
+        and status = 'open' and cutoff_at > ${now.toISOString()}
+      order by starts_at desc limit 1
     `;
-    created += inserted.length;
+    if (existingOpen[0]) continue;
+
+    for (const periodKey of weeklyPeriodKeyCandidates(period)) {
+      const inserted = await sql<{ id: string }[]>`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+          submission_deadline_at, timezone, status, template_id
+        ) values (
+          ${randomUUID()}, ${team.tenant_id}, ${team.team_id}, ${periodKey},
+          ${period.startsAt.toISOString()}, ${period.endsAt.toISOString()},
+          ${period.cutoffAt.toISOString()}, ${period.submissionDeadlineAt.toISOString()},
+          ${team.timezone}, 'open', ${team.template_id}
+        ) on conflict (tenant_id, team_id, period_key) do nothing returning id
+      `;
+      created += inserted.length;
+      if (inserted[0]) break;
+
+      const concurrentOpen = await sql<{ id: string }[]>`
+        select id from report_periods
+        where tenant_id = ${team.tenant_id} and team_id = ${team.team_id}
+          and status = 'open' and cutoff_at > ${now.toISOString()}
+        order by starts_at desc limit 1
+      `;
+      if (concurrentOpen[0]) break;
+    }
   }
   return created;
 }

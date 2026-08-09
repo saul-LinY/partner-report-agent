@@ -3,13 +3,14 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   containsSensitiveValue,
-  sessionContributionSchema,
+  sessionContributionIngestSchema,
   sessionContributionStateQuerySchema,
 } from "@partner-report/contracts";
 import {
   DEFAULT_WEEKLY_PERIOD_RULE,
   sqlClient as sql,
   weeklyPeriodAt,
+  weeklyPeriodKeyCandidates,
   type WeeklyPeriodRule,
 } from "@partner-report/db";
 import {
@@ -58,22 +59,32 @@ async function ensureIngestionPeriod(actor: {
     team.timezone,
     (team.period_rule ?? DEFAULT_WEEKLY_PERIOD_RULE) as WeeklyPeriodRule,
   );
-  await sql`
-    insert into report_periods (
-      id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
-      submission_deadline_at, timezone, status, template_id
-    ) values (
-      ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${period.periodKey},
-      ${period.startsAt.toISOString()}, ${period.endsAt.toISOString()},
-      ${period.cutoffAt.toISOString()}, ${period.submissionDeadlineAt.toISOString()},
-      ${team.timezone}, 'open', ${team.template_id}
-    ) on conflict (tenant_id, team_id, period_key) do nothing
-  `;
+  for (const periodKey of weeklyPeriodKeyCandidates(period)) {
+    const inserted = await sql<{ id: string }[]>`
+      insert into report_periods (
+        id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+        submission_deadline_at, timezone, status, template_id
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${periodKey},
+        ${period.startsAt.toISOString()}, ${period.endsAt.toISOString()},
+        ${period.cutoffAt.toISOString()}, ${period.submissionDeadlineAt.toISOString()},
+        ${team.timezone}, 'open', ${team.template_id}
+      ) on conflict (tenant_id, team_id, period_key) do nothing returning id
+    `;
+    if (inserted[0]) break;
+    const concurrentOpen = await sql<{ id: string }[]>`
+      select id from report_periods
+      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        and status = 'open' and cutoff_at > ${now.toISOString()}
+      order by starts_at desc limit 1
+    `;
+    if (concurrentOpen[0]) break;
+  }
   const created = await sql<any[]>`
     select * from report_periods
     where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-      and period_key = ${period.periodKey} and status = 'open'
-    limit 1
+      and status = 'open' and cutoff_at > ${now.toISOString()}
+    order by starts_at desc limit 1
   `;
   if (!created[0])
     throw new ApiError(
@@ -110,7 +121,7 @@ export async function factRoutes(app: FastifyInstance) {
 
   app.post("/v1/session-contributions", async (request) => {
     const actor = await requirePluginActor(request);
-    const input = sessionContributionSchema.parse(request.body);
+    const input = sessionContributionIngestSchema.parse(request.body);
     if (containsSensitiveValue(input)) {
       throw new ApiError(
         422,

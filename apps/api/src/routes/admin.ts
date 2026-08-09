@@ -842,36 +842,42 @@ export async function adminRoutes(app: FastifyInstance) {
   app.patch("/v1/admin/team", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const input = teamUpdateSchema.parse(request.body);
-    const rows = await sql<any[]>`
-      update teams set
-        name = coalesce(${input.name ?? null}, name),
-        timezone = 'Asia/Shanghai',
-        evidence_excerpt_enabled = coalesce(${input.evidenceExcerptEnabled ?? null}, evidence_excerpt_enabled),
-        session_quiet_period_minutes = coalesce(${input.sessionQuietPeriodMinutes ?? null}, session_quiet_period_minutes),
-        period_rule = coalesce(${input.periodRule ? JSON.stringify(input.periodRule) : null}::jsonb, period_rule),
-        minimum_plugin_version = coalesce(${input.minimumPluginVersion ?? null}, minimum_plugin_version),
-        central_model = coalesce(${input.centralModel ?? null}, central_model),
-        updated_at = now()
-      where id = ${actor.teamId} and tenant_id = ${actor.tenantId}
-      returning *
-    `;
-    if (rows[0] && input.periodRule) {
-      const period = weeklyPeriodAt(
-        new Date(),
-        "Asia/Shanghai",
-        rows[0].period_rule,
-      );
-      await sql`
-        update report_periods set
-          starts_at = ${period.startsAt.toISOString()},
-          ends_at = ${period.endsAt.toISOString()},
-          cutoff_at = ${period.cutoffAt.toISOString()},
-          submission_deadline_at = ${period.submissionDeadlineAt.toISOString()},
-          timezone = 'Asia/Shanghai', updated_at = now()
-        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-          and status = 'open' and period_key = ${period.periodKey}
+    const rows = await sql.begin(async (tx) => {
+      const updated = await tx<any[]>`
+        update teams set
+          name = coalesce(${input.name ?? null}, name),
+          timezone = 'Asia/Shanghai',
+          evidence_excerpt_enabled = coalesce(${input.evidenceExcerptEnabled ?? null}, evidence_excerpt_enabled),
+          session_quiet_period_minutes = coalesce(${input.sessionQuietPeriodMinutes ?? null}, session_quiet_period_minutes),
+          period_rule = coalesce(${input.periodRule ? JSON.stringify(input.periodRule) : null}::jsonb, period_rule),
+          minimum_plugin_version = coalesce(${input.minimumPluginVersion ?? null}, minimum_plugin_version),
+          central_model = coalesce(${input.centralModel ?? null}, central_model),
+          updated_at = now()
+        where id = ${actor.teamId} and tenant_id = ${actor.tenantId}
+        returning *
       `;
-    }
+      if (updated[0] && input.periodRule) {
+        const period = weeklyPeriodAt(
+          new Date(),
+          "Asia/Shanghai",
+          updated[0].period_rule,
+        );
+        await tx`
+          update report_periods set
+            ends_at = ${period.endsAt.toISOString()},
+            cutoff_at = ${period.cutoffAt.toISOString()},
+            submission_deadline_at = ${period.submissionDeadlineAt.toISOString()},
+            timezone = 'Asia/Shanghai', updated_at = now()
+          where id = (
+            select id from report_periods
+            where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+              and status = 'open'
+            order by starts_at desc limit 1
+          )
+        `;
+      }
+      return updated;
+    });
     await audit(request, actor, "team.updated", "team", actor.teamId, input);
     return rows[0];
   });

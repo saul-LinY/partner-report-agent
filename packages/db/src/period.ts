@@ -21,6 +21,17 @@ export const DEFAULT_WEEKLY_PERIOD_RULE: Required<WeeklyPeriodRule> = {
   factCutoffTime: "14:00",
 };
 
+export function weeklyPeriodKeyCandidates(period: {
+  periodKey: string;
+  startsAt: Date;
+}) {
+  const boundary = period.startsAt
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(".000", "");
+  return [period.periodKey, `${period.periodKey}-${boundary}`];
+}
+
 function partsInZone(date: Date, timezone: string): DateParts {
   const values = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,

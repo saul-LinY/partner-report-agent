@@ -83,7 +83,6 @@ export const sessionContributionSchema: z.ZodTypeAny = z
       .strict(),
     title: z.string().min(1).max(200),
     summary: z.string().min(1).max(1600),
-    status: workStatusSchema,
     contributions: z.array(contributionItemSchema).min(1).max(40),
     observedAt: isoDateTimeSchema,
     production: productionMetadataSchema,
@@ -101,6 +100,19 @@ export const sessionContributionSchema: z.ZodTypeAny = z
       });
     }
   });
+
+export const sessionContributionIngestSchema: z.ZodTypeAny = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return value;
+    const record = value as Record<string, unknown>;
+    if (!("status" in record)) return value;
+    if (!workStatusSchema.safeParse(record.status).success) return value;
+    const { status: _legacyStatus, ...contribution } = record;
+    return contribution;
+  },
+  sessionContributionSchema,
+);
 
 export const sessionExtractionResultSchema: z.ZodTypeAny = z.discriminatedUnion(
   "decision",

@@ -4127,7 +4127,6 @@ var sessionContributionSchema = external_exports.object({
   }).strict(),
   title: external_exports.string().min(1).max(200),
   summary: external_exports.string().min(1).max(1600),
-  status: workStatusSchema,
   contributions: external_exports.array(contributionItemSchema).min(1).max(40),
   observedAt: isoDateTimeSchema,
   production: productionMetadataSchema
@@ -5476,7 +5475,6 @@ function buildSessionJob(input) {
             },
             title: "\u7B80\u6D01\u7684\u4E2D\u6587\u5DE5\u4F5C\u6807\u9898",
             summary: "\u7B80\u6D01\u3001\u51C6\u786E\u4E14\u6709\u4E8B\u5B9E\u4F9D\u636E\u7684\u4E2D\u6587\u9879\u76EE\u8D21\u732E\u6458\u8981",
-            status: "discussion | planned | in_progress | awaiting_validation | completed | blocked | cancelled",
             contributions: [
               {
                 kind: "outcome | progress | decision | blocker | next_step",

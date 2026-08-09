@@ -966,7 +966,7 @@ suite("tenant and role authorization", () => {
       },
       title: "完成结构化采集验证",
       summary: "完成 Session Contribution 上传链路验证。",
-      status: "in_progress",
+      status: "completed",
       contributions: [
         {
           kind: "outcome",
@@ -1035,6 +1035,15 @@ suite("tenant and role authorization", () => {
       contentHash: "b".repeat(64),
     });
     expect(changed.json().contributionId).toBe(first.json().contributionId);
+
+    const storedContributions = await sql<any[]>`
+      select payload from session_facts
+      where tenant_id = ${fixture.tenantA}
+        and partner_id = ${fixture.partnerA}
+        and session_id = ${sessionKey}
+    `;
+    expect(storedContributions).toHaveLength(1);
+    expect(storedContributions[0].payload).not.toHaveProperty("status");
 
     const state = await app.inject({
       method: "GET",

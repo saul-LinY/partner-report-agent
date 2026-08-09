@@ -470,8 +470,6 @@ export function buildSessionJob(input: {
             },
             title: "简洁的中文工作标题",
             summary: "简洁、准确且有事实依据的中文项目贡献摘要",
-            status:
-              "discussion | planned | in_progress | awaiting_validation | completed | blocked | cancelled",
             contributions: [
               {
                 kind: "outcome | progress | decision | blocker | next_step",
