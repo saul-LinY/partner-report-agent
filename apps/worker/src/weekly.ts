@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { stableJsonHash } from "@partner-report/contracts/hash";
 import {
   DEFAULT_WEEKLY_PERIOD_RULE,
   sqlClient as sql,
@@ -24,10 +25,6 @@ export type WeeklyScheduleResult = {
   aggregationJobs: number;
   teamReportJobs: number;
 };
-
-function checksum(value: unknown) {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
 
 type AggregationFact = {
   id: string;
@@ -229,7 +226,7 @@ export async function scheduleDueWeeklyReports(
             id, tenant_id, team_id, partner_id, period_id, fact_ids, checksum, coverage
           ) values (
             ${randomUUID()}, ${period.tenant_id}, ${period.team_id}, ${partnerId},
-            ${period.id}, ${JSON.stringify(factIds)}::jsonb, ${checksum(factIds)},
+            ${period.id}, ${JSON.stringify(factIds)}::jsonb, ${stableJsonHash(factIds)},
             ${JSON.stringify(coverageRows[0]?.payload ?? {})}::jsonb
           ) on conflict (tenant_id, partner_id, period_id) do update set
             fact_ids = excluded.fact_ids, checksum = excluded.checksum,
@@ -401,7 +398,7 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
         missingPartnerIds,
         previousTeamReport: previousRows[0] ?? null,
       };
-      const sourceChecksum = checksum(source);
+      const sourceChecksum = stableJsonHash(source);
       const teamReportRows = await tx<{ id: string; status: string }[]>`
         insert into team_reports (
           id, tenant_id, team_id, period_id, status, missing_partner_ids

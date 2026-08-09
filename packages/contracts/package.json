@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./hash": "./src/hash.ts",
     "./models": "./src/models.ts"
   },
   "scripts": {

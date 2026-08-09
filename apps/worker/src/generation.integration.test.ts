@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { stableJsonHash } from "@partner-report/contracts/hash";
 import { sqlClient as sql } from "@partner-report/db";
 import { processNextGenerationJob } from "./generation.js";
 import { scheduleDueTeamReports } from "./weekly.js";
@@ -36,6 +37,15 @@ suite("synthetic report generation pipeline", () => {
         );
         if (request.text?.format?.name === "partner_team_report") {
           lastTeamReportInstructions = request.input[0].content[0].text;
+          expect(request.text.format.schema.properties).not.toHaveProperty(
+            "title",
+          );
+          expect(request.text.format.schema.properties).not.toHaveProperty(
+            "markdown",
+          );
+          expect(
+            request.text.format.schema.properties.sections.items.properties,
+          ).not.toHaveProperty("title");
         }
         return new Response(
           JSON.stringify({
@@ -314,6 +324,26 @@ suite("synthetic report generation pipeline", () => {
       },
     });
     expect(teamJobs[0].input_payload).not.toHaveProperty("projects");
+    expect(teamJobs[0].input_payload.sourceChecksum).toBe(
+      stableJsonHash({
+        individualReports: teamJobs[0].input_payload.individualReports,
+        missingPartnerIds: teamJobs[0].input_payload.missingPartnerIds,
+        previousTeamReport: teamJobs[0].input_payload.previousTeamReport,
+      }),
+    );
+    const duplicateTeamJob = randomUUID();
+    await sql`
+      insert into agent_jobs (
+        id, tenant_id, team_id, partner_id, type, status, idempotency_key,
+        input_payload, error_code, error_message
+      ) values (
+        ${duplicateTeamJob}, ${fixture.tenant}, ${fixture.team}, null,
+        'GENERATE_TEAM_REPORT', 'FAILED',
+        ${`synthetic-team-duplicate:${duplicateTeamJob}`},
+        ${JSON.stringify(teamJobs[0].input_payload)}::jsonb,
+        'CENTRAL_GENERATION_FAILED', 'Synthetic duplicate failure'
+      )
+    `;
     nextOutput = teamReport(reportId);
     expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
       processed: true,
@@ -345,10 +375,38 @@ suite("synthetic report generation pipeline", () => {
     expect(lastTeamReportInstructions).toContain(
       "group content by concrete Partner/person first",
     );
+    expect(lastTeamReportInstructions).toContain(
+      "service assembles the top-level title and markdown deterministically",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "Organize the entire section by project as a Markdown bullet list",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      'Do not start a project entry with phrases such as "当前状态为"',
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "Do not expose raw status enum identifiers",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "copy only exact values from individualReports[].reportId",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      `the complete allowlist is ["${reportId}"]`,
+    );
+    expect(lastTeamReportInstructions).toContain("2026-08-09.team.v7");
     expect(teamReports[0].payload.markdown).toContain("### Synthetic Partner");
     expect(
       teamReports[0].payload.markdown.indexOf("### Synthetic Partner"),
     ).toBeLessThan(teamReports[0].payload.markdown.indexOf("#### 未识别项目"));
+    const duplicateJobs = await sql<any[]>`
+      select status, error_code from agent_jobs where id = ${duplicateTeamJob}
+    `;
+    expect(duplicateJobs).toEqual([
+      {
+        status: "CANCELLED",
+        error_code: "SUPERSEDED_BY_COMPLETED_TEAM_REPORT",
+      },
+    ]);
     const periods = await sql<any[]>`
       select status from report_periods where id = ${fixture.period}
     `;
@@ -399,11 +457,9 @@ function teamReport(reportId: string) {
   const keys = ["summary", "project_progress", "risks"];
   return {
     schemaVersion: "1.0",
-    title: "合成 Team Report",
     summary: "团队链路验证完成。",
     sections: keys.map((key) => ({
       key,
-      title: key,
       markdown:
         key === "project_progress"
           ? "### Synthetic Partner\n\n#### 未识别项目\n\n合成链路验证进行中。"
@@ -418,9 +474,8 @@ function teamReport(reportId: string) {
             ]
           : [],
     })),
-    markdown: "这段模型 Markdown 会由服务端重新组装。",
     missingPartnerIds: [],
     qualityWarnings: [],
-    production: production("2026-08-06.team.v4"),
+    production: production("2026-08-09.team.v7"),
   };
 }

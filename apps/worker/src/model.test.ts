@@ -17,11 +17,16 @@ const result = {
 
 describe("central structured model client", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     delete process.env.OPENAI_API_KEY;
     delete process.env.MODEL_API_KEY;
     delete process.env.MODEL_API_BASE_URL;
     delete process.env.OPENAI_BASE_URL;
+    delete process.env.MODEL_REQUEST_TIMEOUT_MS;
+    delete process.env.MODEL_MAX_OUTPUT_TOKENS;
+    delete process.env.MODEL_REASONING_EFFORT;
+    delete process.env.OPENAI_REASONING_EFFORT;
   });
 
   it("uses the Responses API JSON schema format and validates the result", async () => {
@@ -32,6 +37,7 @@ describe("central structured model client", () => {
       expect(body).toMatchObject({
         model: "deepseek-v4-flash:cloud",
         store: false,
+        max_output_tokens: 32_768,
         text: {
           format: {
             type: "json_schema",
@@ -71,6 +77,94 @@ describe("central structured model client", () => {
         model: "deepseek-v4-flash:cloud",
       }),
     ).resolves.toEqual(result);
+  });
+
+  it("uses a configured output token budget", async () => {
+    process.env.MODEL_API_KEY = "test-only-key";
+    process.env.MODEL_API_BASE_URL = "http://model.test:8080";
+    process.env.MODEL_MAX_OUTPUT_TOKENS = "24000";
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body)).max_output_tokens).toBe(24_000);
+      return new Response(
+        JSON.stringify({ output_text: JSON.stringify(result) }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      generateStructured({
+        name: "aggregation_test",
+        schema: aggregationResultSchema,
+        instructions: "Aggregate facts.",
+        input: { facts: [] },
+        model: "deepseek-v4-flash:cloud",
+      }),
+    ).resolves.toEqual(result);
+  });
+
+  it("explicitly disables reasoning when the configured effort is none", async () => {
+    process.env.MODEL_API_KEY = "test-only-key";
+    process.env.MODEL_API_BASE_URL = "http://model.test:8080";
+    process.env.MODEL_REASONING_EFFORT = "none";
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body)).reasoning).toEqual({
+        effort: "none",
+      });
+      return new Response(
+        JSON.stringify({ output_text: JSON.stringify(result) }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      generateStructured({
+        name: "aggregation_test",
+        schema: aggregationResultSchema,
+        instructions: "Aggregate facts.",
+        input: { facts: [] },
+        model: "deepseek-v4-flash:cloud",
+      }),
+    ).resolves.toEqual(result);
+  });
+
+  it("reports incomplete response diagnostics when output text is absent", async () => {
+    process.env.MODEL_API_KEY = "test-only-key";
+    process.env.MODEL_API_BASE_URL = "http://model.test:8080";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              id: "resp_incomplete",
+              status: "incomplete",
+              incomplete_details: { reason: "max_output_tokens" },
+              output: [{ type: "reasoning" }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+
+    await expect(
+      generateStructured({
+        name: "aggregation_test",
+        schema: aggregationResultSchema,
+        instructions: "Aggregate facts.",
+        input: { facts: [] },
+        model: "deepseek-v4-flash:cloud",
+      }),
+    ).rejects.toThrow(
+      "status=incomplete, reason=max_output_tokens, outputTypes=reasoning",
+    );
   });
 
   it("accepts a whole-response JSON code fence from compatible gateways", async () => {
@@ -139,5 +233,39 @@ describe("central structured model client", () => {
         model: "deepseek-v4-flash:cloud",
       }),
     ).rejects.toThrow("MODEL_API_KEY");
+  });
+
+  it("classifies an aborted request as a model timeout", async () => {
+    vi.useFakeTimers();
+    process.env.MODEL_API_KEY = "test-only-key";
+    process.env.MODEL_REQUEST_TIMEOUT_MS = "25";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("aborted", "AbortError")),
+              { once: true },
+            );
+          }),
+      ),
+    );
+
+    const request = generateStructured({
+      name: "aggregation_test",
+      schema: aggregationResultSchema,
+      instructions: "Aggregate facts.",
+      input: { facts: [] },
+      model: "deepseek-v4-flash:cloud",
+    });
+    const rejection = expect(request).rejects.toMatchObject({
+      name: "ModelRequestTimeoutError",
+      code: "MODEL_REQUEST_TIMEOUT",
+      timeoutMs: 25,
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await rejection;
   });
 });

@@ -8,6 +8,50 @@ type GenerateInput = {
   model: string;
 };
 
+const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 240_000;
+const MAX_MODEL_REQUEST_TIMEOUT_MS = 900_000;
+const DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 32_768;
+const MAX_MODEL_MAX_OUTPUT_TOKENS = 128_000;
+
+export class ModelRequestTimeoutError extends Error {
+  readonly code = "MODEL_REQUEST_TIMEOUT";
+
+  constructor(readonly timeoutMs: number) {
+    super(`Model request timed out after ${timeoutMs}ms`);
+    this.name = "ModelRequestTimeoutError";
+  }
+}
+
+export function modelRequestTimeoutMs() {
+  const raw = process.env.MODEL_REQUEST_TIMEOUT_MS;
+  if (!raw) return DEFAULT_MODEL_REQUEST_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > MAX_MODEL_REQUEST_TIMEOUT_MS
+  )
+    throw new Error(
+      `MODEL_REQUEST_TIMEOUT_MS must be an integer between 1 and ${MAX_MODEL_REQUEST_TIMEOUT_MS}`,
+    );
+  return parsed;
+}
+
+export function modelMaxOutputTokens() {
+  const raw = process.env.MODEL_MAX_OUTPUT_TOKENS;
+  if (!raw) return DEFAULT_MODEL_MAX_OUTPUT_TOKENS;
+  const parsed = Number(raw);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > MAX_MODEL_MAX_OUTPUT_TOKENS
+  )
+    throw new Error(
+      `MODEL_MAX_OUTPUT_TOKENS must be an integer between 1 and ${MAX_MODEL_MAX_OUTPUT_TOKENS}`,
+    );
+  return parsed;
+}
+
 export function modelGatewayConfigured() {
   return Boolean(process.env.MODEL_API_KEY ?? process.env.OPENAI_API_KEY);
 }
@@ -19,6 +63,19 @@ function responsesEndpoint() {
     "https://api.openai.com/v1"
   ).replace(/\/+$/, "");
   return `${baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`}/responses`;
+}
+
+function reasoningRequest() {
+  const effort =
+    process.env.MODEL_REASONING_EFFORT ??
+    process.env.OPENAI_REASONING_EFFORT ??
+    "low";
+  const normalized = effort.trim().toLowerCase();
+  return {
+    reasoning: {
+      effort: normalized === "off" ? "none" : normalized,
+    },
+  };
 }
 
 function responseText(payload: any) {
@@ -64,8 +121,9 @@ export async function generateStructured<T>({
     $refStrategy: "none",
   }) as Record<string, unknown>;
   delete jsonSchema.$schema;
+  const timeoutMs = modelRequestTimeoutMs();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(responsesEndpoint(), {
       method: "POST",
@@ -77,12 +135,8 @@ export async function generateStructured<T>({
       body: JSON.stringify({
         model,
         store: false,
-        reasoning: {
-          effort:
-            process.env.MODEL_REASONING_EFFORT ??
-            process.env.OPENAI_REASONING_EFFORT ??
-            "low",
-        },
+        ...reasoningRequest(),
+        max_output_tokens: modelMaxOutputTokens(),
         input: [
           {
             role: "developer",
@@ -120,13 +174,24 @@ export async function generateStructured<T>({
       );
     }
     const text = responseText(payload);
-    if (!text)
+    if (!text) {
+      const outputTypes = Array.isArray(payload.output)
+        ? payload.output
+            .map((item: any) => item?.type)
+            .filter(Boolean)
+            .join(",")
+        : "none";
       throw new Error(
-        `OpenAI response ${payload.id ?? "unknown"} did not contain structured output`,
+        `OpenAI response ${payload.id ?? "unknown"} did not contain structured output (status=${payload.status ?? "unknown"}, reason=${payload.incomplete_details?.reason ?? "unknown"}, outputTypes=${outputTypes || "none"})`,
       );
+    }
     const result = schema.parse(parseStructuredText(text)) as any;
     if (result?.production) result.production.modelVersion = model;
     return result as T;
+  } catch (error) {
+    if (controller.signal.aborted)
+      throw new ModelRequestTimeoutError(timeoutMs);
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

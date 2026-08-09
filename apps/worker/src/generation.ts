@@ -5,11 +5,17 @@ import {
   assertReportSemantics,
   assertTeamReportSemantics,
   individualReportResultSchema,
+  teamReportGenerationResultSchema,
   teamReportResultSchema,
 } from "@partner-report/contracts";
 import { centralModelIdSchema } from "@partner-report/contracts/models";
 import { sqlClient as sql } from "@partner-report/db";
-import { generateStructured, modelGatewayConfigured } from "./model.js";
+import {
+  generateStructured,
+  ModelRequestTimeoutError,
+  modelGatewayConfigured,
+  modelRequestTimeoutMs,
+} from "./model.js";
 
 type Job = {
   id: string;
@@ -28,8 +34,21 @@ const aggregationInstructions = (model: string) =>
 const reportInstructions = (model: string) =>
   `You generate an individual Partner report from an approved immutable Work Item Snapshot. When currentReport and reviewInstruction are supplied, revise the current report according to that natural-language instruction while keeping every statement grounded in the approved Work Items. Use previousReport only to compare prior state with current approved Work Items. Include each of the seven required sections exactly once. Every current factual claim must cite one or more allowed Work Item IDs. Never alter facts merely to satisfy a wording request. State coverage limits plainly and do not invent percentages. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-04.individual-review.v1","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
-const teamReportInstructions = (model: string) =>
-  `Generate a Chinese Team Report strictly from the locked current-period reports in individualReports. Write the summary and all section prose in Chinese; preserve original project names, product names, people names, and technical identifiers when needed. These reports are the sole source of current-period facts: never use project master data, Session Facts, assumptions, or general knowledge. Include exactly three sections in this order: summary, project_progress, risks. Do not create coverage or next-priorities sections. In summary, first synthesize the team's overall work for the week and then summarize progress for every project represented in the individual reports. In project_progress, group content by concrete Partner/person first, using the supplied partnerName when present and partnerId only as a fallback; under each person, list the projects they worked on, preserving each project's concrete work, deliverables, status, and other relevant details. Do not start project_progress with project-level headings, do not merge people, and do not omit any Partner/project contribution. Include risks only when supported by the current individual reports and state plainly when none were reported. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied individual report IDs. The top-level markdown must contain the three required sections only and must not repeat the report title. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-06.team.v4","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+const teamReportInstructions = (
+  model: string,
+  allowedIndividualReportIds: string[],
+) =>
+  `Generate a Chinese Team Report strictly from the locked current-period reports in individualReports. Write the summary and all section prose in Chinese; preserve original project names, product names, people names, and technical identifiers when needed. These reports are the sole source of current-period facts: never use project master data, Session Facts, assumptions, or general knowledge.
+
+Include exactly three sections in this order: summary, project_progress, risks. Do not create coverage or next-priorities sections.
+
+In summary, do not write an opening narrative paragraph or combine all projects into one prose block. Organize the entire section by project as a Markdown bullet list: create one top-level bullet for every represented project, then add nested bullets for every person who contributed to that project. Each person bullet must state their concrete work, result, decision, or blocker for that project. This section is the project-first inverse index of project_progress, and it must not omit any represented project or contributor.
+
+In project_progress, group content by concrete Partner/person first, using the supplied partnerName when present and partnerId only as a fallback. Under each person, organize their work by project and describe concrete work, deliverables, decisions, validation results, and blockers directly. Do not start a project entry with phrases such as "当前状态为" or "状态为". Do not expose raw status enum identifiers such as awaiting_validation, in_progress, or completed. When status is materially relevant, express it naturally in Chinese after the concrete work, for example "已完成" or "待验证", and only when supported by the report. Do not start project_progress with project-level headings, do not merge people, and do not omit any Partner/project contribution.
+
+Include risks only when supported by the current individual reports and state plainly when none were reported. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied individual report IDs. In every claim's individualReportIds, copy only exact values from individualReports[].reportId. For this request, the complete allowlist is ${JSON.stringify(allowedIndividualReportIds)}. Every individualReportId must be copied exactly from this allowlist. Never use the top-level reportId, partnerId, project IDs, Work Item IDs, or any other identifier as an individualReportId.
+
+Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-09.team.v7","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportSectionTitles = {
   summary: "本周团队工作摘要",
@@ -51,7 +70,7 @@ function finalizeTeamReport(input: any, result: any) {
     production: {
       ...result.production,
       skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-06.team.v4",
+      promptVersion: "2026-08-09.team.v7",
       schemaVersion: "1.0",
       producer: "data-platform",
     },
@@ -76,6 +95,7 @@ async function selectedModelFor(job: Job) {
 }
 
 async function leaseNextJob(onlyTenantId?: string) {
+  const leaseMs = modelRequestTimeoutMs() + 60_000;
   return sql.begin(async (tx) => {
     const rows = await tx<Job[]>`
       select * from agent_jobs
@@ -95,7 +115,7 @@ async function leaseNextJob(onlyTenantId?: string) {
     if (!job) return null;
     await tx`
       update agent_jobs set status = 'LEASED', attempt_count = attempt_count + 1,
-        lease_until = now() + interval '3 minutes', updated_at = now()
+        lease_until = now() + ${leaseMs} * interval '1 millisecond', updated_at = now()
       where id = ${job.id}
     `;
     return { ...job, attempt_count: job.attempt_count + 1 };
@@ -276,10 +296,12 @@ async function applyReport(job: Job, output: unknown, model: string) {
 }
 
 async function applyTeamReport(job: Job, output: unknown, model: string) {
-  const parsed = teamReportResultSchema.parse(output);
-  assertTeamReportSemantics(parsed);
-  assertChineseTeamReport(parsed);
-  const result = finalizeTeamReport(job.input_payload, parsed);
+  const generated = teamReportGenerationResultSchema.parse(output);
+  const result = teamReportResultSchema.parse(
+    finalizeTeamReport(job.input_payload, generated),
+  );
+  assertTeamReportSemantics(result);
+  assertChineseTeamReport(result);
   const allowed = new Set<string>(
     job.input_payload.individualReports.map((report: any) => report.reportId),
   );
@@ -326,12 +348,28 @@ async function applyTeamReport(job: Job, output: unknown, model: string) {
       where id = ${report.period_id} and tenant_id = ${job.tenant_id}
         and team_id = ${job.team_id}
     `;
+    await tx`
+      update agent_jobs set status = 'CANCELLED', lease_until = null,
+        error_code = 'SUPERSEDED_BY_COMPLETED_TEAM_REPORT',
+        error_message = 'Superseded by a completed Team Report job', updated_at = now()
+      where tenant_id = ${job.tenant_id} and id <> ${job.id}
+        and type in ('GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT')
+        and input_payload->>'reportId' = ${report.id}
+        and status in ('PENDING', 'RETRY_WAIT', 'LEASED', 'FAILED')
+    `;
   });
   return result;
 }
 
 function safeError(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, 900);
+}
+
+function generationErrorCode(error: unknown) {
+  if (error instanceof ModelRequestTimeoutError) return error.code;
+  return modelGatewayConfigured()
+    ? "CENTRAL_GENERATION_FAILED"
+    : "MODEL_NOT_CONFIGURED";
 }
 
 export async function processNextGenerationJob(onlyTenantId?: string) {
@@ -355,8 +393,13 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       : isTeamReport
         ? await generateStructured({
             name: "partner_team_report",
-            schema: teamReportResultSchema,
-            instructions: teamReportInstructions(model),
+            schema: teamReportGenerationResultSchema,
+            instructions: teamReportInstructions(
+              model,
+              job.input_payload.individualReports.map(
+                (report: any) => report.reportId,
+              ),
+            ),
             input: job.input_payload,
             model,
           })
@@ -375,16 +418,16 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
     await sql`
       update agent_jobs set status = 'COMPLETED', output_payload = ${JSON.stringify(applied)}::jsonb,
         completed_at = now(), lease_until = null, error_code = null, error_message = null, updated_at = now()
-      where id = ${job.id}
+      where id = ${job.id} and status = 'LEASED'
     `;
     return { processed: true, jobId: job.id, type: job.type };
   } catch (error) {
     const terminal = job.attempt_count >= job.max_attempts;
     await sql`
       update agent_jobs set status = ${terminal ? "FAILED" : "RETRY_WAIT"},
-        error_code = ${modelGatewayConfigured() ? "CENTRAL_GENERATION_FAILED" : "MODEL_NOT_CONFIGURED"},
+        error_code = ${generationErrorCode(error)},
         error_message = ${safeError(error)}, lease_until = null, updated_at = now()
-      where id = ${job.id}
+      where id = ${job.id} and status = 'LEASED'
     `;
     return { processed: true, jobId: job.id, type: job.type, failed: true };
   }

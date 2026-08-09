@@ -70,6 +70,7 @@ const jobTypeMeta: Record<string, { label: string; stage: string }> = {
 
 const errorCodeLabel: Record<string, string> = {
   MODEL_NOT_CONFIGURED: "中台模型尚未配置",
+  MODEL_REQUEST_TIMEOUT: "中台模型响应超时",
   CENTRAL_GENERATION_FAILED: "中台模型生成失败",
   LEASE_EXHAUSTED: "任务租约多次过期",
 };
