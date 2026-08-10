@@ -1,41 +1,35 @@
 # Partner Report Agent
 
+## 用户安装与配置
+
+开始前，请向团队管理员获取数据中台地址和绑定码，然后在终端执行：
+
+```bash
+codex plugin marketplace add saul-LinY/partner-report-agent
+codex plugin add partner-report@partner-report-marketplace
+```
+
+使用下面的命令确认插件已安装：
+
+```bash
+codex plugin list
+```
+
+安装完成后，重启 Codex 并新建对话，发送：
+
+```text
+使用 $partner-report-sync 连接 Partner Report。
+数据中台地址是：https://report-api.example.com
+绑定码是：PR-XXXX-XXXX
+```
+
+随后根据飞书提示完成身份确认和项目授权。
+
+插件绑定成功后的交互与权限激活逻辑可参考：[插件绑定与项目权限激活流程图](https://www.figma.com/board/r7tRUcf15bGTzycjBMR1T4/%E6%8F%92%E4%BB%B6%E7%BB%91%E5%AE%9A%E4%B8%8E%E9%A1%B9%E7%9B%AE%E6%9D%83%E9%99%90%E6%BF%80%E6%B4%BB%E6%B5%81%E7%A8%8B?node-id=0-1&t=j1Iq7WI8x9RwAUos-1)。该图用于说明业务流程，不是部署教程。
+
 ## 项目工作流
 
-```mermaid
-flowchart TD
-    A["Team Admin 创建 Partner<br/>生成绑定码"] --> B["Partner 安装并绑定 Plugin"]
-    B --> C["创建或复用官方 Scheduled Task"]
-    C --> D["飞书身份确认"]
-    D --> E["发现候选项目<br/>仅发送匿名项目元数据"]
-    E --> F{"项目范围已允许?"}
-    F -->|否| G["等待项目审批<br/>不读取 Session"]
-    G -.->|审批后下次运行| E
-    F -->|是| H["Scheduled Task 获取采集租约<br/>按游标和重叠窗口扫描"]
-    H --> I["thread/list + thread/read"]
-    I --> J{"是否为完整问答?"}
-    J -->|否| K["跳过并等待下次运行"]
-    J -->|是| L["单 Session 过滤、提取中文贡献<br/>脱敏与 Schema 校验"]
-    L --> M{"内容是否有价值且未重复?"}
-    M -->|否| N["本地记录匿名 hash<br/>不上传"]
-    M -->|是| O["幂等上传 Session Contribution"]
-    N --> P["终态审查并推进成功游标"]
-    O --> P
-    P --> Q["周期截止：冻结 Fact Snapshot"]
-    Q --> R["中台模型跨 Session 聚合<br/>生成 Work Item 草稿"]
-    R --> S{"第一轮工作事项审核通过?"}
-    S -->|否| T["Admin Web 修改、排除或重新生成"]
-    T --> S
-    S -->|是| U["冻结 Work Item Snapshot"]
-    U --> V["中台模型生成个人 Report 草稿"]
-    V --> W{"第二轮个人报告审核通过?"}
-    W -->|否| X["Admin Web 调整报告<br/>事实错误返回工作事项层"]
-    X --> V
-    W -->|是| Y["锁定个人 Report 版本"]
-    Y --> Z["到 Team Admin 配置时间"]
-    Z --> AA["聚合已锁定个人 Report<br/>标记未提交人员并与上期比较"]
-    AA --> AB["生成、锁定并归档 Team Report"]
-```
+[![插件绑定与项目权限激活流程图](docs/assets/plugin-binding-project-permission-flow.png)](https://www.figma.com/board/r7tRUcf15bGTzycjBMR1T4/%E6%8F%92%E4%BB%B6%E7%BB%91%E5%AE%9A%E4%B8%8E%E9%A1%B9%E7%9B%AE%E6%9D%83%E9%99%90%E6%BF%80%E6%B4%BB%E6%B5%81%E7%A8%8B?node-id=0-1&t=j1Iq7WI8x9RwAUos-1)
 
 ### 1. Partner 绑定
 
