@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { formatReportDate, normalizeTeamReportSummary } from "./generation.js";
+import {
+  aggregationInstructions,
+  formatReportDate,
+  normalizeTeamReportSummary,
+  reportInstructions,
+} from "./generation.js";
+
+describe("reader-facing generation instructions", () => {
+  it("asks work cards to use short, plain Chinese", () => {
+    const instructions = aggregationInstructions("test-model");
+
+    expect(instructions).toContain("simplified Chinese");
+    expect(instructions).toContain("plain, direct, concise language");
+    expect(instructions).toContain("120 Chinese characters");
+    expect(instructions).toContain("80 Chinese characters");
+    expect(instructions).toContain("2026-08-10.project-card.v2");
+  });
+
+  it("asks individual reports to stay readable and avoid repetition", () => {
+    const instructions = reportInstructions("test-model");
+
+    expect(instructions).toContain("simplified Chinese");
+    expect(instructions).toContain("colleague without technical context");
+    expect(instructions).toContain("Do not repeat the same fact");
+    expect(instructions).toContain('write only "无相关内容"');
+    expect(instructions).toContain("2026-08-10.individual-review.v2");
+  });
+});
 
 describe("Team Report numbering", () => {
   it("formats the report creation date in the team's timezone", () => {

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
-import type { SendInteractiveCardInput } from "./client.js";
 import { FeishuDeliveryService } from "./delivery.js";
 
 class RollbackSmokeTest extends Error {}
@@ -220,5 +219,4 @@ describe("FeishuDeliveryService PostgreSQL path", () => {
       if (error !== rollback) throw error;
     }
   });
-
 });

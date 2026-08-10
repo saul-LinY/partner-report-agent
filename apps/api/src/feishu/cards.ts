@@ -807,7 +807,7 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
       (entry) =>
         `- ${safeMarkdownText(entry.date, 40)}：${safeMarkdownText(
           entry.summary,
-          360,
+          180,
         )}`,
     );
   if (input.item.dailyProgress.length > dailyProgress.length) {
@@ -819,7 +819,7 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
     `**${safeMarkdownText(input.item.title, 160)}**`,
     `状态：${safeMarkdownText(input.item.status, 80)}`,
     "",
-    safeMarkdownText(input.item.overview, 1_200),
+    safeMarkdownText(input.item.overview, 500),
     ...(dailyProgress.length > 0 ? ["", "**每日进展**", ...dailyProgress] : []),
   ].join("\n");
   const baseValue = {

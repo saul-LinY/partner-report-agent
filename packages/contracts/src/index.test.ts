@@ -6,6 +6,7 @@ import {
   aggregationResultSchema,
   containsSensitiveValue,
   connectivityTestSchema,
+  coverageSchema,
   individualReportResultSchema,
   pluginDiagnosticBatchSchema,
   productionMetadataSchema,
@@ -13,6 +14,34 @@ import {
   sessionContributionSchema,
   sessionExtractionResultSchema,
 } from "./index.js";
+
+describe("collection coverage contract", () => {
+  it("keeps deferred, skipped, failed extraction, and unprocessed counts separate", () => {
+    expect(
+      coverageSchema.parse({
+        discovered: 11,
+        eligible: 11,
+        readable: 11,
+        extracted: 2,
+        deferred: 1,
+        skipped: 2,
+        notProcessed: 5,
+        failedRead: 0,
+        failedExtract: 1,
+        excluded: 2,
+        pendingSync: 0,
+        activeAtCutoff: 0,
+        hookMissed: 0,
+        warnings: ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+      }),
+    ).toMatchObject({
+      deferred: 1,
+      skipped: 2,
+      notProcessed: 5,
+      failedExtract: 1,
+    });
+  });
+});
 
 describe("plugin connectivity contract", () => {
   const valid = {

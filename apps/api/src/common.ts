@@ -196,8 +196,3 @@ export async function auditWithRequestId(
     )
   `;
 }
-
-export function assertTenant(actual: string, expected: string) {
-  if (actual !== expected)
-    throw new ApiError(403, "TENANT_MISMATCH", "资源不属于当前租户。");
-}

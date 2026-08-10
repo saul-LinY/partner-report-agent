@@ -9,12 +9,7 @@ import {
   renderScopeStatusCard,
   type FeishuCard,
 } from "./cards.js";
-import {
-  FeishuApiError,
-  createFeishuMessageClient,
-  type FeishuMessageClient,
-} from "./client.js";
-import { requireFeishuConfig, type FeishuConfig } from "./config.js";
+import { FeishuApiError, type FeishuMessageClient } from "./client.js";
 
 type Database = typeof defaultDatabase;
 
@@ -1600,56 +1595,4 @@ export class FeishuDeliveryService {
       reason: "delivery_failed",
     };
   }
-}
-
-export function createFeishuDeliveryService(
-  config: FeishuConfig = requireFeishuConfig(),
-) {
-  return new FeishuDeliveryService({
-    appId: config.appId,
-    messageClient: createFeishuMessageClient(config),
-    ...(process.env.WEB_ORIGIN ? { webOrigin: process.env.WEB_ORIGIN } : {}),
-  });
-}
-
-export async function loadDeliveryForAction(
-  input: LoadDeliveryForActionInput,
-  service: FeishuDeliveryService = createFeishuDeliveryService(),
-) {
-  return service.loadDeliveryForAction(input);
-}
-
-export async function deliverReview(
-  input: FeishuDeliveryScope & { reviewId: string },
-  service: FeishuDeliveryService = createFeishuDeliveryService(),
-) {
-  return service.deliverReview(input);
-}
-
-export async function deliverReport(
-  input: FeishuDeliveryScope & { reportId: string },
-  service: FeishuDeliveryService = createFeishuDeliveryService(),
-) {
-  return service.deliverReport(input);
-}
-
-export async function patchReviewStatus(
-  input: FeishuDeliveryScope & { reviewId: string; card: FeishuCard },
-  service: FeishuDeliveryService = createFeishuDeliveryService(),
-) {
-  return service.patchReviewStatus(input);
-}
-
-export async function patchReportStatus(
-  input: FeishuDeliveryScope & { reportId: string; card: FeishuCard },
-  service: FeishuDeliveryService = createFeishuDeliveryService(),
-) {
-  return service.patchReportStatus(input);
-}
-
-export async function syncPartnerPendingApprovals(
-  scope: FeishuDeliveryScope,
-  service: FeishuDeliveryService = createFeishuDeliveryService(),
-) {
-  return service.syncPartnerPendingApprovals(scope);
 }

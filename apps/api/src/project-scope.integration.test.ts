@@ -23,7 +23,6 @@ suite("project scope persistence", () => {
   };
   const periodEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1_000);
   const feishuAppId = `cli_scope_test_${fixture.feishuBindingId}`;
-  const feishuOpenId = `ou_scope_test_${fixture.feishuBindingId}`;
   const actor: DomainActor = {
     actorType: "plugin",
     actorId: fixture.pluginInstanceId,

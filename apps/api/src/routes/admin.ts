@@ -158,8 +158,6 @@ export function pluginRunStatus(row: {
   return "healthy";
 }
 
-export const pluginHealth = pluginRunStatus;
-
 export function projectScopeDeliveryMode(pendingCount: number) {
   return pendingCount > 0 ? "review" : "status";
 }

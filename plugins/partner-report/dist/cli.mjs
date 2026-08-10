@@ -9,16 +9,14 @@ var __export = (target, all) => {
 import { createHash as createHash2, randomBytes as randomBytes2, randomUUID } from "node:crypto";
 import {
   chmodSync as chmodSync4,
-  existsSync as existsSync5,
   mkdtempSync,
   readFileSync as readFileSync4,
   rmSync,
-  unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { hostname, tmpdir as tmpdir2 } from "node:os";
 import { basename as basename3, dirname as dirname3, relative as relative3, resolve as resolve5 } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 
 // ../../packages/contracts/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -4180,6 +4178,8 @@ var coverageSchema = external_exports.object({
   readable: external_exports.number().int().nonnegative(),
   extracted: external_exports.number().int().nonnegative(),
   deferred: external_exports.number().int().nonnegative().default(0),
+  skipped: external_exports.number().int().nonnegative().default(0),
+  notProcessed: external_exports.number().int().nonnegative().default(0),
   failedRead: external_exports.number().int().nonnegative(),
   failedExtract: external_exports.number().int().nonnegative(),
   excluded: external_exports.number().int().nonnegative(),
@@ -4731,6 +4731,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u6BCF\u6B21\u8FD0\u884C\u5148\u6309 Skill \u68C0\u67E5\u540C\u540D Codex Scheduled Task \u7684 Prompt\uFF1B\u53EA\u5728 Prompt \u4E0D\u4E00\u81F4\u65F6\u66F4\u65B0 Prompt\uFF0C\u4E0D\u5F97\u6BD4\u8F83\u6216\u4FEE\u6539\u5176\u4ED6\u4EFB\u52A1\u914D\u7F6E\u3002",
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
+  "\u63A5\u8FD1\u8FD0\u884C\u65F6\u95F4\u4E0A\u9650\u65F6\u505C\u6B62\u9886\u53D6\u65B0 Job\uFF1B\u5F53\u524D Job \u65E0\u6CD5\u5B8C\u6210\u65F6\u4F7F\u7528 collect-defer\uFF0C\u4FDD\u7559\u961F\u5217\u5230\u4E0B\u4E00\u6B21\u8FD0\u884C\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
   "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u53EA\u8BFB\u53D6 thread/list \u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u65B0\u5EFA\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
   "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
@@ -4738,15 +4739,16 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u3001\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\u548C\u5DF2\u5F52\u6863 Session\uFF1B\u6309\u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\uFF0C\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u540C\u540D\u4F46\u4E0D\u540C\u4ED3\u5E93\u5206\u522B\u5904\u7406\u3002\u672A\u9009\u5B9A\u3001\u5F85\u5BA1\u6279\u6216\u62D2\u7EDD\u7684\u9879\u76EE\u4E00\u5F8B\u89C6\u4E3A\u4E34\u65F6\u4F1A\u8BDD\uFF0C\u7981\u6B62\u8BFB\u53D6\u548C\u4E0A\u4F20\u3002project-scope.json \u7684\u672C\u5730 allowed/denied \u4FEE\u6539\u4F1A\u5728\u91C7\u96C6\u524D\u63D0\u4EA4\u4E2D\u53F0\uFF0C\u6309\u7248\u672C\u6821\u9A8C\u6210\u529F\u540E\u624D\u751F\u6548\uFF1B\u51B2\u7A81\u65F6\u505C\u6B62\u91C7\u96C6\u5E76\u8981\u6C42\u5148\u540C\u6B65\u3002",
   "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
-  "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002",
+  "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\uFF0C\u5E76\u91C7\u7528\u901A\u4FD7\u3001\u7CBE\u7B80\u3001\u76F4\u63A5\u7684\u8868\u8FBE\uFF0C\u907F\u514D\u672F\u8BED\u5806\u780C\u3001\u91CD\u590D\u80CC\u666F\u548C\u6D41\u7A0B\u5957\u8BDD\u3002",
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
+  "Schema\u3001\u4E2D\u6587\u6216\u5B89\u5168\u6821\u9A8C\u5931\u8D25\u5FC5\u987B\u5728\u540C\u4E00\u4E2A\u7ED3\u679C\u6587\u4EF6\u5185\u4FEE\u6B63\u4E14\u6700\u591A\u4E09\u6B21\uFF1B\u53EA\u6709\u540C\u4E00 Job \u8FDE\u7EED\u4E09\u6B21\u771F\u5B9E\u5931\u8D25\u540E\u624D\u80FD\u6309 CLI \u8FD4\u56DE\u7684\u5B89\u5168\u539F\u56E0\u7801\u4F7F\u7528 EXTRACT_FAILED\uFF0C\u7981\u6B62\u6279\u91CF collect-skip\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required\u3001project_scope_card_delivery_pending\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "CLI \u8FD4\u56DE started\u3001job\u3001validation_failed\u3001uploaded\u3001ignored\u3001skipped\u3001deferred\u3001review_required\u3001project_scope_card_delivery_pending\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
   "project_scope_card_delivery_pending \u5FC5\u987B\u6301\u7EED\u6267\u884C project-scope-card-wait\uFF1B\u53EA\u6709 CLI \u89C2\u5BDF\u5230\u98DE\u4E66\u5361\u7247\u7248\u672C\u5DF2\u6210\u529F\u6295\u9012\u540E\u624D\u4F1A\u8FD4\u56DE project_scope_approval_required\u3002",
   "CLI \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u786E\u8BA4\u53D1\u9001\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
   "CLI \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
-  "\u961F\u5217\u6E05\u7A7A\u540E\u5FC5\u987B\u6267\u884C collect-review\uFF1B\u53EA\u6709\u8BE5\u5BA1\u67E5\u547D\u4EE4\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextCommand \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
+  "\u961F\u5217\u5B8C\u6574\u5904\u7406\u6216\u56E0\u65F6\u95F4\u9884\u7B97\u5B89\u5168\u5EF6\u540E\u540E\u5FC5\u987B\u6267\u884C collect-review\uFF1B\u5BA1\u67E5\u5FC5\u987B\u533A\u5206 deferred\u3001failedExtract \u548C notProcessed\uFF0C\u53EA\u6709\u8BE5\u547D\u4EE4\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextCommand \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
   "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 CLI \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
   "\u6700\u7EC8\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
 ].join(" ");
@@ -4967,16 +4969,31 @@ function recordAcceptedSession(state, sessionKey, contentHash, processedAt = (/*
   delete state.ignoredSessions[sessionKey];
 }
 function canAdvanceCollectionCheckpoint(counts) {
-  return counts.failedRead === 0 && counts.failedExtract === 0;
+  return counts.failedRead === 0 && counts.failedExtract === 0 && (counts.deferred ?? 0) === 0 && (counts.skipped ?? 0) === 0 && (counts.notProcessed ?? 0) === 0;
 }
 function reviewCollectionCompletion(input) {
   const queueExhausted = input.cursor === input.queueLength;
   const noCurrentJob = !input.hasCurrentJob;
+  const allClaimedJobsTerminal = (input.claimedJobs ?? 0) === (input.terminalJobs ?? 0);
+  const uniqueTerminalJobs = input.uniqueTerminalJobs ?? true;
+  const validFailureAudits = input.validFailureAudits ?? true;
+  const noUnexplainedFailedExtract = (input.unexplainedFailedExtract ?? 0) === 0;
+  const outcomeCountsMatch = input.outcomeCountsMatch ?? true;
+  const notProcessed = input.counts.notProcessed ?? 0;
+  const remainingQueue = Math.max(0, input.queueLength - input.cursor);
+  const remainingQueueExplained = queueExhausted ? notProcessed === 0 : input.stopped === true && notProcessed === remainingQueue;
+  const readyToFinalize = noCurrentJob && allClaimedJobsTerminal && uniqueTerminalJobs && validFailureAudits && noUnexplainedFailedExtract && outcomeCountsMatch && remainingQueueExplained;
   return {
     queueExhausted,
     noCurrentJob,
-    readyToFinalize: queueExhausted && noCurrentJob,
-    checkpointEligible: canAdvanceCollectionCheckpoint(input.counts)
+    allClaimedJobsTerminal,
+    uniqueTerminalJobs,
+    validFailureAudits,
+    noUnexplainedFailedExtract,
+    outcomeCountsMatch,
+    remainingQueueExplained,
+    readyToFinalize,
+    checkpointEligible: readyToFinalize && queueExhausted && input.stopped !== true && canAdvanceCollectionCheckpoint(input.counts)
   };
 }
 function writeLease(path, lease, exclusive = false) {
@@ -5054,6 +5071,116 @@ function releaseCollectionLease(pluginInstanceId, runId, directory = dataDirecto
   if (lease?.pluginInstanceId === pluginInstanceId && lease.runId === runId) {
     unlinkSync(path);
   }
+}
+
+// src/collection-run.ts
+import { isDeepStrictEqual } from "node:util";
+var MAX_EXTRACTION_FAILURES = 3;
+var COLLECTION_RUN_BUDGET_MS = 50 * 6e4;
+var COLLECTION_JOB_RESERVE_MS = 5 * 6e4;
+var extractionFailureCodes = [
+  "RESULT_JSON_INVALID",
+  "SCHEMA_VALIDATION_FAILED",
+  "IMMUTABLE_FIELD_MISMATCH",
+  "CHINESE_OUTPUT_REQUIRED",
+  "SENSITIVE_EGRESS_REJECTED"
+];
+var immutableContributionKeys = [
+  "schemaVersion",
+  "periodKey",
+  "sessionKey",
+  "contentHash",
+  "project",
+  "activity",
+  "observedAt",
+  "production"
+];
+function immutableContributionFromRequirements(contribution) {
+  return Object.fromEntries(
+    immutableContributionKeys.map((key) => [key, contribution[key]])
+  );
+}
+function collectionDeadline(createdAt) {
+  return new Date(
+    new Date(createdAt).getTime() + COLLECTION_RUN_BUDGET_MS
+  ).toISOString();
+}
+function shouldStopBeforeClaim(deadlineAt, now = Date.now(), reserveMs = COLLECTION_JOB_RESERVE_MS) {
+  const deadline = new Date(deadlineAt).getTime();
+  return !Number.isFinite(deadline) || deadline - now <= reserveMs;
+}
+function repairImmutableResult(result, expected) {
+  if (!result || typeof result !== "object" || Array.isArray(result) || result.decision !== "include" || !expected || typeof expected !== "object" || Array.isArray(expected)) {
+    return { result, repaired: false };
+  }
+  const record = result;
+  const originalContribution = record.contribution && typeof record.contribution === "object" && !Array.isArray(record.contribution) ? record.contribution : {};
+  const contribution = { ...originalContribution };
+  for (const key of immutableContributionKeys)
+    contribution[key] = expected[key];
+  const repairedResult = { ...record, contribution };
+  return {
+    result: repairedResult,
+    repaired: !isDeepStrictEqual(repairedResult, result)
+  };
+}
+function appendExtractionFailure(failures, code, occurredAt = (/* @__PURE__ */ new Date()).toISOString()) {
+  if (failures.length >= MAX_EXTRACTION_FAILURES) return failures;
+  return [...failures, { code, occurredAt }];
+}
+function canMarkExtractFailed(failures, causeCode) {
+  return failures.length >= MAX_EXTRACTION_FAILURES && extractionFailureCodes.includes(causeCode) && failures.at(-1)?.code === causeCode;
+}
+function legalCollectSkipOutcome(input) {
+  if (input.requestedJobId !== input.currentJobId)
+    throw Object.assign(new Error("collect-skip \u5FC5\u987B\u663E\u5F0F\u5339\u914D\u5F53\u524D Job\u3002"), {
+      code: "JOB_ID_REQUIRED"
+    });
+  if (input.errorCode === "EXTRACT_FAILED") {
+    if (!canMarkExtractFailed(input.failures, input.causeCode))
+      throw Object.assign(
+        new Error(
+          "EXTRACT_FAILED \u4EC5\u5141\u8BB8\u5728\u540C\u4E00 Job \u8FDE\u7EED\u4E09\u6B21\u771F\u5B9E\u6821\u9A8C\u5931\u8D25\u540E\u4F7F\u7528\uFF0C\u5E76\u4E14\u5FC5\u987B\u4FDD\u7559\u6700\u540E\u4E00\u6B21\u5B89\u5168\u539F\u56E0\u7801\u3002"
+        ),
+        { code: "EXTRACT_FAILED_NOT_ALLOWED" }
+      );
+    return {
+      status: "failedExtract",
+      errorCode: input.errorCode,
+      causeCode: input.causeCode
+    };
+  }
+  if (input.errorCode === "SENSITIVE_EGRESS_REJECTED" && input.failures.at(-1)?.code === input.errorCode)
+    return {
+      status: "skipped",
+      errorCode: input.errorCode,
+      causeCode: input.errorCode
+    };
+  throw Object.assign(
+    new Error("collect-skip \u7F3A\u5C11\u5408\u6CD5\u3001\u5B89\u5168\u4E14\u4E0E\u5F53\u524D Job \u5339\u914D\u7684\u9519\u8BEF\u7801\u3002"),
+    { code: "COLLECT_SKIP_NOT_ALLOWED" }
+  );
+}
+function failedExtractOutcomeIsExplained(outcome) {
+  const failureCodes = Array.isArray(outcome.failureCodes) ? outcome.failureCodes : [];
+  return outcome.status !== "failedExtract" || outcome.errorCode === "EXTRACT_FAILED" && outcome.failureCount >= MAX_EXTRACTION_FAILURES && failureCodes.length === outcome.failureCount && failureCodes.at(-1) === outcome.causeCode && extractionFailureCodes.includes(
+    outcome.causeCode
+  );
+}
+function jobOutcomeFailureAuditIsValid(outcome) {
+  const failureCodes = Array.isArray(outcome.failureCodes) ? outcome.failureCodes : [];
+  return failureCodes.length === outcome.failureCount && failureCodes.every((code) => extractionFailureCodes.includes(code));
+}
+function countJobOutcomes(outcomes) {
+  const counts = {
+    uploaded: 0,
+    ignored: 0,
+    skipped: 0,
+    failedExtract: 0,
+    deferred: 0
+  };
+  for (const outcome of outcomes) counts[outcome.status] += 1;
+  return counts;
 }
 
 // src/app-server.ts
@@ -6073,7 +6200,10 @@ function authRecoveryOutput(expiresAt) {
       read: 0,
       uploaded: 0,
       ignored: 0,
-      skipped: 0
+      skipped: 0,
+      failedExtract: 0,
+      deferred: 0,
+      notProcessed: 0
     }
   });
 }
@@ -6516,9 +6646,16 @@ function readRun(runPath) {
   const absolute = assertRunPath(runPath);
   const manifest = JSON.parse(readFileSync4(absolute, "utf8"));
   const config = loadConfig();
-  if (manifest.schemaVersion !== "1.0" || manifest.pluginInstanceId !== config.pluginInstanceId) {
+  if (!["1.0", "1.1"].includes(manifest.schemaVersion) || manifest.pluginInstanceId !== config.pluginInstanceId) {
     throw new Error("Run \u6E05\u5355\u65E0\u6548\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002");
   }
+  manifest.deadlineAt ??= collectionDeadline(manifest.createdAt);
+  manifest.counts.skipped ??= 0;
+  manifest.counts.deferred ??= 0;
+  manifest.counts.notProcessed ??= 0;
+  manifest.outcomes ??= [];
+  manifest.claimedJobs ??= manifest.counts.uploaded + manifest.counts.ignored + manifest.counts.failedExtract + (manifest.current ? 1 : 0);
+  if (manifest.current) manifest.current.failures ??= [];
   refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
   return { absolute, manifest };
 }
@@ -6528,14 +6665,6 @@ function saveRun(runPath, manifest) {
     mode: 384
   });
   chmodSync4(runPath, 384);
-}
-function removeJobFiles(runPath, current) {
-  const runDirectory = dirname3(runPath);
-  for (const path of [current.inputPath, current.resultPath]) {
-    if (dirname3(resolve5(path)) !== runDirectory)
-      throw new Error("Job \u6587\u4EF6\u4E0D\u5C5E\u4E8E\u5F53\u524D Run\u3002");
-    if (existsSync5(path)) unlinkSync2(path);
-  }
 }
 function writeJob(runPath, jobId, modelInput) {
   const runDirectory = dirname3(runPath);
@@ -6550,20 +6679,23 @@ function writeJob(runPath, jobId, modelInput) {
 }
 async function postCollectionStatus(config, manifest, phase) {
   const { counts } = manifest;
+  const checkpointEligible = phase === "completed" ? completionReview(manifest).checkpointEligible : canAdvanceCollectionCheckpoint(counts);
   const lastSyncAt = counts.uploaded > 0 ? (/* @__PURE__ */ new Date()).toISOString() : void 0;
   const coverage = {
     discovered: counts.discovered,
     eligible: counts.eligible,
     readable: counts.read,
     extracted: counts.uploaded + counts.unchanged,
-    deferred: counts.outsideWindow,
+    deferred: counts.deferred,
+    skipped: counts.skipped,
+    notProcessed: counts.notProcessed,
     failedRead: counts.failedRead,
     failedExtract: counts.failedExtract,
     excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
     activeAtCutoff: 0,
     hookMissed: 0,
-    warnings: canAdvanceCollectionCheckpoint(counts) ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    warnings: checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
     ...lastSyncAt ? { lastSyncAt } : {}
   };
   await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
@@ -6578,6 +6710,7 @@ async function postCollectionStatus(config, manifest, phase) {
       pendingLocalJobs: phase === "completed" ? 0 : manifest.queue.length,
       discoveredCount: counts.discovered,
       eligibleCount: counts.eligible,
+      deferredCount: counts.deferred,
       excludedCount: counts.excluded + counts.ignored + counts.cachedIgnored,
       lastScanAt: manifest.createdAt,
       ...lastSyncAt ? { lastSyncAt } : {},
@@ -6801,10 +6934,11 @@ async function collectStart() {
     (summary) => inWindowIds.has(summary.id)
   ).length;
   const manifest = {
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
     runId,
     pluginInstanceId: config.pluginInstanceId,
     createdAt: runStartedAt,
+    deadlineAt: collectionDeadline(runStartedAt),
     force: flag("force"),
     period: effectivePeriod,
     projects: policy.projects,
@@ -6822,9 +6956,14 @@ async function collectStart() {
       outsideWindow: metadataEligible.length - inWindow.length - queuedOutsideWindow,
       excluded: summaries.length - metadataEligible.length + (inWindow.length - queuedInsideWindow),
       failedRead: 0,
-      failedExtract: 0
+      failedExtract: 0,
+      skipped: 0,
+      deferred: 0,
+      notProcessed: 0
     },
     current: null,
+    claimedJobs: 0,
+    outcomes: [],
     approvalWait: pendingNewScopeKeys.size > 0 ? {
       scopeKeys: [...pendingNewScopeKeys],
       deadlineAt: new Date(runStartedAt).getTime() + POLL_TOTAL_MS,
@@ -6868,12 +7007,51 @@ function currentJobOutput(runPath, current) {
       import.meta.dirname,
       "../schemas/session-extraction-result-v1.json"
     ),
+    validationFailures: current.failures.length,
+    validationAttemptsRemaining: Math.max(
+      0,
+      MAX_EXTRACTION_FAILURES - current.failures.length
+    ),
     nextCommand: `collect-submit --run ${runPath} --result ${current.resultPath}`
   });
 }
+function recordJobOutcome(manifest, current, outcome) {
+  manifest.outcomes.push({
+    jobId: current.jobId,
+    failureCount: current.failures.length,
+    failureCodes: current.failures.map((failure) => failure.code),
+    ...outcome
+  });
+  manifest.counts[outcome.status] += 1;
+  manifest.current = null;
+}
+function deferRun(runPath, manifest, reason) {
+  if (!reason) throw new Error("\u5EF6\u540E\u5904\u7406\u5FC5\u987B\u63D0\u4F9B\u5B89\u5168\u539F\u56E0\u7801\u3002");
+  if (manifest.current)
+    recordJobOutcome(manifest, manifest.current, {
+      status: "deferred",
+      errorCode: reason
+    });
+  manifest.stopReason = reason;
+  manifest.counts.notProcessed = Math.max(
+    0,
+    manifest.queue.length - manifest.cursor
+  );
+  saveRun(runPath, manifest);
+  output({
+    status: "deferred",
+    reason,
+    deferred: manifest.counts.deferred,
+    notProcessed: manifest.counts.notProcessed,
+    checkpointAdvanced: false,
+    warnings: ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    nextCommand: `collect-review --run ${runPath}`
+  });
+}
 async function finishRun(runPath, manifest, config) {
+  const review = completionReview(manifest);
   await postCollectionStatus(config, manifest, "completed");
-  const checkpointAdvanced = canAdvanceCollectionCheckpoint(manifest.counts);
+  const checkpointAdvanced = review.checkpointEligible;
   if (checkpointAdvanced) {
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
@@ -6907,10 +7085,22 @@ async function finishRun(runPath, manifest, config) {
   output(summary);
 }
 function completionReview(manifest) {
+  const outcomeCounts = countJobOutcomes(manifest.outcomes);
   return reviewCollectionCompletion({
     cursor: manifest.cursor,
     queueLength: manifest.queue.length,
     hasCurrentJob: manifest.current !== null,
+    claimedJobs: manifest.claimedJobs,
+    terminalJobs: manifest.outcomes.length,
+    uniqueTerminalJobs: new Set(manifest.outcomes.map((outcome) => outcome.jobId)).size === manifest.outcomes.length,
+    validFailureAudits: manifest.outcomes.every(jobOutcomeFailureAuditIsValid),
+    unexplainedFailedExtract: manifest.outcomes.filter(
+      (outcome) => !failedExtractOutcomeIsExplained(outcome)
+    ).length,
+    outcomeCountsMatch: Object.entries(outcomeCounts).every(
+      ([key, count]) => manifest.counts[key] === count
+    ),
+    stopped: manifest.stopReason !== void 0,
     counts: manifest.counts
   });
 }
@@ -7019,11 +7209,19 @@ async function collectNext() {
   const runPath = option("run");
   if (!runPath) throw new Error("collect-next \u9700\u8981 --run <path>\u3002");
   const { absolute, manifest } = readRun(runPath);
+  if (manifest.stopReason)
+    return deferRun(absolute, manifest, manifest.stopReason);
+  if ((manifest.current || manifest.cursor < manifest.queue.length) && shouldStopBeforeClaim(manifest.deadlineAt))
+    return deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
   if (manifest.current) return currentJobOutput(absolute, manifest.current);
   const server = new CodexAppServer();
   try {
     await server.connect();
     while (manifest.cursor < manifest.queue.length) {
+      if (shouldStopBeforeClaim(manifest.deadlineAt)) {
+        deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
+        return;
+      }
       const summary = manifest.queue[manifest.cursor++];
       const localScope = inspectLocalProjectScope(manifest.pluginInstanceId);
       if (localScope.state !== "valid" || !threadMayBeRead(summary, localScope.scope, {
@@ -7078,7 +7276,15 @@ async function collectNext() {
       }
       const jobId = randomUUID();
       const paths = writeJob(absolute, jobId, job.modelInput);
-      manifest.current = { jobId, ...paths, expected: job.expected };
+      manifest.current = {
+        jobId,
+        ...paths,
+        expected: immutableContributionFromRequirements(
+          job.modelInput.outputRequirements.include.contribution
+        ),
+        failures: []
+      };
+      manifest.claimedJobs += 1;
       saveRun(absolute, manifest);
       return currentJobOutput(absolute, manifest.current);
     }
@@ -7118,11 +7324,11 @@ function assertImmutableContribution(contribution, expected) {
     "activity",
     "observedAt"
   ]) {
-    if (!isDeepStrictEqual(contribution[key], expected[key]))
+    if (!isDeepStrictEqual2(contribution[key], expected[key]))
       throw new Error(`\u6A21\u578B\u4FEE\u6539\u4E86\u4E0D\u53EF\u53D8\u5B57\u6BB5 contribution.${key}\u3002`);
   }
   const { modelVersion: _actualModel, ...actualProduction } = contribution.production;
-  if (!isDeepStrictEqual(actualProduction, expected.production))
+  if (!isDeepStrictEqual2(actualProduction, expected.production))
     throw new Error("\u6A21\u578B\u4FEE\u6539\u4E86\u4E0D\u53EF\u53D8\u5B57\u6BB5 contribution.production\u3002");
   if (contribution.contributions.length === 0)
     throw new Error("include \u7ED3\u679C\u5FC5\u987B\u81F3\u5C11\u5305\u542B\u4E00\u6761\u6709\u4EF7\u503C\u7684\u9879\u76EE\u8D21\u732E\u3002");
@@ -7135,6 +7341,21 @@ function assertChineseContribution(contribution) {
     });
   }
 }
+function extractionFailureOutput(runPath, manifest, current, code) {
+  current.failures = appendExtractionFailure(current.failures, code);
+  saveRun(runPath, manifest);
+  const attempts = current.failures.length;
+  const terminalSensitiveRejection = code === "SENSITIVE_EGRESS_REJECTED";
+  const retriesExhausted = attempts >= MAX_EXTRACTION_FAILURES;
+  output({
+    status: "validation_failed",
+    jobId: current.jobId,
+    errorCode: code,
+    attempts,
+    attemptsRemaining: Math.max(0, MAX_EXTRACTION_FAILURES - attempts),
+    nextCommand: terminalSensitiveRejection ? `collect-skip --run ${runPath} --job ${current.jobId} --error-code SENSITIVE_EGRESS_REJECTED` : retriesExhausted ? `collect-skip --run ${runPath} --job ${current.jobId} --error-code EXTRACT_FAILED --cause-code ${code}` : `collect-submit --run ${runPath} --result ${current.resultPath}`
+  });
+}
 async function collectSubmit() {
   const runPath = option("run");
   const resultPath = option("result");
@@ -7145,9 +7366,43 @@ async function collectSubmit() {
   if (!current) throw new Error("\u5F53\u524D Run \u6CA1\u6709\u5F85\u63D0\u4EA4 Job\u3002");
   if (resolve5(resultPath) !== resolve5(current.resultPath))
     throw new Error("Result \u8DEF\u5F84\u4E0E\u5F53\u524D Job \u4E0D\u5339\u914D\u3002");
-  const result = sessionExtractionResultSchema.parse(
-    JSON.parse(readFileSync4(current.resultPath, "utf8"))
-  );
+  if (current.failures.length >= MAX_EXTRACTION_FAILURES)
+    return output({
+      status: "validation_failed",
+      jobId: current.jobId,
+      errorCode: current.failures.at(-1).code,
+      attempts: current.failures.length,
+      attemptsRemaining: 0,
+      nextCommand: `collect-skip --run ${absolute} --job ${current.jobId} --error-code EXTRACT_FAILED --cause-code ${current.failures.at(-1).code}`
+    });
+  let rawResult;
+  try {
+    rawResult = JSON.parse(readFileSync4(current.resultPath, "utf8"));
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "RESULT_JSON_INVALID"
+    );
+  }
+  const repaired = repairImmutableResult(rawResult, current.expected);
+  if (repaired.repaired)
+    writeFileSync4(
+      current.resultPath,
+      `${JSON.stringify(repaired.result, null, 2)}
+`,
+      { mode: 384 }
+    );
+  const parsed = sessionExtractionResultSchema.safeParse(repaired.result);
+  if (!parsed.success)
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "SCHEMA_VALIDATION_FAILED"
+    );
+  const result = parsed.data;
   if (result.decision === "ignore") {
     const state2 = loadCollectionState(manifest.pluginInstanceId);
     recordIgnoredSession(
@@ -7156,13 +7411,11 @@ async function collectSubmit() {
       current.expected.contentHash
     );
     saveCollectionState(state2);
-    removeJobFiles(absolute, current);
-    manifest.counts.ignored += 1;
     manifest.knownSessions[current.expected.sessionKey] = {
       contentHashes: [current.expected.contentHash],
       decision: "ignored"
     };
-    manifest.current = null;
+    recordJobOutcome(manifest, current, { status: "ignored" });
     saveRun(absolute, manifest);
     return output({
       status: "ignored",
@@ -7170,12 +7423,44 @@ async function collectSubmit() {
       nextCommand: `collect-next --run ${absolute}`
     });
   }
-  assertImmutableContribution(result.contribution, current.expected);
-  assertChineseContribution(result.contribution);
-  if (containsSensitive(result.contribution))
-    throw Object.assign(new Error("\u8D21\u732E\u7ED3\u679C\u5305\u542B\u7591\u4F3C\u654F\u611F\u503C\uFF0C\u5DF2\u963B\u6B62\u4E0A\u4F20\u3002"), {
-      code: "SENSITIVE_EGRESS_REJECTED"
-    });
+  try {
+    assertImmutableContribution(result.contribution, current.expected);
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "IMMUTABLE_FIELD_MISMATCH"
+    );
+  }
+  try {
+    assertChineseContribution(result.contribution);
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "CHINESE_OUTPUT_REQUIRED"
+    );
+  }
+  if (containsSensitive(result.contribution)) {
+    writeFileSync4(
+      current.resultPath,
+      `${JSON.stringify({
+        schemaVersion: "1.0",
+        status: "rejected",
+        errorCode: "SENSITIVE_EGRESS_REJECTED"
+      })}
+`,
+      { mode: 384 }
+    );
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "SENSITIVE_EGRESS_REJECTED"
+    );
+  }
   const idempotencyKey = sha2562(
     `${result.contribution.sessionKey}:${result.contribution.periodKey}:${result.contribution.contentHash}`
   );
@@ -7194,13 +7479,11 @@ async function collectSubmit() {
     result.contribution.contentHash
   );
   saveCollectionState(state);
-  removeJobFiles(absolute, current);
-  manifest.counts.uploaded += 1;
   manifest.knownSessions[result.contribution.sessionKey] = {
     contentHashes: [result.contribution.contentHash],
     decision: "accepted"
   };
-  manifest.current = null;
+  recordJobOutcome(manifest, current, { status: "uploaded" });
   saveRun(absolute, manifest);
   output({
     status: "uploaded",
@@ -7214,15 +7497,42 @@ function collectSkip() {
   const { absolute, manifest } = readRun(runPath);
   const current = manifest.current;
   if (!current) throw new Error("\u5F53\u524D Run \u6CA1\u6709\u5F85\u8DF3\u8FC7 Job\u3002");
-  removeJobFiles(absolute, current);
-  manifest.counts.failedExtract += 1;
-  manifest.current = null;
+  const errorCode = option("error-code");
+  const causeCode = option("cause-code");
+  recordJobOutcome(
+    manifest,
+    current,
+    legalCollectSkipOutcome({
+      currentJobId: current.jobId,
+      requestedJobId: option("job"),
+      errorCode,
+      causeCode,
+      failures: current.failures
+    })
+  );
   saveRun(absolute, manifest);
   output({
     status: "skipped",
-    errorCode: option("error-code", "EXTRACT_FAILED"),
+    jobStatus: manifest.outcomes.at(-1).status,
+    errorCode,
+    ...causeCode ? { causeCode } : {},
     nextCommand: `collect-next --run ${absolute}`
   });
+}
+function collectDefer() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-defer \u9700\u8981 --run <path>\u3002");
+  const { absolute, manifest } = readRun(runPath);
+  const reason = option("reason");
+  if (![
+    "TIME_BUDGET_EXHAUSTED",
+    "RUN_INTERRUPTED",
+    "TEMPORARILY_UNAVAILABLE"
+  ].includes(reason ?? ""))
+    throw Object.assign(new Error("collect-defer \u9700\u8981\u5408\u6CD5\u7684\u5B89\u5168\u539F\u56E0\u7801\u3002"), {
+      code: "DEFER_REASON_REQUIRED"
+    });
+  deferRun(absolute, manifest, reason);
 }
 async function status() {
   const config = loadConfig(false);
@@ -7377,7 +7687,8 @@ function help() {
       "collect-next --run <path>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
-      "collect-skip --run <path> [--error-code <code>]",
+      "collect-skip --run <path> --job <job-id> --error-code <code> [--cause-code <code>]",
+      "collect-defer --run <path> --reason <TIME_BUDGET_EXHAUSTED|RUN_INTERRUPTED|TEMPORARILY_UNAVAILABLE>",
       "status",
       "project-scope-list",
       "project-scope-sync",
@@ -7423,6 +7734,7 @@ async function runCommand() {
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
   else if (command === "collect-skip") collectSkip();
+  else if (command === "collect-defer") collectDefer();
   else if (command === "status") await status();
   else if (command === "project-scope-list") await projectScopeList();
   else if (command === "project-scope-sync")

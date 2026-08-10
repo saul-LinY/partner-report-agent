@@ -4,7 +4,7 @@ import { RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Link, useRoute } from "wouter";
 import { api } from "./api.js";
-import { Badge, EmptyState, ErrorBanner } from "./components.js";
+import { EmptyState, ErrorBanner } from "./components.js";
 
 type TeamReportSummary = {
   id: string;

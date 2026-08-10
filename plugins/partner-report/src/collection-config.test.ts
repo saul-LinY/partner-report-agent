@@ -12,6 +12,7 @@ describe("scheduled collection prompt", () => {
       "只在 Prompt 不一致时更新 Prompt，不得比较或修改其他任务配置",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("必须使用中文");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("通俗、精简、直接");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("automation memory");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "本地 accepted/ignored 哈希记录和中台哈希",
@@ -19,6 +20,12 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("采集和终态审查两个阶段");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-review");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("任何 nextCommand");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-defer");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("连续三次真实失败");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("禁止批量 collect-skip");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "deferred、failedExtract 和 notProcessed",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("本地项目权限文件缺失");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("绑定命令负责项目发现");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("重新发送项目范围审核提醒");

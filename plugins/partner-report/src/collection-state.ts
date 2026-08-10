@@ -202,13 +202,6 @@ export function threadIsInScanWindow(
   );
 }
 
-export function currentMonthStartAt(runStartedAt: string) {
-  const runStart = new Date(runStartedAt);
-  if (!Number.isFinite(runStart.getTime()))
-    throw new Error("采集开始时间无效，无法计算当前月份。");
-  return new Date(runStart.getFullYear(), runStart.getMonth(), 1).toISOString();
-}
-
 export function initialProjectScopeStartAt(runStartedAt: string) {
   const runStart = new Date(runStartedAt);
   if (!Number.isFinite(runStart.getTime()))
@@ -267,23 +260,75 @@ export function recordAcceptedSession(
 export function canAdvanceCollectionCheckpoint(counts: {
   failedRead: number;
   failedExtract: number;
+  deferred?: number;
+  skipped?: number;
+  notProcessed?: number;
 }) {
-  return counts.failedRead === 0 && counts.failedExtract === 0;
+  return (
+    counts.failedRead === 0 &&
+    counts.failedExtract === 0 &&
+    (counts.deferred ?? 0) === 0 &&
+    (counts.skipped ?? 0) === 0 &&
+    (counts.notProcessed ?? 0) === 0
+  );
 }
 
 export function reviewCollectionCompletion(input: {
   cursor: number;
   queueLength: number;
   hasCurrentJob: boolean;
-  counts: { failedRead: number; failedExtract: number };
+  claimedJobs?: number;
+  terminalJobs?: number;
+  uniqueTerminalJobs?: boolean;
+  validFailureAudits?: boolean;
+  unexplainedFailedExtract?: number;
+  outcomeCountsMatch?: boolean;
+  stopped?: boolean;
+  counts: {
+    failedRead: number;
+    failedExtract: number;
+    deferred?: number;
+    skipped?: number;
+    notProcessed?: number;
+  };
 }) {
   const queueExhausted = input.cursor === input.queueLength;
   const noCurrentJob = !input.hasCurrentJob;
+  const allClaimedJobsTerminal =
+    (input.claimedJobs ?? 0) === (input.terminalJobs ?? 0);
+  const uniqueTerminalJobs = input.uniqueTerminalJobs ?? true;
+  const validFailureAudits = input.validFailureAudits ?? true;
+  const noUnexplainedFailedExtract =
+    (input.unexplainedFailedExtract ?? 0) === 0;
+  const outcomeCountsMatch = input.outcomeCountsMatch ?? true;
+  const notProcessed = input.counts.notProcessed ?? 0;
+  const remainingQueue = Math.max(0, input.queueLength - input.cursor);
+  const remainingQueueExplained = queueExhausted
+    ? notProcessed === 0
+    : input.stopped === true && notProcessed === remainingQueue;
+  const readyToFinalize =
+    noCurrentJob &&
+    allClaimedJobsTerminal &&
+    uniqueTerminalJobs &&
+    validFailureAudits &&
+    noUnexplainedFailedExtract &&
+    outcomeCountsMatch &&
+    remainingQueueExplained;
   return {
     queueExhausted,
     noCurrentJob,
-    readyToFinalize: queueExhausted && noCurrentJob,
-    checkpointEligible: canAdvanceCollectionCheckpoint(input.counts),
+    allClaimedJobsTerminal,
+    uniqueTerminalJobs,
+    validFailureAudits,
+    noUnexplainedFailedExtract,
+    outcomeCountsMatch,
+    remainingQueueExplained,
+    readyToFinalize,
+    checkpointEligible:
+      readyToFinalize &&
+      queueExhausted &&
+      input.stopped !== true &&
+      canAdvanceCollectionCheckpoint(input.counts),
   };
 }
 

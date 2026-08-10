@@ -39,6 +39,12 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("collect-next --run");
     expect(skill).toContain("collect-review --run");
     expect(skill).toContain("collect-submit --run");
+    expect(skill).toContain("collect-defer --run");
+    expect(skill).toContain("连续三次真实失败");
+    expect(skill).toContain("禁止编写循环或批量调用 `collect-skip`");
+    expect(skill).toContain("`deferred` 不是提取失败");
+    expect(skill).toContain("`notProcessed`");
+    expect(skill).toContain("审查完成后由 CLI 按现有策略整体清理");
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
     expect(skill).toContain("第一次运行只采集运行开始前最近 1 天");
@@ -49,6 +55,7 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("不维护 Turn 游标");
     expect(skill).toContain("官方 Codex Scheduled Task");
     expect(skill).toContain("必须使用简体中文");
+    expect(skill).toContain("通俗、精简、直接");
     expect(skill).toContain("用户稳定数据目录中的 CLI 本地状态和中台状态");
     expect(skill).toContain("所有 `nextCommand` 都必须执行");
     expect(skill).toContain("持续执行 `project-scope-card-wait`");

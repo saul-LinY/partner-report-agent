@@ -3,7 +3,7 @@ import argon2 from "argon2";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sqlClient as sql } from "@partner-report/db";
-import { ApiError, audit, randomToken, requireWebActor, sha256 } from "../common.js";
+import { ApiError, randomToken, requireWebActor, sha256 } from "../common.js";
 
 const loginSchema = z.object({
   email: z.string().email(),

@@ -1,11 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync,
-  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -49,6 +47,21 @@ import {
   threadIsInKnownScanWindow,
   threadIsInScanWindow,
 } from "./collection-state.js";
+import {
+  MAX_EXTRACTION_FAILURES,
+  appendExtractionFailure,
+  collectionDeadline,
+  countJobOutcomes,
+  failedExtractOutcomeIsExplained,
+  immutableContributionFromRequirements,
+  jobOutcomeFailureAuditIsValid,
+  legalCollectSkipOutcome,
+  repairImmutableResult,
+  shouldStopBeforeClaim,
+  type ExtractionFailure,
+  type ExtractionFailureCode,
+  type JobOutcome,
+} from "./collection-run.js";
 import { CodexAppServer } from "./app-server.js";
 import {
   buildSessionJob,
@@ -152,6 +165,9 @@ type RunCounts = {
   excluded: number;
   failedRead: number;
   failedExtract: number;
+  skipped: number;
+  deferred: number;
+  notProcessed: number;
 };
 
 type CurrentJob = {
@@ -159,13 +175,15 @@ type CurrentJob = {
   inputPath: string;
   resultPath: string;
   expected: any;
+  failures: ExtractionFailure[];
 };
 
 type RunManifest = {
-  schemaVersion: "1.0";
+  schemaVersion: "1.0" | "1.1";
   runId: string;
   pluginInstanceId: string;
   createdAt: string;
+  deadlineAt: string;
   force: boolean;
   period: CollectionPeriod;
   projects: ProjectPolicy[];
@@ -174,6 +192,10 @@ type RunManifest = {
   knownSessions: Record<string, KnownSession>;
   counts: RunCounts;
   current: CurrentJob | null;
+  claimedJobs: number;
+  outcomes: JobOutcome[];
+  stopReason?:
+    "TIME_BUDGET_EXHAUSTED" | "RUN_INTERRUPTED" | "TEMPORARILY_UNAVAILABLE";
   approvalWait?: ScopeApprovalWait | null;
   scopeBackfillKeys?: string[];
 };
@@ -382,6 +404,9 @@ function authRecoveryOutput(expiresAt: string) {
       uploaded: 0,
       ignored: 0,
       skipped: 0,
+      failedExtract: 0,
+      deferred: 0,
+      notProcessed: 0,
     },
   });
 }
@@ -932,11 +957,22 @@ function readRun(runPath: string) {
   const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RunManifest;
   const config = loadConfig()!;
   if (
-    manifest.schemaVersion !== "1.0" ||
+    !["1.0", "1.1"].includes(manifest.schemaVersion) ||
     manifest.pluginInstanceId !== config.pluginInstanceId
   ) {
     throw new Error("Run 清单无效或不属于当前 Plugin Instance。");
   }
+  manifest.deadlineAt ??= collectionDeadline(manifest.createdAt);
+  manifest.counts.skipped ??= 0;
+  manifest.counts.deferred ??= 0;
+  manifest.counts.notProcessed ??= 0;
+  manifest.outcomes ??= [];
+  manifest.claimedJobs ??=
+    manifest.counts.uploaded +
+    manifest.counts.ignored +
+    manifest.counts.failedExtract +
+    (manifest.current ? 1 : 0);
+  if (manifest.current) manifest.current.failures ??= [];
   refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
   return { absolute, manifest };
 }
@@ -946,15 +982,6 @@ function saveRun(runPath: string, manifest: RunManifest) {
     mode: 0o600,
   });
   chmodSync(runPath, 0o600);
-}
-
-function removeJobFiles(runPath: string, current: CurrentJob) {
-  const runDirectory = dirname(runPath);
-  for (const path of [current.inputPath, current.resultPath]) {
-    if (dirname(resolve(path)) !== runDirectory)
-      throw new Error("Job 文件不属于当前 Run。");
-    if (existsSync(path)) unlinkSync(path);
-  }
 }
 
 function writeJob(runPath: string, jobId: string, modelInput: unknown) {
@@ -974,22 +1001,26 @@ async function postCollectionStatus(
   phase: "started" | "completed",
 ) {
   const { counts } = manifest;
+  const checkpointEligible =
+    phase === "completed"
+      ? completionReview(manifest).checkpointEligible
+      : canAdvanceCollectionCheckpoint(counts);
   const lastSyncAt = counts.uploaded > 0 ? new Date().toISOString() : undefined;
   const coverage = {
     discovered: counts.discovered,
     eligible: counts.eligible,
     readable: counts.read,
     extracted: counts.uploaded + counts.unchanged,
-    deferred: counts.outsideWindow,
+    deferred: counts.deferred,
+    skipped: counts.skipped,
+    notProcessed: counts.notProcessed,
     failedRead: counts.failedRead,
     failedExtract: counts.failedExtract,
     excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
     activeAtCutoff: 0,
     hookMissed: 0,
-    warnings: canAdvanceCollectionCheckpoint(counts)
-      ? []
-      : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    warnings: checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
     ...(lastSyncAt ? { lastSyncAt } : {}),
   };
   await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
@@ -1004,6 +1035,7 @@ async function postCollectionStatus(
       pendingLocalJobs: phase === "completed" ? 0 : manifest.queue.length,
       discoveredCount: counts.discovered,
       eligibleCount: counts.eligible,
+      deferredCount: counts.deferred,
       excludedCount: counts.excluded + counts.ignored + counts.cachedIgnored,
       lastScanAt: manifest.createdAt,
       ...(lastSyncAt ? { lastSyncAt } : {}),
@@ -1255,10 +1287,11 @@ async function collectStart() {
     inWindowIds.has(summary.id),
   ).length;
   const manifest: RunManifest = {
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
     runId,
     pluginInstanceId: config.pluginInstanceId,
     createdAt: runStartedAt,
+    deadlineAt: collectionDeadline(runStartedAt),
     force: flag("force"),
     period: effectivePeriod,
     projects: policy.projects,
@@ -1281,8 +1314,13 @@ async function collectStart() {
         (inWindow.length - queuedInsideWindow),
       failedRead: 0,
       failedExtract: 0,
+      skipped: 0,
+      deferred: 0,
+      notProcessed: 0,
     },
     current: null,
+    claimedJobs: 0,
+    outcomes: [],
     approvalWait:
       pendingNewScopeKeys.size > 0
         ? {
@@ -1330,7 +1368,55 @@ function currentJobOutput(runPath: string, current: CurrentJob) {
       import.meta.dirname,
       "../schemas/session-extraction-result-v1.json",
     ),
+    validationFailures: current.failures.length,
+    validationAttemptsRemaining: Math.max(
+      0,
+      MAX_EXTRACTION_FAILURES - current.failures.length,
+    ),
     nextCommand: `collect-submit --run ${runPath} --result ${current.resultPath}`,
+  });
+}
+
+function recordJobOutcome(
+  manifest: RunManifest,
+  current: CurrentJob,
+  outcome: Omit<JobOutcome, "jobId" | "failureCount" | "failureCodes">,
+) {
+  manifest.outcomes.push({
+    jobId: current.jobId,
+    failureCount: current.failures.length,
+    failureCodes: current.failures.map((failure) => failure.code),
+    ...outcome,
+  });
+  manifest.counts[outcome.status] += 1;
+  manifest.current = null;
+}
+
+function deferRun(
+  runPath: string,
+  manifest: RunManifest,
+  reason: RunManifest["stopReason"],
+) {
+  if (!reason) throw new Error("延后处理必须提供安全原因码。");
+  if (manifest.current)
+    recordJobOutcome(manifest, manifest.current, {
+      status: "deferred",
+      errorCode: reason,
+    });
+  manifest.stopReason = reason;
+  manifest.counts.notProcessed = Math.max(
+    0,
+    manifest.queue.length - manifest.cursor,
+  );
+  saveRun(runPath, manifest);
+  output({
+    status: "deferred",
+    reason,
+    deferred: manifest.counts.deferred,
+    notProcessed: manifest.counts.notProcessed,
+    checkpointAdvanced: false,
+    warnings: ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    nextCommand: `collect-review --run ${runPath}`,
   });
 }
 
@@ -1339,8 +1425,9 @@ async function finishRun(
   manifest: RunManifest,
   config: PluginConfig,
 ) {
+  const review = completionReview(manifest);
   await postCollectionStatus(config, manifest, "completed");
-  const checkpointAdvanced = canAdvanceCollectionCheckpoint(manifest.counts);
+  const checkpointAdvanced = review.checkpointEligible;
   if (checkpointAdvanced) {
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
@@ -1377,10 +1464,25 @@ async function finishRun(
 }
 
 function completionReview(manifest: RunManifest) {
+  const outcomeCounts = countJobOutcomes(manifest.outcomes);
   return reviewCollectionCompletion({
     cursor: manifest.cursor,
     queueLength: manifest.queue.length,
     hasCurrentJob: manifest.current !== null,
+    claimedJobs: manifest.claimedJobs,
+    terminalJobs: manifest.outcomes.length,
+    uniqueTerminalJobs:
+      new Set(manifest.outcomes.map((outcome) => outcome.jobId)).size ===
+      manifest.outcomes.length,
+    validFailureAudits: manifest.outcomes.every(jobOutcomeFailureAuditIsValid),
+    unexplainedFailedExtract: manifest.outcomes.filter(
+      (outcome) => !failedExtractOutcomeIsExplained(outcome),
+    ).length,
+    outcomeCountsMatch: Object.entries(outcomeCounts).every(
+      ([key, count]) =>
+        manifest.counts[key as keyof typeof outcomeCounts] === count,
+    ),
+    stopped: manifest.stopReason !== undefined,
     counts: manifest.counts,
   });
 }
@@ -1507,11 +1609,22 @@ async function collectNext() {
   const runPath = option("run");
   if (!runPath) throw new Error("collect-next 需要 --run <path>。");
   const { absolute, manifest } = readRun(runPath);
+  if (manifest.stopReason)
+    return deferRun(absolute, manifest, manifest.stopReason);
+  if (
+    (manifest.current || manifest.cursor < manifest.queue.length) &&
+    shouldStopBeforeClaim(manifest.deadlineAt)
+  )
+    return deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
   if (manifest.current) return currentJobOutput(absolute, manifest.current);
   const server = new CodexAppServer();
   try {
     await server.connect();
     while (manifest.cursor < manifest.queue.length) {
+      if (shouldStopBeforeClaim(manifest.deadlineAt)) {
+        deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
+        return;
+      }
       const summary = manifest.queue[manifest.cursor++]!;
       const localScope = inspectLocalProjectScope(manifest.pluginInstanceId);
       if (
@@ -1573,7 +1686,15 @@ async function collectNext() {
       }
       const jobId = randomUUID();
       const paths = writeJob(absolute, jobId, job.modelInput);
-      manifest.current = { jobId, ...paths, expected: job.expected };
+      manifest.current = {
+        jobId,
+        ...paths,
+        expected: immutableContributionFromRequirements(
+          job.modelInput.outputRequirements.include.contribution,
+        ),
+        failures: [],
+      };
+      manifest.claimedJobs += 1;
       saveRun(absolute, manifest);
       return currentJobOutput(absolute, manifest.current);
     }
@@ -1635,6 +1756,31 @@ function assertChineseContribution(contribution: any) {
   }
 }
 
+function extractionFailureOutput(
+  runPath: string,
+  manifest: RunManifest,
+  current: CurrentJob,
+  code: ExtractionFailureCode,
+) {
+  current.failures = appendExtractionFailure(current.failures, code);
+  saveRun(runPath, manifest);
+  const attempts = current.failures.length;
+  const terminalSensitiveRejection = code === "SENSITIVE_EGRESS_REJECTED";
+  const retriesExhausted = attempts >= MAX_EXTRACTION_FAILURES;
+  output({
+    status: "validation_failed",
+    jobId: current.jobId,
+    errorCode: code,
+    attempts,
+    attemptsRemaining: Math.max(0, MAX_EXTRACTION_FAILURES - attempts),
+    nextCommand: terminalSensitiveRejection
+      ? `collect-skip --run ${runPath} --job ${current.jobId} --error-code SENSITIVE_EGRESS_REJECTED`
+      : retriesExhausted
+        ? `collect-skip --run ${runPath} --job ${current.jobId} --error-code EXTRACT_FAILED --cause-code ${code}`
+        : `collect-submit --run ${runPath} --result ${current.resultPath}`,
+  });
+}
+
 async function collectSubmit() {
   const runPath = option("run");
   const resultPath = option("result");
@@ -1645,9 +1791,42 @@ async function collectSubmit() {
   if (!current) throw new Error("当前 Run 没有待提交 Job。");
   if (resolve(resultPath) !== resolve(current.resultPath))
     throw new Error("Result 路径与当前 Job 不匹配。");
-  const result = sessionExtractionResultSchema.parse(
-    JSON.parse(readFileSync(current.resultPath, "utf8")),
-  ) as any;
+  if (current.failures.length >= MAX_EXTRACTION_FAILURES)
+    return output({
+      status: "validation_failed",
+      jobId: current.jobId,
+      errorCode: current.failures.at(-1)!.code,
+      attempts: current.failures.length,
+      attemptsRemaining: 0,
+      nextCommand: `collect-skip --run ${absolute} --job ${current.jobId} --error-code EXTRACT_FAILED --cause-code ${current.failures.at(-1)!.code}`,
+    });
+  let rawResult: unknown;
+  try {
+    rawResult = JSON.parse(readFileSync(current.resultPath, "utf8"));
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "RESULT_JSON_INVALID",
+    );
+  }
+  const repaired = repairImmutableResult(rawResult, current.expected);
+  if (repaired.repaired)
+    writeFileSync(
+      current.resultPath,
+      `${JSON.stringify(repaired.result, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  const parsed = sessionExtractionResultSchema.safeParse(repaired.result);
+  if (!parsed.success)
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "SCHEMA_VALIDATION_FAILED",
+    );
+  const result = parsed.data as any;
 
   if (result.decision === "ignore") {
     const state = loadCollectionState(manifest.pluginInstanceId);
@@ -1657,13 +1836,11 @@ async function collectSubmit() {
       current.expected.contentHash,
     );
     saveCollectionState(state);
-    removeJobFiles(absolute, current);
-    manifest.counts.ignored += 1;
     manifest.knownSessions[current.expected.sessionKey] = {
       contentHashes: [current.expected.contentHash],
       decision: "ignored",
     };
-    manifest.current = null;
+    recordJobOutcome(manifest, current, { status: "ignored" });
     saveRun(absolute, manifest);
     return output({
       status: "ignored",
@@ -1672,12 +1849,43 @@ async function collectSubmit() {
     });
   }
 
-  assertImmutableContribution(result.contribution, current.expected);
-  assertChineseContribution(result.contribution);
-  if (containsSensitive(result.contribution))
-    throw Object.assign(new Error("贡献结果包含疑似敏感值，已阻止上传。"), {
-      code: "SENSITIVE_EGRESS_REJECTED",
-    });
+  try {
+    assertImmutableContribution(result.contribution, current.expected);
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "IMMUTABLE_FIELD_MISMATCH",
+    );
+  }
+  try {
+    assertChineseContribution(result.contribution);
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "CHINESE_OUTPUT_REQUIRED",
+    );
+  }
+  if (containsSensitive(result.contribution)) {
+    writeFileSync(
+      current.resultPath,
+      `${JSON.stringify({
+        schemaVersion: "1.0",
+        status: "rejected",
+        errorCode: "SENSITIVE_EGRESS_REJECTED",
+      })}\n`,
+      { mode: 0o600 },
+    );
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "SENSITIVE_EGRESS_REJECTED",
+    );
+  }
   const idempotencyKey = sha256(
     `${result.contribution.sessionKey}:${result.contribution.periodKey}:${result.contribution.contentHash}`,
   );
@@ -1696,13 +1904,11 @@ async function collectSubmit() {
     result.contribution.contentHash,
   );
   saveCollectionState(state);
-  removeJobFiles(absolute, current);
-  manifest.counts.uploaded += 1;
   manifest.knownSessions[result.contribution.sessionKey] = {
     contentHashes: [result.contribution.contentHash],
     decision: "accepted",
   };
-  manifest.current = null;
+  recordJobOutcome(manifest, current, { status: "uploaded" });
   saveRun(absolute, manifest);
   output({
     status: "uploaded",
@@ -1717,15 +1923,45 @@ function collectSkip() {
   const { absolute, manifest } = readRun(runPath);
   const current = manifest.current;
   if (!current) throw new Error("当前 Run 没有待跳过 Job。");
-  removeJobFiles(absolute, current);
-  manifest.counts.failedExtract += 1;
-  manifest.current = null;
+  const errorCode = option("error-code");
+  const causeCode = option("cause-code");
+  recordJobOutcome(
+    manifest,
+    current,
+    legalCollectSkipOutcome({
+      currentJobId: current.jobId,
+      requestedJobId: option("job"),
+      errorCode,
+      causeCode,
+      failures: current.failures,
+    }),
+  );
   saveRun(absolute, manifest);
   output({
     status: "skipped",
-    errorCode: option("error-code", "EXTRACT_FAILED"),
+    jobStatus: manifest.outcomes.at(-1)!.status,
+    errorCode,
+    ...(causeCode ? { causeCode } : {}),
     nextCommand: `collect-next --run ${absolute}`,
   });
+}
+
+function collectDefer() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-defer 需要 --run <path>。");
+  const { absolute, manifest } = readRun(runPath);
+  const reason = option("reason");
+  if (
+    ![
+      "TIME_BUDGET_EXHAUSTED",
+      "RUN_INTERRUPTED",
+      "TEMPORARILY_UNAVAILABLE",
+    ].includes(reason ?? "")
+  )
+    throw Object.assign(new Error("collect-defer 需要合法的安全原因码。"), {
+      code: "DEFER_REASON_REQUIRED",
+    });
+  deferRun(absolute, manifest, reason as RunManifest["stopReason"]);
 }
 
 async function status() {
@@ -1896,7 +2132,8 @@ function help() {
       "collect-next --run <path>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
-      "collect-skip --run <path> [--error-code <code>]",
+      "collect-skip --run <path> --job <job-id> --error-code <code> [--cause-code <code>]",
+      "collect-defer --run <path> --reason <TIME_BUDGET_EXHAUSTED|RUN_INTERRUPTED|TEMPORARILY_UNAVAILABLE>",
       "status",
       "project-scope-list",
       "project-scope-sync",
@@ -1947,6 +2184,7 @@ async function runCommand() {
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
   else if (command === "collect-skip") collectSkip();
+  else if (command === "collect-defer") collectDefer();
   else if (command === "status") await status();
   else if (command === "project-scope-list") await projectScopeList();
   else if (command === "project-scope-sync")

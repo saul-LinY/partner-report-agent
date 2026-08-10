@@ -260,13 +260,6 @@ export function inspectLocalProjectScope(
   return { state: "invalid", scope: newLocalScope(pluginInstanceId) };
 }
 
-export function loadLocalProjectScope(
-  pluginInstanceId: string,
-  directory = dataDirectory(),
-): LocalProjectScope {
-  return inspectLocalProjectScope(pluginInstanceId, directory).scope;
-}
-
 export function saveLocalProjectScope(
   scope: LocalProjectScope,
   directory = dataDirectory(),

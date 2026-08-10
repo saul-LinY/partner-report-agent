@@ -6,7 +6,6 @@ import {
   acquireCollectionLease,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
-  currentMonthStartAt,
   initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
@@ -162,10 +161,7 @@ describe("collection state", () => {
     ).toBe(true);
   });
 
-  it("limits first project discovery to the current local calendar month", () => {
-    expect(currentMonthStartAt("2026-08-07T11:46:00+08:00")).toBe(
-      new Date(2026, 7, 1).toISOString(),
-    );
+  it("requires timestamps for known scan candidates", () => {
     expect(
       threadIsInKnownScanWindow(
         "2026-07-31T23:59:59.000Z",
@@ -205,6 +201,20 @@ describe("collection state", () => {
     expect(
       canAdvanceCollectionCheckpoint({ failedRead: 0, failedExtract: 1 }),
     ).toBe(false);
+    expect(
+      canAdvanceCollectionCheckpoint({
+        failedRead: 0,
+        failedExtract: 0,
+        deferred: 1,
+      }),
+    ).toBe(false);
+    expect(
+      canAdvanceCollectionCheckpoint({
+        failedRead: 0,
+        failedExtract: 0,
+        notProcessed: 1,
+      }),
+    ).toBe(false);
   });
 
   it("requires an exhausted queue and no active job before final review", () => {
@@ -234,6 +244,12 @@ describe("collection state", () => {
     ).toEqual({
       queueExhausted: true,
       noCurrentJob: true,
+      allClaimedJobsTerminal: true,
+      uniqueTerminalJobs: true,
+      validFailureAudits: true,
+      noUnexplainedFailedExtract: true,
+      outcomeCountsMatch: true,
+      remainingQueueExplained: true,
       readyToFinalize: true,
       checkpointEligible: true,
     });
@@ -250,6 +266,12 @@ describe("collection state", () => {
     ).toEqual({
       queueExhausted: true,
       noCurrentJob: true,
+      allClaimedJobsTerminal: true,
+      uniqueTerminalJobs: true,
+      validFailureAudits: true,
+      noUnexplainedFailedExtract: true,
+      outcomeCountsMatch: true,
+      remainingQueueExplained: true,
       readyToFinalize: true,
       checkpointEligible: false,
     });
