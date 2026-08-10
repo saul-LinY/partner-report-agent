@@ -17,6 +17,8 @@ import {
   renderLockedCard,
   renderStaleCard,
   renderStatusCard,
+  SCOPE_FORM_FIELD_PREFIX,
+  SCOPE_FORM_PROJECT_LIMIT,
   type FeishuActionValue,
   type FeishuCard,
 } from "./cards.js";
@@ -45,6 +47,7 @@ const quietLogger: FeishuGatewayLogger = {
 };
 
 const opaqueIdSchema = z.string().trim().min(1).max(256);
+const projectScopeFormDecisionSchema = z.enum(["allow", "deny"]);
 const cardActionEventSchema = z
   .object({
     event_id: opaqueIdSchema,
@@ -168,6 +171,25 @@ function regenerationInstruction(event: StoredCardAction): string {
     );
   }
   return parsed.data;
+}
+
+export function projectScopeFormDecisions(
+  formValue: Record<string, unknown>,
+  projects: Array<{ scopeKey: string }>,
+) {
+  const visibleProjects = projects.slice(0, SCOPE_FORM_PROJECT_LIMIT);
+  return visibleProjects.map((project, index) => {
+    const field = `${SCOPE_FORM_FIELD_PREFIX}${index}`;
+    const decision = projectScopeFormDecisionSchema.safeParse(formValue[field]);
+    if (!decision.success) {
+      throw new ApiError(
+        400,
+        "PROJECT_SCOPE_DECISIONS_REQUIRED",
+        "请为本页每个项目选择采集权限后再提交。",
+      );
+    }
+    return { scopeKey: project.scopeKey, decision: decision.data };
+  });
 }
 
 function isExpectedError(error: unknown): error is ApiError {
@@ -593,9 +615,11 @@ export class FeishuGateway {
           "PROJECT_SCOPE_ALREADY_REVIEWED",
           "当前项目权限已经处理完成。",
         );
-      const selected =
-        event.value.action === "scope_allow_all" ||
-        event.value.action === "scope_deny_all"
+      const isFormSubmit = event.value.action === "scope_submit";
+      const selected = isFormSubmit
+        ? view.projects.slice(0, SCOPE_FORM_PROJECT_LIMIT)
+        : event.value.action === "scope_allow_all" ||
+            event.value.action === "scope_deny_all"
           ? view.projects
           : view.projects.filter(
               (project) =>
@@ -611,26 +635,43 @@ export class FeishuGateway {
       const allow =
         event.value.action === "scope_allow" ||
         event.value.action === "scope_allow_all";
+      const decisions = isFormSubmit
+        ? projectScopeFormDecisions(event.formValue, view.projects)
+        : selected.map((project) => ({
+            scopeKey: project.scopeKey,
+            decision: allow ? ("allow" as const) : ("deny" as const),
+          }));
       const result = await decideProjectScopes(
         actor,
         aggregate.pluginInstanceId,
         {
           baseVersion: event.value.baseVersion,
-          decisions: selected.map((project) => ({
-            scopeKey: project.scopeKey,
-            decision: allow ? "allow" : "deny",
-          })),
+          decisions,
         },
         this.database,
       );
       await this.auditOnce(
         row.event_id,
         actor,
-        allow ? "project_scope.allowed" : "project_scope.denied",
+        isFormSubmit
+          ? "project_scope.decisions_submitted"
+          : allow
+            ? "project_scope.allowed"
+            : "project_scope.denied",
         "plugin_instance",
         aggregate.pluginInstanceId,
         {
-          scopeKeys: selected.map((project) => project.scopeKey),
+          scopeKeys: decisions.map((decision) => decision.scopeKey),
+          ...(isFormSubmit
+            ? {
+                allowed: decisions.filter(
+                  (decision) => decision.decision === "allow",
+                ).length,
+                denied: decisions.filter(
+                  (decision) => decision.decision === "deny",
+                ).length,
+              }
+            : {}),
           version: result.version,
         },
       );
@@ -643,6 +684,7 @@ export class FeishuGateway {
         await this.deliveries.patchScopeStatus({
           ...scope,
           aggregateId: event.value.aggregateId,
+          targetDomainVersion: result.version,
           card: renderStatusCard({
             kind: "locked",
             title: "项目采集范围已确认",
@@ -1116,7 +1158,8 @@ export class FeishuGateway {
                 ...delivery,
                 reportId: event.value.aggregateId,
               });
-      if (result.outcome !== "skipped") return;
+      if (result.outcome !== "skipped" || result.reason === "already_current")
+        return;
     }
 
     const card: FeishuCard =

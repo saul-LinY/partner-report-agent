@@ -133,8 +133,8 @@ describe("Feishu JSON 2.0 cards", () => {
     expect(JSON.stringify(card)).toContain("原有项目采集权限");
   });
 
-  it("renders project scope decisions with versioned item and bulk actions", () => {
-    const scopeKey = "a".repeat(64);
+  it("renders project scope decisions as one versioned form submission", () => {
+    const scopeKeys = ["a".repeat(64), "b".repeat(64)];
     const card = renderScopeCard({
       deliveryId: ids.deliveryId,
       aggregateId: `${ids.aggregateId}:2026-W32`,
@@ -142,24 +142,63 @@ describe("Feishu JSON 2.0 cards", () => {
       deviceName: "Saul MacBook",
       periodLabel: "2026-W32",
       initial: false,
-      projects: [{ scopeKey, displayName: "partner-report", sessionCount: 3 }],
+      projects: [
+        {
+          scopeKey: scopeKeys[0]!,
+          displayName: "partner-report",
+          sessionCount: 3,
+        },
+        {
+          scopeKey: scopeKeys[1]!,
+          displayName: "private-notes",
+          sessionCount: 1,
+        },
+      ],
     });
 
     expect(callbackValues(card)).toEqual([
-      expect.objectContaining({
-        action: "scope_deny",
-        scopeKey,
-        baseVersion: 4,
-      }),
-      expect.objectContaining({
-        action: "scope_allow",
-        scopeKey,
-        baseVersion: 4,
-      }),
+      expect.objectContaining({ action: "scope_submit", baseVersion: 4 }),
       expect.objectContaining({ action: "scope_deny_all", baseVersion: 4 }),
       expect.objectContaining({ action: "scope_allow_all", baseVersion: 4 }),
     ]);
-    expect(JSON.stringify(card)).toContain("立即补采本周期内容");
+    expect(findByElementId(card, "scope_select_0")).toMatchObject({
+      tag: "select_static",
+      name: "scope_decision_0",
+      required: true,
+      options: [{ value: "allow" }, { value: "deny" }],
+    });
+    expect(findByElementId(card, "scope_select_1")).toMatchObject({
+      name: "scope_decision_1",
+      required: true,
+    });
+    expect(findByElementId(card, "scope_submit_btn")).toMatchObject({
+      action_type: "form_submit",
+      name: "scope_submit",
+      value: { action: "scope_submit", baseVersion: 4 },
+    });
+    expect(JSON.stringify(card)).toContain("提交前所有选择都不会生效");
+    expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThan(
+      FEISHU_CARD_MAX_JSON_BYTES,
+    );
+  });
+
+  it("keeps oversized scope reviews on the same card in safe pages", () => {
+    const card = renderScopeCard({
+      deliveryId: ids.deliveryId,
+      aggregateId: `${ids.aggregateId}:2026-W32`,
+      baseVersion: 4,
+      deviceName: "Saul MacBook",
+      initial: true,
+      projects: Array.from({ length: 13 }, (_, index) => ({
+        scopeKey: index.toString(16).padStart(64, "0"),
+        displayName: `project-${index + 1}`,
+        sessionCount: index + 1,
+      })),
+    });
+
+    expect(findByElementId(card, "scope_select_11")).toBeDefined();
+    expect(findByElementId(card, "scope_select_12")).toBeUndefined();
+    expect(JSON.stringify(card)).toContain("同一张卡片继续显示");
     expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThan(
       FEISHU_CARD_MAX_JSON_BYTES,
     );

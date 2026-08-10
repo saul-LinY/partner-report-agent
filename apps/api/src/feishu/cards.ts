@@ -63,6 +63,13 @@ const scopeAllActionValueSchema = z
   })
   .strict();
 
+const scopeSubmitActionValueSchema = z
+  .object({
+    ...actionBase,
+    action: z.literal("scope_submit"),
+  })
+  .strict();
+
 export const feishuActionValueSchema = z.discriminatedUnion("action", [
   bindingActionValueSchema,
   recoveryActionValueSchema,
@@ -70,6 +77,7 @@ export const feishuActionValueSchema = z.discriminatedUnion("action", [
   reportActionValueSchema,
   scopeItemActionValueSchema,
   scopeAllActionValueSchema,
+  scopeSubmitActionValueSchema,
 ]);
 
 const regenerationSchema = z
@@ -238,6 +246,9 @@ export type ReportCardInput = z.input<typeof reportCardInputSchema>;
 export type StatusCardInput = z.input<typeof statusCardInputSchema>;
 export type ScopeCardInput = z.input<typeof scopeCardInputSchema>;
 export type ScopeStatusCardInput = z.input<typeof scopeStatusCardInputSchema>;
+
+export const SCOPE_FORM_PROJECT_LIMIT = 12;
+export const SCOPE_FORM_FIELD_PREFIX = "scope_decision_";
 
 type HeaderTemplate = "blue" | "green" | "red" | "grey";
 
@@ -498,6 +509,51 @@ function regenerationForm(input: {
   };
 }
 
+function scopeDecisionForm(input: {
+  projects: ScopeCardInput["projects"];
+  value: FeishuActionValue;
+}): FeishuCardElement {
+  const submit: FeishuCardElement = {
+    tag: "button",
+    element_id: "scope_submit_btn",
+    text: plainText("提交审核"),
+    type: "primary",
+    width: "fill",
+    action_type: "form_submit",
+    name: "scope_submit",
+    value: feishuActionValueSchema.parse(input.value),
+    confirm: {
+      title: plainText("确认提交项目权限"),
+      text: plainText("提交后，本页所有项目的采集权限将一次性生效。"),
+    },
+  };
+  return {
+    tag: "form",
+    name: "scope_decision_form",
+    elements: [
+      ...input.projects.flatMap((project, index) => [
+        markdown(
+          `**${safeMarkdownText(project.displayName, 100)}**（${project.sessionCount} 个 Session）`,
+          `scope_project_${index}`,
+        ),
+        {
+          tag: "select_static",
+          element_id: `scope_select_${index}`,
+          name: `${SCOPE_FORM_FIELD_PREFIX}${index}`,
+          required: true,
+          width: "fill",
+          placeholder: plainText("选择采集权限"),
+          options: [
+            { text: plainText("允许采集"), value: "allow" },
+            { text: plainText("不采集"), value: "deny" },
+          ],
+        },
+      ]),
+      buttonRow([submit]),
+    ],
+  };
+}
+
 function createCard(input: {
   title: string;
   subtitle?: string;
@@ -609,63 +665,32 @@ export function renderScopeCard(rawInput: ScopeCardInput): FeishuCard {
     aggregateId: input.aggregateId,
     baseVersion: input.baseVersion,
   };
-  const individuallyReviewable = input.projects.slice(0, 12);
-  const projectSummary = input.projects
-    .map(
-      (project) =>
-        `- **${safeMarkdownText(project.displayName, 100)}**（${project.sessionCount} 个 Session）`,
-    )
-    .join("\n");
+  const individuallyReviewable = input.projects.slice(
+    0,
+    SCOPE_FORM_PROJECT_LIMIT,
+  );
   const elements: FeishuCardElement[] = [
     markdown(
-      truncateCardText(
-        `${input.initial ? "请选择允许 Partner Report 审核的项目。" : "以下项目是本周期新发现的项目，请确认后续采集范围。"}\n\n${projectSummary}`,
-        FEISHU_CARD_BODY_TEXT_LIMIT,
-      ),
+      input.initial
+        ? "请为每个项目选择采集权限，最后统一提交。"
+        : "请确认本周期新发现项目的采集权限，最后统一提交。",
       "scope_projects",
     ),
     notation(
       input.initial
-        ? "首次授权立即生效；未选择的项目保持待审批且不会读取 Session 内容。"
-        : "允许后会立即补采本周期内容；未处理项目保持待审批且不会读取 Session 内容。",
+        ? "提交前所有选择都不会生效；待审批项目不会读取 Session 内容。"
+        : "提交前所有选择都不会生效；允许后会补采本周期内容。",
       "scope_effective_time",
     ),
+    scopeDecisionForm({
+      projects: individuallyReviewable,
+      value: { ...baseValue, action: "scope_submit" },
+    }),
   ];
-
-  for (const project of individuallyReviewable) {
-    elements.push(
-      markdown(
-        `**${safeMarkdownText(project.displayName, 100)}**`,
-        `scope_${project.scopeKey.slice(0, 12)}`,
-      ),
-      buttonRow([
-        callbackButton({
-          elementId: `scope_deny_${project.scopeKey.slice(0, 12)}`,
-          label: "不采集",
-          type: "danger",
-          value: {
-            ...baseValue,
-            action: "scope_deny",
-            scopeKey: project.scopeKey,
-          },
-        }),
-        callbackButton({
-          elementId: `scope_allow_${project.scopeKey.slice(0, 12)}`,
-          label: "允许采集",
-          type: "primary",
-          value: {
-            ...baseValue,
-            action: "scope_allow",
-            scopeKey: project.scopeKey,
-          },
-        }),
-      ]),
-    );
-  }
   if (input.projects.length > individuallyReviewable.length) {
     elements.push(
       notation(
-        `另有 ${input.projects.length - individuallyReviewable.length} 个项目未展开，可使用下方批量操作。`,
+        `另有 ${input.projects.length - individuallyReviewable.length} 个项目；提交本页后会在同一张卡片继续显示，无需返回 Codex。`,
       ),
     );
   }

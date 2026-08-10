@@ -837,13 +837,18 @@ export class FeishuDeliveryService {
   }
 
   async patchScopeStatus(
-    input: FeishuDeliveryScope & { aggregateId: string; card: FeishuCard },
+    input: FeishuDeliveryScope & {
+      aggregateId: string;
+      card: FeishuCard;
+      targetDomainVersion?: number;
+    },
   ) {
     return this.patchAggregateStatus(
       "scope",
       input,
       input.aggregateId,
       input.card,
+      input.targetDomainVersion,
     );
   }
 
@@ -1219,6 +1224,7 @@ export class FeishuDeliveryService {
     scope: FeishuDeliveryScope,
     aggregateId: string,
     card: FeishuCard,
+    domainVersion?: number,
   ): Promise<FeishuDeliveryResult> {
     const partners = await this.database<PartnerRow[]>`
       select p.id, p.tenant_id, p.team_id, p.user_id, p.email, p.display_name
@@ -1260,7 +1266,7 @@ export class FeishuDeliveryService {
     return this.patchClaimedDelivery(
       claimed,
       card,
-      claimed.domain_version ?? 1,
+      domainVersion ?? claimed.domain_version ?? 1,
     );
   }
 

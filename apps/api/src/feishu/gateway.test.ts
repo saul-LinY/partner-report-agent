@@ -3,7 +3,35 @@ import { describe, expect, it, vi } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
 import { isReportContentComplete } from "./cards.js";
 import { FeishuDeliveryService } from "./delivery.js";
-import { FeishuGateway } from "./gateway.js";
+import { FeishuGateway, projectScopeFormDecisions } from "./gateway.js";
+
+describe("project scope form decisions", () => {
+  it("maps every visible form field to its project", () => {
+    const projects = [
+      { scopeKey: "a".repeat(64) },
+      { scopeKey: "b".repeat(64) },
+    ];
+
+    expect(
+      projectScopeFormDecisions(
+        { scope_decision_0: "allow", scope_decision_1: "deny" },
+        projects,
+      ),
+    ).toEqual([
+      { scopeKey: projects[0]!.scopeKey, decision: "allow" },
+      { scopeKey: projects[1]!.scopeKey, decision: "deny" },
+    ]);
+  });
+
+  it("rejects an incomplete form instead of applying a partial decision", () => {
+    expect(() =>
+      projectScopeFormDecisions({ scope_decision_0: "allow" }, [
+        { scopeKey: "a".repeat(64) },
+        { scopeKey: "b".repeat(64) },
+      ]),
+    ).toThrow("请为本页每个项目选择采集权限后再提交。");
+  });
+});
 
 type ReportCallbackFixture = {
   tenantId: string;
@@ -536,9 +564,11 @@ describe("FeishuGateway project scope delivery", () => {
     const bindingId = randomUUID();
     const entryId = randomUUID();
     const pendingEntryId = randomUUID();
+    const secondPendingEntryId = randomUUID();
     const outboxId = randomUUID();
     const candidateOutboxId = randomUUID();
     const candidateRetryOutboxId = randomUUID();
+    const scopeSubmitEventId = randomUUID();
     const appId = `cli_scope_status_${randomUUID()}`;
     const periodKey = `scope-status-${periodId}`;
     const openId = `ou_${randomUUID()}`;
@@ -650,8 +680,12 @@ describe("FeishuGateway project scope delivery", () => {
           scope_key, display_name, status, first_seen_period_key, session_count
         ) values (
           ${pendingEntryId}, ${tenantId}, ${teamId}, ${partnerId},
-          ${pluginInstanceId}, ${"b".repeat(64)}, 'New Pending Project',
+          ${pluginInstanceId}, ${"b".repeat(64)}, 'New Pending Project A',
           'pending', ${periodKey}, 2
+        ), (
+          ${secondPendingEntryId}, ${tenantId}, ${teamId}, ${partnerId},
+          ${pluginInstanceId}, ${"c".repeat(64)}, 'New Pending Project B',
+          'pending', ${periodKey}, 1
         )
       `;
       await sql`
@@ -692,11 +726,68 @@ describe("FeishuGateway project scope delivery", () => {
       `;
       await expect(gateway.drainOutbox()).resolves.toBe(1);
       expect(sendInteractiveCard).toHaveBeenCalledTimes(2);
+
+      const scopeDeliveries = await sql<Array<{ id: string }>>`
+        select id from feishu_deliveries
+        where tenant_id = ${tenantId} and kind = 'scope'
+          and aggregate_id = ${`${pluginInstanceId}:${periodKey}`}
+          and message_id = ${newMessageId}
+        limit 1
+      `;
+      await expect(
+        gateway.acceptCardAction({
+          event_id: scopeSubmitEventId,
+          event_type: "card.action.trigger",
+          app_id: appId,
+          operator: { open_id: openId },
+          action: {
+            value: {
+              deliveryId: scopeDeliveries[0]!.id,
+              aggregateId: `${pluginInstanceId}:${periodKey}`,
+              baseVersion: 4,
+              action: "scope_submit",
+            },
+            form_value: {
+              scope_decision_0: "allow",
+              scope_decision_1: "deny",
+            },
+          },
+          context: { open_message_id: newMessageId },
+        }),
+      ).resolves.toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+
+      const decisions = await sql<
+        Array<{ display_name: string; status: string }>
+      >`
+        select display_name, status from project_scope_entries
+        where id in (${pendingEntryId}, ${secondPendingEntryId})
+        order by display_name asc
+      `;
+      expect(decisions).toEqual([
+        { display_name: "New Pending Project A", status: "allowed" },
+        { display_name: "New Pending Project B", status: "denied" },
+      ]);
+      const policies = await sql<Array<{ version: number }>>`
+        select version from project_scope_policies
+        where plugin_instance_id = ${pluginInstanceId}
+      `;
+      expect(policies).toEqual([{ version: 5 }]);
+      const completedDeliveries = await sql<Array<{ domain_version: number }>>`
+        select domain_version from feishu_deliveries
+        where id = ${scopeDeliveries[0]!.id}
+      `;
+      expect(completedDeliveries).toEqual([{ domain_version: 5 }]);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
     } finally {
+      await sql`delete from feishu_inbox_events where event_id = ${scopeSubmitEventId}`;
+      await sql`delete from audit_events where tenant_id = ${tenantId}`;
       await sql`delete from outbox_events where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
       await sql`delete from feishu_partner_bindings where id = ${bindingId}`;
-      await sql`delete from project_scope_entries where id in (${entryId}, ${pendingEntryId})`;
+      await sql`delete from project_scope_entries where id in (${entryId}, ${pendingEntryId}, ${secondPendingEntryId})`;
       await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
       await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
       await sql`delete from report_periods where id = ${periodId}`;
@@ -821,6 +912,37 @@ describe("FeishuGateway individual report callback", () => {
       `;
       expect(submissions).toEqual([{ count: 0 }]);
       expect(fixture.updateInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(fixture.sendInteractiveCard).not.toHaveBeenCalled();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("does not overwrite an already-current card after a stale callback", async () => {
+    const fixture = await createReportCallbackFixture({
+      markdown: "# 最新个人报告\n\n这是版本二的完整正文。",
+      contentRevision: 2,
+      deliveryVersion: 2,
+    });
+
+    try {
+      await expect(
+        fixture.gateway.acceptCardAction(fixture.callback(1)),
+      ).resolves.toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
+      });
+      await expect(fixture.gateway.drainInbox()).resolves.toBe(1);
+
+      const inbox = await sql<
+        Array<{ status: string; error_code: string | null }>
+      >`
+        select status, error_code from feishu_inbox_events
+        where event_id = ${fixture.eventId}
+      `;
+      expect(inbox).toEqual([
+        { status: "processed", error_code: "REPORT_CONTENT_CHANGED" },
+      ]);
+      expect(fixture.updateInteractiveCard).not.toHaveBeenCalled();
       expect(fixture.sendInteractiveCard).not.toHaveBeenCalled();
     } finally {
       await fixture.cleanup();
