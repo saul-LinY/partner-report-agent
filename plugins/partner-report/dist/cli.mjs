@@ -4139,6 +4139,18 @@ var sessionContributionSchema = external_exports.object({
     });
   }
 });
+var sessionContributionIngestSchema = external_exports.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return value;
+    const record = value;
+    if (!("status" in record)) return value;
+    if (!workStatusSchema.safeParse(record.status).success) return value;
+    const { status: _legacyStatus, ...contribution } = record;
+    return contribution;
+  },
+  sessionContributionSchema
+);
 var sessionExtractionResultSchema = external_exports.discriminatedUnion(
   "decision",
   [
@@ -4230,6 +4242,19 @@ var teamReportSectionSchema = external_exports.object({
   title: external_exports.string().min(1).max(100),
   markdown: external_exports.string().max(16e3),
   claims: external_exports.array(teamReportClaimSchema).default([])
+});
+var teamReportGenerationSectionSchema = external_exports.object({
+  key: external_exports.enum(["summary", "project_progress", "risks"]),
+  markdown: external_exports.string().max(16e3),
+  claims: external_exports.array(teamReportClaimSchema).default([])
+});
+var teamReportGenerationResultSchema = external_exports.object({
+  schemaVersion: external_exports.literal("1.0"),
+  summary: external_exports.string().min(1).max(1600),
+  sections: external_exports.array(teamReportGenerationSectionSchema).length(3),
+  missingPartnerIds: external_exports.array(idSchema).default([]),
+  qualityWarnings: external_exports.array(external_exports.string()).default([]),
+  production: productionMetadataSchema
 });
 var teamReportResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
@@ -4699,7 +4724,7 @@ async function authenticatedRequest(path, init = {}) {
 }
 
 // src/collection-config.ts
-var DEFAULT_COLLECTION_MODEL = "gpt-5.5";
+var DEFAULT_COLLECTION_MODEL = "gpt-5.6";
 var DEFAULT_COLLECTION_REASONING_EFFORT = "low";
 var SCHEDULED_COLLECTION_PROMPT = [
   "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
@@ -4709,6 +4734,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
   "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u53EA\u8BFB\u53D6 thread/list \u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u65B0\u5EFA\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
   "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
+  "\u9996\u6B21\u6388\u6743\u5B8C\u6210\u540E\u53D1\u73B0\u65B0\u9879\u76EE\u65F6\uFF0C\u7ACB\u5373\u5F02\u6B65\u53D1\u9001\u98DE\u4E66\u8303\u56F4\u5361\uFF0C\u5148\u7EE7\u7EED\u91C7\u96C6\u5DF2\u6709\u6388\u6743\u9879\u76EE\uFF1B\u539F\u961F\u5217\u6E05\u7A7A\u540E\u5728\u6709\u9650\u65F6\u95F4\u5185\u7B49\u5F85\u5BA1\u6279\u3002\u7528\u6237\u53CA\u65F6\u5141\u8BB8\u65F6\u628A\u65B0\u9879\u76EE\u672C\u5468\u671F Session \u8FFD\u52A0\u5230\u5F53\u524D\u961F\u5217\uFF0C\u7B49\u5F85\u8D85\u65F6\u5219\u6B63\u5E38\u7ED3\u675F\u4E14\u4FDD\u6301 pending\uFF0C\u7A0D\u540E\u5141\u8BB8\u65F6\u7531\u4E0B\u4E00\u6B21\u8FD0\u884C\u8865\u91C7\u672C\u5468\u671F\u3002",
   "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u3001\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\u548C\u5DF2\u5F52\u6863 Session\uFF1B\u6309\u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\uFF0C\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u540C\u540D\u4F46\u4E0D\u540C\u4ED3\u5E93\u5206\u522B\u5904\u7406\u3002\u672A\u9009\u5B9A\u3001\u5F85\u5BA1\u6279\u6216\u62D2\u7EDD\u7684\u9879\u76EE\u4E00\u5F8B\u89C6\u4E3A\u4E34\u65F6\u4F1A\u8BDD\uFF0C\u7981\u6B62\u8BFB\u53D6\u548C\u4E0A\u4F20\u3002project-scope.json \u7684\u672C\u5730 allowed/denied \u4FEE\u6539\u4F1A\u5728\u91C7\u96C6\u524D\u63D0\u4EA4\u4E2D\u53F0\uFF0C\u6309\u7248\u672C\u6821\u9A8C\u6210\u529F\u540E\u624D\u751F\u6548\uFF1B\u51B2\u7A81\u65F6\u505C\u6B62\u91C7\u96C6\u5E76\u8981\u6C42\u5148\u540C\u6B65\u3002",
   "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
@@ -4716,7 +4742,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required\u3001project_scope_card_delivery_pending \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "CLI \u8FD4\u56DE started\u3001job\u3001uploaded\u3001ignored\u3001skipped\u3001review_required\u3001project_scope_card_delivery_pending\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
   "project_scope_card_delivery_pending \u5FC5\u987B\u6301\u7EED\u6267\u884C project-scope-card-wait\uFF1B\u53EA\u6709 CLI \u89C2\u5BDF\u5230\u98DE\u4E66\u5361\u7247\u7248\u672C\u5DF2\u6210\u529F\u6295\u9012\u540E\u624D\u4F1A\u8FD4\u56DE project_scope_approval_required\u3002",
   "CLI \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u786E\u8BA4\u53D1\u9001\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
   "CLI \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
@@ -5621,7 +5647,7 @@ function isLocalProjectScope(value, pluginInstanceId) {
       String(entry.environmentKind)
     )) && (entry.lastSyncedStatus === void 0 || ["pending", "allowed", "denied"].includes(
       String(entry.lastSyncedStatus)
-    ))
+    )) && (entry.backfilledPeriodKey === void 0 || entry.backfilledPeriodKey === null || typeof entry.backfilledPeriodKey === "string")
   );
 }
 function inspectLocalProjectScope(pluginInstanceId, directory = dataDirectory()) {
@@ -5655,7 +5681,8 @@ function mergeRemoteProjectScope(local, remote) {
       entry.scopeKey,
       {
         localRoot: entry.localRoot,
-        environmentKind: entry.environmentKind
+        environmentKind: entry.environmentKind,
+        backfilledPeriodKey: entry.backfilledPeriodKey
       }
     ])
   );
@@ -5667,6 +5694,9 @@ function mergeRemoteProjectScope(local, remote) {
       ...entry,
       localRoot: localMetadata.get(entry.scopeKey)?.localRoot ?? null,
       lastSyncedStatus: entry.status,
+      ...localMetadata.get(entry.scopeKey)?.backfilledPeriodKey !== void 0 ? {
+        backfilledPeriodKey: localMetadata.get(entry.scopeKey).backfilledPeriodKey
+      } : {},
       ...localMetadata.get(entry.scopeKey)?.environmentKind ? {
         environmentKind: localMetadata.get(entry.scopeKey).environmentKind
       } : {}
@@ -5795,6 +5825,11 @@ function scopeIsActive(entry, now = /* @__PURE__ */ new Date()) {
   return Boolean(
     entry?.status === "allowed" && entry.effectiveFrom && new Date(entry.effectiveFrom).getTime() <= now.getTime()
   );
+}
+function scopeNeedsCurrentPeriodBackfill(entry, initializedAt, periodKey) {
+  if (entry.status !== "allowed" || entry.firstSeenPeriodKey !== periodKey || entry.backfilledPeriodKey === periodKey || !initializedAt)
+    return false;
+  return new Date(entry.firstSeenAt).getTime() > new Date(initializedAt).getTime();
 }
 function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__PURE__ */ new Date()) {
   const policies = new Map(entries.map((entry) => [entry.scopeKey, entry]));
@@ -6642,6 +6677,12 @@ async function collectStart() {
     }
   );
   const discovery = discoveredScopes;
+  const knownScopeKeys = new Set(
+    localScope.entries.map((entry) => entry.scopeKey)
+  );
+  const newlyDiscoveredScopeKeys = new Set(
+    discovery.candidates.filter((candidate) => !knownScopeKeys.has(candidate.scopeKey)).map((candidate) => candidate.scopeKey)
+  );
   let registeredScope;
   try {
     registeredScope = await authenticatedRequest(
@@ -6668,9 +6709,15 @@ async function collectStart() {
     discovery.candidates
   );
   saveLocalProjectScope(localScope);
-  const queue = authorizedProjectThreads(
+  const allThreadDiscovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    metadataEligible,
+    { configuredRoots }
+  );
+  const regularQueue = authorizedProjectThreads(
     inWindow,
-    discovery.threadScopes,
+    allThreadDiscovery.threadScopes,
     localScope.entries
   );
   if (!localScope.initialized) {
@@ -6696,6 +6743,63 @@ async function collectStart() {
     localAccepted: localState.acceptedSessions,
     localIgnored: localState.ignoredSessions
   });
+  const fullPeriodSummaries = metadataEligible.filter(
+    (summary) => threadIsInKnownScanWindow(
+      summary.updatedAt,
+      policy.currentPeriod.starts_at,
+      runStartedAt
+    )
+  );
+  const scopeBackfillKeys = new Set(
+    localScope.entries.filter(
+      (entry) => scopeNeedsCurrentPeriodBackfill(
+        entry,
+        localScope.initializedAt,
+        policy.currentPeriod.period_key
+      )
+    ).map((entry) => entry.scopeKey)
+  );
+  const fullPeriodQueue = authorizedProjectThreads(
+    fullPeriodSummaries,
+    allThreadDiscovery.threadScopes,
+    localScope.entries
+  ).filter((summary) => scopeBackfillKeys.has(summary.scopeKey)).map((summary) => ({
+    ...summary,
+    collectionStartsAt: policy.currentPeriod.starts_at
+  }));
+  const queue = [...regularQueue];
+  const queuedIds = new Set(queue.map((summary) => summary.id));
+  for (const summary of fullPeriodQueue) {
+    if (queuedIds.has(summary.id)) continue;
+    queue.push(summary);
+    queuedIds.add(summary.id);
+  }
+  const inWindowIds = new Set(inWindow.map((summary) => summary.id));
+  const pendingNewScopeKeys = new Set(
+    localScope.entries.filter(
+      (entry) => newlyDiscoveredScopeKeys.has(entry.scopeKey) && entry.status === "pending"
+    ).map((entry) => entry.scopeKey)
+  );
+  const deferredQueue = fullPeriodSummaries.flatMap(
+    (summary) => {
+      const scopeKey = allThreadDiscovery.threadScopes.get(summary.id);
+      if (!scopeKey || !pendingNewScopeKeys.has(scopeKey)) return [];
+      return [
+        {
+          ...summary,
+          scopeKey,
+          collectionStartsAt: policy.currentPeriod.starts_at,
+          countedAsExcluded: inWindowIds.has(summary.id)
+        }
+      ];
+    }
+  );
+  const queuedOutsideWindow = queue.filter(
+    (summary) => !inWindowIds.has(summary.id)
+  ).length;
+  const queuedInsideWindow = queue.filter(
+    (summary) => inWindowIds.has(summary.id)
+  ).length;
   const manifest = {
     schemaVersion: "1.0",
     runId,
@@ -6715,12 +6819,19 @@ async function collectStart() {
       ignored: 0,
       unchanged: 0,
       cachedIgnored: 0,
-      outsideWindow: metadataEligible.length - inWindow.length,
-      excluded: summaries.length - metadataEligible.length + (inWindow.length - queue.length),
+      outsideWindow: metadataEligible.length - inWindow.length - queuedOutsideWindow,
+      excluded: summaries.length - metadataEligible.length + (inWindow.length - queuedInsideWindow),
       failedRead: 0,
       failedExtract: 0
     },
-    current: null
+    current: null,
+    approvalWait: pendingNewScopeKeys.size > 0 ? {
+      scopeKeys: [...pendingNewScopeKeys],
+      deadlineAt: new Date(runStartedAt).getTime() + POLL_TOTAL_MS,
+      attempt: 0,
+      deferredQueue
+    } : null,
+    scopeBackfillKeys: [...scopeBackfillKeys]
   };
   let runPath = null;
   try {
@@ -6767,6 +6878,19 @@ async function finishRun(runPath, manifest, config) {
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
     saveCollectionState(state);
+    const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
+    if (backfillKeys.size > 0) {
+      const local = inspectLocalProjectScope(manifest.pluginInstanceId);
+      if (local.state === "valid") {
+        local.scope.entries = local.scope.entries.map(
+          (entry) => backfillKeys.has(entry.scopeKey) ? {
+            ...entry,
+            backfilledPeriodKey: manifest.period.period_key
+          } : entry
+        );
+        saveLocalProjectScope(local.scope);
+      }
+    }
   }
   const summary = {
     status: "completed",
@@ -6789,6 +6913,107 @@ function completionReview(manifest) {
     hasCurrentJob: manifest.current !== null,
     counts: manifest.counts
   });
+}
+async function continueScopeApprovalWait(runPath, manifest) {
+  const wait = manifest.approvalWait;
+  if (!wait || wait.scopeKeys.length === 0) return false;
+  const applyRemote = async () => {
+    const remote = await fetchProjectScope();
+    const inspection = inspectLocalProjectScope(manifest.pluginInstanceId);
+    if (inspection.state !== "valid")
+      throw Object.assign(
+        new Error("\u91C7\u96C6\u8FC7\u7A0B\u4E2D\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u5931\u6548\uFF0C\u5DF2\u505C\u6B62\u8BFB\u53D6\u3002"),
+        { code: "PROJECT_SCOPE_LOCAL_INVALID" }
+      );
+    const local = mergeRemoteProjectScope(inspection.scope, remote);
+    saveLocalProjectScope(local);
+    const entries = new Map(
+      local.entries.map((entry) => [entry.scopeKey, entry])
+    );
+    const approvedKeys = /* @__PURE__ */ new Set();
+    const pendingKeys = [];
+    for (const scopeKey of wait.scopeKeys) {
+      const entry = entries.get(scopeKey);
+      if (entry?.status === "pending") pendingKeys.push(scopeKey);
+      else if (entry?.status === "allowed" && entry.effectiveFrom && new Date(entry.effectiveFrom).getTime() <= wait.deadlineAt)
+        approvedKeys.add(scopeKey);
+    }
+    let appended = 0;
+    const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
+    for (const summary of wait.deferredQueue) {
+      if (!approvedKeys.has(summary.scopeKey) || queuedIds.has(summary.id))
+        continue;
+      manifest.queue.push(summary);
+      queuedIds.add(summary.id);
+      appended += 1;
+      if (summary.countedAsExcluded)
+        manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
+      else
+        manifest.counts.outsideWindow = Math.max(
+          0,
+          manifest.counts.outsideWindow - 1
+        );
+    }
+    if (approvedKeys.size > 0) {
+      const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
+      for (const scopeKey of approvedKeys) backfillKeys.add(scopeKey);
+      manifest.scopeBackfillKeys = [...backfillKeys];
+    }
+    wait.scopeKeys = pendingKeys;
+    wait.deferredQueue = wait.deferredQueue.filter(
+      (summary) => pendingKeys.includes(summary.scopeKey)
+    );
+    return { appended, pending: pendingKeys.length };
+  };
+  const first = await applyRemote();
+  if (first.appended > 0) {
+    saveRun(runPath, manifest);
+    output({
+      status: "project_scope_approved",
+      runPath,
+      appended: first.appended,
+      pendingProjects: first.pending,
+      nextCommand: `collect-next --run ${runPath}`
+    });
+    return true;
+  }
+  if (first.pending === 0 || Date.now() >= wait.deadlineAt) {
+    manifest.approvalWait = null;
+    saveRun(runPath, manifest);
+    return false;
+  }
+  const result = await waitForCondition({
+    check: async () => {
+      const remote = await fetchProjectScope();
+      const entries = new Map(
+        remote.entries.map((entry) => [entry.scopeKey, entry])
+      );
+      return wait.scopeKeys.some(
+        (scopeKey) => entries.get(scopeKey)?.status !== "pending"
+      );
+    },
+    deadlineAt: wait.deadlineAt,
+    segmentDurationMs: POLL_SEGMENT_MS,
+    attempt: wait.attempt,
+    errorCode: (error) => error instanceof HttpError ? error.code : "PROJECT_SCOPE_APPROVAL_STATUS_UNAVAILABLE"
+  });
+  wait.attempt = result.attempt;
+  if (result.status === "confirmed")
+    return continueScopeApprovalWait(runPath, manifest);
+  if (result.status === "timed_out") {
+    manifest.approvalWait = null;
+    saveRun(runPath, manifest);
+    return false;
+  }
+  saveRun(runPath, manifest);
+  output({
+    status: "project_scope_approval_waiting",
+    runPath,
+    pendingProjects: wait.scopeKeys.length,
+    ..."lastErrorCode" in result && result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {},
+    nextCommand: `collect-next --run ${runPath}`
+  });
+  return true;
 }
 async function collectNext() {
   const runPath = option("run");
@@ -6826,7 +7051,7 @@ async function collectNext() {
         updatedAt: thread.updatedAt ?? summary.updatedAt,
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
-        period: manifest.period
+        period: summary.collectionStartsAt ? { ...manifest.period, starts_at: summary.collectionStartsAt } : manifest.period
       });
       if (!job) {
         manifest.counts.excluded += 1;
@@ -6860,6 +7085,7 @@ async function collectNext() {
   } finally {
     server.close();
   }
+  if (await continueScopeApprovalWait(absolute, manifest)) return;
   output({
     status: "review_required",
     runPath: absolute,

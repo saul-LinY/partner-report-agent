@@ -160,6 +160,10 @@ export function pluginRunStatus(row: {
 
 export const pluginHealth = pluginRunStatus;
 
+export function projectScopeDeliveryMode(pendingCount: number) {
+  return pendingCount > 0 ? "review" : "status";
+}
+
 export type FeishuBindingState =
   "disabled" | "not_connected" | "pending" | "connected" | "invalid";
 
@@ -629,6 +633,150 @@ export async function adminRoutes(app: FastifyInstance) {
       instances,
     };
   });
+
+  app.post(
+    "/v1/admin/partners/:id/project-scopes/deliver",
+    async (request, reply) => {
+      const actor = await requireWebActor(request, "admin");
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+      const feishuAppId = process.env.FEISHU_APP_ID?.trim();
+      if (!feishuAppId)
+        throw new ApiError(
+          503,
+          "FEISHU_NOT_CONFIGURED",
+          "飞书卡片投递尚未启用。",
+        );
+
+      const [partners, periods, policies] = await Promise.all([
+        sql<Array<{ id: string }>>`
+          select id from partners
+          where id = ${id} and tenant_id = ${actor.tenantId}
+            and team_id = ${actor.teamId} and status = 'active'
+          limit 1
+        `,
+        sql<Array<{ period_key: string }>>`
+          select period_key from report_periods
+          where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          order by
+            case when starts_at <= now() and ends_at >= now() then 0 else 1 end,
+            starts_at desc
+          limit 1
+        `,
+        sql<
+          Array<{
+            plugin_instance_id: string;
+            total_count: number;
+            pending_count: number;
+          }>
+        >`
+          select psp.plugin_instance_id,
+            count(pse.id)::int as total_count,
+            count(pse.id) filter (where pse.status = 'pending')::int as pending_count
+          from project_scope_policies psp
+          join plugin_instances pi on pi.id = psp.plugin_instance_id
+            and pi.tenant_id = psp.tenant_id and pi.team_id = psp.team_id
+            and pi.partner_id = psp.partner_id and pi.status = 'active'
+          left join project_scope_entries pse
+            on pse.plugin_instance_id = psp.plugin_instance_id
+            and pse.tenant_id = psp.tenant_id
+            and pse.team_id = psp.team_id and pse.partner_id = psp.partner_id
+          where psp.tenant_id = ${actor.tenantId}
+            and psp.team_id = ${actor.teamId} and psp.partner_id = ${id}
+          group by psp.plugin_instance_id, psp.created_at
+          order by psp.created_at asc
+        `,
+      ]);
+      if (!partners[0])
+        throw new ApiError(404, "NOT_FOUND", "Partner 不存在。");
+      const period = periods[0];
+      if (!period)
+        throw new ApiError(
+          409,
+          "REPORT_PERIOD_MISSING",
+          "尚无报告周期，无法生成权限卡片。",
+        );
+
+      const totalCount = policies.reduce(
+        (sum, policy) => sum + policy.total_count,
+        0,
+      );
+      const pendingCount = policies.reduce(
+        (sum, policy) => sum + policy.pending_count,
+        0,
+      );
+      if (totalCount === 0)
+        throw new ApiError(
+          409,
+          "PROJECT_SCOPE_EMPTY",
+          "尚未发现可发送的项目权限。",
+        );
+      const mode = projectScopeDeliveryMode(pendingCount);
+      const targets = policies.filter((policy) =>
+        mode === "review" ? policy.pending_count > 0 : policy.total_count > 0,
+      );
+      const requestId = randomUUID();
+
+      await sql.begin(async (tx) => {
+        for (const target of targets) {
+          const aggregateId = `${target.plugin_instance_id}:${period.period_key}`;
+          const canonicalIdempotencyKey = `scope:${feishuAppId}:${id}:${aggregateId}`;
+          await tx`
+            update feishu_deliveries set
+              idempotency_key = idempotency_key || ':superseded:' || ${requestId},
+              status = case
+                when status in ('pending', 'sending', 'retry_wait', 'failed', 'deferred')
+                  then 'cancelled'
+                else status
+              end,
+              next_retry_at = null, updated_at = now()
+            where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+              and partner_id = ${id} and kind = 'scope'
+              and aggregate_type = 'project_scope'
+              and aggregate_id = ${aggregateId}
+              and idempotency_key = ${canonicalIdempotencyKey}
+          `;
+          await tx`
+            insert into outbox_events (
+              id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+            ) values (
+              ${randomUUID()}, ${actor.tenantId},
+              'project_scope.delivery.requested', 'plugin_instance',
+              ${target.plugin_instance_id},
+              ${JSON.stringify({
+                teamId: actor.teamId,
+                partnerId: id,
+                periodKey: period.period_key,
+                requestedBy: actor.userId,
+                requestId,
+              })}::jsonb
+            )
+          `;
+        }
+      });
+      await audit(
+        request,
+        actor,
+        "project_scope.delivery.requested",
+        "partner",
+        id,
+        {
+          mode,
+          pendingCount,
+          totalCount,
+          targetCount: targets.length,
+          periodKey: period.period_key,
+          requestId,
+        },
+      );
+      return reply.code(202).send({
+        queued: true,
+        mode,
+        queuedCount: targets.length,
+        pendingCount,
+        totalCount,
+      });
+    },
+  );
 
   app.post("/v1/admin/partners", async (request) => {
     const actor = await requireWebActor(request, "admin");

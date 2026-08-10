@@ -1,6 +1,6 @@
 # Partner Report Agent 产品需求文档
 
-> MVP 实现决策（2026-08-04）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 14:30、`gpt-5.5` 和 `low` 推理，并通知所有运行，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；安全契约升级时只修复 Prompt，已有任务的用户配置保持不变。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
+> MVP 实现决策（2026-08-04）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 14:30、`gpt-5.6` 和 `low` 推理，并通知所有运行，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度和通知策略。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；安全契约升级时只修复 Prompt，已有任务的用户配置保持不变。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
 
 > 采集状态修订（2026-08-05）：首次运行只采集最近 1 天；后续按 Plugin 本地成功运行游标和 24 小时重叠窗口筛选候选 Session。已接收与已忽略 Session 均使用用户稳定目录中的本地匿名 hash ledger 防重，并与中台状态合并；hash 只覆盖周期内完整问答，不包含标题、项目 ID 或匹配方式等可变元数据。跨运行租约阻止自动和手动采集并发。只有完整成功的 Run 才推进游标。所有 Session 提取指令以及上传的标题、摘要和贡献正文使用中文。任务级 automation memory 只保存安全运行摘要，不作为防重事实源。
 
@@ -474,7 +474,7 @@ Partner 设置采用四步向导：
 3. 确认本地 Session 历史记录未关闭。
 4. 选择允许分析和必须排除的项目目录。
 5. 选择是否允许上传有限 Evidence Excerpt。
-6. 确认 Skill 已创建默认每天北京时间 14:30、运行于新聊天、项目为无、模型为 `gpt-5.5`、推理强度为 `low`、通知所有运行的 Daily Collection Task；这些值可在 Scheduled 面板修改，并授权访问 Report Service 网络域名。
+6. 确认 Skill 已创建默认每天北京时间 14:30、运行于新聊天、项目为无、模型为 `gpt-5.6`、推理强度为 `low`、通知所有运行的 Daily Collection Task；这些值可在 Scheduled 面板修改，并授权访问 Report Service 网络域名。
 7. 完成一次测试同步，确认 Session 覆盖和错误提示。
 
 可选设置：

@@ -101,39 +101,8 @@ describe("project scope policy", () => {
     ).toThrow();
   });
 
-  it("keeps the complete first batch immediate and delays later additions", () => {
-    const initializedAt = new Date("2026-08-06T10:00:00.000Z");
+  it("applies every project scope decision immediately", () => {
     const now = new Date("2026-08-06T11:00:00.000Z");
-    const nextPeriodStart = new Date("2026-08-10T00:00:00.000Z");
-    expect(
-      projectScopeEffectiveFrom({
-        decision: "allow",
-        policyInitializedAt: initializedAt,
-        entryFirstSeenAt: new Date("2026-08-06T09:00:00.000Z"),
-        wasPending: true,
-        nextPeriodStart,
-        now,
-      }),
-    ).toEqual(now);
-    expect(
-      projectScopeEffectiveFrom({
-        decision: "allow",
-        policyInitializedAt: initializedAt,
-        entryFirstSeenAt: new Date("2026-08-07T09:00:00.000Z"),
-        wasPending: true,
-        nextPeriodStart,
-        now,
-      }),
-    ).toEqual(nextPeriodStart);
-    expect(
-      projectScopeEffectiveFrom({
-        decision: "deny",
-        policyInitializedAt: initializedAt,
-        entryFirstSeenAt: new Date("2026-08-07T09:00:00.000Z"),
-        wasPending: true,
-        nextPeriodStart,
-        now,
-      }),
-    ).toEqual(now);
+    expect(projectScopeEffectiveFrom({ now })).toEqual(now);
   });
 });

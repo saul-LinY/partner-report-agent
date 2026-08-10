@@ -328,7 +328,10 @@ export class FeishuGateway {
           where published_at is null
           and (${this.tenantIdFilter}::uuid is null or tenant_id = ${this.tenantIdFilter})
           and (
-            event_type = 'plugin.binding.recovery.requested'
+            event_type in (
+              'plugin.binding.recovery.requested',
+              'project_scope.delivery.requested'
+            )
             or (
               ${this.reviewDeliveryEnabled}
               and event_type in (
@@ -1197,11 +1200,32 @@ export class FeishuGateway {
         event.event_type === "project_scope.candidates.changed" &&
         !view.initial
       )
-        return true;
+        await this.deliveries.supersedeScopeDelivery({
+          ...scope,
+          aggregateId: view.aggregateId,
+          version: view.version,
+        });
       const result = await this.deliveries.deliverScope({
         ...scope,
         pluginInstanceId: event.aggregate_id,
         periodKey: view.periodLabel,
+      });
+      return !deliveryNeedsStatusRetry(result);
+    }
+
+    if (event.event_type === "project_scope.delivery.requested") {
+      const scope = await this.loadPluginScope(
+        event.tenant_id,
+        event.aggregate_id,
+      );
+      if (!scope) return true;
+      const payload = safeRecord(event.payload);
+      const periodKey =
+        typeof payload.periodKey === "string" ? payload.periodKey : null;
+      const result = await this.deliveries.deliverScopeReminder({
+        ...scope,
+        pluginInstanceId: event.aggregate_id,
+        ...(periodKey ? { periodKey } : {}),
       });
       return !deliveryNeedsStatusRetry(result);
     }
@@ -1322,14 +1346,13 @@ export class FeishuGateway {
     return true;
   }
 
-
- private async loadPluginScope(
-   tenantId: string,
-   pluginInstanceId: string,
- ): Promise<FeishuDeliveryScope | null> {
-   const rows = await this.database<
-     Array<{ tenant_id: string; team_id: string; partner_id: string }>
-   >`
+  private async loadPluginScope(
+    tenantId: string,
+    pluginInstanceId: string,
+  ): Promise<FeishuDeliveryScope | null> {
+    const rows = await this.database<
+      Array<{ tenant_id: string; team_id: string; partner_id: string }>
+    >`
       select tenant_id, team_id, partner_id from plugin_instances
       where id = ${pluginInstanceId} and tenant_id = ${tenantId}
         and status = 'active'

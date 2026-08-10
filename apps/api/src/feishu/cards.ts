@@ -205,6 +205,31 @@ export const scopeCardInputSchema = z
   })
   .strict();
 
+export const scopeStatusCardInputSchema = z
+  .object({
+    deviceName: z.string().trim().min(1).max(120),
+    periodLabel: z.string().trim().min(1).max(120).optional(),
+    summary: z
+      .object({
+        allowed: z.number().int().nonnegative(),
+        denied: z.number().int().nonnegative(),
+      })
+      .strict(),
+    projects: z
+      .array(
+        z
+          .object({
+            displayName: z.string().trim().min(1).max(120),
+            permission: z.enum(["allowed", "denied"]),
+            sessionCount: z.number().int().nonnegative(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(500),
+  })
+  .strict();
+
 export type FeishuActionValue = z.infer<typeof feishuActionValueSchema>;
 export type BindingCardInput = z.input<typeof bindingCardInputSchema>;
 export type RecoveryCardInput = z.input<typeof recoveryCardInputSchema>;
@@ -212,6 +237,7 @@ export type ReviewCardInput = z.input<typeof reviewCardInputSchema>;
 export type ReportCardInput = z.input<typeof reportCardInputSchema>;
 export type StatusCardInput = z.input<typeof statusCardInputSchema>;
 export type ScopeCardInput = z.input<typeof scopeCardInputSchema>;
+export type ScopeStatusCardInput = z.input<typeof scopeStatusCardInputSchema>;
 
 type HeaderTemplate = "blue" | "green" | "red" | "grey";
 
@@ -601,7 +627,7 @@ export function renderScopeCard(rawInput: ScopeCardInput): FeishuCard {
     notation(
       input.initial
         ? "首次授权立即生效；未选择的项目保持待审批且不会读取 Session 内容。"
-        : "本卡片中的新增项目授权从下个周期生效；未处理项目会保持待审批。",
+        : "允许后会立即补采本周期内容；未处理项目保持待审批且不会读取 Session 内容。",
       "scope_effective_time",
     ),
   ];
@@ -664,7 +690,7 @@ export function renderScopeCard(rawInput: ScopeCardInput): FeishuCard {
           title: "确认全部允许",
           text: input.initial
             ? "当前卡片中的全部项目将立即允许采集。"
-            : "当前卡片中的全部项目将从下个周期允许采集。",
+            : "当前卡片中的全部项目将立即允许采集，并补采本周期内容。",
         },
       }),
     ]),
@@ -675,6 +701,65 @@ export function renderScopeCard(rawInput: ScopeCardInput): FeishuCard {
     subtitle: input.periodLabel ?? input.deviceName,
     summary: `有 ${input.projects.length} 个项目等待采集授权`,
     template: "blue",
+    elements,
+  });
+}
+
+export function renderScopeStatusCard(
+  rawInput: ScopeStatusCardInput,
+): FeishuCard {
+  const input = scopeStatusCardInputSchema.parse(rawInput);
+  const allowed = input.projects.filter(
+    (project) => project.permission === "allowed",
+  );
+  const denied = input.projects.filter(
+    (project) => project.permission === "denied",
+  );
+  const visibleAllowed = allowed.slice(0, 60);
+  const visibleDenied = denied.slice(0, 60);
+  const hiddenCount =
+    input.summary.allowed +
+    input.summary.denied -
+    visibleAllowed.length -
+    visibleDenied.length;
+  const projectList = (
+    title: string,
+    projects: typeof input.projects,
+    total: number,
+  ) => [
+    `**${title}（${total}）**`,
+    ...(projects.length > 0
+      ? projects.map(
+          (project) =>
+            `- ${safeMarkdownText(project.displayName, 100)}（${project.sessionCount} 个 Session）`,
+        )
+      : ["- 无"]),
+  ];
+  const elements: FeishuCardElement[] = [
+    markdown(
+      truncateCardText(
+        [
+          ...projectList("允许采集", visibleAllowed, input.summary.allowed),
+          "",
+          ...projectList("不采集", visibleDenied, input.summary.denied),
+        ].join("\n"),
+        FEISHU_CARD_BODY_TEXT_LIMIT,
+      ),
+      "scope_status_projects",
+    ),
+    notation(
+      hiddenCount > 0
+        ? `另有 ${hiddenCount} 个项目未在卡片中展开。当前没有待审批项目，插件只会采集已允许的项目。`
+        : "当前没有待审批项目，插件只会采集已允许的项目。",
+      "scope_status_notice",
+    ),
+  ];
+
+  return createCard({
+    title: "项目采集权限状态",
+    subtitle: input.periodLabel ?? input.deviceName,
+    summary: `允许采集 ${input.summary.allowed} 个 · 不采集 ${input.summary.denied} 个`,
+    template: "green",
     elements,
   });
 }

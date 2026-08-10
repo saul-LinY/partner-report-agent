@@ -107,20 +107,11 @@ async function projectScopeIdentityConfirmed(
   return rows[0]?.confirmed === true;
 }
 
-export function projectScopeEffectiveFrom(input: {
-  decision: "allow" | "deny";
-  policyInitializedAt: Date | null;
-  entryFirstSeenAt: Date;
-  wasPending: boolean;
-  nextPeriodStart: Date;
-  now: Date;
-}) {
-  const belongsToInitialBatch =
-    input.policyInitializedAt === null ||
-    input.entryFirstSeenAt.getTime() <= input.policyInitializedAt.getTime();
-  return input.decision === "deny" || belongsToInitialBatch || !input.wasPending
-    ? input.now
-    : input.nextPeriodStart;
+export function projectScopeEffectiveFrom(input: { now: Date }) {
+  // Approval is the privacy boundary. Once the user has made a decision, it
+  // applies immediately; the plugin decides whether to append the project to
+  // the active run or backfill it on the next run.
+  return input.now;
 }
 
 async function ensurePolicy(database: any, identity: ScopeIdentity) {
@@ -400,11 +391,9 @@ export async function decideProjectScopes(
     const entries = await tx<
       Array<{
         scope_key: string;
-        status: string;
-        first_seen_at: Date | string;
       }>
     >`
-      select scope_key, status, first_seen_at from project_scope_entries
+      select scope_key from project_scope_entries
       where plugin_instance_id = ${pluginInstanceId}
         and tenant_id = ${actor.tenantId} and scope_key in ${tx(keys)}
       for update
@@ -415,32 +404,8 @@ export async function decideProjectScopes(
         "PROJECT_SCOPE_NOT_FOUND",
         "部分项目权限不存在。",
       );
-    const previousEntries = new Map(
-      entries.map((entry) => [entry.scope_key, entry]),
-    );
-    const periods = await tx<Array<{ ends_at: Date }>>`
-      select ends_at from report_periods
-      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and status = 'open' and starts_at <= now() and ends_at >= now()
-      order by starts_at desc limit 1
-    `;
-    const nextPeriodStart = periods[0]?.ends_at
-      ? new Date(periods[0].ends_at)
-      : new Date();
-
     for (const item of input.decisions) {
-      const previous = previousEntries.get(item.scopeKey)!;
-      const wasPending = previous.status === "pending";
-      const effectiveFrom = projectScopeEffectiveFrom({
-        decision: item.decision,
-        policyInitializedAt: policy.initialized_at
-          ? new Date(policy.initialized_at)
-          : null,
-        entryFirstSeenAt: new Date(previous.first_seen_at),
-        wasPending,
-        nextPeriodStart,
-        now: new Date(),
-      });
+      const effectiveFrom = projectScopeEffectiveFrom({ now: new Date() });
       await tx`
         update project_scope_entries set
           status = ${item.decision === "allow" ? "allowed" : "denied"},

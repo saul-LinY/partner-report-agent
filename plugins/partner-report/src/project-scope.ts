@@ -41,6 +41,7 @@ export type LocalProjectScopeEntry = RemoteProjectScopeEntry & {
   localRoot: string | null;
   environmentKind?: "configured" | "git" | "unknown";
   lastSyncedStatus?: RemoteProjectScopeEntry["status"];
+  backfilledPeriodKey?: string | null;
 };
 
 export type LocalProjectScope = Omit<RemoteProjectScopePolicy, "entries"> & {
@@ -235,7 +236,10 @@ function isLocalProjectScope(
       (entry.lastSyncedStatus === undefined ||
         ["pending", "allowed", "denied"].includes(
           String(entry.lastSyncedStatus),
-        )),
+        )) &&
+      (entry.backfilledPeriodKey === undefined ||
+        entry.backfilledPeriodKey === null ||
+        typeof entry.backfilledPeriodKey === "string"),
   );
 }
 
@@ -289,6 +293,7 @@ export function mergeRemoteProjectScope(
       {
         localRoot: entry.localRoot,
         environmentKind: entry.environmentKind,
+        backfilledPeriodKey: entry.backfilledPeriodKey,
       },
     ]),
   );
@@ -300,6 +305,12 @@ export function mergeRemoteProjectScope(
       ...entry,
       localRoot: localMetadata.get(entry.scopeKey)?.localRoot ?? null,
       lastSyncedStatus: entry.status,
+      ...(localMetadata.get(entry.scopeKey)?.backfilledPeriodKey !== undefined
+        ? {
+            backfilledPeriodKey: localMetadata.get(entry.scopeKey)!
+              .backfilledPeriodKey,
+          }
+        : {}),
       ...(localMetadata.get(entry.scopeKey)?.environmentKind
         ? {
             environmentKind: localMetadata.get(entry.scopeKey)!.environmentKind,
@@ -503,6 +514,23 @@ export function scopeIsActive(
     entry?.status === "allowed" &&
     entry.effectiveFrom &&
     new Date(entry.effectiveFrom).getTime() <= now.getTime(),
+  );
+}
+
+export function scopeNeedsCurrentPeriodBackfill(
+  entry: LocalProjectScopeEntry,
+  initializedAt: string | null,
+  periodKey: string,
+) {
+  if (
+    entry.status !== "allowed" ||
+    entry.firstSeenPeriodKey !== periodKey ||
+    entry.backfilledPeriodKey === periodKey ||
+    !initializedAt
+  )
+    return false;
+  return (
+    new Date(entry.firstSeenAt).getTime() > new Date(initializedAt).getTime()
   );
 }
 

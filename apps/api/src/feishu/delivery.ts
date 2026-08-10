@@ -6,6 +6,7 @@ import {
   renderReportCard,
   renderReviewCard,
   renderScopeCard,
+  renderScopeStatusCard,
   type FeishuCard,
 } from "./cards.js";
 import {
@@ -94,6 +95,23 @@ export type ScopeDeliveryView = FeishuDeliveryScope & {
   projects: Array<{
     scopeKey: string;
     displayName: string;
+    sessionCount: number;
+  }>;
+};
+
+export type ScopeStatusDeliveryView = FeishuDeliveryScope & {
+  aggregateId: string;
+  pluginInstanceId: string;
+  version: number;
+  deviceName: string;
+  periodLabel: string;
+  summary: {
+    allowed: number;
+    denied: number;
+  };
+  projects: Array<{
+    displayName: string;
+    permission: "allowed" | "denied";
     sessionCount: number;
   }>;
 };
@@ -261,7 +279,6 @@ export class FeishuDeliveryService {
       ? webOriginSchema.parse(input.webOrigin).replace(/\/+$/, "")
       : null;
   }
-
 
   async loadReviewDeliveryView(
     scope: FeishuDeliveryScope,
@@ -493,6 +510,83 @@ export class FeishuDeliveryService {
     };
   }
 
+  async loadScopeStatusDeliveryView(
+    scope: FeishuDeliveryScope,
+    pluginInstanceId: string,
+    requestedPeriodKey?: string,
+  ): Promise<ScopeStatusDeliveryView | null> {
+    const rows = await this.database<
+      Array<{
+        plugin_instance_id: string;
+        device_name: string;
+        version: number;
+        period_key: string;
+      }>
+    >`
+      select pi.id as plugin_instance_id, pi.device_name, psp.version,
+        rp.period_key
+      from plugin_instances pi
+      join project_scope_policies psp
+        on psp.plugin_instance_id = pi.id and psp.tenant_id = pi.tenant_id
+      join lateral (
+        select period_key from report_periods
+        where tenant_id = pi.tenant_id and team_id = pi.team_id
+          and (${requestedPeriodKey ?? null}::text is null or period_key = ${requestedPeriodKey ?? null})
+        order by
+          case when starts_at <= now() and ends_at >= now() then 0 else 1 end,
+          starts_at desc
+        limit 1
+      ) rp on true
+      where pi.id = ${pluginInstanceId} and pi.tenant_id = ${scope.tenantId}
+        and pi.team_id = ${scope.teamId} and pi.partner_id = ${scope.partnerId}
+        and pi.status = 'active'
+      limit 1
+    `;
+    const policy = rows[0];
+    if (!policy) return null;
+    const projects = await this.database<
+      Array<{
+        display_name: string;
+        status: "pending" | "allowed" | "denied";
+        session_count: number;
+        pending_count: number;
+        allowed_count: number;
+        denied_count: number;
+      }>
+    >`
+      select display_name, status, session_count,
+        count(*) filter (where status = 'pending') over ()::int as pending_count,
+        count(*) filter (where status = 'allowed') over ()::int as allowed_count,
+        count(*) filter (where status = 'denied') over ()::int as denied_count
+      from project_scope_entries
+      where plugin_instance_id = ${pluginInstanceId}
+        and tenant_id = ${scope.tenantId} and team_id = ${scope.teamId}
+        and partner_id = ${scope.partnerId}
+      order by case status when 'allowed' then 0 else 1 end,
+        display_name asc, first_seen_at asc
+      limit 500
+    `;
+    if (projects.length === 0 || (projects[0]?.pending_count ?? 0) > 0)
+      return null;
+    return {
+      ...scope,
+      aggregateId: `${pluginInstanceId}:${policy.period_key}`,
+      pluginInstanceId,
+      version: policy.version,
+      deviceName: policy.device_name,
+      periodLabel: policy.period_key,
+      summary: {
+        allowed: projects[0]?.allowed_count ?? 0,
+        denied: projects[0]?.denied_count ?? 0,
+      },
+      projects: projects.map((project) => ({
+        displayName: project.display_name,
+        permission: project.status === "allowed" ? "allowed" : "denied",
+        sessionCount: project.session_count,
+      })),
+    };
+  }
+
   renderReviewDeliveryCard(
     view: ReviewDeliveryView,
     deliveryId: string,
@@ -543,6 +637,45 @@ export class FeishuDeliveryService {
     });
   }
 
+  renderScopeStatusDeliveryCard(view: ScopeStatusDeliveryView) {
+    return renderScopeStatusCard({
+      deviceName: view.deviceName,
+      periodLabel: view.periodLabel,
+      summary: view.summary,
+      projects: view.projects,
+    });
+  }
+
+  async supersedeScopeDelivery(
+    input: FeishuDeliveryScope & {
+      aggregateId: string;
+      version: number;
+    },
+  ) {
+    const canonicalKey = idempotencyKey(
+      this.appId,
+      "scope",
+      input.partnerId,
+      input.aggregateId,
+    );
+    await this.database`
+      update feishu_deliveries set
+        idempotency_key = idempotency_key || ':superseded:auto:' || ${input.version},
+        status = case
+          when status in ('pending', 'sending', 'retry_wait', 'failed', 'deferred')
+            then 'cancelled'
+          else status
+        end,
+        next_retry_at = null, updated_at = now()
+      where tenant_id = ${input.tenantId} and team_id = ${input.teamId}
+        and partner_id = ${input.partnerId} and kind = 'scope'
+        and aggregate_type = 'project_scope'
+        and aggregate_id = ${input.aggregateId}
+        and idempotency_key = ${canonicalKey}
+        and coalesce(domain_version, 0) < ${input.version}
+    `;
+  }
+
   async deliverScope(
     input: FeishuDeliveryScope & {
       pluginInstanceId: string;
@@ -566,6 +699,53 @@ export class FeishuDeliveryService {
       view.aggregateId,
       view.version,
       (deliveryId) => this.renderScopeDeliveryCard(view, deliveryId),
+    );
+  }
+
+  async deliverScopeStatus(
+    input: FeishuDeliveryScope & {
+      pluginInstanceId: string;
+      periodKey?: string;
+    },
+  ) {
+    const view = await this.loadScopeStatusDeliveryView(
+      input,
+      input.pluginInstanceId,
+      input.periodKey,
+    );
+    if (!view)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "not_reviewable",
+      } satisfies FeishuDeliveryResult;
+    return this.deliverAggregate(
+      "scope",
+      input,
+      view.aggregateId,
+      view.version,
+      () => this.renderScopeStatusDeliveryCard(view),
+    );
+  }
+
+  async deliverScopeReminder(
+    input: FeishuDeliveryScope & {
+      pluginInstanceId: string;
+      periodKey?: string;
+    },
+  ) {
+    const reviewView = await this.loadScopeDeliveryView(
+      input,
+      input.pluginInstanceId,
+      input.periodKey,
+    );
+    if (!reviewView) return this.deliverScopeStatus(input);
+    return this.deliverAggregate(
+      "scope",
+      input,
+      reviewView.aggregateId,
+      reviewView.version,
+      (deliveryId) => this.renderScopeDeliveryCard(reviewView, deliveryId),
     );
   }
 
@@ -907,7 +1087,6 @@ export class FeishuDeliveryService {
     `;
     return partners[0] ?? null;
   }
-
 
   private async ensurePendingBindingForPartner(
     partner: PartnerRow,

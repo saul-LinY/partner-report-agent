@@ -526,6 +526,187 @@ describe("FeishuGateway plugin binding automation", () => {
   });
 });
 
+describe("FeishuGateway project scope delivery", () => {
+  it("sends Admin status and later-candidate review cards", async () => {
+    const tenantId = randomUUID();
+    const teamId = randomUUID();
+    const partnerId = randomUUID();
+    const pluginInstanceId = randomUUID();
+    const periodId = randomUUID();
+    const bindingId = randomUUID();
+    const entryId = randomUUID();
+    const pendingEntryId = randomUUID();
+    const outboxId = randomUUID();
+    const candidateOutboxId = randomUUID();
+    const candidateRetryOutboxId = randomUUID();
+    const appId = `cli_scope_status_${randomUUID()}`;
+    const periodKey = `scope-status-${periodId}`;
+    const openId = `ou_${randomUUID()}`;
+    const messageId = `om_${randomUUID()}`;
+    const newMessageId = `om_${randomUUID()}`;
+    const sendInteractiveCard = vi
+      .fn()
+      .mockResolvedValueOnce({ messageId })
+      .mockResolvedValueOnce({ messageId: newMessageId });
+    const updateInteractiveCard = vi.fn(async () => undefined);
+
+    try {
+      await sql`insert into tenants (id, name) values (${tenantId}, 'Scope status delivery')`;
+      await sql`
+        insert into teams (id, tenant_id, name)
+        values (${teamId}, ${tenantId}, 'Scope status delivery')
+      `;
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (
+          ${partnerId}, ${tenantId}, ${teamId},
+          ${`scope-status-${partnerId}@example.com`}, 'Scope Status User'
+        )
+      `;
+      await sql`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at,
+          cutoff_at, submission_deadline_at, timezone
+        ) values (
+          ${periodId}, ${tenantId}, ${teamId}, ${periodKey},
+          now() - interval '1 day', now() + interval '6 days',
+          now() + interval '5 days', now() + interval '6 days',
+          'Asia/Shanghai'
+        )
+      `;
+      await sql`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at
+        ) values (
+          ${pluginInstanceId}, ${tenantId}, ${teamId}, ${partnerId},
+          'Scope Status MacBook', '0.4.5', 'scope-access', 'scope-refresh',
+          now() + interval '1 day'
+        )
+      `;
+      await sql`
+        insert into project_scope_policies (
+          plugin_instance_id, tenant_id, team_id, partner_id,
+          version, initialized, initialized_at
+        ) values (
+          ${pluginInstanceId}, ${tenantId}, ${teamId}, ${partnerId},
+          3, true, now()
+        )
+      `;
+      await sql`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id,
+          scope_key, display_name, status, effective_from,
+          first_seen_period_key, session_count
+        ) values (
+          ${entryId}, ${tenantId}, ${teamId}, ${partnerId},
+          ${pluginInstanceId}, ${"a".repeat(64)}, 'Allowed Project',
+          'allowed', now(), ${periodKey}, 4
+        )
+      `;
+      await sql`
+        insert into feishu_partner_bindings (
+          id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
+        ) values (
+          ${bindingId}, ${tenantId}, ${teamId}, ${partnerId}, ${appId},
+          ${openId}, 'active', now()
+        )
+      `;
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${outboxId}, ${tenantId}, 'project_scope.delivery.requested',
+          'plugin_instance', ${pluginInstanceId},
+          ${JSON.stringify({ periodKey })}::jsonb
+        )
+      `;
+      const service = new FeishuDeliveryService({
+        appId,
+        messageClient: { sendInteractiveCard, updateInteractiveCard },
+      });
+      const gateway = new FeishuGateway(
+        { appId, appSecret: "scope-status-delivery-secret" },
+        { updateInteractiveCard },
+        service,
+        { tenantIdFilter: tenantId, reviewDeliveryEnabled: true },
+      );
+
+      await expect(gateway.drainOutbox()).resolves.toBe(1);
+      expect(sendInteractiveCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          receiveId: openId,
+          receiveIdType: "open_id",
+          card: expect.objectContaining({
+            header: expect.objectContaining({
+              title: { tag: "plain_text", content: "项目采集权限状态" },
+            }),
+          }),
+        }),
+      );
+      await sql`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id,
+          scope_key, display_name, status, first_seen_period_key, session_count
+        ) values (
+          ${pendingEntryId}, ${tenantId}, ${teamId}, ${partnerId},
+          ${pluginInstanceId}, ${"b".repeat(64)}, 'New Pending Project',
+          'pending', ${periodKey}, 2
+        )
+      `;
+      await sql`
+        update project_scope_policies set version = 4
+        where plugin_instance_id = ${pluginInstanceId}
+      `;
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${candidateOutboxId}, ${tenantId},
+          'project_scope.candidates.changed', 'plugin_instance',
+          ${pluginInstanceId}, ${JSON.stringify({ periodKey, version: 4 })}::jsonb
+        )
+      `;
+
+      const published = await gateway.drainOutbox();
+      expect(sendInteractiveCard).toHaveBeenCalledTimes(2);
+      expect(sendInteractiveCard).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          card: expect.objectContaining({
+            header: expect.objectContaining({
+              title: { tag: "plain_text", content: "审批本周期新增项目" },
+            }),
+          }),
+        }),
+      );
+      expect(updateInteractiveCard).not.toHaveBeenCalled();
+      expect(published).toBe(1);
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${candidateRetryOutboxId}, ${tenantId},
+          'project_scope.candidates.changed', 'plugin_instance',
+          ${pluginInstanceId}, ${JSON.stringify({ periodKey, version: 4 })}::jsonb
+        )
+      `;
+      await expect(gateway.drainOutbox()).resolves.toBe(1);
+      expect(sendInteractiveCard).toHaveBeenCalledTimes(2);
+    } finally {
+      await sql`delete from outbox_events where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_partner_bindings where id = ${bindingId}`;
+      await sql`delete from project_scope_entries where id in (${entryId}, ${pendingEntryId})`;
+      await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+      await sql`delete from report_periods where id = ${periodId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+      await sql`delete from teams where id = ${teamId}`;
+      await sql`delete from tenants where id = ${tenantId}`;
+    }
+  });
+});
+
 describe("FeishuGateway individual report callback", () => {
   it("submits a fully displayed report for the bound Feishu identity", async () => {
     const markdown = "# 个人报告\n\n本周完成了数据链路审核，并核对了全部事实。";

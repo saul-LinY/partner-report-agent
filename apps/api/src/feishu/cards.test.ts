@@ -11,6 +11,7 @@ import {
   renderReportCard,
   renderReviewCard,
   renderScopeCard,
+  renderScopeStatusCard,
   renderStaleCard,
   reviewCardInputSchema,
   truncateCardText,
@@ -158,7 +159,35 @@ describe("Feishu JSON 2.0 cards", () => {
       expect.objectContaining({ action: "scope_deny_all", baseVersion: 4 }),
       expect.objectContaining({ action: "scope_allow_all", baseVersion: 4 }),
     ]);
-    expect(JSON.stringify(card)).toContain("下个周期");
+    expect(JSON.stringify(card)).toContain("立即补采本周期内容");
+    expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThan(
+      FEISHU_CARD_MAX_JSON_BYTES,
+    );
+  });
+
+  it("renders a read-only project scope status without callbacks", () => {
+    const card = renderScopeStatusCard({
+      deviceName: "Saul MacBook",
+      periodLabel: "2026-W32",
+      summary: { allowed: 1, denied: 1 },
+      projects: [
+        {
+          displayName: "partner-report",
+          permission: "allowed",
+          sessionCount: 3,
+        },
+        {
+          displayName: "private-notes",
+          permission: "denied",
+          sessionCount: 1,
+        },
+      ],
+    });
+
+    expect(callbackValues(card)).toEqual([]);
+    expect(card.header.title.content).toBe("项目采集权限状态");
+    expect(JSON.stringify(card)).toContain("允许采集 1 个");
+    expect(JSON.stringify(card)).toContain("当前没有待审批项目");
     expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThan(
       FEISHU_CARD_MAX_JSON_BYTES,
     );

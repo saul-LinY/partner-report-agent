@@ -10,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Send,
   Server,
   ShieldCheck,
   Trash2,
@@ -25,6 +26,7 @@ import {
   ErrorBanner,
   Field,
   Modal,
+  SuccessBanner,
 } from "./components.js";
 
 type FeishuConnectionState =
@@ -115,6 +117,14 @@ type AdminProjectScope = {
       sessionCount: number;
     }>;
   }>;
+};
+
+type ProjectScopeDeliveryResult = {
+  queued: true;
+  mode: "review" | "status";
+  queuedCount: number;
+  pendingCount: number;
+  totalCount: number;
 };
 
 type Overview = {
@@ -507,17 +517,43 @@ function ProjectScopeModal({
       ),
   });
   const data = query.data;
+  const delivery = useMutation({
+    mutationFn: () =>
+      api<ProjectScopeDeliveryResult>(
+        `/v1/admin/partners/${connection.partnerId}/project-scopes/deliver`,
+        { method: "POST" },
+      ),
+  });
+  const deliveryLabel = data?.summary.pending ? "再次发送审核" : "发送权限状态";
 
   return (
     <Modal
       title={`${connection.partnerName} 的采集权限`}
       onClose={onClose}
       footer={
-        <Button variant="secondary" onClick={onClose}>
-          关闭
-        </Button>
+        <>
+          <Button
+            icon={<Send size={16} />}
+            loading={delivery.isPending}
+            disabled={!data || data.summary.total === 0 || query.isError}
+            onClick={() => delivery.mutate()}
+          >
+            {deliveryLabel}
+          </Button>
+          <Button variant="secondary" onClick={onClose}>
+            关闭
+          </Button>
+        </>
       }
     >
+      {delivery.isError && <ErrorBanner error={delivery.error} />}
+      {delivery.data && (
+        <SuccessBanner>
+          {delivery.data.mode === "review"
+            ? `已提交发送，${delivery.data.pendingCount} 个待审批项目将再次发给用户。`
+            : "已提交发送，用户将在飞书中看到当前项目权限状态。"}
+        </SuccessBanner>
+      )}
       {query.isLoading ? (
         <div className="scope-loading">
           <RefreshCw className="spin" size={18} />

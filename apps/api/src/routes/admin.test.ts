@@ -7,6 +7,7 @@ import {
   partnerReviewProgress,
   pluginConnectivityStatus,
   pluginRunStatus,
+  projectScopeDeliveryMode,
 } from "./admin.js";
 
 describe("Admin agent job retry", () => {
@@ -14,6 +15,16 @@ describe("Admin agent job retry", () => {
     expect(nextManualRetryMaxAttempts(3, 3)).toBe(6);
     expect(nextManualRetryMaxAttempts(2, 10)).toBe(10);
     expect(nextManualRetryMaxAttempts(11, 10)).toBe(14);
+  });
+});
+
+describe("Project scope delivery mode", () => {
+  it("resends approvals while pending projects remain", () => {
+    expect(projectScopeDeliveryMode(3)).toBe("review");
+  });
+
+  it("sends a read-only status after every project is reviewed", () => {
+    expect(projectScopeDeliveryMode(0)).toBe("status");
   });
 });
 

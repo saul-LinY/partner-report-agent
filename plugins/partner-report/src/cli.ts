@@ -69,11 +69,16 @@ import {
   mergeRemoteProjectScope,
   saveLocalProjectScope,
   scopeIsActive,
+  scopeNeedsCurrentPeriodBackfill,
   threadMayBeRead,
   type LocalProjectScope,
   type RemoteProjectScopePolicy,
 } from "./project-scope.js";
-import { decodeWaitPeriod, waitForConditionAndContinue } from "./poll-wait.js";
+import {
+  decodeWaitPeriod,
+  waitForCondition,
+  waitForConditionAndContinue,
+} from "./poll-wait.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -122,7 +127,18 @@ type ThreadSummary = {
   systemGenerated?: boolean;
 };
 
-type ScopedThreadSummary = ThreadSummary & { scopeKey: string };
+type ScopedThreadSummary = ThreadSummary & {
+  scopeKey: string;
+  collectionStartsAt?: string;
+  countedAsExcluded?: boolean;
+};
+
+type ScopeApprovalWait = {
+  scopeKeys: string[];
+  deadlineAt: number;
+  attempt: number;
+  deferredQueue: ScopedThreadSummary[];
+};
 
 type RunCounts = {
   discovered: number;
@@ -158,6 +174,8 @@ type RunManifest = {
   knownSessions: Record<string, KnownSession>;
   counts: RunCounts;
   current: CurrentJob | null;
+  approvalWait?: ScopeApprovalWait | null;
+  scopeBackfillKeys?: string[];
 };
 
 const RUN_PREFIX = "partner-report-run-";
@@ -1100,6 +1118,14 @@ async function collectStart() {
     },
   );
   const discovery = discoveredScopes;
+  const knownScopeKeys = new Set(
+    localScope.entries.map((entry) => entry.scopeKey),
+  );
+  const newlyDiscoveredScopeKeys = new Set(
+    discovery.candidates
+      .filter((candidate) => !knownScopeKeys.has(candidate.scopeKey))
+      .map((candidate) => candidate.scopeKey),
+  );
   let registeredScope: RemoteProjectScopePolicy;
   try {
     registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
@@ -1126,9 +1152,15 @@ async function collectStart() {
     discovery.candidates,
   );
   saveLocalProjectScope(localScope);
-  const queue: ScopedThreadSummary[] = authorizedProjectThreads(
+  const allThreadDiscovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    metadataEligible,
+    { configuredRoots },
+  );
+  const regularQueue: ScopedThreadSummary[] = authorizedProjectThreads(
     inWindow,
-    discovery.threadScopes,
+    allThreadDiscovery.threadScopes,
     localScope.entries,
   );
 
@@ -1157,6 +1189,71 @@ async function collectStart() {
     localAccepted: localState.acceptedSessions,
     localIgnored: localState.ignoredSessions,
   });
+  const fullPeriodSummaries = metadataEligible.filter((summary) =>
+    threadIsInKnownScanWindow(
+      summary.updatedAt,
+      policy.currentPeriod!.starts_at,
+      runStartedAt,
+    ),
+  );
+  const scopeBackfillKeys = new Set(
+    localScope.entries
+      .filter((entry) =>
+        scopeNeedsCurrentPeriodBackfill(
+          entry,
+          localScope.initializedAt,
+          policy.currentPeriod!.period_key,
+        ),
+      )
+      .map((entry) => entry.scopeKey),
+  );
+  const fullPeriodQueue = authorizedProjectThreads(
+    fullPeriodSummaries,
+    allThreadDiscovery.threadScopes,
+    localScope.entries,
+  )
+    .filter((summary) => scopeBackfillKeys.has(summary.scopeKey))
+    .map((summary) => ({
+      ...summary,
+      collectionStartsAt: policy.currentPeriod!.starts_at,
+    }));
+  const queue = [...regularQueue];
+  const queuedIds = new Set(queue.map((summary) => summary.id));
+  for (const summary of fullPeriodQueue) {
+    if (queuedIds.has(summary.id)) continue;
+    queue.push(summary);
+    queuedIds.add(summary.id);
+  }
+  const inWindowIds = new Set(inWindow.map((summary) => summary.id));
+  const pendingNewScopeKeys = new Set(
+    localScope.entries
+      .filter(
+        (entry) =>
+          newlyDiscoveredScopeKeys.has(entry.scopeKey) &&
+          entry.status === "pending",
+      )
+      .map((entry) => entry.scopeKey),
+  );
+  const deferredQueue = fullPeriodSummaries.flatMap(
+    (summary): ScopedThreadSummary[] => {
+      const scopeKey = allThreadDiscovery.threadScopes.get(summary.id);
+      if (!scopeKey || !pendingNewScopeKeys.has(scopeKey)) return [];
+      return [
+        {
+          ...summary,
+          scopeKey,
+          collectionStartsAt: policy.currentPeriod!.starts_at,
+          countedAsExcluded: inWindowIds.has(summary.id),
+        },
+      ];
+    },
+  );
+  const queuedOutsideWindow = queue.filter(
+    (summary) => !inWindowIds.has(summary.id),
+  ).length;
+  const queuedInsideWindow = queue.filter((summary) =>
+    inWindowIds.has(summary.id),
+  ).length;
   const manifest: RunManifest = {
     schemaVersion: "1.0",
     runId,
@@ -1176,15 +1273,26 @@ async function collectStart() {
       ignored: 0,
       unchanged: 0,
       cachedIgnored: 0,
-      outsideWindow: metadataEligible.length - inWindow.length,
+      outsideWindow:
+        metadataEligible.length - inWindow.length - queuedOutsideWindow,
       excluded:
         summaries.length -
         metadataEligible.length +
-        (inWindow.length - queue.length),
+        (inWindow.length - queuedInsideWindow),
       failedRead: 0,
       failedExtract: 0,
     },
     current: null,
+    approvalWait:
+      pendingNewScopeKeys.size > 0
+        ? {
+            scopeKeys: [...pendingNewScopeKeys],
+            deadlineAt: new Date(runStartedAt).getTime() + POLL_TOTAL_MS,
+            attempt: 0,
+            deferredQueue,
+          }
+        : null,
+    scopeBackfillKeys: [...scopeBackfillKeys],
   };
   let runPath: string | null = null;
   try {
@@ -1237,6 +1345,21 @@ async function finishRun(
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
     saveCollectionState(state);
+    const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
+    if (backfillKeys.size > 0) {
+      const local = inspectLocalProjectScope(manifest.pluginInstanceId);
+      if (local.state === "valid") {
+        local.scope.entries = local.scope.entries.map((entry) =>
+          backfillKeys.has(entry.scopeKey)
+            ? {
+                ...entry,
+                backfilledPeriodKey: manifest.period.period_key,
+              }
+            : entry,
+        );
+        saveLocalProjectScope(local.scope);
+      }
+    }
   }
   const summary = {
     status: "completed",
@@ -1260,6 +1383,124 @@ function completionReview(manifest: RunManifest) {
     hasCurrentJob: manifest.current !== null,
     counts: manifest.counts,
   });
+}
+
+async function continueScopeApprovalWait(
+  runPath: string,
+  manifest: RunManifest,
+): Promise<boolean> {
+  const wait = manifest.approvalWait;
+  if (!wait || wait.scopeKeys.length === 0) return false;
+
+  const applyRemote = async () => {
+    const remote = await fetchProjectScope();
+    const inspection = inspectLocalProjectScope(manifest.pluginInstanceId);
+    if (inspection.state !== "valid")
+      throw Object.assign(
+        new Error("采集过程中本地项目权限文件失效，已停止读取。"),
+        { code: "PROJECT_SCOPE_LOCAL_INVALID" },
+      );
+    const local = mergeRemoteProjectScope(inspection.scope, remote);
+    saveLocalProjectScope(local);
+    const entries = new Map(
+      local.entries.map((entry) => [entry.scopeKey, entry]),
+    );
+    const approvedKeys = new Set<string>();
+    const pendingKeys: string[] = [];
+    for (const scopeKey of wait.scopeKeys) {
+      const entry = entries.get(scopeKey);
+      if (entry?.status === "pending") pendingKeys.push(scopeKey);
+      else if (
+        entry?.status === "allowed" &&
+        entry.effectiveFrom &&
+        new Date(entry.effectiveFrom).getTime() <= wait.deadlineAt
+      )
+        approvedKeys.add(scopeKey);
+    }
+
+    let appended = 0;
+    const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
+    for (const summary of wait.deferredQueue) {
+      if (!approvedKeys.has(summary.scopeKey) || queuedIds.has(summary.id))
+        continue;
+      manifest.queue.push(summary);
+      queuedIds.add(summary.id);
+      appended += 1;
+      if (summary.countedAsExcluded)
+        manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
+      else
+        manifest.counts.outsideWindow = Math.max(
+          0,
+          manifest.counts.outsideWindow - 1,
+        );
+    }
+    if (approvedKeys.size > 0) {
+      const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
+      for (const scopeKey of approvedKeys) backfillKeys.add(scopeKey);
+      manifest.scopeBackfillKeys = [...backfillKeys];
+    }
+    wait.scopeKeys = pendingKeys;
+    wait.deferredQueue = wait.deferredQueue.filter((summary) =>
+      pendingKeys.includes(summary.scopeKey),
+    );
+    return { appended, pending: pendingKeys.length };
+  };
+
+  const first = await applyRemote();
+  if (first.appended > 0) {
+    saveRun(runPath, manifest);
+    output({
+      status: "project_scope_approved",
+      runPath,
+      appended: first.appended,
+      pendingProjects: first.pending,
+      nextCommand: `collect-next --run ${runPath}`,
+    });
+    return true;
+  }
+  if (first.pending === 0 || Date.now() >= wait.deadlineAt) {
+    manifest.approvalWait = null;
+    saveRun(runPath, manifest);
+    return false;
+  }
+
+  const result = await waitForCondition({
+    check: async () => {
+      const remote = await fetchProjectScope();
+      const entries = new Map(
+        remote.entries.map((entry) => [entry.scopeKey, entry]),
+      );
+      return wait.scopeKeys.some(
+        (scopeKey) => entries.get(scopeKey)?.status !== "pending",
+      );
+    },
+    deadlineAt: wait.deadlineAt,
+    segmentDurationMs: POLL_SEGMENT_MS,
+    attempt: wait.attempt,
+    errorCode: (error) =>
+      error instanceof HttpError
+        ? error.code
+        : "PROJECT_SCOPE_APPROVAL_STATUS_UNAVAILABLE",
+  });
+  wait.attempt = result.attempt;
+  if (result.status === "confirmed")
+    return continueScopeApprovalWait(runPath, manifest);
+  if (result.status === "timed_out") {
+    manifest.approvalWait = null;
+    saveRun(runPath, manifest);
+    return false;
+  }
+  saveRun(runPath, manifest);
+  output({
+    status: "project_scope_approval_waiting",
+    runPath,
+    pendingProjects: wait.scopeKeys.length,
+    ...("lastErrorCode" in result && result.lastErrorCode
+      ? { lastErrorCode: result.lastErrorCode }
+      : {}),
+    nextCommand: `collect-next --run ${runPath}`,
+  });
+  return true;
 }
 
 async function collectNext() {
@@ -1301,7 +1542,9 @@ async function collectNext() {
         updatedAt: thread.updatedAt ?? summary.updatedAt,
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
-        period: manifest.period,
+        period: summary.collectionStartsAt
+          ? { ...manifest.period, starts_at: summary.collectionStartsAt }
+          : manifest.period,
       });
       if (!job) {
         manifest.counts.excluded += 1;
@@ -1337,6 +1580,7 @@ async function collectNext() {
   } finally {
     server.close();
   }
+  if (await continueScopeApprovalWait(absolute, manifest)) return;
   output({
     status: "review_required",
     runPath: absolute,

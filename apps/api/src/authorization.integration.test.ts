@@ -830,6 +830,45 @@ suite("tenant and role authorization", () => {
     expect(crossTenant.statusCode).toBe(404);
   });
 
+  it("queues pending project permissions for another Feishu review", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/admin/partners/${fixture.partnerA}/project-scopes/deliver`,
+      headers,
+    });
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({
+      queued: true,
+      mode: "review",
+      queuedCount: 1,
+      pendingCount: 1,
+      totalCount: 2,
+    });
+    const events = await sql<
+      Array<{ aggregate_id: string; payload: Record<string, unknown> }>
+    >`
+      select aggregate_id, payload from outbox_events
+      where tenant_id = ${fixture.tenantA}
+        and event_type = 'project_scope.delivery.requested'
+      order by created_at desc
+      limit 1
+    `;
+    expect(events[0]).toMatchObject({
+      aggregate_id: fixture.pluginA,
+      payload: expect.objectContaining({
+        partnerId: fixture.partnerA,
+        periodKey: "fixture-current-a",
+      }),
+    });
+
+    const crossTenant = await app.inject({
+      method: "POST",
+      url: `/v1/admin/partners/${fixture.partnerB}/project-scopes/deliver`,
+      headers,
+    });
+    expect(crossTenant.statusCode).toBe(404);
+  });
+
   it("does not mutate another tenant's Admin resources", async () => {
     const response = await app.inject({
       method: "PATCH",

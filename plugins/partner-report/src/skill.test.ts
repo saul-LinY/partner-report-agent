@@ -64,6 +64,8 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("不依赖 Codex 侧边栏项目列表");
     expect(skill).toContain("project-scope-sync");
     expect(skill).toContain("pending 项目保持待审批");
+    expect(skill).toContain("project_scope_approval_waiting");
+    expect(skill).toContain("补采本周期");
     expect(skill).toContain("不读取或上传 Session");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");
     expect(skill).toContain("下一次定时运行");

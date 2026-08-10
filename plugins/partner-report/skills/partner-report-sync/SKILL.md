@@ -69,7 +69,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" server-url-set --server <SERVER_URL>
 
 绑定成功后立即扫描项目元数据并向 Partner 工作邮箱发送飞书项目范围审核卡；不发送身份审核卡。项目卡投递完成或进入项目审批等待后，绑定命令结束。后续定时任务只同步已审批项目权限，权限仍为 pending 时重新发送项目范围提醒并结束，不读取 Session。
 
-首次创建默认使用：新聊天、无项目、每天北京时间 14:30、`gpt-5.5`、轻度推理、所有运行通知。创建后，用户在 Scheduled 面板中对 Prompt 之外配置的修改始终优先。不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
+首次创建默认使用：新聊天、无项目、每天北京时间 14:30、`gpt-5.6`、轻度推理、所有运行通知。创建后，用户在 Scheduled 面板中对 Prompt 之外配置的修改始终优先。不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
 
 ## 项目采集权限
 
@@ -94,7 +94,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" project-scope-sync
 
 插件会用 `project-scope.json` 中的版本向中台提交变更；中台确认并返回新版本后才写回本地。不得在本地新增、删除或伪造项目，也不得绕过中台直接让本地 `allowed` 生效。中台不可达或返回版本冲突时，明确告知修改尚未生效，不得覆盖本地改动。
 
-权限单位只有顶层逻辑项目一层：项目内子目录、新 Session 和嵌套 Git 仓库继承同一权限，同一 Git 仓库的多个 worktree 归并为一个逻辑项目（再统计 Session）；同名但不同仓库不得合并。系统任务、官方自动化、Codex 临时目录、系统临时目录和已归档 Session 在候选登记前排除。按最近 7 天新建且有工作目录的 Session 归并项目，每个项目至少 1 个 Session 即登记；不依赖 Codex 侧边栏项目列表。已经存在但尚未审核的 pending 项目保持待审批，插件不会读取其 Session。授权前不得读取。首次审批的允许项立即生效；首次审批完成后发现的新项目保持 `pending`，本周期内不读取内容，允许结果从下个周期生效。拒绝只阻止未来采集，不删除已经上传的数据。
+权限单位只有顶层逻辑项目一层：项目内子目录、新 Session 和嵌套 Git 仓库继承同一权限，同一 Git 仓库的多个 worktree 归并为一个逻辑项目（再统计 Session）；同名但不同仓库不得合并。系统任务、官方自动化、Codex 临时目录、系统临时目录和已归档 Session 在候选登记前排除。按最近 7 天新建且有工作目录的 Session 归并项目，每个项目至少 1 个 Session 即登记；不依赖 Codex 侧边栏项目列表。已经存在但尚未审核的 pending 项目保持待审批，插件不会读取其 Session。授权前不得读取。所有允许或拒绝决定立即生效。首次审批完成后发现新项目时，中台立即异步发送飞书范围卡，插件先继续处理已有授权项目；用户在当前运行的有限等待时间内允许后，插件立即追加并处理该项目的本周期 Session。等待超时不会阻塞本次运行，项目继续保持 `pending`；稍后允许时由下一次运行补采本周期。拒绝只阻止未来采集，不删除已经上传的数据。
 
 ## 采集 Session
 
@@ -110,7 +110,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-start
 
 如果返回 `project_scope_no_candidates`，表示临时环境过滤后没有需要人工审批的项目，因此不会生成项目范围卡。此状态是零读取、零上传的正常终态；不得等待卡片或把它记录为失败。后续周期发现合法 Git、已配置或 `unknown` 项目时会重新进入审批。
 
-插件激活时如果项目权限仍为 pending，CLI 只重新发送项目范围提醒并结束，不读取或上传 Session。
+首次项目范围尚未完成时，如果项目权限仍为 pending，CLI 只重新发送项目范围提醒并结束，不读取或上传 Session。首次范围已经完成后发现的新项目不会阻塞已有授权项目的采集。
 
 如果返回 `auth_recovery_required`，说明连接恢复卡已发送或仍在等待飞书确认。本次运行是正常等待态，`discovered`、`read` 和 `uploaded` 必须为 `0`，不得继续执行采集命令或轮询。用户确认后，下一次定时运行会自动恢复并继续；不要求用户重新进入旧 Session。
 
@@ -135,7 +135,9 @@ node "<PLUGIN_PATH>/dist/cli.mjs" collect-next --run <RUN_PATH>
 
 `collect-start` 的 `queued` 只是更新时间窗口内的粗筛候选数，不是需要模型处理的数量。不要向用户描述为“待判定项”或“都会处理”；CLI 读取结构化 Turn 并完成本地/中台 hash 比对后，只有内容发生变化且符合输入条件的 Session 才会返回 `job`。
 
-CLI 返回的所有 `nextCommand` 都必须执行，包括卡片投递等待状态返回的 `project-scope-card-wait`。`project_scope_card_delivery_pending`、`started`、`job`、`uploaded`、`ignored`、`skipped`、`review_required` 和 `review_failed` 均为非终态；出现其中任何状态时不得总结、更新 memory 为成功或结束任务。Session 数量、已运行时间、普通等待或已经上传一部分结果都不能作为收尾依据。
+CLI 返回的所有 `nextCommand` 都必须执行，包括卡片投递等待状态返回的 `project-scope-card-wait`。`project_scope_card_delivery_pending`、`project_scope_approval_waiting`、`project_scope_approved`、`started`、`job`、`uploaded`、`ignored`、`skipped`、`review_required` 和 `review_failed` 均为非终态；出现其中任何状态时不得总结、更新 memory 为成功或结束任务。Session 数量、已运行时间、普通等待或已经上传一部分结果都不能作为收尾依据。
+
+已有授权项目的队列清空后，如果本次刚发现的新项目仍在等待审批，`collect-next` 会返回 `project_scope_approval_waiting` 并继续给出同一 Run 的 `nextCommand`。必须持续执行，直到及时允许的项目以 `project_scope_approved` 追加进当前队列，或有限等待时间结束并进入 `review_required`。等待期间和超时后都不得读取 pending 项目；超时是正常分支，不应阻止 `collect-review` 完成本次运行。
 
 状态为 `job` 时：
 

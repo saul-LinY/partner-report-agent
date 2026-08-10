@@ -36,6 +36,10 @@ describe("scheduled collection prompt", () => {
       "project_scope_card_delivery_pending",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "project_scope_approval_waiting",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("补采本周期");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "project_scope_no_candidates",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
@@ -54,7 +58,7 @@ describe("scheduled collection prompt", () => {
         rrule: "RRULE:FREQ=DAILY;BYHOUR=14;BYMINUTE=30",
         timezone: "Asia/Shanghai",
       },
-      model: "gpt-5.5",
+      model: "gpt-5.6",
       reasoningEffort: "low",
       notifications: "all_runs",
     });
