@@ -331,6 +331,10 @@ suite("synthetic report generation pipeline", () => {
         previousTeamReport: teamJobs[0].input_payload.previousTeamReport,
       }),
     );
+    await sql`
+      update agent_jobs set created_at = '2026-08-10T01:00:00.000Z'
+      where id = ${teamJobs[0].id}
+    `;
     const duplicateTeamJob = randomUUID();
     await sql`
       insert into agent_jobs (
@@ -360,7 +364,8 @@ suite("synthetic report generation pipeline", () => {
         current_version: 1,
         locked_at: expect.any(String),
         payload: {
-          title: "团队周报 synthetic-period",
+          title: "团队周报 2026-08-10",
+          summary: "团队完成生成链路修复。 数据平台完成验证。",
           missingPartnerIds: [],
           sections: [
             { key: "summary", title: "本周团队工作摘要" },
@@ -382,6 +387,12 @@ suite("synthetic report generation pipeline", () => {
       "Organize the entire section by project as a Markdown bullet list",
     );
     expect(lastTeamReportInstructions).toContain(
+      "top-level summary field is the short introduction",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "Do not use bullets, numbered lists, headings, or line breaks",
+    );
+    expect(lastTeamReportInstructions).toContain(
       'Do not start a project entry with phrases such as "当前状态为"',
     );
     expect(lastTeamReportInstructions).toContain(
@@ -393,7 +404,7 @@ suite("synthetic report generation pipeline", () => {
     expect(lastTeamReportInstructions).toContain(
       `the complete allowlist is ["${reportId}"]`,
     );
-    expect(lastTeamReportInstructions).toContain("2026-08-09.team.v7");
+    expect(lastTeamReportInstructions).toContain("2026-08-10.team.v8");
     expect(teamReports[0].payload.markdown).toContain("### Synthetic Partner");
     expect(
       teamReports[0].payload.markdown.indexOf("### Synthetic Partner"),
@@ -457,7 +468,7 @@ function teamReport(reportId: string) {
   const keys = ["summary", "project_progress", "risks"];
   return {
     schemaVersion: "1.0",
-    summary: "团队链路验证完成。",
+    summary: "- 团队完成生成链路修复。\n2. 数据平台完成验证。",
     sections: keys.map((key) => ({
       key,
       markdown:
@@ -476,6 +487,6 @@ function teamReport(reportId: string) {
     })),
     missingPartnerIds: [],
     qualityWarnings: [],
-    production: production("2026-08-09.team.v7"),
+    production: production("2026-08-10.team.v8"),
   };
 }

@@ -1439,6 +1439,14 @@ select:focus {
   grid-template-columns: minmax(320px, 540px);
   place-content: center;
 }
+.auth-page-login {
+  grid-template-columns: minmax(320px, 640px);
+  place-content: center;
+  background: #fff;
+}
+.auth-page-login .auth-panel {
+  min-height: 100vh;
+}
 .auth-panel {
   padding: 72px;
   display: flex;
@@ -1478,38 +1486,6 @@ select:focus {
   gap: 7px;
   color: var(--muted);
   font-size: 10px;
-}
-.auth-aside {
-  position: relative;
-  padding: 80px;
-  display: flex;
-  align-items: flex-end;
-  color: #e9eff0;
-  background: #253038;
-  overflow: hidden;
-}
-.auth-aside::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
-}
-.auth-aside > div {
-  position: relative;
-  max-width: 590px;
-}
-.auth-aside strong {
-  display: block;
-  margin-top: 12px;
-  font-size: 54px;
-  line-height: 1.07;
-}
-.auth-aside p {
-  max-width: 430px;
-  margin: 22px 0 0;
-  color: #adbac0;
-  font-size: 14px;
-  line-height: 1.7;
 }
 .connect-panel {
   max-width: 520px;
@@ -3038,15 +3014,9 @@ select:focus {
   .auth-page {
     grid-template-columns: 1fr;
   }
-  .auth-aside {
-    display: none;
-  }
   .auth-panel {
     min-height: 100vh;
     padding: 34px 24px;
-  }
-  .auth-aside strong {
-    font-size: 36px;
   }
   .auth-copy {
     margin-top: 60px;

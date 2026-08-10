@@ -26,6 +26,7 @@ type Job = {
   input_payload: any;
   attempt_count: number;
   max_attempts: number;
+  created_at: Date | string;
 };
 
 const aggregationInstructions = (model: string) =>
@@ -42,13 +43,15 @@ const teamReportInstructions = (
 
 Include exactly three sections in this order: summary, project_progress, risks. Do not create coverage or next-priorities sections.
 
+The top-level summary field is the short introduction displayed directly below the report title. Write it as one concise Chinese prose paragraph that synthesizes the team's main work and outcomes for the week. Do not enumerate projects or people separately. Do not use bullets, numbered lists, headings, or line breaks.
+
 In summary, do not write an opening narrative paragraph or combine all projects into one prose block. Organize the entire section by project as a Markdown bullet list: create one top-level bullet for every represented project, then add nested bullets for every person who contributed to that project. Each person bullet must state their concrete work, result, decision, or blocker for that project. This section is the project-first inverse index of project_progress, and it must not omit any represented project or contributor.
 
 In project_progress, group content by concrete Partner/person first, using the supplied partnerName when present and partnerId only as a fallback. Under each person, organize their work by project and describe concrete work, deliverables, decisions, validation results, and blockers directly. Do not start a project entry with phrases such as "当前状态为" or "状态为". Do not expose raw status enum identifiers such as awaiting_validation, in_progress, or completed. When status is materially relevant, express it naturally in Chinese after the concrete work, for example "已完成" or "待验证", and only when supported by the report. Do not start project_progress with project-level headings, do not merge people, and do not omit any Partner/project contribution.
 
 Include risks only when supported by the current individual reports and state plainly when none were reported. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied individual report IDs. In every claim's individualReportIds, copy only exact values from individualReports[].reportId. For this request, the complete allowlist is ${JSON.stringify(allowedIndividualReportIds)}. Every individualReportId must be copied exactly from this allowlist. Never use the top-level reportId, partnerId, project IDs, Work Item IDs, or any other identifier as an individualReportId.
 
-Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-09.team.v7","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-10.team.v8","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportSectionTitles = {
   summary: "本周团队工作摘要",
@@ -56,7 +59,29 @@ const teamReportSectionTitles = {
   risks: "风险与阻塞",
 } as const;
 
-function finalizeTeamReport(input: any, result: any) {
+export function formatReportDate(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value;
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
+export function normalizeTeamReportSummary(summary: string) {
+  return summary
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^(?:[-*+]\s+|\d+[.)]\s+)/, ""))
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function finalizeTeamReport(result: any, reportDate: string) {
   const sections = result.sections.map((section: any) => ({
     ...section,
     title:
@@ -66,11 +91,12 @@ function finalizeTeamReport(input: any, result: any) {
   }));
   return {
     ...result,
-    title: `团队周报 ${input.period.key}`,
+    title: `团队周报 ${reportDate}`,
+    summary: normalizeTeamReportSummary(result.summary),
     production: {
       ...result.production,
       skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-09.team.v7",
+      promptVersion: "2026-08-10.team.v8",
       schemaVersion: "1.0",
       producer: "data-platform",
     },
@@ -84,14 +110,17 @@ function finalizeTeamReport(input: any, result: any) {
   };
 }
 
-async function selectedModelFor(job: Job) {
-  const rows = await sql<{ central_model: string }[]>`
-    select central_model from teams
+async function selectedTeamSettingsFor(job: Job) {
+  const rows = await sql<{ central_model: string; timezone: string }[]>`
+    select central_model, timezone from teams
     where id = ${job.team_id} and tenant_id = ${job.tenant_id}
     limit 1
   `;
   if (!rows[0]) throw new Error("TEAM_NOT_FOUND");
-  return centralModelIdSchema.parse(rows[0].central_model);
+  return {
+    model: centralModelIdSchema.parse(rows[0].central_model),
+    timezone: rows[0].timezone,
+  };
 }
 
 async function leaseNextJob(onlyTenantId?: string) {
@@ -295,10 +324,16 @@ async function applyReport(job: Job, output: unknown, model: string) {
   return result;
 }
 
-async function applyTeamReport(job: Job, output: unknown, model: string) {
+async function applyTeamReport(
+  job: Job,
+  output: unknown,
+  model: string,
+  timezone: string,
+) {
   const generated = teamReportGenerationResultSchema.parse(output);
+  const reportDate = formatReportDate(new Date(job.created_at), timezone);
   const result = teamReportResultSchema.parse(
-    finalizeTeamReport(job.input_payload, generated),
+    finalizeTeamReport(generated, reportDate),
   );
   assertTeamReportSemantics(result);
   assertChineseTeamReport(result);
@@ -376,7 +411,7 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
   const job = await leaseNextJob(onlyTenantId);
   if (!job) return { processed: false };
   try {
-    const model = await selectedModelFor(job);
+    const { model, timezone } = await selectedTeamSettingsFor(job);
     const isAggregation = job.type === "AGGREGATE_WORK_ITEMS";
     const isTeamReport = [
       "GENERATE_TEAM_REPORT",
@@ -413,7 +448,7 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
     const applied = isAggregation
       ? await applyAggregation(job, output)
       : isTeamReport
-        ? await applyTeamReport(job, output, model)
+        ? await applyTeamReport(job, output, model, timezone)
         : await applyReport(job, output, model);
     await sql`
       update agent_jobs set status = 'COMPLETED', output_payload = ${JSON.stringify(applied)}::jsonb,

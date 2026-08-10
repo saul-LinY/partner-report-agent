@@ -17,7 +17,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
     onSuccess,
   });
   return (
-    <div className="auth-page">
+    <div className="auth-page auth-page-login">
       <section className="auth-panel">
         <div className="auth-brand">
           <div className="brand-mark">PR</div>
@@ -65,13 +65,6 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
           <span>本地账号 · HttpOnly Session</span>
         </div>
       </section>
-      <div className="auth-aside">
-        <div>
-          <span className="eyebrow">CURRENT CYCLE</span>
-          <strong>事实先确认，表达后调整。</strong>
-          <p>未经 Partner 审核的内容不会进入最终 Report。</p>
-        </div>
-      </div>
     </div>
   );
 }
