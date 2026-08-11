@@ -238,7 +238,7 @@ export const teamReportGenerationSectionSchema: z.ZodTypeAny = z.object({
 
 export const teamReportGenerationResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
-  summary: z.string().min(1).max(1600),
+  summary: z.string().min(250).max(650),
   sections: z.array(teamReportGenerationSectionSchema).length(3),
   missingPartnerIds: z.array(idSchema).default([]),
   qualityWarnings: z.array(z.string()).default([]),

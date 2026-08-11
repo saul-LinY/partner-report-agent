@@ -163,6 +163,7 @@ suite("synthetic report generation pipeline", () => {
       await tx`delete from work_item_facts where work_item_id in (select id from work_items where tenant_id = ${fixture.tenant})`;
       await tx`delete from work_items where tenant_id = ${fixture.tenant}`;
       await tx`delete from reviews where tenant_id = ${fixture.tenant}`;
+      await tx`delete from fact_snapshots where tenant_id = ${fixture.tenant}`;
       await tx`delete from session_facts where tenant_id = ${fixture.tenant}`;
       await tx`delete from report_periods where tenant_id = ${fixture.tenant}`;
       await tx`delete from partners where tenant_id = ${fixture.tenant}`;
@@ -316,6 +317,7 @@ suite("synthetic report generation pipeline", () => {
           partnerId: fixture.partner,
           partnerName: "Synthetic Partner",
           reportId,
+          projectNames: ["未识别项目"],
         },
       ],
       previousTeamReport: {
@@ -365,7 +367,7 @@ suite("synthetic report generation pipeline", () => {
         locked_at: expect.any(String),
         payload: {
           title: "团队周报 2026-08-10",
-          summary: "团队完成生成链路修复。 数据平台完成验证。",
+          summary: expect.stringContaining("团队本周完成了重点工作的梳理"),
           missingPartnerIds: [],
           sections: [
             { key: "summary", title: "本周团队工作摘要" },
@@ -387,7 +389,23 @@ suite("synthetic report generation pipeline", () => {
       "Organize the entire section by project as a Markdown bullet list",
     );
     expect(lastTeamReportInstructions).toContain(
-      "top-level summary field is the short introduction",
+      "top-level summary field is the executive overview",
+    );
+    expect(lastTeamReportInstructions).toContain("450 to 600 characters");
+    expect(lastTeamReportInstructions).toContain(
+      "business leader who does not understand software engineering",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "management-level overview, not a compressed inventory",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "exactly five substantial sentences",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "language a non-technical leader can understand",
+    );
+    expect(lastTeamReportInstructions).toContain(
+      "exact project name copied verbatim",
     );
     expect(lastTeamReportInstructions).toContain(
       "Do not use bullets, numbered lists, headings, or line breaks",
@@ -404,7 +422,7 @@ suite("synthetic report generation pipeline", () => {
     expect(lastTeamReportInstructions).toContain(
       `the complete allowlist is ["${reportId}"]`,
     );
-    expect(lastTeamReportInstructions).toContain("2026-08-10.team.v8");
+    expect(lastTeamReportInstructions).toContain("2026-08-11.team.v13");
     expect(teamReports[0].payload.markdown).toContain("### Synthetic Partner");
     expect(
       teamReports[0].payload.markdown.indexOf("### Synthetic Partner"),
@@ -422,6 +440,167 @@ suite("synthetic report generation pipeline", () => {
       select status from report_periods where id = ${fixture.period}
     `;
     expect(periods).toEqual([{ status: "completed" }]);
+  });
+
+  it("advances the cutoff pipeline without waiting for Partner actions", async () => {
+    const periodId = randomUUID();
+    const factId = randomUUID();
+    const factSnapshotId = randomUUID();
+    const reviewId = randomUUID();
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+          submission_deadline_at, timezone, status, facts_frozen_at
+        ) values (
+          ${periodId}, ${fixture.tenant}, ${fixture.team}, 'synthetic-auto-period',
+          '2026-08-07T06:00:00Z', '2026-08-14T06:00:00Z',
+          '2026-08-14T06:00:00Z', '2026-08-14T06:00:00Z',
+          'Asia/Shanghai', 'facts_frozen', now()
+        )
+      `;
+      await tx`
+        insert into reviews (id, tenant_id, team_id, partner_id, period_id)
+        values (${reviewId}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner}, ${periodId})
+      `;
+      await tx`
+        insert into session_facts (
+          id, tenant_id, team_id, partner_id, period_id, session_id,
+          external_fact_id, source_revision, source_hash, payload
+        ) values (
+          ${factId}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
+          ${periodId}, 'synthetic-auto-session', 'synthetic-auto-fact', 1,
+          ${"a".repeat(64)},
+          ${JSON.stringify({ title: "按截止时间自动推进", status: "in_progress" })}::jsonb
+        )
+      `;
+      await tx`
+        insert into fact_snapshots (
+          id, tenant_id, team_id, partner_id, period_id, fact_ids, checksum,
+          coverage
+        ) values (
+          ${factSnapshotId}, ${fixture.tenant}, ${fixture.team},
+          ${fixture.partner}, ${periodId}, ${JSON.stringify([factId])}::jsonb,
+          ${stableJsonHash([factId])}, '{"extracted":1}'::jsonb
+        )
+      `;
+      await tx`
+        insert into agent_jobs (
+          id, tenant_id, team_id, partner_id, type, idempotency_key,
+          input_payload
+        ) values (
+          ${randomUUID()}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
+          'AGGREGATE_WORK_ITEMS', ${`synthetic-auto-aggregate:${periodId}`},
+          ${JSON.stringify({
+            schemaVersion: "1.0",
+            aggregationMode: "weekly_report",
+            autoAdvanceAtCutoff: true,
+            factSnapshotId,
+            period: { id: periodId, key: "synthetic-auto-period" },
+            reviewId,
+            projectBuckets: [
+              {
+                projectKey: "unassigned",
+                projectId: null,
+                projectName: "未识别项目",
+                factIds: [factId],
+                facts: [
+                  { id: factId, payload: { title: "按截止时间自动推进" } },
+                ],
+              },
+            ],
+          })}::jsonb
+        )
+      `;
+    });
+
+    nextOutput = {
+      schemaVersion: "1.0",
+      groups: [
+        {
+          projectKey: "unassigned",
+          status: "in_progress",
+          overview: "系统按截止时间使用现有贡献继续生成报告。",
+          dailyProgress: [
+            { date: "2026-08-11", summary: "完成现有贡献的自动汇总。" },
+          ],
+        },
+      ],
+      qualityWarnings: [],
+      production: production("2026-08-11.project-card.v2"),
+    };
+    expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
+      processed: true,
+      type: "AGGREGATE_WORK_ITEMS",
+    });
+
+    const [reviews, workItems, snapshots, reportJobs] = await Promise.all([
+      sql<any[]>`
+        select state, approved_count, pending_count from reviews
+        where id = ${reviewId}
+      `,
+      sql<any[]>`
+        select * from work_items where review_id = ${reviewId}
+      `,
+      sql<any[]>`
+        select payload, approved_by_actor_type, approved_by_actor_id
+        from work_item_snapshots where review_id = ${reviewId}
+      `,
+      sql<any[]>`
+        select input_payload from agent_jobs
+        where tenant_id = ${fixture.tenant}
+          and type = 'GENERATE_INDIVIDUAL_REPORT'
+          and input_payload->>'snapshotId' in (
+            select id::text from work_item_snapshots where review_id = ${reviewId}
+          )
+      `,
+    ]);
+    expect(reviews).toEqual([
+      { state: "ITEMS_APPROVED", approved_count: 1, pending_count: 0 },
+    ]);
+    expect(workItems).toMatchObject([{ review_status: "approved" }]);
+    expect(snapshots).toMatchObject([
+      {
+        approved_by_actor_type: "system",
+        approved_by_actor_id: "weekly-cutoff",
+        payload: { autoApprovedAtCutoff: true },
+      },
+    ]);
+    expect(reportJobs).toMatchObject([
+      { input_payload: { autoLockAtCutoff: true } },
+    ]);
+
+    nextOutput = individualReport(workItems[0].id);
+    expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
+      processed: true,
+      type: "GENERATE_INDIVIDUAL_REPORT",
+    });
+    const reports = await sql<any[]>`
+      select id, status, submitted_at, locked_at from individual_reports
+      where tenant_id = ${fixture.tenant} and period_id = ${periodId}
+    `;
+    expect(reports).toMatchObject([
+      {
+        status: "LOCKED",
+        submitted_at: expect.any(String),
+        locked_at: expect.any(String),
+      },
+    ]);
+
+    expect(await scheduleDueTeamReports(periodId)).toBe(1);
+    const teamJobs = await sql<any[]>`
+      select input_payload from agent_jobs
+      where tenant_id = ${fixture.tenant} and type = 'GENERATE_TEAM_REPORT'
+        and input_payload->'period'->>'id' = ${periodId}
+    `;
+    expect(teamJobs).toMatchObject([
+      {
+        input_payload: {
+          missingPartnerIds: [],
+          individualReports: [{ reportId: reports[0].id }],
+        },
+      },
+    ]);
   });
 });
 
@@ -468,13 +647,18 @@ function teamReport(reportId: string) {
   const keys = ["summary", "project_progress", "risks"];
   return {
     schemaVersion: "1.0",
-    summary: "- 团队完成生成链路修复。\n2. 数据平台完成验证。",
+    summary:
+      "团队本周完成了重点工作的梳理、改进和验证，相关流程已经能够正常运行，并形成了可供后续使用的阶段性成果。".repeat(
+        9,
+      ),
     sections: keys.map((key) => ({
       key,
       markdown:
         key === "project_progress"
           ? "### Synthetic Partner\n\n#### 未识别项目\n\n合成链路验证进行中。"
-          : `${key} 中文内容`,
+          : key === "summary"
+            ? "- 未识别项目：完成合成链路验证。\n  - Synthetic Partner：完成本地验证。"
+            : `${key} 中文内容`,
       claims:
         key === "summary"
           ? [
@@ -487,6 +671,6 @@ function teamReport(reportId: string) {
     })),
     missingPartnerIds: [],
     qualityWarnings: [],
-    production: production("2026-08-10.team.v8"),
+    production: production("2026-08-11.team.v13"),
   };
 }

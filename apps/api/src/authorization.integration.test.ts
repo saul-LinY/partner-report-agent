@@ -1114,6 +1114,8 @@ suite("tenant and role authorization", () => {
     });
     expect(factPreview.statusCode).toBe(200);
     expect(factPreview.json()).toMatchObject({
+      page: 1,
+      pageSize: 10,
       total: 1,
       items: [
         {

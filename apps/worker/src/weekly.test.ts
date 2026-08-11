@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectBuckets } from "./weekly.js";
+import {
+  buildNoActivityIndividualReport,
+  buildProjectBuckets,
+} from "./weekly.js";
 
 describe("project aggregation buckets", () => {
   it("creates exactly one bucket for every project identity", () => {
@@ -37,5 +40,21 @@ describe("project aggregation buckets", () => {
         }),
       ]),
     );
+  });
+});
+
+describe("no-activity individual report", () => {
+  it("states the coverage limit without claiming that no work happened", () => {
+    const report = buildNoActivityIndividualReport();
+
+    expect(report.sections).toHaveLength(7);
+    expect(report.summary).toContain("未采集到");
+    expect(report.summary).toContain("不代表本周期没有开展工作");
+    expect(report.qualityWarnings).toContain(
+      "NO_REPORTABLE_ACTIVITY_COLLECTED",
+    );
+    expect(
+      report.sections.every((section: any) => section.claims.length === 0),
+    ).toBe(true);
   });
 });

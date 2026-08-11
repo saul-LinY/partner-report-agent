@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { individualReportResultSchema } from "@partner-report/contracts";
 import { stableJsonHash } from "@partner-report/contracts/hash";
 import {
   DEFAULT_WEEKLY_PERIOD_RULE,
@@ -31,6 +32,79 @@ type AggregationFact = {
   payload: Record<string, any>;
   source_occurred_at?: Date | string | null;
 };
+
+const noActivitySectionContent: Record<
+  string,
+  { title: string; markdown: string }
+> = {
+  summary: {
+    title: "本周概览",
+    markdown: "本周期未采集到可用于汇报的工作记录。",
+  },
+  achievements: {
+    title: "主要成果",
+    markdown: "无可核对的工作记录，因此不对成果作出判断。",
+  },
+  project_progress: {
+    title: "项目进展",
+    markdown: "无可核对的项目记录，因此不对项目进展作出判断。",
+  },
+  risks: {
+    title: "风险与阻塞",
+    markdown: "无可核对的工作记录，因此不对风险与阻塞作出判断。",
+  },
+  next_priorities: {
+    title: "下周重点",
+    markdown: "无可核对的工作记录，因此不填写后续安排。",
+  },
+  coordination: {
+    title: "协作事项",
+    markdown: "无可核对的工作记录，因此不填写协作事项。",
+  },
+  coverage: {
+    title: "记录覆盖范围",
+    markdown:
+      "本报告只说明中台未采集到可用于本周期汇报的记录，不代表本周期没有开展工作。",
+  },
+};
+
+export function buildNoActivityIndividualReport() {
+  const sections = [
+    "summary",
+    "achievements",
+    "project_progress",
+    "risks",
+    "next_priorities",
+    "coordination",
+    "coverage",
+  ].map((key) => ({
+    key,
+    ...noActivitySectionContent[key]!,
+    claims: [],
+  }));
+  const title = "本周期个人周报：无可汇报记录";
+  return individualReportResultSchema.parse({
+    schemaVersion: "1.0",
+    title,
+    summary:
+      "本周期未采集到可用于汇报的工作记录；这只表示中台缺少报告依据，不代表本周期没有开展工作。",
+    sections,
+    markdown: [
+      `# ${title}`,
+      ...sections.map(
+        (section: { title: string; markdown: string }) =>
+          `## ${section.title}\n\n${section.markdown}`,
+      ),
+    ].join("\n\n"),
+    qualityWarnings: ["NO_REPORTABLE_ACTIVITY_COLLECTED"],
+    production: {
+      skillVersion: "partner-report-platform/0.3.0",
+      promptVersion: "2026-08-11.no-activity.v1",
+      schemaVersion: "1.0",
+      producer: "data-platform",
+    },
+  });
+}
 
 export function buildProjectBuckets(
   facts: AggregationFact[],
@@ -195,10 +269,10 @@ export async function scheduleDueWeeklyReports(
       const period = locked[0];
       if (!period) return { closed: false, jobs: 0 };
       const partners = await tx<{ partner_id: string }[]>`
-        select distinct partner_id from session_facts
+        select id as partner_id from partners
         where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
-          and period_id = ${period.id} and excluded = false
-        order by partner_id
+          and status = 'active'
+        order by id
       `;
       const projects = await tx<any[]>`
         select id, name, aliases, allowed_paths, external_ids from projects
@@ -233,12 +307,59 @@ export async function scheduleDueWeeklyReports(
             coverage = excluded.coverage, frozen_at = now()
           returning id
         `;
-        const reviewRows = await tx<{ id: string }[]>`
+        const reviewRows = await tx<{ id: string; version: number }[]>`
           insert into reviews (id, tenant_id, team_id, partner_id, period_id)
           values (${randomUUID()}, ${period.tenant_id}, ${period.team_id}, ${partnerId}, ${period.id})
           on conflict (tenant_id, partner_id, period_id)
-          do update set updated_at = reviews.updated_at returning id
+          do update set updated_at = reviews.updated_at returning id, version
         `;
+        if (facts.length === 0) {
+          const review = reviewRows[0]!;
+          const snapshotPayload = {
+            reviewId: review.id,
+            reviewVersion: review.version,
+            periodId: period.id,
+            workItems: [],
+            excludedWorkItemIds: [],
+            coverage: coverageRows[0]?.payload ?? {},
+            noReportableActivity: true,
+          };
+          const checksum = stableJsonHash(snapshotPayload);
+          const workItemSnapshotId = randomUUID();
+          const report = buildNoActivityIndividualReport();
+          await tx`
+            update reviews set state = 'ITEMS_APPROVED',
+              approved_count = 0, excluded_count = 0, pending_count = 0,
+              updated_at = now()
+            where id = ${review.id} and tenant_id = ${period.tenant_id}
+          `;
+          await tx`
+            insert into work_item_snapshots (
+              id, tenant_id, team_id, partner_id, period_id, review_id,
+              review_version, checksum, payload, approved_by_actor_type,
+              approved_by_actor_id, approved_at
+            ) values (
+              ${workItemSnapshotId}, ${period.tenant_id}, ${period.team_id},
+              ${partnerId}, ${period.id}, ${review.id}, ${review.version},
+              ${checksum}, ${JSON.stringify(snapshotPayload)}::jsonb,
+              'system', 'weekly-cutoff', now()
+            )
+          `;
+          await tx`
+            insert into individual_reports (
+              id, tenant_id, team_id, partner_id, period_id, snapshot_id,
+              status, content_revision, title, summary, markdown, payload,
+              source_checksum, generator_version, submitted_at, locked_at
+            ) values (
+              ${randomUUID()}, ${period.tenant_id}, ${period.team_id},
+              ${partnerId}, ${period.id}, ${workItemSnapshotId}, 'LOCKED', 1,
+              ${report.title}, ${report.summary}, ${report.markdown},
+              ${JSON.stringify(report)}::jsonb, ${checksum},
+              'partner-report-platform/0.3.0 (no-activity)', now(), now()
+            ) on conflict (tenant_id, partner_id, period_id) do nothing
+          `;
+          continue;
+        }
         const inserted = await tx<{ id: string }[]>`
           insert into agent_jobs (
             id, tenant_id, team_id, partner_id, plugin_instance_id,
@@ -249,6 +370,7 @@ export async function scheduleDueWeeklyReports(
             ${JSON.stringify({
               schemaVersion: "1.0",
               aggregationMode: "weekly_report",
+              autoAdvanceAtCutoff: true,
               factSnapshotId: snapshotRows[0]!.id,
               period: {
                 id: period.id,
@@ -344,7 +466,7 @@ export async function scheduleProjectScopeFallbacks(now = new Date()) {
   return candidates.length;
 }
 
-/** Generate a Team Report once every active Partner has locked their report. */
+/** Generate a Team Report once every cutoff participant has a locked report. */
 export async function scheduleDueTeamReports(onlyPeriodId?: string) {
   const periods = await sql<any[]>`
     select rp.* from report_periods rp
@@ -356,13 +478,17 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
   for (const period of periods) {
     const result = await sql.begin(async (tx) => {
       const reportRows = await tx<any[]>`
-        select p.id as partner_id, p.display_name as partner_name,
-          ir.id as report_id, ir.payload
-        from partners p
-        left join individual_reports ir on ir.tenant_id = p.tenant_id
-          and ir.partner_id = p.id and ir.period_id = ${period.id} and ir.status = 'LOCKED'
-        where p.tenant_id = ${period.tenant_id} and p.team_id = ${period.team_id}
-          and p.status = 'active'
+        select r.partner_id, p.display_name as partner_name,
+          ir.id as report_id, ir.payload, wis.payload as work_item_snapshot
+        from reviews r
+        join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
+        left join individual_reports ir on ir.tenant_id = r.tenant_id
+          and ir.partner_id = r.partner_id and ir.period_id = r.period_id
+          and ir.status = 'LOCKED'
+        left join work_item_snapshots wis on wis.id = ir.snapshot_id
+          and wis.tenant_id = ir.tenant_id
+        where r.tenant_id = ${period.tenant_id} and r.team_id = ${period.team_id}
+          and r.period_id = ${period.id}
         order by p.display_name
       `;
       const submitted = reportRows.filter(
@@ -394,6 +520,20 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
           partnerName: row.partner_name,
           reportId: row.report_id,
           payload: row.payload,
+          noReportableActivity:
+            row.work_item_snapshot?.noReportableActivity === true,
+          projectNames: [
+            ...new Set(
+              (Array.isArray(row.work_item_snapshot?.workItems)
+                ? row.work_item_snapshot.workItems
+                : []
+              )
+                .map((item: any) =>
+                  typeof item.title === "string" ? item.title.trim() : "",
+                )
+                .filter(Boolean),
+            ),
+          ],
         })),
         missingPartnerIds,
         previousTeamReport: previousRows[0] ?? null,

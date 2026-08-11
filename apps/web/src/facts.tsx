@@ -28,6 +28,12 @@ type Overview = {
   projects: Array<{ id: string; name: string }>;
 };
 
+export const FACTS_PAGE_SIZE = 10;
+
+export function factsPageCount(total: number) {
+  return Math.max(1, Math.ceil(total / FACTS_PAGE_SIZE));
+}
+
 export function FactPreviewPage() {
   const [partnerId, setPartnerId] = useState("");
   const [periodId, setPeriodId] = useState("");
@@ -38,7 +44,10 @@ export function FactPreviewPage() {
     queryKey: ["admin-overview"],
     queryFn: () => api<Overview>("/v1/admin/overview"),
   });
-  const params = new URLSearchParams({ page: String(page), pageSize: "25" });
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(FACTS_PAGE_SIZE),
+  });
   if (partnerId) params.set("partnerId", partnerId);
   if (periodId) params.set("periodId", periodId);
   if (projectId) params.set("projectId", projectId);
@@ -55,7 +64,7 @@ export function FactPreviewPage() {
     queryFn: () => api<FactPage>(`/v1/admin/session-facts?${params}`),
   });
   const data = overview.data;
-  const pageCount = Math.max(1, Math.ceil((facts.data?.total ?? 0) / 25));
+  const pageCount = factsPageCount(facts.data?.total ?? 0);
   const resetPage = (update: () => void) => {
     update();
     setPage(1);

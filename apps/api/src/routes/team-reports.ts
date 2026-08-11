@@ -11,6 +11,10 @@ type IndividualReportSourceRow = {
   partner_name: string;
   report_id: string | null;
   payload: unknown | null;
+  work_item_snapshot: {
+    workItems?: Array<{ title?: unknown }>;
+    noReportableActivity?: boolean;
+  } | null;
 };
 
 async function enqueueTeamReportForPeriod(
@@ -33,14 +37,17 @@ async function enqueueTeamReportForPeriod(
   if (!period) throw new ApiError(404, "PERIOD_NOT_FOUND", "所选周期不存在。");
 
   const reportRows = (await tx`
-    select p.id as partner_id, p.display_name as partner_name,
-      ir.id as report_id, ir.payload
-    from partners p
-    left join individual_reports ir on ir.tenant_id = p.tenant_id
-      and ir.partner_id = p.id and ir.period_id = ${input.periodId}
+    select r.partner_id, p.display_name as partner_name,
+      ir.id as report_id, ir.payload, wis.payload as work_item_snapshot
+    from reviews r
+    join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
+    left join individual_reports ir on ir.tenant_id = r.tenant_id
+      and ir.partner_id = r.partner_id and ir.period_id = r.period_id
       and ir.status = 'LOCKED'
-    where p.tenant_id = ${input.tenantId} and p.team_id = ${input.teamId}
-      and p.status = 'active'
+    left join work_item_snapshots wis on wis.id = ir.snapshot_id
+      and wis.tenant_id = ir.tenant_id
+    where r.tenant_id = ${input.tenantId} and r.team_id = ${input.teamId}
+      and r.period_id = ${input.periodId}
     order by p.display_name
   `) as IndividualReportSourceRow[];
   const submitted = reportRows.filter((row) => row.report_id && row.payload);
@@ -77,6 +84,20 @@ async function enqueueTeamReportForPeriod(
       partnerName: row.partner_name,
       reportId: row.report_id,
       payload: row.payload,
+      noReportableActivity:
+        row.work_item_snapshot?.noReportableActivity === true,
+      projectNames: [
+        ...new Set(
+          (Array.isArray(row.work_item_snapshot?.workItems)
+            ? row.work_item_snapshot.workItems
+            : []
+          )
+            .map((item) =>
+              typeof item.title === "string" ? item.title.trim() : "",
+            )
+            .filter(Boolean),
+        ),
+      ],
     })),
     missingPartnerIds,
     previousTeamReport: previousRows[0] ?? null,

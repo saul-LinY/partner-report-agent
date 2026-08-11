@@ -302,7 +302,7 @@ export async function factRoutes(app: FastifyInstance) {
           .optional(),
         sessionDate: z.string().date().optional(),
         page: z.coerce.number().int().min(1).default(1),
-        pageSize: z.coerce.number().int().min(1).max(100).default(25),
+        pageSize: z.coerce.number().int().min(1).max(100).default(10),
       })
       .parse(request.query);
     const offset = (query.page - 1) * query.pageSize;

@@ -8,6 +8,7 @@ import {
   teamReportGenerationResultSchema,
   teamReportResultSchema,
 } from "@partner-report/contracts";
+import { stableJsonHash } from "@partner-report/contracts/hash";
 import { centralModelIdSchema } from "@partner-report/contracts/models";
 import { sqlClient as sql } from "@partner-report/db";
 import {
@@ -39,19 +40,21 @@ const teamReportInstructions = (
   model: string,
   allowedIndividualReportIds: string[],
 ) =>
-  `Generate a Chinese Team Report strictly from the locked current-period reports in individualReports. Write the summary and all section prose in Chinese; preserve original project names, product names, people names, and technical identifiers when needed. These reports are the sole source of current-period facts: never use project master data, Session Facts, assumptions, or general knowledge.
+  `Generate a Chinese Team Report strictly from the locked current-period reports in individualReports. The audience is a business leader who does not understand software engineering. Write plain, natural, concise Chinese that can be understood without technical background. Translate implementation details into the purpose of the work, the result, its practical value, and any remaining concern. Avoid unexplained engineering jargon, internal process language, file names, protocols, framework names, raw test names, and low-level implementation steps. When a technical point is necessary to state a supported result or risk, explain it immediately in everyday language. Preserve exact project names only where the structure below requires them. These reports are the sole source of current-period facts: never use project master data, Session Facts, assumptions, or general knowledge. Each individualReports[].projectNames array is the authoritative allowlist of exact project names represented by that person's report. An individual report with noReportableActivity=true is a coverage-only record: it means the platform did not collect material that can support a work report for that person. It does not mean the person did no work. Never invent a project, result, risk, or performance judgment for such a report.
+
+Do not use the following internal terms in reader-facing prose: SSH, README, 状态机, 聚合调度, 贡献模型, 类型校验, 依赖安装, 依赖未安装, 主分支, 代码仓库, 远程仓库, 前端架构, 本地开发服务, 飞书网关, 测试用例, 实验元数据, 历史快照, 报表凭证, 同步解析, 数据接入. Translate them into plain outcomes instead. For example: say project materials were submitted and synchronized, the work page is available, a complete quality check is still pending, the Feishu message connection still has an issue, or experiment information is available for comparison and analysis. Exact project names are exempt from this vocabulary rule.
 
 Include exactly three sections in this order: summary, project_progress, risks. Do not create coverage or next-priorities sections.
 
-The top-level summary field is the short introduction displayed directly below the report title. Write it as one concise Chinese prose paragraph that synthesizes the team's main work and outcomes for the week. Do not enumerate projects or people separately. Do not use bullets, numbered lists, headings, or line breaks.
+The top-level summary field is the executive overview displayed directly below the report title. Write one cohesive Chinese prose paragraph of about 500 Chinese characters, targeting 450 to 600 characters. It must contain exactly five substantial sentences in this order: (1) the overall conclusion supported by the available reports; (2) the main completed work or process improvement; (3) delivery, collaboration, or validation results; (4) another supported capability or area of progress; (5) the supported issues or reporting-coverage limits that require management attention. Target 80 to 120 Chinese characters per sentence. If a requested sentence has no supporting work record, use that sentence to state the reporting-coverage limit instead of inventing progress. Write a management-level overview, not a compressed inventory of every source detail. Do not mention Partner names, project names, code, repositories, configuration, files, protocols, internal models, internal workflow states, or specialized test terminology in this paragraph. Do not enumerate projects or people separately. Do not use bullets, numbered lists, headings, or line breaks. Use the available source detail without adding business impact that the reports do not support.
 
-In summary, do not write an opening narrative paragraph or combine all projects into one prose block. Organize the entire section by project as a Markdown bullet list: create one top-level bullet for every represented project, then add nested bullets for every person who contributed to that project. Each person bullet must state their concrete work, result, decision, or blocker for that project. This section is the project-first inverse index of project_progress, and it must not omit any represented project or contributor.
+In summary, do not write an opening narrative paragraph or combine all projects into one prose block. Organize the entire section by project as a Markdown bullet list. Create exactly one top-level bullet for every distinct name in individualReports[].projectNames, and start that bullet with the exact project name copied verbatim, followed by a Chinese colon. Never invent a category label, rename a project, or merge several projects under a generalized label. Add nested bullets for every person who contributed to that project. Each person bullet must describe the work and result in language a non-technical leader can understand. Prefer outcomes such as improved stability, completed validation, clearer process, working delivery, or an unresolved issue over implementation mechanics. This section is the project-first inverse index of project_progress. Reports with noReportableActivity=true must not create a project bullet and must not be inserted under an unrelated project.
 
-In project_progress, group content by concrete Partner/person first, using the supplied partnerName when present and partnerId only as a fallback. Under each person, organize their work by project and describe concrete work, deliverables, decisions, validation results, and blockers directly. Do not start a project entry with phrases such as "当前状态为" or "状态为". Do not expose raw status enum identifiers such as awaiting_validation, in_progress, or completed. When status is materially relevant, express it naturally in Chinese after the concrete work, for example "已完成" or "待验证", and only when supported by the report. Do not start project_progress with project-level headings, do not merge people, and do not omit any Partner/project contribution.
+In project_progress, group content by concrete Partner/person first, using the supplied partnerName when present and partnerId only as a fallback. Under each person, organize their work by project, using only exact names copied from that person's projectNames array. Explain what was advanced, what usable result was reached, and what remains, using everyday Chinese. Combine related technical actions into one management-level statement instead of listing implementation steps. Do not start a project entry with phrases such as "当前状态为" or "状态为". Do not expose raw status enum identifiers such as awaiting_validation, in_progress, or completed. When status is materially relevant, express it naturally in Chinese after the concrete work, for example "已完成" or "待验证", and only when supported by the report. For every report with noReportableActivity=true, include that person exactly once without a project name and state only that the platform did not collect a work record suitable for this report and therefore makes no judgment about actual work. Do not start project_progress with project-level headings, do not merge people, and do not omit any Partner/project contribution or coverage-only person.
 
-Include risks only when supported by the current individual reports and state plainly when none were reported. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied individual report IDs. In every claim's individualReportIds, copy only exact values from individualReports[].reportId. For this request, the complete allowlist is ${JSON.stringify(allowedIndividualReportIds)}. Every individualReportId must be copied exactly from this allowlist. Never use the top-level reportId, partnerId, project IDs, Work Item IDs, or any other identifier as an individualReportId.
+Include risks only when supported by the current individual reports. State each risk in plain language, explain its practical consequence only when supported, and make the remaining action understandable without technical knowledge. State plainly when none were reported. Treat noReportableActivity=true as a reporting-coverage limit, not as evidence of a project risk or poor performance. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied individual report IDs. In every claim's individualReportIds, copy only exact values from individualReports[].reportId. For this request, the complete allowlist is ${JSON.stringify(allowedIndividualReportIds)}. Every individualReportId must be copied exactly from this allowlist. Never use the top-level reportId, partnerId, project IDs, Work Item IDs, or any other identifier as an individualReportId.
 
-Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-10.team.v8","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-11.team.v13","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportSectionTitles = {
   summary: "本周团队工作摘要",
@@ -81,6 +84,73 @@ export function normalizeTeamReportSummary(summary: string) {
     .trim();
 }
 
+export function buildNoActivityTeamReport(
+  individualReports: Array<{
+    partnerId: string;
+    partnerName?: string;
+    reportId: string;
+  }>,
+  model: string,
+) {
+  const reportIds = individualReports.map((report) => report.reportId);
+  const summary =
+    "本周期内，中台没有采集到可用于团队工作汇报的记录，因此本报告不对具体项目进展、工作成果或完成情况作出判断。" +
+    "该结果只说明当前缺少能够进入报告的资料，不代表团队成员在本周期没有开展工作，也不能据此评价个人投入或工作表现。" +
+    "团队报告仍按计划完成归档，并保留所有在职人员的记录状态，避免因个别人员没有数据而阻塞整个周期的报告生成。" +
+    "由于缺少可核对的项目材料，本报告不会补写项目名称、成果、风险或后续安排，相关信息需要结合其他管理记录了解。" +
+    "管理人员查看本报告时，应将其理解为本周期的数据覆盖说明，而不是工作结论；后续周期一旦采集到新的有效记录，将继续按正常流程形成工作卡片和报告。";
+  return teamReportGenerationResultSchema.parse({
+    schemaVersion: "1.0",
+    summary,
+    sections: [
+      {
+        key: "summary",
+        markdown:
+          "本周期未采集到可用于汇报的项目记录，因此没有可列出的项目摘要。",
+        claims: [
+          {
+            claim: "本周期没有可用于汇报的项目记录。",
+            individualReportIds: reportIds,
+          },
+        ],
+      },
+      {
+        key: "project_progress",
+        markdown: individualReports
+          .map(
+            (report) =>
+              `- ${report.partnerName ?? report.partnerId}：本周期未采集到可用于汇报的工作记录，本报告不对其实际工作作出判断。`,
+          )
+          .join("\n"),
+        claims: individualReports.map((report) => ({
+          claim: `${report.partnerName ?? report.partnerId}本周期没有可用于汇报的工作记录。`,
+          individualReportIds: [report.reportId],
+        })),
+      },
+      {
+        key: "risks",
+        markdown:
+          "本周期缺少可用于汇报的记录，无法仅根据本报告判断项目进展和风险；这属于报告覆盖范围限制，不代表实际工作存在异常。",
+        claims: [
+          {
+            claim: "本周期报告存在记录覆盖范围限制。",
+            individualReportIds: reportIds,
+          },
+        ],
+      },
+    ],
+    missingPartnerIds: [],
+    qualityWarnings: ["NO_REPORTABLE_ACTIVITY_COLLECTED"],
+    production: {
+      skillVersion: "partner-report-platform/0.3.0",
+      promptVersion: "2026-08-11.team.v13",
+      schemaVersion: "1.0",
+      producer: "data-platform",
+      modelVersion: model,
+    },
+  });
+}
+
 function finalizeTeamReport(result: any, reportDate: string) {
   const sections = result.sections.map((section: any) => ({
     ...section,
@@ -96,7 +166,7 @@ function finalizeTeamReport(result: any, reportDate: string) {
     production: {
       ...result.production,
       skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-10.team.v8",
+      promptVersion: "2026-08-11.team.v13",
       schemaVersion: "1.0",
       producer: "data-platform",
     },
@@ -186,6 +256,181 @@ function projectCardPayload(group: any) {
   };
 }
 
+async function autoAdvanceWeeklyReview(
+  tx: any,
+  job: Job,
+  reviewId: string,
+  qualityWarnings: unknown,
+) {
+  await tx`
+    update work_items set review_status = 'approved', updated_at = now()
+    where tenant_id = ${job.tenant_id} and review_id = ${reviewId}
+  `;
+  const reviewRows = await tx<Array<{ period_id: string; version: number }>>`
+    update reviews set state = 'ITEMS_APPROVED', version = version + 1,
+      approved_count = (
+        select count(*)::int from work_items where review_id = ${reviewId}
+      ),
+      excluded_count = 0, pending_count = 0, updated_at = now()
+    where id = ${reviewId} and tenant_id = ${job.tenant_id}
+    returning period_id, version
+  `;
+  const review = reviewRows[0];
+  if (!review) throw new Error("REVIEW_NOT_FOUND");
+
+  const workItems = await tx<any[]>`
+    select * from work_items
+    where tenant_id = ${job.tenant_id} and review_id = ${reviewId}
+    order by created_at, id
+  `;
+  const coverageRows = await tx<any[]>`
+    select id, payload from coverage_snapshots
+    where tenant_id = ${job.tenant_id} and partner_id = ${job.partner_id}
+      and period_id = ${review.period_id}
+    order by created_at desc limit 1
+  `;
+  const factSnapshotRows = await tx<Array<{ coverage: unknown }>>`
+    select coverage from fact_snapshots
+    where id = ${job.input_payload.factSnapshotId}
+      and tenant_id = ${job.tenant_id}
+    limit 1
+  `;
+  const coverage =
+    coverageRows[0]?.payload ?? factSnapshotRows[0]?.coverage ?? {};
+  const snapshotPayload = {
+    reviewId,
+    reviewVersion: review.version,
+    periodId: review.period_id,
+    workItems,
+    excludedWorkItemIds: [],
+    coverage,
+    autoApprovedAtCutoff: true,
+  };
+  const checksum = stableJsonHash(snapshotPayload);
+  const snapshotId = randomUUID();
+  await tx`
+    insert into work_item_snapshots (
+      id, tenant_id, team_id, partner_id, period_id, review_id,
+      review_version, checksum, payload, approved_by_actor_type,
+      approved_by_actor_id, approved_at
+    ) values (
+      ${snapshotId}, ${job.tenant_id}, ${job.team_id}, ${job.partner_id},
+      ${review.period_id}, ${reviewId}, ${review.version}, ${checksum},
+      ${JSON.stringify(snapshotPayload)}::jsonb, 'system', 'weekly-cutoff', now()
+    )
+  `;
+
+  let templates = await tx<any[]>`
+    select rt.* from report_periods rp
+    join report_templates rt on rt.id = rp.template_id
+      and rt.tenant_id = rp.tenant_id
+    where rp.id = ${review.period_id} and rp.tenant_id = ${job.tenant_id}
+      and rp.team_id = ${job.team_id}
+    limit 1
+  `;
+  if (!templates[0])
+    templates = await tx<any[]>`
+      select * from report_templates
+      where tenant_id = ${job.tenant_id} and team_id = ${job.team_id}
+        and is_default = true
+      order by version desc limit 1
+    `;
+  const partners = await tx<any[]>`
+    select preferences from partners
+    where id = ${job.partner_id} and tenant_id = ${job.tenant_id}
+    limit 1
+  `;
+  const previousReports = await tx<any[]>`
+    select previous_report.id as report_id, previous_report.payload
+    from report_periods current_period
+    join report_periods previous_period
+      on previous_period.tenant_id = current_period.tenant_id
+      and previous_period.team_id = current_period.team_id
+      and previous_period.starts_at < current_period.starts_at
+    join individual_reports previous_report
+      on previous_report.period_id = previous_period.id
+      and previous_report.tenant_id = current_period.tenant_id
+      and previous_report.partner_id = ${job.partner_id}
+      and previous_report.status = 'LOCKED'
+    where current_period.id = ${review.period_id}
+    order by previous_period.starts_at desc limit 1
+  `;
+  const reportRows = await tx<{ id: string }[]>`
+    insert into individual_reports (
+      id, tenant_id, team_id, partner_id, period_id, snapshot_id,
+      status, source_checksum
+    ) values (
+      ${randomUUID()}, ${job.tenant_id}, ${job.team_id}, ${job.partner_id},
+      ${review.period_id}, ${snapshotId}, 'REPORT_DRAFT', ${checksum}
+    )
+    on conflict (tenant_id, partner_id, period_id) do update set
+      team_id = excluded.team_id,
+      snapshot_id = excluded.snapshot_id,
+      status = 'REPORT_DRAFT',
+      title = null,
+      summary = null,
+      markdown = null,
+      payload = null,
+      preferences = '{}'::jsonb,
+      source_checksum = excluded.source_checksum,
+      generator_version = null,
+      submitted_at = null,
+      locked_at = null,
+      updated_at = now()
+    returning id
+  `;
+  const reportId = reportRows[0]!.id;
+  await tx`
+    insert into agent_jobs (
+      id, tenant_id, team_id, partner_id, plugin_instance_id, type,
+      idempotency_key, input_payload
+    ) values (
+      ${randomUUID()}, ${job.tenant_id}, ${job.team_id}, ${job.partner_id}, null,
+      'GENERATE_INDIVIDUAL_REPORT', ${`cutoff-report:${snapshotId}:${checksum}`},
+      ${JSON.stringify({
+        schemaVersion: "1.0",
+        reportId,
+        snapshotId,
+        sourceChecksum: checksum,
+        generatorVersion: "partner-report-platform/0.3.0",
+        autoLockAtCutoff: true,
+        workItems,
+        coverage,
+        template: templates[0] ?? null,
+        preferences: partners[0]?.preferences ?? {},
+        previousReport: previousReports[0] ?? null,
+        constraints: {
+          claimsRequireWorkItemIds: true,
+          noUnsupportedPercentages: true,
+        },
+      })}::jsonb
+    ) on conflict (tenant_id, idempotency_key) do nothing
+  `;
+  await tx`
+    insert into outbox_events (
+      id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+    ) values
+      (
+        ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created',
+        'review', ${reviewId},
+        ${JSON.stringify({
+          count: workItems.length,
+          warnings: qualityWarnings,
+          autoApprovedAtCutoff: true,
+        })}::jsonb
+      ),
+      (
+        ${randomUUID()}, ${job.tenant_id}, 'work_items.snapshot.approved',
+        'work_item_snapshot', ${snapshotId},
+        ${JSON.stringify({
+          reportId,
+          checksum,
+          autoApprovedAtCutoff: true,
+        })}::jsonb
+      )
+  `;
+}
+
 async function applyAggregation(job: Job, output: unknown) {
   const result = validateAggregation(job, output);
   const reviewId = job.input_payload.reviewId as string;
@@ -273,16 +518,21 @@ async function applyAggregation(job: Job, output: unknown) {
         await tx`insert into work_item_facts (work_item_id, fact_id) values (${workItemId}, ${factId})`;
       }
     }
-    await tx`
-      update reviews set state = 'IN_PROGRESS', version = version + 1,
-        approved_count = 0, excluded_count = 0, pending_count = ${result.groups.length}, updated_at = now()
-      where id = ${reviewId} and tenant_id = ${job.tenant_id}
-    `;
-    await tx`
-      insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-      values (${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created', 'review', ${reviewId},
-        ${JSON.stringify({ count: result.groups.length, warnings: result.qualityWarnings })}::jsonb)
-    `;
+    if (job.input_payload.autoAdvanceAtCutoff === true) {
+      await autoAdvanceWeeklyReview(tx, job, reviewId, result.qualityWarnings);
+    } else {
+      await tx`
+        update reviews set state = 'IN_PROGRESS', version = version + 1,
+          approved_count = 0, excluded_count = 0,
+          pending_count = ${result.groups.length}, updated_at = now()
+        where id = ${reviewId} and tenant_id = ${job.tenant_id}
+      `;
+      await tx`
+        insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+        values (${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created', 'review', ${reviewId},
+          ${JSON.stringify({ count: result.groups.length, warnings: result.qualityWarnings })}::jsonb)
+      `;
+    }
   });
   return result;
 }
@@ -299,15 +549,21 @@ async function applyReport(job: Job, output: unknown, model: string) {
         if (!allowed.has(id))
           throw new Error(`UNKNOWN_WORK_ITEM_REFERENCE:${id}`);
     }
+  const autoLockAtCutoff =
+    job.type === "GENERATE_INDIVIDUAL_REPORT" &&
+    job.input_payload.autoLockAtCutoff === true;
   await sql.begin(async (tx) => {
     const updated = await tx<{ content_revision: number }[]>`
       update individual_reports set
-        status = 'REPORT_REVIEW', content_revision = content_revision + 1,
+        status = ${autoLockAtCutoff ? "LOCKED" : "REPORT_REVIEW"},
+        content_revision = content_revision + 1,
         title = ${result.title}, summary = ${result.summary},
         markdown = ${result.markdown}, payload = ${JSON.stringify(result)}::jsonb,
         preferences = ${JSON.stringify(job.input_payload.preferences ?? {})}::jsonb,
         source_checksum = ${job.input_payload.sourceChecksum},
         generator_version = ${`partner-report-platform/0.2.0 (${model})`},
+        submitted_at = ${autoLockAtCutoff ? new Date().toISOString() : null},
+        locked_at = ${autoLockAtCutoff ? new Date().toISOString() : null},
         updated_at = now()
       where id = ${job.input_payload.reportId} and tenant_id = ${job.tenant_id}
         and status not in ('SUBMITTED', 'LOCKED')
@@ -320,6 +576,19 @@ async function applyReport(job: Job, output: unknown, model: string) {
       values (${randomUUID()}, ${job.tenant_id}, 'individual_report.draft.created', 'individual_report', ${job.input_payload.reportId},
         ${JSON.stringify({ contentRevision: updated[0].content_revision, warnings: result.qualityWarnings })}::jsonb)
     `;
+    if (autoLockAtCutoff)
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${job.tenant_id}, 'individual_report.submitted',
+          'individual_report', ${job.input_payload.reportId},
+          ${JSON.stringify({
+            contentRevision: updated[0].content_revision,
+            autoLockedAtCutoff: true,
+          })}::jsonb
+        )
+      `;
   });
   return result;
 }
@@ -337,6 +606,12 @@ async function applyTeamReport(
   );
   assertTeamReportSemantics(result);
   assertChineseTeamReport(result);
+  assertLeaderReadableTeamReport(result);
+  assertExactTeamReportProjectNames(
+    result,
+    job.input_payload.individualReports,
+  );
+  assertNoActivityTeamCoverage(result, job.input_payload.individualReports);
   const allowed = new Set<string>(
     job.input_payload.individualReports.map((report: any) => report.reportId),
   );
@@ -396,6 +671,109 @@ async function applyTeamReport(
   return result;
 }
 
+const teamReportForbiddenTerms = [
+  "SSH",
+  "README",
+  "状态机",
+  "聚合调度",
+  "贡献模型",
+  "类型校验",
+  "依赖安装",
+  "依赖未安装",
+  "主分支",
+  "代码仓库",
+  "远程仓库",
+  "前端架构",
+  "本地开发服务",
+  "飞书网关",
+  "测试用例",
+  "实验元数据",
+  "历史快照",
+  "报表凭证",
+  "同步解析",
+  "数据接入",
+] as const;
+
+export function assertLeaderReadableTeamReport(report: {
+  summary: string;
+  sections: Array<{ markdown: string }>;
+}) {
+  const summaryLength = Array.from(report.summary.replace(/\s/gu, "")).length;
+  if (summaryLength < 250 || summaryLength > 650) {
+    throw new Error(`TEAM_REPORT_SUMMARY_LENGTH:${summaryLength}`);
+  }
+  const prose = [
+    report.summary,
+    ...report.sections.map((section) => section.markdown),
+  ].join("\n");
+  const forbidden = teamReportForbiddenTerms.find((term) =>
+    prose.includes(term),
+  );
+  if (forbidden) throw new Error(`TEAM_REPORT_TECHNICAL_JARGON:${forbidden}`);
+}
+
+export function assertExactTeamReportProjectNames(
+  report: { sections: Array<{ key: string; markdown: string }> },
+  individualReports: Array<{ projectNames?: unknown }>,
+) {
+  const expected = [
+    ...new Set(
+      individualReports.flatMap((individualReport) =>
+        Array.isArray(individualReport.projectNames)
+          ? individualReport.projectNames.filter(
+              (name): name is string =>
+                typeof name === "string" && name.trim().length > 0,
+            )
+          : [],
+      ),
+    ),
+  ].sort();
+  if (expected.length === 0) return;
+
+  const summary = report.sections.find((section) => section.key === "summary");
+  const actual = (summary?.markdown ?? "")
+    .split(/\r?\n/)
+    .filter((line) => /^[-*+]\s+/.test(line))
+    .map((line) => {
+      const label = line
+        .replace(/^[-*+]\s+/, "")
+        .split(/[：:]/, 1)[0]!
+        .replace(/\*\*/g, "")
+        .trim();
+      return label;
+    })
+    .filter(Boolean)
+    .sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error("TEAM_REPORT_PROJECT_NAMES_MISMATCH");
+  }
+}
+
+export function assertNoActivityTeamCoverage(
+  report: { sections: Array<{ key: string; markdown: string }> },
+  individualReports: Array<{
+    partnerId: string;
+    partnerName?: string;
+    noReportableActivity?: boolean;
+  }>,
+) {
+  const noActivityReports = individualReports.filter(
+    (individualReport) => individualReport.noReportableActivity === true,
+  );
+  if (noActivityReports.length === 0) return;
+  const progress =
+    report.sections.find((section) => section.key === "project_progress")
+      ?.markdown ?? "";
+  for (const individualReport of noActivityReports) {
+    const label = individualReport.partnerName ?? individualReport.partnerId;
+    if (!progress.includes(label))
+      throw new Error(`TEAM_REPORT_NO_ACTIVITY_PARTNER_MISSING:${label}`);
+  }
+  if (progress.includes("没有工作") || progress.includes("未开展工作")) {
+    throw new Error("TEAM_REPORT_NO_ACTIVITY_UNSUPPORTED_JUDGMENT");
+  }
+}
+
 function safeError(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, 900);
 }
@@ -417,6 +795,12 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       "GENERATE_TEAM_REPORT",
       "REGENERATE_TEAM_REPORT",
     ].includes(job.type);
+    const allReportsHaveNoActivity =
+      isTeamReport &&
+      job.input_payload.individualReports.length > 0 &&
+      job.input_payload.individualReports.every(
+        (report: any) => report.noReportableActivity === true,
+      );
     const output = isAggregation
       ? await generateStructured({
           name: "partner_work_item_aggregation",
@@ -426,18 +810,23 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
           model,
         })
       : isTeamReport
-        ? await generateStructured({
-            name: "partner_team_report",
-            schema: teamReportGenerationResultSchema,
-            instructions: teamReportInstructions(
+        ? allReportsHaveNoActivity
+          ? buildNoActivityTeamReport(
+              job.input_payload.individualReports,
               model,
-              job.input_payload.individualReports.map(
-                (report: any) => report.reportId,
+            )
+          : await generateStructured({
+              name: "partner_team_report",
+              schema: teamReportGenerationResultSchema,
+              instructions: teamReportInstructions(
+                model,
+                job.input_payload.individualReports.map(
+                  (report: any) => report.reportId,
+                ),
               ),
-            ),
-            input: job.input_payload,
-            model,
-          })
+              input: job.input_payload,
+              model,
+            })
         : await generateStructured({
             name: "partner_individual_report",
             schema: individualReportResultSchema,
