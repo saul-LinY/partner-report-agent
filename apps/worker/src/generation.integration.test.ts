@@ -442,7 +442,7 @@ suite("synthetic report generation pipeline", () => {
     expect(periods).toEqual([{ status: "completed" }]);
   });
 
-  it("advances the cutoff pipeline without waiting for Partner actions", async () => {
+  it("keeps cutoff output pending for Partner review", async () => {
     const periodId = randomUUID();
     const factId = randomUUID();
     const factSnapshotId = randomUUID();
@@ -520,9 +520,9 @@ suite("synthetic report generation pipeline", () => {
         {
           projectKey: "unassigned",
           status: "in_progress",
-          overview: "系统按截止时间使用现有贡献继续生成报告。",
+          overview: "系统按截止时间使用现有贡献生成待审核卡片。",
           dailyProgress: [
-            { date: "2026-08-11", summary: "完成现有贡献的自动汇总。" },
+            { date: "2026-08-11", summary: "完成现有贡献的汇总。" },
           ],
         },
       ],
@@ -534,19 +534,20 @@ suite("synthetic report generation pipeline", () => {
       type: "AGGREGATE_WORK_ITEMS",
     });
 
-    const [reviews, workItems, snapshots, reportJobs] = await Promise.all([
-      sql<any[]>`
+    const [reviews, workItems, snapshots, reportJobs, outbox] =
+      await Promise.all([
+        sql<any[]>`
         select state, approved_count, pending_count from reviews
         where id = ${reviewId}
       `,
-      sql<any[]>`
+        sql<any[]>`
         select * from work_items where review_id = ${reviewId}
       `,
-      sql<any[]>`
+        sql<any[]>`
         select payload, approved_by_actor_type, approved_by_actor_id
         from work_item_snapshots where review_id = ${reviewId}
       `,
-      sql<any[]>`
+        sql<any[]>`
         select input_payload from agent_jobs
         where tenant_id = ${fixture.tenant}
           and type = 'GENERATE_INDIVIDUAL_REPORT'
@@ -554,53 +555,19 @@ suite("synthetic report generation pipeline", () => {
             select id::text from work_item_snapshots where review_id = ${reviewId}
           )
       `,
-    ]);
+        sql<any[]>`
+        select event_type from outbox_events
+        where tenant_id = ${fixture.tenant} and aggregate_id = ${reviewId}
+      `,
+      ]);
     expect(reviews).toEqual([
-      { state: "ITEMS_APPROVED", approved_count: 1, pending_count: 0 },
+      { state: "IN_PROGRESS", approved_count: 0, pending_count: 1 },
     ]);
-    expect(workItems).toMatchObject([{ review_status: "approved" }]);
-    expect(snapshots).toMatchObject([
-      {
-        approved_by_actor_type: "system",
-        approved_by_actor_id: "weekly-cutoff",
-        payload: { autoApprovedAtCutoff: true },
-      },
-    ]);
-    expect(reportJobs).toMatchObject([
-      { input_payload: { autoLockAtCutoff: true } },
-    ]);
-
-    nextOutput = individualReport(workItems[0].id);
-    expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
-      processed: true,
-      type: "GENERATE_INDIVIDUAL_REPORT",
-    });
-    const reports = await sql<any[]>`
-      select id, status, submitted_at, locked_at from individual_reports
-      where tenant_id = ${fixture.tenant} and period_id = ${periodId}
-    `;
-    expect(reports).toMatchObject([
-      {
-        status: "LOCKED",
-        submitted_at: expect.any(String),
-        locked_at: expect.any(String),
-      },
-    ]);
-
-    expect(await scheduleDueTeamReports(periodId)).toBe(1);
-    const teamJobs = await sql<any[]>`
-      select input_payload from agent_jobs
-      where tenant_id = ${fixture.tenant} and type = 'GENERATE_TEAM_REPORT'
-        and input_payload->'period'->>'id' = ${periodId}
-    `;
-    expect(teamJobs).toMatchObject([
-      {
-        input_payload: {
-          missingPartnerIds: [],
-          individualReports: [{ reportId: reports[0].id }],
-        },
-      },
-    ]);
+    expect(workItems).toMatchObject([{ review_status: "pending" }]);
+    expect(snapshots).toEqual([]);
+    expect(reportJobs).toEqual([]);
+    expect(outbox).toEqual([{ event_type: "work_items.draft.created" }]);
+    expect(await scheduleDueTeamReports(periodId)).toBe(0);
   });
 });
 

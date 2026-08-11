@@ -256,181 +256,6 @@ function projectCardPayload(group: any) {
   };
 }
 
-async function autoAdvanceWeeklyReview(
-  tx: any,
-  job: Job,
-  reviewId: string,
-  qualityWarnings: unknown,
-) {
-  await tx`
-    update work_items set review_status = 'approved', updated_at = now()
-    where tenant_id = ${job.tenant_id} and review_id = ${reviewId}
-  `;
-  const reviewRows = await tx<Array<{ period_id: string; version: number }>>`
-    update reviews set state = 'ITEMS_APPROVED', version = version + 1,
-      approved_count = (
-        select count(*)::int from work_items where review_id = ${reviewId}
-      ),
-      excluded_count = 0, pending_count = 0, updated_at = now()
-    where id = ${reviewId} and tenant_id = ${job.tenant_id}
-    returning period_id, version
-  `;
-  const review = reviewRows[0];
-  if (!review) throw new Error("REVIEW_NOT_FOUND");
-
-  const workItems = await tx<any[]>`
-    select * from work_items
-    where tenant_id = ${job.tenant_id} and review_id = ${reviewId}
-    order by created_at, id
-  `;
-  const coverageRows = await tx<any[]>`
-    select id, payload from coverage_snapshots
-    where tenant_id = ${job.tenant_id} and partner_id = ${job.partner_id}
-      and period_id = ${review.period_id}
-    order by created_at desc limit 1
-  `;
-  const factSnapshotRows = await tx<Array<{ coverage: unknown }>>`
-    select coverage from fact_snapshots
-    where id = ${job.input_payload.factSnapshotId}
-      and tenant_id = ${job.tenant_id}
-    limit 1
-  `;
-  const coverage =
-    coverageRows[0]?.payload ?? factSnapshotRows[0]?.coverage ?? {};
-  const snapshotPayload = {
-    reviewId,
-    reviewVersion: review.version,
-    periodId: review.period_id,
-    workItems,
-    excludedWorkItemIds: [],
-    coverage,
-    autoApprovedAtCutoff: true,
-  };
-  const checksum = stableJsonHash(snapshotPayload);
-  const snapshotId = randomUUID();
-  await tx`
-    insert into work_item_snapshots (
-      id, tenant_id, team_id, partner_id, period_id, review_id,
-      review_version, checksum, payload, approved_by_actor_type,
-      approved_by_actor_id, approved_at
-    ) values (
-      ${snapshotId}, ${job.tenant_id}, ${job.team_id}, ${job.partner_id},
-      ${review.period_id}, ${reviewId}, ${review.version}, ${checksum},
-      ${JSON.stringify(snapshotPayload)}::jsonb, 'system', 'weekly-cutoff', now()
-    )
-  `;
-
-  let templates = await tx<any[]>`
-    select rt.* from report_periods rp
-    join report_templates rt on rt.id = rp.template_id
-      and rt.tenant_id = rp.tenant_id
-    where rp.id = ${review.period_id} and rp.tenant_id = ${job.tenant_id}
-      and rp.team_id = ${job.team_id}
-    limit 1
-  `;
-  if (!templates[0])
-    templates = await tx<any[]>`
-      select * from report_templates
-      where tenant_id = ${job.tenant_id} and team_id = ${job.team_id}
-        and is_default = true
-      order by version desc limit 1
-    `;
-  const partners = await tx<any[]>`
-    select preferences from partners
-    where id = ${job.partner_id} and tenant_id = ${job.tenant_id}
-    limit 1
-  `;
-  const previousReports = await tx<any[]>`
-    select previous_report.id as report_id, previous_report.payload
-    from report_periods current_period
-    join report_periods previous_period
-      on previous_period.tenant_id = current_period.tenant_id
-      and previous_period.team_id = current_period.team_id
-      and previous_period.starts_at < current_period.starts_at
-    join individual_reports previous_report
-      on previous_report.period_id = previous_period.id
-      and previous_report.tenant_id = current_period.tenant_id
-      and previous_report.partner_id = ${job.partner_id}
-      and previous_report.status = 'LOCKED'
-    where current_period.id = ${review.period_id}
-    order by previous_period.starts_at desc limit 1
-  `;
-  const reportRows = await tx<{ id: string }[]>`
-    insert into individual_reports (
-      id, tenant_id, team_id, partner_id, period_id, snapshot_id,
-      status, source_checksum
-    ) values (
-      ${randomUUID()}, ${job.tenant_id}, ${job.team_id}, ${job.partner_id},
-      ${review.period_id}, ${snapshotId}, 'REPORT_DRAFT', ${checksum}
-    )
-    on conflict (tenant_id, partner_id, period_id) do update set
-      team_id = excluded.team_id,
-      snapshot_id = excluded.snapshot_id,
-      status = 'REPORT_DRAFT',
-      title = null,
-      summary = null,
-      markdown = null,
-      payload = null,
-      preferences = '{}'::jsonb,
-      source_checksum = excluded.source_checksum,
-      generator_version = null,
-      submitted_at = null,
-      locked_at = null,
-      updated_at = now()
-    returning id
-  `;
-  const reportId = reportRows[0]!.id;
-  await tx`
-    insert into agent_jobs (
-      id, tenant_id, team_id, partner_id, plugin_instance_id, type,
-      idempotency_key, input_payload
-    ) values (
-      ${randomUUID()}, ${job.tenant_id}, ${job.team_id}, ${job.partner_id}, null,
-      'GENERATE_INDIVIDUAL_REPORT', ${`cutoff-report:${snapshotId}:${checksum}`},
-      ${JSON.stringify({
-        schemaVersion: "1.0",
-        reportId,
-        snapshotId,
-        sourceChecksum: checksum,
-        generatorVersion: "partner-report-platform/0.3.0",
-        autoLockAtCutoff: true,
-        workItems,
-        coverage,
-        template: templates[0] ?? null,
-        preferences: partners[0]?.preferences ?? {},
-        previousReport: previousReports[0] ?? null,
-        constraints: {
-          claimsRequireWorkItemIds: true,
-          noUnsupportedPercentages: true,
-        },
-      })}::jsonb
-    ) on conflict (tenant_id, idempotency_key) do nothing
-  `;
-  await tx`
-    insert into outbox_events (
-      id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-    ) values
-      (
-        ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created',
-        'review', ${reviewId},
-        ${JSON.stringify({
-          count: workItems.length,
-          warnings: qualityWarnings,
-          autoApprovedAtCutoff: true,
-        })}::jsonb
-      ),
-      (
-        ${randomUUID()}, ${job.tenant_id}, 'work_items.snapshot.approved',
-        'work_item_snapshot', ${snapshotId},
-        ${JSON.stringify({
-          reportId,
-          checksum,
-          autoApprovedAtCutoff: true,
-        })}::jsonb
-      )
-  `;
-}
-
 async function applyAggregation(job: Job, output: unknown) {
   const result = validateAggregation(job, output);
   const reviewId = job.input_payload.reviewId as string;
@@ -518,21 +343,17 @@ async function applyAggregation(job: Job, output: unknown) {
         await tx`insert into work_item_facts (work_item_id, fact_id) values (${workItemId}, ${factId})`;
       }
     }
-    if (job.input_payload.autoAdvanceAtCutoff === true) {
-      await autoAdvanceWeeklyReview(tx, job, reviewId, result.qualityWarnings);
-    } else {
-      await tx`
-        update reviews set state = 'IN_PROGRESS', version = version + 1,
-          approved_count = 0, excluded_count = 0,
-          pending_count = ${result.groups.length}, updated_at = now()
-        where id = ${reviewId} and tenant_id = ${job.tenant_id}
-      `;
-      await tx`
-        insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-        values (${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created', 'review', ${reviewId},
-          ${JSON.stringify({ count: result.groups.length, warnings: result.qualityWarnings })}::jsonb)
-      `;
-    }
+    await tx`
+      update reviews set state = 'IN_PROGRESS', version = version + 1,
+        approved_count = 0, excluded_count = 0,
+        pending_count = ${result.groups.length}, updated_at = now()
+      where id = ${reviewId} and tenant_id = ${job.tenant_id}
+    `;
+    await tx`
+      insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+      values (${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created', 'review', ${reviewId},
+        ${JSON.stringify({ count: result.groups.length, warnings: result.qualityWarnings })}::jsonb)
+    `;
   });
   return result;
 }
@@ -549,21 +370,18 @@ async function applyReport(job: Job, output: unknown, model: string) {
         if (!allowed.has(id))
           throw new Error(`UNKNOWN_WORK_ITEM_REFERENCE:${id}`);
     }
-  const autoLockAtCutoff =
-    job.type === "GENERATE_INDIVIDUAL_REPORT" &&
-    job.input_payload.autoLockAtCutoff === true;
   await sql.begin(async (tx) => {
     const updated = await tx<{ content_revision: number }[]>`
       update individual_reports set
-        status = ${autoLockAtCutoff ? "LOCKED" : "REPORT_REVIEW"},
+        status = 'REPORT_REVIEW',
         content_revision = content_revision + 1,
         title = ${result.title}, summary = ${result.summary},
         markdown = ${result.markdown}, payload = ${JSON.stringify(result)}::jsonb,
         preferences = ${JSON.stringify(job.input_payload.preferences ?? {})}::jsonb,
         source_checksum = ${job.input_payload.sourceChecksum},
         generator_version = ${`partner-report-platform/0.2.0 (${model})`},
-        submitted_at = ${autoLockAtCutoff ? new Date().toISOString() : null},
-        locked_at = ${autoLockAtCutoff ? new Date().toISOString() : null},
+        submitted_at = null,
+        locked_at = null,
         updated_at = now()
       where id = ${job.input_payload.reportId} and tenant_id = ${job.tenant_id}
         and status not in ('SUBMITTED', 'LOCKED')
@@ -576,19 +394,6 @@ async function applyReport(job: Job, output: unknown, model: string) {
       values (${randomUUID()}, ${job.tenant_id}, 'individual_report.draft.created', 'individual_report', ${job.input_payload.reportId},
         ${JSON.stringify({ contentRevision: updated[0].content_revision, warnings: result.qualityWarnings })}::jsonb)
     `;
-    if (autoLockAtCutoff)
-      await tx`
-        insert into outbox_events (
-          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-        ) values (
-          ${randomUUID()}, ${job.tenant_id}, 'individual_report.submitted',
-          'individual_report', ${job.input_payload.reportId},
-          ${JSON.stringify({
-            contentRevision: updated[0].content_revision,
-            autoLockedAtCutoff: true,
-          })}::jsonb
-        )
-      `;
   });
   return result;
 }

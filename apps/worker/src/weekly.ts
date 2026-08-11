@@ -370,7 +370,6 @@ export async function scheduleDueWeeklyReports(
             ${JSON.stringify({
               schemaVersion: "1.0",
               aggregationMode: "weekly_report",
-              autoAdvanceAtCutoff: true,
               factSnapshotId: snapshotRows[0]!.id,
               period: {
                 id: period.id,

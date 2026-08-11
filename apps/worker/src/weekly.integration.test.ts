@@ -160,7 +160,6 @@ suite("weekly report scheduling", () => {
       idempotency_key: `weekly-aggregate:${fixture.partner}:${fixture.period}`,
       input_payload: {
         aggregationMode: "weekly_report",
-        autoAdvanceAtCutoff: true,
         reviewId: expect.any(String),
         projectBuckets: [
           {
@@ -171,6 +170,7 @@ suite("weekly report scheduling", () => {
         ],
       },
     });
+    expect(jobs[0].input_payload).not.toHaveProperty("autoAdvanceAtCutoff");
     expect(emptyReports).toHaveLength(1);
     expect(emptyReports[0]).toMatchObject({
       status: "LOCKED",
