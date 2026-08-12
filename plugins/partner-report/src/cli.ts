@@ -9,7 +9,10 @@ import {
 import { hostname, tmpdir } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { sessionExtractionResultSchema } from "@partner-report/contracts";
+import {
+  projectDescriptionResultSchema,
+  sessionExtractionResultSchema,
+} from "@partner-report/contracts";
 import {
   PLUGIN_VERSION,
   loadConfig,
@@ -23,7 +26,7 @@ import {
 } from "./config.js";
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
 import {
-  SCHEDULED_COLLECTION_PROMPT_CHECK,
+  SCHEDULED_COLLECTION_PROMPT_POLICY,
   SCHEDULED_COLLECTION_TASK,
 } from "./collection-config.js";
 import {
@@ -56,7 +59,10 @@ import {
   immutableContributionFromRequirements,
   jobOutcomeFailureAuditIsValid,
   legalCollectSkipOutcome,
+  newlyPendingProjectScopeKeys,
+  projectScopeApprovalDeadline,
   repairImmutableResult,
+  resolveProjectScopeApprovals,
   shouldStopBeforeClaim,
   type ExtractionFailure,
   type ExtractionFailureCode,
@@ -69,6 +75,7 @@ import {
   firstNonChineseContributionField,
   isOfficialAutomationThread,
   isPluginSystemThread,
+  mappedProject,
   pathIsExcluded,
   type CollectionPeriod,
   type ProjectPolicy,
@@ -92,6 +99,10 @@ import {
   waitForCondition,
   waitForConditionAndContinue,
 } from "./poll-wait.js";
+import {
+  buildProjectDescriptionSource,
+  projectDescriptionIsChinese,
+} from "./project-description.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -143,7 +154,9 @@ type ThreadSummary = {
 type ScopedThreadSummary = ThreadSummary & {
   scopeKey: string;
   collectionStartsAt?: string;
+  collectionEndsAt?: string;
   countedAsExcluded?: boolean;
+  initialCountBucket?: "excluded" | "outsideWindow";
 };
 
 type ScopeApprovalWait = {
@@ -151,6 +164,37 @@ type ScopeApprovalWait = {
   deadlineAt: number;
   attempt: number;
   deferredQueue: ScopedThreadSummary[];
+};
+
+type EndOfRunScopeScan = {
+  completed: boolean;
+  cardPolicyVersion: number | null;
+  cardDeliveryDeadlineAt: number | null;
+  cardDeliveryAttempt: number;
+};
+
+type ProjectDescriptionQueueItem = {
+  scopeKey: string;
+  projectName: string;
+  rootFingerprint: string;
+  sourceFingerprint: string;
+  modelInput: Record<string, unknown>;
+};
+
+type ProjectDescriptionCurrent = ProjectDescriptionQueueItem & {
+  inputPath: string;
+  resultPath: string;
+  failures: number;
+};
+
+type ProjectDescriptionScan = {
+  initialized: boolean;
+  queue: ProjectDescriptionQueueItem[];
+  cursor: number;
+  current: ProjectDescriptionCurrent | null;
+  generated: number;
+  unchanged: number;
+  failed: number;
 };
 
 type RunCounts = {
@@ -179,13 +223,18 @@ type CurrentJob = {
 };
 
 type RunManifest = {
-  schemaVersion: "1.0" | "1.1";
+  schemaVersion: "1.0" | "1.1" | "1.2" | "1.3";
   runId: string;
   pluginInstanceId: string;
   createdAt: string;
   deadlineAt: string;
   force: boolean;
   period: CollectionPeriod;
+  reportPeriodStartsAt?: string;
+  reportPeriodEndsAt?: string;
+  scanStartsAt?: string;
+  scanEndsAt?: string;
+  initialThreadIds?: string[];
   projects: ProjectPolicy[];
   queue: ScopedThreadSummary[];
   cursor: number;
@@ -197,6 +246,8 @@ type RunManifest = {
   stopReason?:
     "TIME_BUDGET_EXHAUSTED" | "RUN_INTERRUPTED" | "TEMPORARILY_UNAVAILABLE";
   approvalWait?: ScopeApprovalWait | null;
+  endOfRunScopeScan?: EndOfRunScopeScan;
+  projectDescriptionScan?: ProjectDescriptionScan;
   scopeBackfillKeys?: string[];
 };
 
@@ -297,8 +348,8 @@ function scheduledTaskConfig() {
   output({
     status: "scheduled_task_config",
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    promptCheck: SCHEDULED_COLLECTION_PROMPT_CHECK,
-    setupMode: "create_if_missing_or_repair_prompt_only",
+    promptPolicy: SCHEDULED_COLLECTION_PROMPT_POLICY,
+    setupMode: "create_if_missing_or_update_prompt_on_explicit_request",
   });
 }
 
@@ -520,9 +571,9 @@ function connectedOutput(
     connectivity,
     ...(projectScope ?? {}),
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    promptCheck: SCHEDULED_COLLECTION_PROMPT_CHECK,
+    promptPolicy: SCHEDULED_COLLECTION_PROMPT_POLICY,
     nextStep:
-      "使用 $partner-report-sync 检查同名 Codex Scheduled Task；存在时只修复 Prompt。",
+      "首次连接时创建缺失的同名 Codex Scheduled Task；已有任务保持不变。",
   });
 }
 
@@ -715,6 +766,38 @@ function summaryFromThread(value: any): ThreadSummary | null {
 
 function configuredProjectRoots(projects: ProjectPolicy[]) {
   return projects.flatMap((project) => project.allowed_paths ?? []);
+}
+
+function metadataEligibleThreads(
+  summaries: ThreadSummary[],
+  config: PluginConfig,
+) {
+  const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
+  const currentSessionId = process.env.CODEX_THREAD_ID;
+  return summaries.filter(
+    (summary) =>
+      summary.id !== currentSessionId &&
+      !summary.archived &&
+      !excludedSessionIds.has(summary.id) &&
+      !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
+      !isPluginSystemThread(summary as unknown as Record<string, unknown>),
+  );
+}
+
+async function listCollectionThreadMetadata(config: PluginConfig) {
+  const server = new CodexAppServer();
+  try {
+    await server.connect();
+    const summaries = (await server.listThreads())
+      .map(summaryFromThread)
+      .filter((value): value is ThreadSummary => Boolean(value));
+    return {
+      summaries,
+      metadataEligible: metadataEligibleThreads(summaries, config),
+    };
+  } finally {
+    server.close();
+  }
 }
 
 function projectScopeApprovalRequired(
@@ -957,7 +1040,7 @@ function readRun(runPath: string) {
   const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RunManifest;
   const config = loadConfig()!;
   if (
-    !["1.0", "1.1"].includes(manifest.schemaVersion) ||
+    !["1.0", "1.1", "1.2", "1.3"].includes(manifest.schemaVersion) ||
     manifest.pluginInstanceId !== config.pluginInstanceId
   ) {
     throw new Error("Run 清单无效或不属于当前 Plugin Instance。");
@@ -973,6 +1056,15 @@ function readRun(runPath: string) {
     manifest.counts.failedExtract +
     (manifest.current ? 1 : 0);
   if (manifest.current) manifest.current.failures ??= [];
+  manifest.projectDescriptionScan ??= {
+    initialized: false,
+    queue: [],
+    cursor: 0,
+    current: null,
+    generated: 0,
+    unchanged: 0,
+    failed: 0,
+  };
   refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
   return { absolute, manifest };
 }
@@ -1060,8 +1152,6 @@ async function collectStart() {
     localInspection,
   );
   const remoteScope = synchronizedScope.remote;
-  const requiresProjectScopeBootstrap =
-    localInspection.state !== "valid" && !remoteScope.initialized;
   let localScope: LocalProjectScope = synchronizedScope.scope;
 
   if (
@@ -1099,30 +1189,15 @@ async function collectStart() {
     starts_at: window.extractionStartsAt,
     ends_at: window.extractionEndsAt,
   };
-  const server = new CodexAppServer();
-  let listed: any[];
+  let summaries: ThreadSummary[];
+  let metadataEligible: ThreadSummary[];
   try {
-    await server.connect();
-    listed = await server.listThreads();
+    ({ summaries, metadataEligible } =
+      await listCollectionThreadMetadata(config));
   } catch (error) {
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
-  } finally {
-    server.close();
   }
-  const summaries = listed
-    .map(summaryFromThread)
-    .filter((value): value is ThreadSummary => Boolean(value));
-  const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
-  const currentSessionId = process.env.CODEX_THREAD_ID;
-  const metadataEligible = summaries.filter(
-    (summary) =>
-      summary.id !== currentSessionId &&
-      !summary.archived &&
-      !excludedSessionIds.has(summary.id) &&
-      !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
-      !isPluginSystemThread(summary as unknown as Record<string, unknown>),
-  );
   const inWindow = flag("force")
     ? metadataEligible
     : metadataEligible.filter((summary) =>
@@ -1132,58 +1207,56 @@ async function collectStart() {
           window.scanEndsAt,
         ),
       );
-  const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
-  const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
-    threadIsInKnownScanWindow(
-      summary.createdAt,
-      initialProjectScopeStart,
-      runStartedAt,
-    ),
-  );
   const configuredRoots = configuredProjectRoots(policy.projects);
-  const discoveredScopes = discoverProjectScopes(
-    config.pluginInstanceId,
-    localScope,
-    permissionDiscoverySummaries,
-    {
-      configuredRoots,
-    },
-  );
-  const discovery = discoveredScopes;
-  const knownScopeKeys = new Set(
-    localScope.entries.map((entry) => entry.scopeKey),
-  );
-  const newlyDiscoveredScopeKeys = new Set(
-    discovery.candidates
-      .filter((candidate) => !knownScopeKeys.has(candidate.scopeKey))
-      .map((candidate) => candidate.scopeKey),
-  );
-  let registeredScope: RemoteProjectScopePolicy;
-  try {
-    registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
-      "/v1/project-scope/candidates",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          periodKey: policy.currentPeriod.period_key,
-          initialDiscovery: requiresProjectScopeBootstrap,
-          candidates: discovery.candidates.map((candidate) => ({
-            scopeKey: candidate.scopeKey,
-            displayName: candidate.displayName,
-            sessionCount: candidate.sessionCount,
-          })),
-        }),
-      },
+  if (!localScope.initialized) {
+    const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
+    const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
+      threadIsInKnownScanWindow(
+        summary.createdAt,
+        initialProjectScopeStart,
+        runStartedAt,
+      ),
     );
-  } catch (error) {
+    const discovery = discoverProjectScopes(
+      config.pluginInstanceId,
+      localScope,
+      permissionDiscoverySummaries,
+      { configuredRoots },
+    );
+    try {
+      const registeredScope =
+        await authenticatedRequest<RemoteProjectScopePolicy>(
+          "/v1/project-scope/candidates",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              periodKey: policy.currentPeriod.period_key,
+              initialDiscovery: true,
+              candidates: discovery.candidates.map((candidate) => ({
+                scopeKey: candidate.scopeKey,
+                displayName: candidate.displayName,
+                sessionCount: candidate.sessionCount,
+              })),
+            }),
+          },
+        );
+      localScope = mergeDiscoveredRoots(
+        mergeRemoteProjectScope(localScope, registeredScope),
+        discovery.candidates,
+      );
+      saveLocalProjectScope(localScope);
+    } catch (error) {
+      releaseCollectionLease(config.pluginInstanceId, runId);
+      throw error;
+    }
     releaseCollectionLease(config.pluginInstanceId, runId);
-    throw error;
+    return output(
+      await projectScopePendingStatus(
+        policy.currentPeriod.period_key,
+        localScope,
+      ),
+    );
   }
-  localScope = mergeDiscoveredRoots(
-    mergeRemoteProjectScope(localScope, registeredScope),
-    discovery.candidates,
-  );
-  saveLocalProjectScope(localScope);
   const allThreadDiscovery = discoverProjectScopes(
     config.pluginInstanceId,
     localScope,
@@ -1196,15 +1269,6 @@ async function collectStart() {
     localScope.entries,
   );
 
-  if (!localScope.initialized) {
-    releaseCollectionLease(config.pluginInstanceId, runId);
-    return output(
-      await projectScopePendingStatus(
-        policy.currentPeriod.period_key,
-        localScope,
-      ),
-    );
-  }
   let state: {
     sessions: Array<{ sessionKey: string; contentHash: string }>;
   };
@@ -1257,29 +1321,6 @@ async function collectStart() {
     queuedIds.add(summary.id);
   }
   const inWindowIds = new Set(inWindow.map((summary) => summary.id));
-  const pendingNewScopeKeys = new Set(
-    localScope.entries
-      .filter(
-        (entry) =>
-          newlyDiscoveredScopeKeys.has(entry.scopeKey) &&
-          entry.status === "pending",
-      )
-      .map((entry) => entry.scopeKey),
-  );
-  const deferredQueue = fullPeriodSummaries.flatMap(
-    (summary): ScopedThreadSummary[] => {
-      const scopeKey = allThreadDiscovery.threadScopes.get(summary.id);
-      if (!scopeKey || !pendingNewScopeKeys.has(scopeKey)) return [];
-      return [
-        {
-          ...summary,
-          scopeKey,
-          collectionStartsAt: policy.currentPeriod!.starts_at,
-          countedAsExcluded: inWindowIds.has(summary.id),
-        },
-      ];
-    },
-  );
   const queuedOutsideWindow = queue.filter(
     (summary) => !inWindowIds.has(summary.id),
   ).length;
@@ -1287,13 +1328,18 @@ async function collectStart() {
     inWindowIds.has(summary.id),
   ).length;
   const manifest: RunManifest = {
-    schemaVersion: "1.1",
+    schemaVersion: "1.3",
     runId,
     pluginInstanceId: config.pluginInstanceId,
     createdAt: runStartedAt,
     deadlineAt: collectionDeadline(runStartedAt),
     force: flag("force"),
     period: effectivePeriod,
+    reportPeriodStartsAt: policy.currentPeriod.starts_at,
+    reportPeriodEndsAt: policy.currentPeriod.ends_at,
+    scanStartsAt: window.scanStartsAt,
+    scanEndsAt: window.scanEndsAt,
+    initialThreadIds: summaries.map((summary) => summary.id),
     projects: policy.projects,
     queue,
     cursor: 0,
@@ -1321,15 +1367,22 @@ async function collectStart() {
     current: null,
     claimedJobs: 0,
     outcomes: [],
-    approvalWait:
-      pendingNewScopeKeys.size > 0
-        ? {
-            scopeKeys: [...pendingNewScopeKeys],
-            deadlineAt: new Date(runStartedAt).getTime() + POLL_TOTAL_MS,
-            attempt: 0,
-            deferredQueue,
-          }
-        : null,
+    approvalWait: null,
+    endOfRunScopeScan: {
+      completed: false,
+      cardPolicyVersion: null,
+      cardDeliveryDeadlineAt: null,
+      cardDeliveryAttempt: 0,
+    },
+    projectDescriptionScan: {
+      initialized: false,
+      queue: [],
+      cursor: 0,
+      current: null,
+      generated: 0,
+      unchanged: 0,
+      failed: 0,
+    },
     scopeBackfillKeys: [...scopeBackfillKeys],
   };
   let runPath: string | null = null;
@@ -1455,7 +1508,17 @@ async function finishRun(
     collectionStartsAt: manifest.period.starts_at,
     collectionEndsAt: manifest.period.ends_at,
     checkpointAdvanced,
-    warnings: checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    warnings: [
+      ...(checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"]),
+      ...((manifest.projectDescriptionScan?.failed ?? 0) > 0
+        ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"]
+        : []),
+    ],
+    projectDescriptions: {
+      generated: manifest.projectDescriptionScan?.generated ?? 0,
+      unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+      failed: manifest.projectDescriptionScan?.failed ?? 0,
+    },
     ...manifest.counts,
   };
   releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
@@ -1487,6 +1550,172 @@ function completionReview(manifest: RunManifest) {
   });
 }
 
+function projectDescriptionJobOutput(
+  runPath: string,
+  current: ProjectDescriptionCurrent,
+) {
+  output({
+    status: "project_description_job",
+    runPath,
+    projectName: current.projectName,
+    inputPath: current.inputPath,
+    resultPath: current.resultPath,
+    resultSchema: resolve(
+      import.meta.dirname,
+      "../schemas/project-description-result-v1.json",
+    ),
+    nextCommand: `project-description-submit --run ${runPath} --result ${current.resultPath}`,
+  });
+}
+
+async function initializeProjectDescriptionScan(
+  runPath: string,
+  manifest: RunManifest,
+) {
+  const scan = manifest.projectDescriptionScan!;
+  if (scan.initialized) return;
+  const local = inspectLocalProjectScope(manifest.pluginInstanceId);
+  if (local.state !== "valid") {
+    scan.initialized = true;
+    saveRun(runPath, manifest);
+    return;
+  }
+  const sources = local.scope.entries.flatMap((entry) => {
+    if (!scopeIsActive(entry) || !entry.localRoot) return [];
+    const project = mappedProject(entry.localRoot, manifest.projects);
+    const source = buildProjectDescriptionSource({
+      projectName: entry.displayName,
+      localRoot: entry.localRoot,
+      rootFingerprint: project.rootFingerprint,
+    });
+    return source ? [{ ...source, scopeKey: entry.scopeKey }] : [];
+  });
+  let remote: {
+    projects: Array<{
+      scopeKey: string;
+      sourceFingerprint: string | null;
+      pendingSourceFingerprint: string | null;
+    }>;
+  };
+  try {
+    remote = await authenticatedRequest("/v1/project-descriptions/state", {
+      method: "POST",
+      body: JSON.stringify({
+        projects: sources.map((source) => ({
+          scopeKey: source.scopeKey,
+          rootFingerprint: source.rootFingerprint,
+          sourceFingerprint: source.sourceFingerprint,
+        })),
+      }),
+    });
+  } catch {
+    scan.failed += sources.length;
+    scan.initialized = true;
+    saveRun(runPath, manifest);
+    return;
+  }
+  const states = new Map(remote.projects.map((item) => [item.scopeKey, item]));
+  scan.queue = sources.filter((source) => {
+    const state = states.get(source.scopeKey);
+    const unchanged =
+      state?.sourceFingerprint === source.sourceFingerprint ||
+      state?.pendingSourceFingerprint === source.sourceFingerprint;
+    if (unchanged) scan.unchanged += 1;
+    return !unchanged;
+  });
+  scan.cursor = 0;
+  scan.initialized = true;
+  saveRun(runPath, manifest);
+}
+
+async function continueProjectDescriptionScan(
+  runPath: string,
+  manifest: RunManifest,
+): Promise<boolean> {
+  const scan = manifest.projectDescriptionScan!;
+  await initializeProjectDescriptionScan(runPath, manifest);
+  if (scan.current) {
+    projectDescriptionJobOutput(runPath, scan.current);
+    return true;
+  }
+  const next = scan.queue[scan.cursor++];
+  if (!next) return false;
+  const paths = writeJob(
+    runPath,
+    `project-description-${randomUUID()}`,
+    next.modelInput,
+  );
+  scan.current = { ...next, ...paths, failures: 0 };
+  saveRun(runPath, manifest);
+  projectDescriptionJobOutput(runPath, scan.current);
+  return true;
+}
+
+async function submitProjectDescription() {
+  const runPath = option("run");
+  const resultPath = option("result");
+  if (!runPath || !resultPath)
+    throw new Error("project-description-submit 需要 --run 和 --result。");
+  const { absolute, manifest } = readRun(runPath);
+  const scan = manifest.projectDescriptionScan!;
+  const current = scan.current;
+  if (!current) throw new Error("当前没有待提交的项目描述 Job。");
+  if (resolve(resultPath) !== resolve(current.resultPath))
+    throw new Error("项目描述结果路径与当前 Job 不匹配。");
+  try {
+    const raw = JSON.parse(readFileSync(current.resultPath, "utf8"));
+    const result = projectDescriptionResultSchema.parse(raw);
+    if (!projectDescriptionIsChinese(result.description))
+      throw new Error("PROJECT_DESCRIPTION_CHINESE_REQUIRED");
+    if (containsSensitive(result.description))
+      throw new Error("PROJECT_DESCRIPTION_SENSITIVE");
+    await authenticatedRequest("/v1/project-descriptions/candidates", {
+      method: "POST",
+      headers: {
+        "idempotency-key": `${current.scopeKey}:${current.sourceFingerprint}`,
+      },
+      body: JSON.stringify({
+        scopeKey: current.scopeKey,
+        rootFingerprint: current.rootFingerprint,
+        sourceFingerprint: current.sourceFingerprint,
+        description: result.description.trim(),
+      }),
+    });
+    scan.generated += 1;
+    scan.current = null;
+    saveRun(absolute, manifest);
+    output({
+      status: "project_description_uploaded",
+      runPath: absolute,
+      generated: scan.generated,
+      nextCommand: `collect-next --run ${absolute}`,
+    });
+  } catch (error) {
+    current.failures += 1;
+    if (current.failures >= 3) {
+      scan.failed += 1;
+      scan.current = null;
+      saveRun(absolute, manifest);
+      return output({
+        status: "project_description_skipped",
+        runPath: absolute,
+        reason:
+          error instanceof Error
+            ? error.message.slice(0, 120)
+            : "INVALID_RESULT",
+        nextCommand: `collect-next --run ${absolute}`,
+      });
+    }
+    saveRun(absolute, manifest);
+    output({
+      status: "project_description_validation_failed",
+      runPath: absolute,
+      remainingAttempts: 3 - current.failures,
+      nextCommand: `project-description-submit --run ${absolute} --result ${current.resultPath}`,
+    });
+  }
+}
+
 async function continueScopeApprovalWait(
   runPath: string,
   manifest: RunManifest,
@@ -1504,21 +1733,12 @@ async function continueScopeApprovalWait(
       );
     const local = mergeRemoteProjectScope(inspection.scope, remote);
     saveLocalProjectScope(local);
-    const entries = new Map(
-      local.entries.map((entry) => [entry.scopeKey, entry]),
-    );
-    const approvedKeys = new Set<string>();
-    const pendingKeys: string[] = [];
-    for (const scopeKey of wait.scopeKeys) {
-      const entry = entries.get(scopeKey);
-      if (entry?.status === "pending") pendingKeys.push(scopeKey);
-      else if (
-        entry?.status === "allowed" &&
-        entry.effectiveFrom &&
-        new Date(entry.effectiveFrom).getTime() <= wait.deadlineAt
-      )
-        approvedKeys.add(scopeKey);
-    }
+    const { approvedKeys, pendingKeys, deniedKeys } =
+      resolveProjectScopeApprovals(
+        wait.scopeKeys,
+        local.entries,
+        wait.deadlineAt,
+      );
 
     let appended = 0;
     const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
@@ -1528,9 +1748,15 @@ async function continueScopeApprovalWait(
       manifest.queue.push(summary);
       queuedIds.add(summary.id);
       appended += 1;
-      if (summary.countedAsExcluded)
+      if (
+        summary.initialCountBucket === "excluded" ||
+        summary.countedAsExcluded === true
+      )
         manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
-      else
+      else if (
+        summary.initialCountBucket === "outsideWindow" ||
+        summary.countedAsExcluded === false
+      )
         manifest.counts.outsideWindow = Math.max(
           0,
           manifest.counts.outsideWindow - 1,
@@ -1540,12 +1766,27 @@ async function continueScopeApprovalWait(
       const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
       for (const scopeKey of approvedKeys) backfillKeys.add(scopeKey);
       manifest.scopeBackfillKeys = [...backfillKeys];
+      manifest.deadlineAt = collectionDeadline(new Date().toISOString());
+      manifest.projectDescriptionScan = {
+        initialized: false,
+        queue: [],
+        cursor: 0,
+        current: null,
+        generated: manifest.projectDescriptionScan?.generated ?? 0,
+        unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+        failed: manifest.projectDescriptionScan?.failed ?? 0,
+      };
     }
-    wait.scopeKeys = pendingKeys;
+    const remainingKeys = deniedKeys.size > 0 ? [] : pendingKeys;
+    wait.scopeKeys = remainingKeys;
     wait.deferredQueue = wait.deferredQueue.filter((summary) =>
-      pendingKeys.includes(summary.scopeKey),
+      remainingKeys.includes(summary.scopeKey),
     );
-    return { appended, pending: pendingKeys.length };
+    return {
+      appended,
+      pending: remainingKeys.length,
+      denied: deniedKeys.size,
+    };
   };
 
   const first = await applyRemote();
@@ -1556,6 +1797,7 @@ async function continueScopeApprovalWait(
       runPath,
       appended: first.appended,
       pendingProjects: first.pending,
+      deniedProjects: first.denied,
       nextCommand: `collect-next --run ${runPath}`,
     });
     return true;
@@ -1600,6 +1842,191 @@ async function continueScopeApprovalWait(
     ...("lastErrorCode" in result && result.lastErrorCode
       ? { lastErrorCode: result.lastErrorCode }
       : {}),
+    nextCommand: `collect-next --run ${runPath}`,
+  });
+  return true;
+}
+
+async function startEndOfRunScopeScan(
+  runPath: string,
+  manifest: RunManifest,
+): Promise<boolean> {
+  const scan = manifest.endOfRunScopeScan;
+  if (!scan || scan.completed) return false;
+
+  const config = loadConfig()!;
+  const { summaries, metadataEligible } =
+    await listCollectionThreadMetadata(config);
+  manifest.counts.discovered = Math.max(
+    manifest.counts.discovered,
+    summaries.length,
+  );
+  const inspection = inspectLocalProjectScope(manifest.pluginInstanceId);
+  if (inspection.state !== "valid")
+    throw Object.assign(
+      new Error("末尾项目扫描时本地项目权限文件失效，已停止读取。"),
+      { code: "PROJECT_SCOPE_LOCAL_INVALID" },
+    );
+  const localScope = inspection.scope;
+  const scanCompletedAt = new Date().toISOString();
+  const scanStartsAt = initialProjectScopeStartAt(scanCompletedAt);
+  const discoverySummaries = metadataEligible.filter((summary) =>
+    threadIsInKnownScanWindow(summary.createdAt, scanStartsAt, scanCompletedAt),
+  );
+  const discovery = discoverProjectScopes(
+    manifest.pluginInstanceId,
+    localScope,
+    discoverySummaries,
+    { configuredRoots: configuredProjectRoots(manifest.projects) },
+  );
+  const knownScopeKeys = new Set(
+    localScope.entries.map((entry) => entry.scopeKey),
+  );
+  const registeredScope = await authenticatedRequest<RemoteProjectScopePolicy>(
+    "/v1/project-scope/candidates",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        periodKey: manifest.period.period_key,
+        initialDiscovery: false,
+        candidates: discovery.candidates.map((candidate) => ({
+          scopeKey: candidate.scopeKey,
+          displayName: candidate.displayName,
+          sessionCount: candidate.sessionCount,
+        })),
+      }),
+    },
+  );
+  const mergedScope = mergeDiscoveredRoots(
+    mergeRemoteProjectScope(localScope, registeredScope),
+    discovery.candidates,
+  );
+  saveLocalProjectScope(mergedScope);
+  const pendingScopeKeys = newlyPendingProjectScopeKeys(
+    knownScopeKeys,
+    mergedScope.entries,
+  );
+  if (pendingScopeKeys.size === 0) {
+    scan.completed = true;
+    saveRun(runPath, manifest);
+    return false;
+  }
+
+  const allThreadDiscovery = discoverProjectScopes(
+    manifest.pluginInstanceId,
+    mergedScope,
+    metadataEligible,
+    { configuredRoots: configuredProjectRoots(manifest.projects) },
+  );
+  const inOriginalWindow = new Set(
+    metadataEligible
+      .filter(
+        (summary) =>
+          manifest.force ||
+          threadIsInScanWindow(
+            summary.updatedAt,
+            manifest.scanStartsAt ?? manifest.period.starts_at,
+            manifest.scanEndsAt ?? manifest.createdAt,
+          ),
+      )
+      .map((summary) => summary.id),
+  );
+  const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
+  const reportPeriodStartsAt =
+    manifest.reportPeriodStartsAt ?? manifest.period.starts_at;
+  const collectionEndsAt = new Date(
+    Math.min(
+      new Date(manifest.reportPeriodEndsAt ?? scanCompletedAt).getTime(),
+      new Date(scanCompletedAt).getTime(),
+    ),
+  ).toISOString();
+  const fullPeriodSummaries = metadataEligible.filter((summary) =>
+    threadIsInKnownScanWindow(
+      summary.updatedAt,
+      reportPeriodStartsAt,
+      scanCompletedAt,
+    ),
+  );
+  const deferredQueue = fullPeriodSummaries.flatMap(
+    (summary): ScopedThreadSummary[] => {
+      const scopeKey = allThreadDiscovery.threadScopes.get(summary.id);
+      if (!scopeKey || !pendingScopeKeys.has(scopeKey)) return [];
+      return [
+        {
+          ...summary,
+          scopeKey,
+          collectionStartsAt: reportPeriodStartsAt,
+          collectionEndsAt,
+          ...(initialThreadIds.has(summary.id)
+            ? {
+                initialCountBucket: inOriginalWindow.has(summary.id)
+                  ? ("excluded" as const)
+                  : ("outsideWindow" as const),
+              }
+            : {}),
+        },
+      ];
+    },
+  );
+  manifest.approvalWait = {
+    scopeKeys: [...pendingScopeKeys],
+    deadlineAt: 0,
+    attempt: 0,
+    deferredQueue,
+  };
+  scan.completed = true;
+  scan.cardPolicyVersion = registeredScope.version;
+  scan.cardDeliveryDeadlineAt = Date.now() + POLL_TOTAL_MS;
+  saveRun(runPath, manifest);
+  return continueEndOfRunCardDeliveryWait(runPath, manifest);
+}
+
+async function continueEndOfRunCardDeliveryWait(
+  runPath: string,
+  manifest: RunManifest,
+): Promise<boolean> {
+  const scan = manifest.endOfRunScopeScan;
+  const wait = manifest.approvalWait;
+  if (!scan?.cardPolicyVersion || !scan.cardDeliveryDeadlineAt || !wait)
+    return false;
+  const result = await waitForCondition({
+    check: async () =>
+      (
+        await fetchProjectScopeCardStatus(
+          manifest.period.period_key,
+          scan.cardPolicyVersion!,
+        )
+      ).status === "sent",
+    deadlineAt: scan.cardDeliveryDeadlineAt,
+    segmentDurationMs: POLL_SEGMENT_MS,
+    attempt: scan.cardDeliveryAttempt,
+    errorCode: (error) =>
+      error instanceof HttpError
+        ? error.code
+        : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
+  });
+  scan.cardDeliveryAttempt = result.attempt;
+  if (result.status === "confirmed") {
+    scan.cardPolicyVersion = null;
+    scan.cardDeliveryDeadlineAt = null;
+    wait.deadlineAt = projectScopeApprovalDeadline();
+    saveRun(runPath, manifest);
+    return continueScopeApprovalWait(runPath, manifest);
+  }
+  if (result.status === "timed_out") {
+    manifest.approvalWait = null;
+    scan.cardPolicyVersion = null;
+    scan.cardDeliveryDeadlineAt = null;
+    saveRun(runPath, manifest);
+    return false;
+  }
+  saveRun(runPath, manifest);
+  const lastErrorCode = "lastErrorCode" in result ? result.lastErrorCode : null;
+  output({
+    status: "project_scope_end_scan_card_waiting",
+    runPath,
+    pendingProjects: wait.scopeKeys.length,
+    ...(lastErrorCode ? { lastErrorCode } : {}),
     nextCommand: `collect-next --run ${runPath}`,
   });
   return true;
@@ -1655,9 +2082,15 @@ async function collectNext() {
         updatedAt: thread.updatedAt ?? summary.updatedAt,
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
-        period: summary.collectionStartsAt
-          ? { ...manifest.period, starts_at: summary.collectionStartsAt }
-          : manifest.period,
+        period:
+          summary.collectionStartsAt || summary.collectionEndsAt
+            ? {
+                ...manifest.period,
+                starts_at:
+                  summary.collectionStartsAt ?? manifest.period.starts_at,
+                ends_at: summary.collectionEndsAt ?? manifest.period.ends_at,
+              }
+            : manifest.period,
       });
       if (!job) {
         manifest.counts.excluded += 1;
@@ -1701,6 +2134,9 @@ async function collectNext() {
   } finally {
     server.close();
   }
+  if (await continueProjectDescriptionScan(absolute, manifest)) return;
+  if (await startEndOfRunScopeScan(absolute, manifest)) return;
+  if (await continueEndOfRunCardDeliveryWait(absolute, manifest)) return;
   if (await continueScopeApprovalWait(absolute, manifest)) return;
   output({
     status: "review_required",
@@ -1714,6 +2150,19 @@ async function collectReview() {
   const runPath = option("run");
   if (!runPath) throw new Error("collect-review 需要 --run <path>。");
   const { absolute, manifest } = readRun(runPath);
+  const descriptionScan = manifest.projectDescriptionScan!;
+  if (
+    !descriptionScan.initialized ||
+    descriptionScan.current ||
+    descriptionScan.cursor < descriptionScan.queue.length
+  ) {
+    return output({
+      status: "review_failed",
+      runPath: absolute,
+      reason: "PROJECT_DESCRIPTION_SCAN_INCOMPLETE",
+      nextCommand: `collect-next --run ${absolute}`,
+    });
+  }
   const review = completionReview(manifest);
   if (!review.readyToFinalize) {
     return output({
@@ -2132,6 +2581,7 @@ function help() {
       "collect-next --run <path>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
+      "project-description-submit --run <path> --result <path>",
       "collect-skip --run <path> --job <job-id> --error-code <code> [--cause-code <code>]",
       "collect-defer --run <path> --reason <TIME_BUDGET_EXHAUSTED|RUN_INTERRUPTED|TEMPORARILY_UNAVAILABLE>",
       "status",
@@ -2157,6 +2607,7 @@ const recoveryAwareCommands = new Set([
   "collect-next",
   "collect-review",
   "collect-submit",
+  "project-description-submit",
   "status",
   "project-scope-list",
   "project-scope-sync",
@@ -2183,6 +2634,8 @@ async function runCommand() {
   else if (command === "collect-next") await collectNext();
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
+  else if (command === "project-description-submit")
+    await submitProjectDescription();
   else if (command === "collect-skip") collectSkip();
   else if (command === "collect-defer") collectDefer();
   else if (command === "status") await status();

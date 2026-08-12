@@ -5,6 +5,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   aggregationResultSchema,
   individualReportResultSchema,
+  projectDescriptionResultSchema,
   sessionContributionSchema,
   sessionExtractionResultSchema,
   teamReportResultSchema,
@@ -35,6 +36,10 @@ const schemas = {
   "individual-report-result-v1.json": toJsonSchema(
     individualReportResultSchema,
     "IndividualReportResultV1",
+  ),
+  "project-description-result-v1.json": toJsonSchema(
+    projectDescriptionResultSchema,
+    "ProjectDescriptionResultV1",
   ),
   "team-report-result-v1.json": toJsonSchema(
     teamReportResultSchema,

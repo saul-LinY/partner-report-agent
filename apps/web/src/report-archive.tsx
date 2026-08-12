@@ -431,6 +431,12 @@ function IndividualArchiveDetail({ id }: { id: string }) {
                 </time>
               </div>
               <h1>{selectedWorkItem.title}</h1>
+              {selectedWorkItem.payload.projectDescription && (
+                <section className="project-overview">
+                  <h2>项目描述</h2>
+                  <p>{selectedWorkItem.payload.projectDescription}</p>
+                </section>
+              )}
               <p className="report-lede">
                 {selectedWorkItem.payload.overview ??
                   selectedWorkItem.payload.summary ??

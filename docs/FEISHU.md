@@ -42,9 +42,13 @@ npm run start -w @partner-report/api
 
 ## 首次绑定
 
+插件使用绑定码连接成功本身不会发送飞书消息，也不会创建
+`plugin.binding.claimed` 投递事件。飞书身份确认是独立能力，不属于插件绑定成功通知。
+
 可以按 Partner 工作邮箱发送一次身份确认卡：
 
 ```bash
+
 ```
 
 邮箱必须在 `partners` 中唯一匹配一个 `active` 记录。有效期内重复执行命令不会重复发送同一张绑定卡；未确认卡片满 13 天后会作废并续发，以避开飞书卡片 14 天交互期限。Partner 邮箱变更时旧卡会立即失效并发送新卡。用户点击确认后，系统以 `deliveryId + messageId + appId` 校验回调，并将该 Partner 与操作人的 `open_id` 绑定。

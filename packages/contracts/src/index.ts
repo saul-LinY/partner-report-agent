@@ -166,6 +166,7 @@ export const coverageSchema: z.ZodTypeAny = z.object({
 export const aggregationGroupSchema: z.ZodTypeAny = z
   .object({
     projectKey: z.string().min(1).max(160),
+    projectDescription: z.string().max(300).default(""),
     status: workStatusSchema,
     overview: z.string().min(1).max(1600),
     dailyProgress: z
@@ -187,6 +188,22 @@ export const aggregationResultSchema: z.ZodTypeAny = z.object({
   qualityWarnings: z.array(z.string()).default([]),
   production: productionMetadataSchema,
 });
+
+export const projectDescriptionResultSchema: z.ZodTypeAny = z
+  .object({
+    schemaVersion: z.literal("1.0"),
+    description: z.string().min(50).max(300),
+  })
+  .strict();
+
+export const projectDescriptionCandidateSchema: z.ZodTypeAny = z
+  .object({
+    scopeKey: z.string().regex(/^[a-f0-9]{64}$/),
+    rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    description: z.string().min(50).max(300),
+  })
+  .strict();
 
 export const reportClaimSchema: z.ZodTypeAny = z.object({
   claim: z.string().min(1).max(800),

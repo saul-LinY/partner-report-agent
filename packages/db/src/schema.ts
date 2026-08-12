@@ -326,6 +326,11 @@ export const projects = pgTable(
     aliases: jsonb("aliases").notNull().$type<string[]>(),
     allowedPaths: jsonb("allowed_paths").notNull().$type<string[]>(),
     externalIds: jsonb("external_ids").notNull().$type<string[]>(),
+    description: text("description"),
+    descriptionSourceFingerprint: text("description_source_fingerprint"),
+    descriptionUpdatedAt: timestamp("description_updated_at", {
+      withTimezone: true,
+    }),
     status: text("status").notNull().default("active"),
     ...timestamps(),
   },
@@ -558,6 +563,47 @@ export const projectScopeEntries = pgTable(
     index("project_scope_entries_pending_idx").on(
       table.tenantId,
       table.partnerId,
+      table.status,
+    ),
+  ],
+);
+
+export const projectDescriptionCandidates = pgTable(
+  "project_description_candidates",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id),
+    scopeKey: text("scope_key").notNull(),
+    description: text("description").notNull(),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    status: text("status").notNull().default("pending"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("project_description_candidate_source_unique").on(
+      table.pluginInstanceId,
+      table.projectId,
+      table.sourceFingerprint,
+    ),
+    index("project_description_candidate_pending_idx").on(
+      table.tenantId,
+      table.partnerId,
+      table.projectId,
       table.status,
     ),
   ],

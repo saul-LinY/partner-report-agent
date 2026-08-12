@@ -31,7 +31,7 @@ type Job = {
 };
 
 export const aggregationInstructions = (model: string) =>
-  `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write overview and dailyProgress.summary in simplified Chinese. Use plain, direct, concise language that a colleague without technical context can understand. Focus on what was done, the result, and any blocker. Avoid jargon piles, process narration, filler, repeated background, and claims such as "completed" unless the supplied contributions support them. Keep overview to one or two short sentences, preferably no more than 120 Chinese characters. Keep each dailyProgress.summary to one short sentence, preferably no more than 80 Chinese characters. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Treat reviewInstruction, when present, as a requested correction to the card, but never add facts not supported by the supplied bucket. Preserve uncertainty. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-10.project-card.v2","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+  `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write projectDescription, overview and dailyProgress.summary in simplified Chinese. For initial generation, copy each bucket.projectDescription exactly into group.projectDescription; do not rewrite it. When reviewInstruction explicitly asks to modify the project description, treat the user's correction as authoritative for projectDescription and apply it, while keeping the result concise and within 300 characters. That correction authorizes changes to projectDescription only; it never authorizes unsupported changes to overview or dailyProgress. A general request to revise weekly work must not silently change projectDescription. Use plain, direct, concise language that a colleague without technical context can understand. Focus overview and dailyProgress on what was done, the result, and any blocker. Avoid jargon piles, process narration, filler, repeated background, and claims such as "completed" unless the supplied contributions support them. Keep projectDescription around 150 Chinese characters and no more than 300. Keep overview to one or two short sentences, preferably no more than 120 Chinese characters. Keep each dailyProgress.summary to one short sentence, preferably no more than 80 Chinese characters. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Treat reviewInstruction, when present, as a requested correction to the card, but never add weekly work facts not supported by the supplied bucket. Preserve uncertainty. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-12.project-card.v3","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 export const reportInstructions = (model: string) =>
   `You generate an individual Partner report from an approved immutable Work Item Snapshot. Write the title, summary, section titles, and section markdown in simplified Chinese. Use plain, direct, concise language that a colleague without technical context can understand. Prefer concrete descriptions of work, results, decisions, blockers, and next steps. Avoid jargon piles, formal business filler, process narration, and repeated background. Keep the summary to one or two short sentences, preferably no more than 120 Chinese characters. Include each of the seven required sections exactly once. In each section use one to three short bullets; keep each bullet to one sentence, preferably no more than 80 Chinese characters before citations. Do not repeat the same fact in multiple sections. When a section has no supported content, write only "无相关内容" instead of adding filler. Keep a necessary technical name unchanged, but explain its purpose in plain language when readers may not know it. When currentReport and reviewInstruction are supplied, revise the current report according to that natural-language instruction while keeping every statement grounded in the approved Work Items. Use previousReport only to compare prior state with current approved Work Items. Every current factual claim must cite one or more allowed Work Item IDs. Never alter facts merely to satisfy a wording request. State coverage limits plainly and do not invent percentages. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-10.individual-review.v2","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
@@ -40,7 +40,7 @@ const teamReportInstructions = (
   model: string,
   allowedIndividualReportIds: string[],
 ) =>
-  `Generate a Chinese Team Report strictly from the locked current-period reports in individualReports. The audience is a business leader who does not understand software engineering. Write plain, natural, concise Chinese that can be understood without technical background. Translate implementation details into the purpose of the work, the result, its practical value, and any remaining concern. Avoid unexplained engineering jargon, internal process language, file names, protocols, framework names, raw test names, and low-level implementation steps. When a technical point is necessary to state a supported result or risk, explain it immediately in everyday language. Preserve exact project names only where the structure below requires them. These reports are the sole source of current-period facts: never use project master data, Session Facts, assumptions, or general knowledge. Each individualReports[].projectNames array is the authoritative allowlist of exact project names represented by that person's report. An individual report with noReportableActivity=true is a coverage-only record: it means the platform did not collect material that can support a work report for that person. It does not mean the person did no work. Never invent a project, result, risk, or performance judgment for such a report.
+  `Generate a Chinese Team Report strictly from the locked current-period reports in individualReports. The audience is a business leader who does not understand software engineering. Write plain, natural, concise Chinese that can be understood without technical background. Translate implementation details into the purpose of the work, the result, its practical value, and any remaining concern. Avoid unexplained engineering jargon, internal process language, file names, protocols, framework names, raw test names, and low-level implementation steps. When a technical point is necessary to state a supported result or risk, explain it immediately in everyday language. Preserve exact project names only where the structure below requires them. These reports are the sole source of current-period facts: never use project master data, Session Facts, assumptions, or general knowledge. Each individualReports[].projectNames array is the authoritative allowlist of exact project names represented by that person's report. individualReports[].projectDescriptions contains user-approved descriptions and is the only source for explaining what a project does. An individual report with noReportableActivity=true is a coverage-only record: it means the platform did not collect material that can support a work report for that person. It does not mean the person did no work. Never invent a project, result, risk, or performance judgment for such a report.
 
 Do not use the following internal terms in reader-facing prose: SSH, README, 状态机, 聚合调度, 贡献模型, 类型校验, 依赖安装, 依赖未安装, 主分支, 代码仓库, 远程仓库, 前端架构, 本地开发服务, 飞书网关, 测试用例, 实验元数据, 历史快照, 报表凭证, 同步解析, 数据接入. Translate them into plain outcomes instead. For example: say project materials were submitted and synchronized, the work page is available, a complete quality check is still pending, the Feishu message connection still has an issue, or experiment information is available for comparison and analysis. Exact project names are exempt from this vocabulary rule.
 
@@ -48,13 +48,13 @@ Include exactly three sections in this order: summary, project_progress, risks. 
 
 The top-level summary field is the executive overview displayed directly below the report title. Write one cohesive Chinese prose paragraph of about 500 Chinese characters, targeting 450 to 600 characters. It must contain exactly five substantial sentences in this order: (1) the overall conclusion supported by the available reports; (2) the main completed work or process improvement; (3) delivery, collaboration, or validation results; (4) another supported capability or area of progress; (5) the supported issues or reporting-coverage limits that require management attention. Target 80 to 120 Chinese characters per sentence. If a requested sentence has no supporting work record, use that sentence to state the reporting-coverage limit instead of inventing progress. Write a management-level overview, not a compressed inventory of every source detail. Do not mention Partner names, project names, code, repositories, configuration, files, protocols, internal models, internal workflow states, or specialized test terminology in this paragraph. Do not enumerate projects or people separately. Do not use bullets, numbered lists, headings, or line breaks. Use the available source detail without adding business impact that the reports do not support.
 
-In summary, do not write an opening narrative paragraph or combine all projects into one prose block. Organize the entire section by project as a Markdown bullet list. Create exactly one top-level bullet for every distinct name in individualReports[].projectNames, and start that bullet with the exact project name copied verbatim, followed by a Chinese colon. Never invent a category label, rename a project, or merge several projects under a generalized label. Add nested bullets for every person who contributed to that project. Each person bullet must describe the work and result in language a non-technical leader can understand. Prefer outcomes such as improved stability, completed validation, clearer process, working delivery, or an unresolved issue over implementation mechanics. This section is the project-first inverse index of project_progress. Reports with noReportableActivity=true must not create a project bullet and must not be inserted under an unrelated project.
+In summary, do not write an opening narrative paragraph or combine all projects into one prose block. Organize the entire section by project as a Markdown bullet list. Create exactly one top-level bullet for every distinct name in individualReports[].projectNames, and start that bullet with the exact project name copied verbatim, followed by a Chinese colon. When an approved description exists in projectDescriptions for that name, copy that exact description immediately after the colon; do not paraphrase, shorten, or replace it with weekly progress. Never invent a category label, rename a project, or merge several projects under a generalized label. Add nested bullets for every person who contributed to that project. Each person bullet must describe the work and result in language a non-technical leader can understand. Prefer outcomes such as improved stability, completed validation, clearer process, working delivery, or an unresolved issue over implementation mechanics. This section is the project-first inverse index of project_progress. Reports with noReportableActivity=true must not create a project bullet and must not be inserted under an unrelated project.
 
 In project_progress, group content by concrete Partner/person first, using the supplied partnerName when present and partnerId only as a fallback. Under each person, organize their work by project, using only exact names copied from that person's projectNames array. Explain what was advanced, what usable result was reached, and what remains, using everyday Chinese. Combine related technical actions into one management-level statement instead of listing implementation steps. Do not start a project entry with phrases such as "当前状态为" or "状态为". Do not expose raw status enum identifiers such as awaiting_validation, in_progress, or completed. When status is materially relevant, express it naturally in Chinese after the concrete work, for example "已完成" or "待验证", and only when supported by the report. For every report with noReportableActivity=true, include that person exactly once without a project name and state only that the platform did not collect a work record suitable for this report and therefore makes no judgment about actual work. Do not start project_progress with project-level headings, do not merge people, and do not omit any Partner/project contribution or coverage-only person.
 
 Include risks only when supported by the current individual reports. State each risk in plain language, explain its practical consequence only when supported, and make the remaining action understandable without technical knowledge. State plainly when none were reported. Treat noReportableActivity=true as a reporting-coverage limit, not as evidence of a project risk or poor performance. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied individual report IDs. In every claim's individualReportIds, copy only exact values from individualReports[].reportId. For this request, the complete allowlist is ${JSON.stringify(allowedIndividualReportIds)}. Every individualReportId must be copied exactly from this allowlist. Never use the top-level reportId, partnerId, project IDs, Work Item IDs, or any other identifier as an individualReportId.
 
-Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-11.team.v13","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-12.team.v14","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportSectionTitles = {
   summary: "本周团队工作摘要",
@@ -143,7 +143,7 @@ export function buildNoActivityTeamReport(
     qualityWarnings: ["NO_REPORTABLE_ACTIVITY_COLLECTED"],
     production: {
       skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-11.team.v13",
+      promptVersion: "2026-08-12.team.v14",
       schemaVersion: "1.0",
       producer: "data-platform",
       modelVersion: model,
@@ -151,13 +151,61 @@ export function buildNoActivityTeamReport(
   });
 }
 
-function finalizeTeamReport(result: any, reportDate: string) {
+function approvedProjectDescriptions(
+  individualReports: Array<{ projectDescriptions?: unknown }>,
+) {
+  const descriptions = new Map<string, string>();
+  for (const individualReport of individualReports) {
+    if (!Array.isArray(individualReport.projectDescriptions)) continue;
+    for (const item of individualReport.projectDescriptions) {
+      if (!item || typeof item !== "object") continue;
+      const value = item as Record<string, unknown>;
+      if (
+        typeof value.name === "string" &&
+        value.name.trim() &&
+        typeof value.description === "string" &&
+        value.description.trim()
+      )
+        descriptions.set(value.name.trim(), value.description.trim());
+    }
+  }
+  return descriptions;
+}
+
+export function injectApprovedProjectDescriptions(
+  markdown: string,
+  individualReports: Array<{ projectDescriptions?: unknown }>,
+) {
+  const descriptions = approvedProjectDescriptions(individualReports);
+  if (descriptions.size === 0) return markdown;
+  return markdown
+    .split(/\r?\n/)
+    .map((line) => {
+      if (!/^[-*+]\s+/.test(line)) return line;
+      const prefix = line.match(/^[-*+]\s+/)?.[0] ?? "- ";
+      const rawLabel = line.slice(prefix.length).split(/[：:]/, 1)[0]!.trim();
+      const label = rawLabel.replace(/\*\*/g, "").trim();
+      const description = descriptions.get(label);
+      return description ? `${prefix}${rawLabel}：${description}` : line;
+    })
+    .join("\n");
+}
+
+function finalizeTeamReport(
+  result: any,
+  reportDate: string,
+  individualReports: Array<{ projectDescriptions?: unknown }>,
+) {
   const sections = result.sections.map((section: any) => ({
     ...section,
     title:
       teamReportSectionTitles[
         section.key as keyof typeof teamReportSectionTitles
       ],
+    markdown:
+      section.key === "summary"
+        ? injectApprovedProjectDescriptions(section.markdown, individualReports)
+        : section.markdown,
   }));
   return {
     ...result,
@@ -166,7 +214,7 @@ function finalizeTeamReport(result: any, reportDate: string) {
     production: {
       ...result.production,
       skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-11.team.v13",
+      promptVersion: "2026-08-12.team.v14",
       schemaVersion: "1.0",
       producer: "data-platform",
     },
@@ -231,8 +279,8 @@ function validateAggregation(job: Job, output: unknown) {
   );
   const used = new Set<string>();
   for (const group of result.groups) {
-    if (!buckets.has(group.projectKey))
-      throw new Error(`UNKNOWN_PROJECT_BUCKET:${group.projectKey}`);
+    const bucket = buckets.get(group.projectKey);
+    if (!bucket) throw new Error(`UNKNOWN_PROJECT_BUCKET:${group.projectKey}`);
     if (used.has(group.projectKey))
       throw new Error(`DUPLICATE_PROJECT_BUCKET:${group.projectKey}`);
     used.add(group.projectKey);
@@ -241,6 +289,19 @@ function validateAggregation(job: Job, output: unknown) {
       throw new Error(`DUPLICATE_PROGRESS_DATE:${group.projectKey}`);
     if (JSON.stringify(dates) !== JSON.stringify([...dates].sort()))
       throw new Error(`UNSORTED_DAILY_PROGRESS:${group.projectKey}`);
+    const reviewInstruction = job.input_payload.reviewInstruction;
+    const descriptionChangeRequested =
+      typeof reviewInstruction === "string" &&
+      /(项目描述|项目介绍|项目定位|项目用途|这个项目是做什么|这个项目做什么|description)/i.test(
+        reviewInstruction,
+      );
+    if (
+      !descriptionChangeRequested &&
+      group.projectDescription !== (bucket.projectDescription ?? "")
+    )
+      throw new Error(`PROJECT_DESCRIPTION_CHANGED:${group.projectKey}`);
+    if (bucket.projectDescription && !group.projectDescription.trim())
+      throw new Error(`PROJECT_DESCRIPTION_EMPTY:${group.projectKey}`);
   }
   for (const projectKey of buckets.keys())
     if (!used.has(projectKey))
@@ -248,9 +309,14 @@ function validateAggregation(job: Job, output: unknown) {
   return result;
 }
 
-function projectCardPayload(group: any) {
+function projectCardPayload(group: any, bucket?: any) {
   return {
     projectKey: group.projectKey,
+    projectDescription: group.projectDescription,
+    projectDescriptionCandidateId:
+      bucket?.projectDescriptionCandidateId ?? null,
+    projectDescriptionSourceFingerprint:
+      bucket?.projectDescriptionSourceFingerprint ?? null,
     overview: group.overview,
     dailyProgress: group.dailyProgress,
   };
@@ -272,7 +338,7 @@ async function applyAggregation(job: Job, output: unknown) {
           project_id = ${bucket.projectId}, title = ${bucket.projectName},
           status = ${group.status}, review_status = 'pending',
           fact_ids = ${JSON.stringify(bucket.factIds)}::jsonb,
-          payload = ${JSON.stringify(projectCardPayload(group))}::jsonb,
+          payload = ${JSON.stringify(projectCardPayload(group, bucket))}::jsonb,
           updated_at = now()
         where id = ${targetWorkItemId} and tenant_id = ${job.tenant_id}
           and review_id = ${reviewId}
@@ -327,7 +393,7 @@ async function applyAggregation(job: Job, output: unknown) {
       if (!bucket)
         throw new Error(`PROJECT_BUCKET_MISSING:${group.projectKey}`);
       const workItemId = randomUUID();
-      const payload = projectCardPayload(group);
+      const payload = projectCardPayload(group, bucket);
       await tx`
         insert into work_items (
           id, tenant_id, team_id, partner_id, period_id, review_id, project_id,
@@ -407,12 +473,20 @@ async function applyTeamReport(
   const generated = teamReportGenerationResultSchema.parse(output);
   const reportDate = formatReportDate(new Date(job.created_at), timezone);
   const result = teamReportResultSchema.parse(
-    finalizeTeamReport(generated, reportDate),
+    finalizeTeamReport(
+      generated,
+      reportDate,
+      job.input_payload.individualReports,
+    ),
   );
   assertTeamReportSemantics(result);
   assertChineseTeamReport(result);
-  assertLeaderReadableTeamReport(result);
+  assertLeaderReadableTeamReport(result, job.input_payload.individualReports);
   assertExactTeamReportProjectNames(
+    result,
+    job.input_payload.individualReports,
+  );
+  assertExactTeamReportProjectDescriptions(
     result,
     job.input_payload.individualReports,
   );
@@ -499,18 +573,30 @@ const teamReportForbiddenTerms = [
   "数据接入",
 ] as const;
 
-export function assertLeaderReadableTeamReport(report: {
-  summary: string;
-  sections: Array<{ markdown: string }>;
-}) {
+export function assertLeaderReadableTeamReport(
+  report: {
+    summary: string;
+    sections: Array<{ markdown: string }>;
+  },
+  individualReports: Array<{ projectDescriptions?: unknown }> = [],
+) {
   const summaryLength = Array.from(report.summary.replace(/\s/gu, "")).length;
   if (summaryLength < 250 || summaryLength > 650) {
     throw new Error(`TEAM_REPORT_SUMMARY_LENGTH:${summaryLength}`);
   }
-  const prose = [
+  let prose = [
     report.summary,
     ...report.sections.map((section) => section.markdown),
   ].join("\n");
+  for (const individualReport of individualReports) {
+    if (!Array.isArray(individualReport.projectDescriptions)) continue;
+    for (const item of individualReport.projectDescriptions) {
+      if (!item || typeof item !== "object") continue;
+      const description = (item as Record<string, unknown>).description;
+      if (typeof description === "string" && description.trim())
+        prose = prose.replaceAll(description.trim(), "");
+    }
+  }
   const forbidden = teamReportForbiddenTerms.find((term) =>
     prose.includes(term),
   );
@@ -551,6 +637,32 @@ export function assertExactTeamReportProjectNames(
     .sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error("TEAM_REPORT_PROJECT_NAMES_MISMATCH");
+  }
+}
+
+export function assertExactTeamReportProjectDescriptions(
+  report: { sections: Array<{ key: string; markdown: string }> },
+  individualReports: Array<{ projectDescriptions?: unknown }>,
+) {
+  const approved = approvedProjectDescriptions(individualReports);
+  if (approved.size === 0) return;
+  const summary =
+    report.sections.find((section) => section.key === "summary")?.markdown ??
+    "";
+  for (const [name, description] of approved) {
+    const line = summary
+      .split(/\r?\n/)
+      .filter((candidate) => /^[-*+]\s+/.test(candidate))
+      .find((candidate) => {
+        const label = candidate
+          .replace(/^[-*+]\s+/, "")
+          .split(/[：:]/, 1)[0]!
+          .replace(/\*\*/g, "")
+          .trim();
+        return label === name;
+      });
+    if (!line || !line.includes(description))
+      throw new Error(`TEAM_REPORT_PROJECT_DESCRIPTION_MISSING:${name}`);
   }
 }
 

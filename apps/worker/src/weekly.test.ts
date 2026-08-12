@@ -22,7 +22,16 @@ describe("project aggregation buckets", () => {
           },
         },
       ],
-      [{ id: projectId, name: "Partner Report" }],
+      [
+        {
+          id: projectId,
+          name: "Partner Report",
+          description: "团队工作报告平台。",
+          description_candidate_id: "candidate-a",
+          description_candidate: "用于采集并审核团队工作记录的报告平台。",
+          description_candidate_source_fingerprint: "a".repeat(64),
+        },
+      ],
     );
 
     expect(buckets).toHaveLength(2);
@@ -31,6 +40,8 @@ describe("project aggregation buckets", () => {
         expect.objectContaining({
           projectKey: `project:${projectId}`,
           projectName: "Partner Report",
+          projectDescription: "用于采集并审核团队工作记录的报告平台。",
+          projectDescriptionCandidateId: "candidate-a",
           factIds: ["fact-a", "fact-b"],
         }),
         expect.objectContaining({

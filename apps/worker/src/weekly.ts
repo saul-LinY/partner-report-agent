@@ -108,7 +108,15 @@ export function buildNoActivityIndividualReport() {
 
 export function buildProjectBuckets(
   facts: AggregationFact[],
-  projects: Array<{ id: string; name: string }>,
+  projects: Array<{
+    id: string;
+    name: string;
+    description?: string | null;
+    description_source_fingerprint?: string | null;
+    description_candidate_id?: string | null;
+    description_candidate?: string | null;
+    description_candidate_source_fingerprint?: string | null;
+  }>,
 ) {
   const projectNames = new Map(
     projects.map((project) => [project.id, project.name]),
@@ -119,6 +127,9 @@ export function buildProjectBuckets(
       projectKey: string;
       projectId: string | null;
       projectName: string;
+      projectDescription: string;
+      projectDescriptionCandidateId: string | null;
+      projectDescriptionSourceFingerprint: string | null;
       factIds: string[];
       facts: AggregationFact[];
     }
@@ -141,10 +152,23 @@ export function buildProjectBuckets(
       fact.payload.project?.name ??
       fact.payload.projectHint ??
       "未识别项目";
+    const projectRecord = projectId
+      ? projects.find((project) => project.id === projectId)
+      : null;
     const bucket = buckets.get(projectKey) ?? {
       projectKey,
       projectId,
       projectName,
+      projectDescription:
+        projectRecord?.description_candidate ??
+        projectRecord?.description ??
+        "",
+      projectDescriptionCandidateId:
+        projectRecord?.description_candidate_id ?? null,
+      projectDescriptionSourceFingerprint:
+        projectRecord?.description_candidate_source_fingerprint ??
+        projectRecord?.description_source_fingerprint ??
+        null,
       factIds: [] as string[],
       facts: [] as AggregationFact[],
     };
@@ -274,20 +298,32 @@ export async function scheduleDueWeeklyReports(
           and status = 'active'
         order by id
       `;
-      const projects = await tx<any[]>`
-        select id, name, aliases, allowed_paths, external_ids from projects
-        where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
-          and status = 'active' order by name
-      `;
       let jobs = 0;
       for (const { partner_id: partnerId } of partners) {
+        const partnerProjects = await tx<any[]>`
+          select p.*,
+            candidate.id as description_candidate_id,
+            candidate.description as description_candidate,
+            candidate.source_fingerprint as description_candidate_source_fingerprint
+          from projects p
+          left join lateral (
+            select id, description, source_fingerprint
+            from project_description_candidates
+            where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}
+              and project_id = p.id and status = 'pending'
+            order by created_at desc limit 1
+          ) candidate on true
+          where p.tenant_id = ${period.tenant_id} and p.team_id = ${period.team_id}
+            and p.status = 'active'
+          order by p.name
+        `;
         const facts = await tx<any[]>`
           select id, payload, source_occurred_at from session_facts
           where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}
             and period_id = ${period.id} and excluded = false
           order by source_occurred_at nulls last, created_at, id
         `;
-        const projectBuckets = buildProjectBuckets(facts, projects);
+        const projectBuckets = buildProjectBuckets(facts, partnerProjects);
         const coverageRows = await tx<any[]>`
           select payload from coverage_snapshots
           where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}
@@ -496,6 +532,15 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
       const missingPartnerIds = reportRows
         .filter((row) => !row.report_id || !row.payload)
         .map((row) => row.partner_id);
+      const approvedProjectDescriptions = new Map(
+        (
+          await tx<Array<{ id: string; name: string; description: string }>>`
+            select id, name, description from projects
+            where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
+              and status = 'active' and description is not null
+          `
+        ).map((project) => [project.id, project]),
+      );
       if (reportRows.length === 0 || missingPartnerIds.length > 0) return 0;
       const previousRows = await tx<any[]>`
         select trv.id as version_id, previous_period.period_key, trv.payload
@@ -533,6 +578,28 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
                 .filter(Boolean),
             ),
           ],
+          projectDescriptions: [
+            ...new Map(
+              (Array.isArray(row.work_item_snapshot?.workItems)
+                ? row.work_item_snapshot.workItems
+                : []
+              )
+                .map((item: any) => {
+                  const project =
+                    typeof item.project_id === "string"
+                      ? approvedProjectDescriptions.get(item.project_id)
+                      : null;
+                  return [
+                    project?.name ??
+                      (typeof item.title === "string" ? item.title.trim() : ""),
+                    project?.description?.trim() ?? "",
+                  ];
+                })
+                .filter(([name, description]: string[]) =>
+                  Boolean(name && description),
+                ),
+            ).entries(),
+          ].map(([name, description]) => ({ name, description })),
         })),
         missingPartnerIds,
         previousTeamReport: previousRows[0] ?? null,

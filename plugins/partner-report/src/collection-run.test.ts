@@ -10,7 +10,10 @@ import {
   immutableContributionFromRequirements,
   jobOutcomeFailureAuditIsValid,
   legalCollectSkipOutcome,
+  newlyPendingProjectScopeKeys,
+  projectScopeApprovalDeadline,
   repairImmutableResult,
+  resolveProjectScopeApprovals,
   shouldStopBeforeClaim,
   type ExtractionFailure,
   type JobOutcome,
@@ -54,6 +57,52 @@ function failures(count: number, code = "SCHEMA_VALIDATION_FAILED") {
 }
 
 describe("collection run guards", () => {
+  it("gives end-of-run project approval a full 30 minute window", () => {
+    const scanCompletedAt = new Date("2026-08-12T06:00:00.000Z").getTime();
+    expect(projectScopeApprovalDeadline(scanCompletedAt)).toBe(
+      new Date("2026-08-12T06:30:00.000Z").getTime(),
+    );
+  });
+
+  it("continues only for approvals made inside the window", () => {
+    const deadlineAt = new Date("2026-08-12T06:30:00.000Z").getTime();
+    const result = resolveProjectScopeApprovals(
+      ["allowed", "denied", "pending", "late"],
+      [
+        {
+          scopeKey: "allowed",
+          status: "allowed",
+          effectiveFrom: "2026-08-12T06:20:00.000Z",
+        },
+        {
+          scopeKey: "denied",
+          status: "denied",
+          effectiveFrom: "2026-08-12T06:10:00.000Z",
+        },
+        { scopeKey: "pending", status: "pending", effectiveFrom: null },
+        {
+          scopeKey: "late",
+          status: "allowed",
+          effectiveFrom: "2026-08-12T06:31:00.000Z",
+        },
+      ],
+      deadlineAt,
+    );
+    expect([...result.approvedKeys]).toEqual(["allowed"]);
+    expect(result.pendingKeys).toEqual(["pending"]);
+    expect([...result.deniedKeys]).toEqual(["denied"]);
+  });
+
+  it("waits only for projects first discovered by the end-of-run scan", () => {
+    expect([
+      ...newlyPendingProjectScopeKeys(new Set(["existing-pending"]), [
+        { scopeKey: "existing-pending", status: "pending" },
+        { scopeKey: "new-pending", status: "pending" },
+        { scopeKey: "new-allowed", status: "allowed" },
+      ]),
+    ]).toEqual(["new-pending"]);
+  });
+
   it("stops claiming before the time budget is exhausted", () => {
     const createdAt = "2026-08-10T02:00:00.000Z";
     const deadlineAt = collectionDeadline(createdAt);

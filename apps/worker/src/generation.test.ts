@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   aggregationInstructions,
+  assertExactTeamReportProjectDescriptions,
   assertExactTeamReportProjectNames,
   assertLeaderReadableTeamReport,
   assertNoActivityTeamCoverage,
   buildNoActivityTeamReport,
   formatReportDate,
+  injectApprovedProjectDescriptions,
   normalizeTeamReportSummary,
   reportInstructions,
 } from "./generation.js";
@@ -18,7 +20,13 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("plain, direct, concise language");
     expect(instructions).toContain("120 Chinese characters");
     expect(instructions).toContain("80 Chinese characters");
-    expect(instructions).toContain("2026-08-10.project-card.v2");
+    expect(instructions).toContain("projectDescription");
+    expect(instructions).toContain(
+      "copy each bucket.projectDescription exactly",
+    );
+    expect(instructions).toContain("user's correction as authoritative");
+    expect(instructions).toContain("projectDescription only");
+    expect(instructions).toContain("2026-08-12.project-card.v3");
   });
 
   it("asks individual reports to stay readable and avoid repetition", () => {
@@ -104,6 +112,66 @@ describe("Team Report numbering", () => {
         ],
       ),
     ).toThrow("TEAM_REPORT_PROJECT_NAMES_MISMATCH");
+  });
+
+  it("requires approved project descriptions in the project summary", () => {
+    const source = [
+      {
+        projectDescriptions: [
+          {
+            name: "partner-report-agent",
+            description: "用于采集、审核并汇总团队工作记录的报告平台。",
+          },
+        ],
+      },
+    ];
+    expect(() =>
+      assertExactTeamReportProjectDescriptions(
+        {
+          sections: [
+            {
+              key: "summary",
+              markdown:
+                "- partner-report-agent：用于采集、审核并汇总团队工作记录的报告平台。",
+            },
+          ],
+        },
+        source,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertExactTeamReportProjectDescriptions(
+        {
+          sections: [
+            {
+              key: "summary",
+              markdown: "- partner-report-agent：本周有进展。",
+            },
+          ],
+        },
+        source,
+      ),
+    ).toThrow("TEAM_REPORT_PROJECT_DESCRIPTION_MISSING");
+  });
+
+  it("injects approved descriptions without changing nested progress", () => {
+    expect(
+      injectApprovedProjectDescriptions(
+        "- **partner-report-agent**：模型生成的周进展\n  - 林勇：完成审核链路。",
+        [
+          {
+            projectDescriptions: [
+              {
+                name: "partner-report-agent",
+                description: "用于采集和审核团队工作记录的报告平台。",
+              },
+            ],
+          },
+        ],
+      ),
+    ).toBe(
+      "- **partner-report-agent**：用于采集和审核团队工作记录的报告平台。\n  - 林勇：完成审核链路。",
+    );
   });
 
   it("requires every no-activity person without claiming they did no work", () => {

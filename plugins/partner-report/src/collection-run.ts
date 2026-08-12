@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 export const MAX_EXTRACTION_FAILURES = 3;
 export const COLLECTION_RUN_BUDGET_MS = 50 * 60_000;
 export const COLLECTION_JOB_RESERVE_MS = 5 * 60_000;
+export const PROJECT_SCOPE_APPROVAL_WAIT_MS = 30 * 60_000;
 
 export const extractionFailureCodes = [
   "RESULT_JSON_INVALID",
@@ -54,6 +55,54 @@ export function collectionDeadline(createdAt: string) {
   return new Date(
     new Date(createdAt).getTime() + COLLECTION_RUN_BUDGET_MS,
   ).toISOString();
+}
+
+export function projectScopeApprovalDeadline(now = Date.now()) {
+  return now + PROJECT_SCOPE_APPROVAL_WAIT_MS;
+}
+
+export function resolveProjectScopeApprovals(
+  scopeKeys: string[],
+  entries: Array<{
+    scopeKey: string;
+    status: "pending" | "allowed" | "denied";
+    effectiveFrom: string | null;
+  }>,
+  deadlineAt: number,
+) {
+  const entriesByKey = new Map(entries.map((entry) => [entry.scopeKey, entry]));
+  const approvedKeys = new Set<string>();
+  const pendingKeys: string[] = [];
+  const deniedKeys = new Set<string>();
+  for (const scopeKey of scopeKeys) {
+    const entry = entriesByKey.get(scopeKey);
+    if (entry?.status === "pending") pendingKeys.push(scopeKey);
+    else if (entry?.status === "denied") deniedKeys.add(scopeKey);
+    else if (
+      entry?.status === "allowed" &&
+      entry.effectiveFrom &&
+      new Date(entry.effectiveFrom).getTime() <= deadlineAt
+    )
+      approvedKeys.add(scopeKey);
+  }
+  return { approvedKeys, pendingKeys, deniedKeys };
+}
+
+export function newlyPendingProjectScopeKeys(
+  knownScopeKeys: Set<string>,
+  entries: Array<{
+    scopeKey: string;
+    status: "pending" | "allowed" | "denied";
+  }>,
+) {
+  return new Set(
+    entries
+      .filter(
+        (entry) =>
+          entry.status === "pending" && !knownScopeKeys.has(entry.scopeKey),
+      )
+      .map((entry) => entry.scopeKey),
+  );
 }
 
 export function shouldStopBeforeClaim(

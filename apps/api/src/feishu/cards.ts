@@ -151,6 +151,7 @@ export const reviewCardInputSchema = z
       .object({
         id: opaqueIdSchema,
         title: z.string().trim().min(1).max(2_000),
+        projectDescription: displayTextSchema.default(""),
         status: z.string().trim().min(1).max(120),
         overview: displayTextSchema,
         dailyProgress: z.array(dailyProgressSchema).max(366).default([]),
@@ -817,6 +818,13 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
   }
   const itemBody = [
     `**${safeMarkdownText(input.item.title, 160)}**`,
+    ...(input.item.projectDescription
+      ? [
+          "",
+          "**项目描述**",
+          safeMarkdownText(input.item.projectDescription, 600),
+        ]
+      : []),
     `状态：${safeMarkdownText(input.item.status, 80)}`,
     "",
     safeMarkdownText(input.item.overview, 500),

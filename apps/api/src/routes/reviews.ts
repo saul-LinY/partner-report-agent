@@ -392,6 +392,50 @@ export async function completeReview(
       );
     }
     await tx`update coverage_snapshots set immutable = true where id = ${coverage.id}`;
+    for (const item of approvedItems) {
+      const candidateId = item.payload.projectDescriptionCandidateId;
+      const description = item.payload.projectDescription;
+      const sourceFingerprint =
+        item.payload.projectDescriptionSourceFingerprint;
+      if (
+        !item.project_id ||
+        typeof description !== "string" ||
+        !description.trim() ||
+        typeof sourceFingerprint !== "string"
+      )
+        continue;
+      if (typeof candidateId === "string") {
+        const promoted = await tx<{ id: string }[]>`
+          update project_description_candidates set
+            description = ${description.trim()}, status = 'approved',
+            reviewed_at = now(), updated_at = now()
+          where id = ${candidateId} and tenant_id = ${actor.tenantId}
+            and partner_id = ${actor.partnerId} and project_id = ${item.project_id}
+            and status = 'pending'
+          returning id
+        `;
+        if (!promoted[0]) continue;
+      }
+      await tx`
+        update projects set description = ${description.trim()},
+          description_source_fingerprint = ${sourceFingerprint},
+          description_updated_at = now(), updated_at = now()
+        where id = ${item.project_id} and tenant_id = ${actor.tenantId}
+          and team_id = ${actor.teamId}
+          and (
+            description is distinct from ${description.trim()}
+            or description_source_fingerprint is distinct from ${sourceFingerprint}
+          )
+      `;
+      await tx`
+        update project_description_candidates set status = 'superseded',
+          reviewed_at = now(), updated_at = now()
+        where tenant_id = ${actor.tenantId} and project_id = ${item.project_id}
+          and (${typeof candidateId === "string" ? candidateId : null}::uuid is null
+            or id <> ${typeof candidateId === "string" ? candidateId : null})
+          and status = 'pending'
+      `;
+    }
     await tx`
       insert into work_item_snapshots (
         id, tenant_id, team_id, partner_id, period_id, review_id, review_version,
@@ -543,6 +587,14 @@ export async function regenerateReviewWorkItem(
       projectKey,
       projectId: item.project_id,
       projectName: item.project_name ?? item.title,
+      projectDescription:
+        typeof item.payload.projectDescription === "string"
+          ? item.payload.projectDescription
+          : "",
+      projectDescriptionCandidateId:
+        item.payload.projectDescriptionCandidateId ?? null,
+      projectDescriptionSourceFingerprint:
+        item.payload.projectDescriptionSourceFingerprint ?? null,
       factIds: facts.map((fact) => fact.id),
       facts,
     };

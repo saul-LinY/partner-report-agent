@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   SCHEDULED_COLLECTION_PROMPT,
-  SCHEDULED_COLLECTION_PROMPT_CHECK,
+  SCHEDULED_COLLECTION_PROMPT_POLICY,
   SCHEDULED_COLLECTION_TASK,
 } from "./collection-config.js";
 
 describe("scheduled collection prompt", () => {
   it("uses Chinese instructions and documents the safe memory boundary", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("首次运行只采集最近 1 天");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "只在 Prompt 不一致时更新 Prompt，不得比较或修改其他任务配置",
-    );
+    expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("检查同名 Codex");
+    expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("更新 Prompt");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("必须使用中文");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("通俗、精简、直接");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("automation memory");
@@ -45,7 +44,17 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "project_scope_approval_waiting",
     );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "project_scope_end_scan_card_waiting",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "已有授权队列清空后才重新读取 thread/list 元数据扫描新项目",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("审批 30 分钟");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("补采本周期");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("约 150 字中文候选描述");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("语义指纹变化时才生成");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("project_description_job");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "project_scope_no_candidates",
     );
@@ -71,14 +80,18 @@ describe("scheduled collection prompt", () => {
     });
   });
 
-  it("checks and repairs only the prompt once per skill run", () => {
-    expect(SCHEDULED_COLLECTION_PROMPT_CHECK).toEqual({
-      frequency: "once_per_skill_run",
-      timing: "before_first_business_command",
-      compareFields: ["prompt"],
+  it("updates only the prompt after an explicit user request", () => {
+    expect(SCHEDULED_COLLECTION_PROMPT_POLICY).toEqual({
+      automaticCheck: false,
+      automaticRepair: false,
+      updateTrigger: "explicit_user_request_only",
+      customPromptAllowed: true,
       updateFields: ["prompt"],
       preserveOtherConfiguration: true,
-      failureMode: "stop",
     });
+    expect(SCHEDULED_COLLECTION_PROMPT_POLICY).not.toHaveProperty("frequency");
+    expect(SCHEDULED_COLLECTION_PROMPT_POLICY).not.toHaveProperty(
+      "failureMode",
+    );
   });
 });

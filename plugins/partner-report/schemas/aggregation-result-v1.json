@@ -18,6 +18,11 @@
                 "minLength": 1,
                 "maxLength": 160
               },
+              "projectDescription": {
+                "type": "string",
+                "maxLength": 300,
+                "default": ""
+              },
               "status": {
                 "type": "string",
                 "enum": [

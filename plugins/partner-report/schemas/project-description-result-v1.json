@@ -1,0 +1,22 @@
+{
+  "$ref": "#/definitions/ProjectDescriptionResultV1",
+  "definitions": {
+    "ProjectDescriptionResultV1": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 50,
+          "maxLength": 300
+        }
+      },
+      "required": ["schemaVersion", "description"],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

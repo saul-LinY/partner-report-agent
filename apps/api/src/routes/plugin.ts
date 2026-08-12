@@ -31,6 +31,10 @@ import {
   loadProjectScopePolicy,
   registerProjectScopeCandidates,
 } from "../project-scope.js";
+import {
+  loadProjectDescriptionState,
+  registerProjectDescriptionCandidate,
+} from "../project-description.js";
 
 const deviceStartSchema = z.object({
   deviceName: z.string().min(1).max(120),
@@ -510,6 +514,27 @@ export async function pluginRoutes(app: FastifyInstance) {
     return loadProjectScopePolicy(actor);
   });
 
+  app.post("/v1/project-descriptions/state", async (request) => {
+    const actor = await requirePluginActor(request);
+    return loadProjectDescriptionState(actor, request.body);
+  });
+
+  app.post("/v1/project-descriptions/candidates", async (request) => {
+    const actor = await requirePluginActor(request);
+    const result = await registerProjectDescriptionCandidate(
+      actor,
+      request.body,
+    );
+    await audit(
+      request,
+      actor,
+      "project_description.candidate_registered",
+      "project_description_candidate",
+      result.candidateId,
+    );
+    return result;
+  });
+
   app.get("/v1/project-scope/card-status", async (request) => {
     const actor = await requirePluginActor(request);
     return loadProjectScopeCardDeliveryStatus(actor, request.query);
@@ -566,7 +591,11 @@ export async function pluginRoutes(app: FastifyInstance) {
         limit 1
       `;
       if (!periods[0])
-        throw new ApiError(404, "REPORT_PERIOD_MISSING", "当前周期不存在或未开放。");
+        throw new ApiError(
+          404,
+          "REPORT_PERIOD_MISSING",
+          "当前周期不存在或未开放。",
+        );
       const aggregateId = `${actor.pluginInstanceId}:${input.periodKey}`;
       await tx`
         update feishu_deliveries set

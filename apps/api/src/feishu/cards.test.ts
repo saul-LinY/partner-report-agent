@@ -242,6 +242,7 @@ describe("Feishu JSON 2.0 cards", () => {
       item: {
         id: ids.itemId,
         title: "飞书审核接入",
+        projectDescription: "用于采集、审核并汇总团队工作记录的报告平台。",
         status: "进行中",
         overview: "已经完成卡片协议设计。",
         dailyProgress: [
@@ -274,6 +275,8 @@ describe("Feishu JSON 2.0 cards", () => {
         action: "review_regenerate",
       },
     ]);
+    expect(JSON.stringify(card)).toContain("项目描述");
+    expect(JSON.stringify(card)).toContain("用于采集、审核并汇总");
     expect(findByElementId(card, "review_regen_input")).toMatchObject({
       tag: "input",
       name: "instruction",
