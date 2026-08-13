@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   aggregationInstructions,
+  bucketHasCompletionSupport,
   assertExactTeamReportProjectDescriptions,
   assertExactTeamReportProjectNames,
   assertLeaderReadableTeamReport,
@@ -9,6 +10,7 @@ import {
   formatReportDate,
   injectApprovedProjectDescriptions,
   normalizeTeamReportSummary,
+  projectStatusWithCompletionSupport,
   reportInstructions,
 } from "./generation.js";
 
@@ -37,6 +39,55 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("Do not repeat the same fact");
     expect(instructions).toContain('write only "无相关内容"');
     expect(instructions).toContain("2026-08-10.individual-review.v2");
+  });
+});
+
+describe("project completion support", () => {
+  it("accepts a credible Session outcome", () => {
+    expect(
+      bucketHasCompletionSupport({
+        facts: [
+          {
+            payload: {
+              recordType: "session_contribution",
+              contributions: [
+                { kind: "outcome", confidence: "medium", text: "已交付" },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects progress-only material as completion evidence", () => {
+    expect(
+      bucketHasCompletionSupport({
+        facts: [
+          {
+            payload: {
+              recordType: "session_contribution",
+              contributions: [
+                { kind: "progress", confidence: "high", text: "持续推进" },
+                { kind: "outcome", confidence: "low", text: "可能完成" },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      projectStatusWithCompletionSupport("completed", {
+        facts: [
+          {
+            payload: {
+              recordType: "session_contribution",
+              contributions: [{ kind: "progress", confidence: "high" }],
+            },
+          },
+        ],
+      }),
+    ).toBe("awaiting_validation");
   });
 });
 

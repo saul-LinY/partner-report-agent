@@ -24,7 +24,11 @@
               ]
             }
           },
-          "required": ["schemaVersion", "decision", "reason"],
+          "required": [
+            "schemaVersion",
+            "decision",
+            "reason"
+          ],
           "additionalProperties": false
         },
         {
@@ -94,9 +98,18 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 120
+                    },
+                    "scopeKey": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
                     }
                   },
-                  "required": ["id", "name", "matchMethod", "rootFingerprint"],
+                  "required": [
+                    "id",
+                    "name",
+                    "matchMethod",
+                    "rootFingerprint"
+                  ],
                   "additionalProperties": false
                 },
                 "activity": {
@@ -110,7 +123,10 @@
                       "$ref": "#/definitions/SessionExtractionResultV1/anyOf/1/properties/contribution/properties/activity/properties/startedAt"
                     }
                   },
-                  "required": ["startedAt", "endedAt"],
+                  "required": [
+                    "startedAt",
+                    "endedAt"
+                  ],
                   "additionalProperties": false
                 },
                 "title": {
@@ -145,10 +161,18 @@
                       },
                       "confidence": {
                         "type": "string",
-                        "enum": ["high", "medium", "low"]
+                        "enum": [
+                          "high",
+                          "medium",
+                          "low"
+                        ]
                       }
                     },
-                    "required": ["kind", "text", "confidence"],
+                    "required": [
+                      "kind",
+                      "text",
+                      "confidence"
+                    ],
                     "additionalProperties": false
                   },
                   "minItems": 1,
@@ -175,7 +199,10 @@
                     },
                     "producer": {
                       "type": "string",
-                      "enum": ["codex-skill", "data-platform"]
+                      "enum": [
+                        "codex-skill",
+                        "data-platform"
+                      ]
                     },
                     "modelVersion": {
                       "type": "string",
@@ -207,7 +234,11 @@
               "additionalProperties": false
             }
           },
-          "required": ["schemaVersion", "decision", "contribution"],
+          "required": [
+            "schemaVersion",
+            "decision",
+            "contribution"
+          ],
           "additionalProperties": false
         }
       ]

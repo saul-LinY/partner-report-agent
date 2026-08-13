@@ -3,6 +3,7 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  statSync,
   realpathSync,
   renameSync,
   writeFileSync,
@@ -39,6 +40,7 @@ export type RemoteProjectScopePolicy = {
 
 export type LocalProjectScopeEntry = RemoteProjectScopeEntry & {
   localRoot: string | null;
+  localIdentity?: string;
   environmentKind?: "configured" | "git" | "unknown";
   lastSyncedStatus?: RemoteProjectScopeEntry["status"];
   backfilledPeriodKey?: string | null;
@@ -60,6 +62,7 @@ export type DiscoveredScope = {
   scopeKey: string;
   displayName: string;
   localRoot: string;
+  localIdentity?: string;
   sessionCount: number;
   environmentKind: "configured" | "git" | "unknown";
 };
@@ -83,7 +86,19 @@ function canonicalPath(path: string) {
   try {
     return realpathSync.native(absolute);
   } catch {
-    return absolute;
+    let existingParent = absolute;
+    const missingSegments: string[] = [];
+    while (!existsSync(existingParent)) {
+      const parent = dirname(existingParent);
+      if (parent === existingParent) return absolute;
+      missingSegments.unshift(basename(existingParent));
+      existingParent = parent;
+    }
+    try {
+      return resolve(realpathSync.native(existingParent), ...missingSegments);
+    } catch {
+      return absolute;
+    }
   }
 }
 
@@ -119,6 +134,67 @@ function outermostGitRoot(cwd: string) {
     if (parent === current) return outermost;
     current = parent;
   }
+}
+
+function normalizedGitRemote(value: string) {
+  const remote = value.trim();
+  if (!remote || remote.startsWith("/") || remote.startsWith("file:"))
+    return null;
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/.exec(remote);
+  if (scp?.[1] && scp[2])
+    return `${scp[1].toLowerCase()}/${scp[2].replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "")}`;
+  try {
+    const url = new URL(remote);
+    if (!url.hostname) return null;
+    return `${url.hostname.toLowerCase()}/${url.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "")}`;
+  } catch {
+    return null;
+  }
+}
+
+function gitRemoteIdentity(root: string) {
+  try {
+    const config = readFileSync(resolve(root, ".git", "config"), "utf8");
+    let remoteName: string | null = null;
+    const remotes = new Map<string, string>();
+    for (const line of config.split(/\r?\n/)) {
+      const section = /^\s*\[([^\]]+)]\s*$/.exec(line);
+      if (section) {
+        remoteName =
+          /^remote\s+"([^"]+)"$/i.exec(section[1] ?? "")?.[1] ?? null;
+        continue;
+      }
+      if (!remoteName) continue;
+      const match = /^\s*url\s*=\s*(.+?)\s*$/.exec(line);
+      const normalized = match?.[1] ? normalizedGitRemote(match[1]) : null;
+      if (normalized) remotes.set(remoteName.toLowerCase(), normalized);
+    }
+    const stableRemote =
+      remotes.get("origin") ?? [...remotes.values()].sort()[0];
+    return stableRemote ? `git-remote:${stableRemote}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectLocalIdentity(scopeSalt: string, localRoot: string) {
+  const gitRoot = outermostGitRoot(localRoot);
+  const remote = gitRoot ? gitRemoteIdentity(gitRoot) : null;
+  let material = remote;
+  if (!material) {
+    try {
+      const stat = statSync(gitRoot ?? localRoot, { bigint: true });
+      const birthtime =
+        (stat as unknown as { birthtimeNs?: bigint }).birthtimeNs ??
+        stat.birthtimeMs;
+      material = `filesystem:${stat.dev}:${stat.ino}:${birthtime}`;
+    } catch {
+      return undefined;
+    }
+  }
+  return createHmac("sha256", scopeSalt)
+    .update(`partner-report/project-local-identity/v1:${material}`)
+    .digest("hex");
 }
 
 function defaultTemporaryRoots() {
@@ -229,6 +305,9 @@ function isLocalProjectScope(
       Number.isInteger(entry.sessionCount) &&
       (entry.sessionCount as number) >= 0 &&
       (entry.localRoot === null || typeof entry.localRoot === "string") &&
+      (entry.localIdentity === undefined ||
+        (typeof entry.localIdentity === "string" &&
+          /^[a-f0-9]{64}$/.test(entry.localIdentity))) &&
       (entry.environmentKind === undefined ||
         ["configured", "git", "unknown"].includes(
           String(entry.environmentKind),
@@ -285,6 +364,7 @@ export function mergeRemoteProjectScope(
       entry.scopeKey,
       {
         localRoot: entry.localRoot,
+        localIdentity: entry.localIdentity,
         environmentKind: entry.environmentKind,
         backfilledPeriodKey: entry.backfilledPeriodKey,
       },
@@ -297,6 +377,9 @@ export function mergeRemoteProjectScope(
     entries: remote.entries.map((entry) => ({
       ...entry,
       localRoot: localMetadata.get(entry.scopeKey)?.localRoot ?? null,
+      ...(localMetadata.get(entry.scopeKey)?.localIdentity
+        ? { localIdentity: localMetadata.get(entry.scopeKey)!.localIdentity }
+        : {}),
       lastSyncedStatus: entry.status,
       ...(localMetadata.get(entry.scopeKey)?.backfilledPeriodKey !== undefined
         ? {
@@ -404,6 +487,9 @@ export function discoverProjectScopes(
         ...entry,
         localRoot,
         logicalRoot: environment.localRoot ?? localRoot,
+        localIdentity:
+          entry.localIdentity ??
+          projectLocalIdentity(local.scopeSalt, localRoot),
       };
     })
     .sort((left, right) => right.localRoot.length - left.localRoot.length);
@@ -419,28 +505,68 @@ export function discoverProjectScopes(
     )
       continue;
     const cwd = canonicalPath(summary.cwd);
-    const pathInherited = knownRoots.find((entry) =>
+    const pathMatch = knownRoots.find((entry) =>
       withinPath(cwd, entry.localRoot),
     );
-    const logicalMatches = knownRoots.filter(
-      (entry) => entry.logicalRoot === environment.localRoot,
+    const environmentIdentity = projectLocalIdentity(
+      local.scopeSalt,
+      environment.localRoot,
     );
+    const pathIdentity = pathMatch
+      ? projectLocalIdentity(local.scopeSalt, pathMatch.localRoot)
+      : undefined;
+    const pathInherited =
+      pathMatch &&
+      (!pathMatch.localIdentity ||
+        !pathIdentity ||
+        pathMatch.localIdentity === pathIdentity)
+        ? pathMatch
+        : undefined;
+    const logicalMatches = knownRoots.filter(
+      (entry) =>
+        entry.logicalRoot === environment.localRoot &&
+        (!entry.localIdentity || entry.localIdentity === environmentIdentity),
+    );
+    const identityMatches = environmentIdentity
+      ? knownRoots.filter(
+          (entry) => entry.localIdentity === environmentIdentity,
+        )
+      : [];
     const inherited =
       pathInherited ??
-      (logicalMatches.length === 1 ? logicalMatches[0] : undefined);
+      (logicalMatches.length === 1 ? logicalMatches[0] : undefined) ??
+      (identityMatches.length === 1 ? identityMatches[0] : undefined);
     const localRoot =
-      inherited && environment.kind === "unknown"
-        ? inherited.localRoot
+      pathInherited && environment.kind === "unknown"
+        ? pathInherited.localRoot
         : environment.localRoot;
+    const localIdentity =
+      localRoot === environment.localRoot
+        ? environmentIdentity
+        : projectLocalIdentity(local.scopeSalt, localRoot);
     const scopeKey =
       inherited?.scopeKey ??
-      anonymousProjectScopeKey(pluginInstanceId, local.scopeSalt, localRoot);
+      anonymousProjectScopeKey(
+        pluginInstanceId,
+        local.scopeSalt,
+        localIdentity ?? `path:${localRoot}`,
+      );
     const current = discovered.get(scopeKey);
+    const preferredLocalRoot =
+      current?.localIdentity && !localIdentity ? current.localRoot : localRoot;
+    const preferredLocalIdentity =
+      localIdentity ?? inherited?.localIdentity ?? current?.localIdentity;
     discovered.set(scopeKey, {
       scopeKey,
       displayName:
-        inherited?.displayName ?? (basename(localRoot) || "未命名项目"),
-      localRoot,
+        basename(preferredLocalRoot) ||
+        inherited?.displayName ||
+        current?.displayName ||
+        "未命名项目",
+      localRoot: preferredLocalRoot,
+      ...(preferredLocalIdentity
+        ? { localIdentity: preferredLocalIdentity }
+        : {}),
       sessionCount: (current?.sessionCount ?? 0) + 1,
       environmentKind: environment.kind,
     });
@@ -480,6 +606,7 @@ export function mergeDiscoveredRoots(
       candidate.scopeKey,
       {
         localRoot: candidate.localRoot,
+        localIdentity: candidate.localIdentity,
         environmentKind: candidate.environmentKind,
       },
     ]),
@@ -493,6 +620,11 @@ export function mergeDiscoveredRoots(
       return {
         ...entry,
         localRoot: discovered?.localRoot ?? entry.localRoot,
+        ...(discovered?.localIdentity
+          ? { localIdentity: discovered.localIdentity }
+          : entry.localIdentity
+            ? { localIdentity: entry.localIdentity }
+            : {}),
         ...(environmentKind ? { environmentKind } : {}),
       };
     }),

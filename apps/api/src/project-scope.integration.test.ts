@@ -293,4 +293,94 @@ suite("project scope persistence", () => {
       new Date(reapproved.entries[0]!.effectiveFrom!).getTime(),
     ).toBeLessThanOrEqual(Date.now() + 1_000);
   });
+
+  it("renames the unique central project for an existing allowed scope", async () => {
+    const scopeKey = "9".repeat(64);
+    const projectId = randomUUID();
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids)
+        values (${projectId}, ${fixture.tenantId}, ${fixture.teamId}, 'legacy-name',
+          '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+      `;
+      await tx`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
+          display_name, status, effective_from, first_seen_period_key, session_count
+        ) values (
+          ${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId}, ${fixture.partnerId},
+          ${fixture.pluginInstanceId}, ${scopeKey}, 'legacy-name', 'allowed', now(),
+          'scope-period', 1
+        )
+      `;
+    });
+    try {
+      await registerProjectScopeCandidates(identity, {
+        periodKey: "scope-period",
+        candidates: [
+          { scopeKey, displayName: "renamed-project", sessionCount: 2 },
+        ],
+      });
+      const projects = await sql<
+        Array<{ name: string; aliases: string[]; external_ids: string[] }>
+      >`
+        select name, aliases, external_ids from projects where id = ${projectId}
+      `;
+      expect(projects).toEqual([
+        {
+          name: "renamed-project",
+          aliases: ["legacy-name"],
+          external_ids: [`scope:${fixture.pluginInstanceId}:${scopeKey}`],
+        },
+      ]);
+    } finally {
+      await sql`delete from project_scope_entries where scope_key = ${scopeKey}`;
+      await sql`delete from projects where id = ${projectId}`;
+    }
+  });
+
+  it("attaches the stable scope identity during an upgrade without renaming", async () => {
+    const scopeKey = "8".repeat(64);
+    const projectId = randomUUID();
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids)
+        values (${projectId}, ${fixture.tenantId}, ${fixture.teamId}, 'upgrade-project',
+          '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+      `;
+      await tx`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
+          display_name, status, effective_from, first_seen_period_key, session_count
+        ) values (
+          ${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId}, ${fixture.partnerId},
+          ${fixture.pluginInstanceId}, ${scopeKey}, 'upgrade-project', 'allowed', now(),
+          'scope-period', 1
+        )
+      `;
+    });
+    try {
+      await registerProjectScopeCandidates(identity, {
+        periodKey: "scope-period",
+        candidates: [
+          { scopeKey, displayName: "upgrade-project", sessionCount: 2 },
+        ],
+      });
+      const projects = await sql<
+        Array<{ name: string; aliases: string[]; external_ids: string[] }>
+      >`
+        select name, aliases, external_ids from projects where id = ${projectId}
+      `;
+      expect(projects).toEqual([
+        {
+          name: "upgrade-project",
+          aliases: [],
+          external_ids: [`scope:${fixture.pluginInstanceId}:${scopeKey}`],
+        },
+      ]);
+    } finally {
+      await sql`delete from project_scope_entries where scope_key = ${scopeKey}`;
+      await sql`delete from projects where id = ${projectId}`;
+    }
+  });
 });

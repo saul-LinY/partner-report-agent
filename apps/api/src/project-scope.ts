@@ -243,6 +243,63 @@ export async function registerProjectScopeCandidates(
     );
 
     for (const candidate of eligibleCandidates) {
+      const previous = await tx<
+        Array<{ display_name: string; status: string }>
+      >`
+        select display_name, status from project_scope_entries
+        where plugin_instance_id = ${identity.pluginInstanceId}
+          and scope_key = ${candidate.scopeKey}
+        limit 1
+      `;
+      const previousEntry = previous[0];
+      if (previousEntry?.status === "allowed") {
+        const scopeExternalId = `scope:${identity.pluginInstanceId}:${candidate.scopeKey}`;
+        await tx`
+          update projects set
+            name = case
+              when ${previousEntry.display_name !== candidate.displayName}
+                and not exists (
+                select 1 from projects other
+                where other.tenant_id = ${identity.tenantId}
+                  and other.team_id = ${identity.teamId}
+                  and other.name = ${candidate.displayName}
+                  and other.id <> projects.id
+              ) then ${candidate.displayName}
+              else name
+            end,
+            aliases = case
+              when ${previousEntry.display_name === candidate.displayName}
+                or aliases @> ${JSON.stringify([previousEntry.display_name])}::jsonb
+                then aliases
+              else aliases || ${JSON.stringify([previousEntry.display_name])}::jsonb
+            end,
+            external_ids = case
+              when external_ids @> ${JSON.stringify([scopeExternalId])}::jsonb then external_ids
+              else external_ids || ${JSON.stringify([scopeExternalId])}::jsonb
+            end,
+            updated_at = now()
+          where id = (
+            select id from (
+              select id, 1 as priority
+              from projects
+              where tenant_id = ${identity.tenantId}
+                and team_id = ${identity.teamId} and status = 'active'
+                and external_ids @> ${JSON.stringify([scopeExternalId])}::jsonb
+              union all
+              select id, 2 as priority from (
+                select id, count(*) over () as match_count
+                from projects
+                where tenant_id = ${identity.tenantId}
+                  and team_id = ${identity.teamId} and status = 'active'
+                  and lower(name) = lower(${previousEntry.display_name})
+              ) legacy_matches
+              where match_count = 1
+            ) matches
+            order by priority
+            limit 1
+          )
+        `;
+      }
       await tx`
         insert into project_scope_entries (
           id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,

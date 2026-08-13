@@ -80,6 +80,35 @@ describe("project mapping", () => {
     expect(JSON.stringify(mapped)).not.toContain("/private/work");
   });
 
+  it("does not reuse a path match when a different stable scope is supplied", () => {
+    const cwd = "/private/work/recreated-project";
+    const discovered = mappedProject(cwd, []);
+    const oldProject = {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "recreated-project",
+      aliases: [],
+      allowed_paths: [cwd],
+      external_ids: [`path-sha256:${discovered.rootFingerprint}`],
+    };
+    expect(
+      mappedProject(cwd, [oldProject], {
+        pluginInstanceId: "binding",
+        scopeKey: "a".repeat(64),
+      }),
+    ).toMatchObject({ id: null, matchMethod: "path_discovered" });
+
+    const stableProject = {
+      ...oldProject,
+      external_ids: [`scope:binding:${"a".repeat(64)}`],
+    };
+    expect(
+      mappedProject("/private/work/renamed-project", [stableProject], {
+        pluginInstanceId: "binding",
+        scopeKey: "a".repeat(64),
+      }),
+    ).toMatchObject({ id: stableProject.id });
+  });
+
   it("keeps a Session without cwd unassigned", () => {
     expect(mappedProject(null, projects)).toMatchObject({
       id: null,
@@ -144,7 +173,7 @@ describe("safe Session input", () => {
       expect.arrayContaining([expect.stringContaining("必须使用简体中文")]),
     );
     expect(job!.expected.production).toMatchObject({
-      skillVersion: "partner-report-sync/0.4.5",
+      skillVersion: "partner-report-sync/1.0.0",
       promptVersion: "2026-08-05.zh-session-value.v3",
     });
     const serialized = JSON.stringify(job);

@@ -38,7 +38,7 @@ const expectedContribution = {
   },
   observedAt: "2026-08-04T05:01:00.000Z",
   production: {
-    skillVersion: "partner-report-sync/0.4.5",
+    skillVersion: "partner-report-sync/1.0.0",
     promptVersion: "2026-08-05.zh-session-value.v3",
     schemaVersion: "1.0",
     producer: "codex-skill",

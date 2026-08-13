@@ -120,6 +120,7 @@ suite("tenant and role authorization", () => {
       await tx`delete from partners where id in (${fixture.partnerA}, ${fixture.partnerB})`;
       await tx`delete from users where id in (${fixture.userA}, ${fixture.userB})`;
       await tx`delete from teams where id in (${fixture.teamA}, ${fixture.teamB})`;
+      await tx`delete from outbox_events where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from tenants where id in (${fixture.tenantA}, ${fixture.tenantB})`;
     });
     if (originalFeishuAppId === undefined) {
@@ -1182,6 +1183,180 @@ suite("tenant and role authorization", () => {
     expect(runs).toEqual([]);
   });
 
+  it("keeps one central project when an allowed local project is renamed and moved", async () => {
+    const pluginHeaders = { authorization: `Bearer ${pluginToken}` };
+    const scopeKey = "a".repeat(64);
+    const contribution = {
+      schemaVersion: "1.0",
+      periodKey: "fixture-current-a",
+      sessionKey: "8".repeat(64),
+      contentHash: "6".repeat(64),
+      project: {
+        id: null,
+        name: "old-local-name",
+        matchMethod: "path_discovered",
+        rootFingerprint: "1".repeat(64),
+        rootName: "old-local-name",
+        scopeKey,
+      },
+      activity: {
+        startedAt: "2030-08-03T08:00:00.000Z",
+        endedAt: "2030-08-03T08:30:00.000Z",
+      },
+      title: "项目改名前的工作",
+      summary: "记录项目改名前的进展。",
+      contributions: [
+        { kind: "progress", text: "完成一项进展。", confidence: "high" },
+      ],
+      observedAt: "2030-08-03T09:00:00.000Z",
+      production: {
+        skillVersion: "partner-report-sync/0.4.5",
+        promptVersion: "2026-08-05.zh-session-value.v3",
+        schemaVersion: "1.0",
+        producer: "codex-skill",
+      },
+    };
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/session-contributions",
+      headers: {
+        ...pluginHeaders,
+        "idempotency-key": "fixture-project-before-rename",
+      },
+      payload: contribution,
+    });
+    expect(first.statusCode).toBe(200);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/session-contributions",
+      headers: {
+        ...pluginHeaders,
+        "idempotency-key": "fixture-project-after-rename",
+      },
+      payload: {
+        ...contribution,
+        sessionKey: "9".repeat(64),
+        contentHash: "7".repeat(64),
+        project: {
+          ...contribution.project,
+          name: "new-local-name",
+          rootName: "new-local-name",
+          rootFingerprint: "2".repeat(64),
+        },
+        title: "项目改名后的工作",
+      },
+    });
+    expect(second.statusCode).toBe(200);
+
+    const projects = await sql<
+      Array<{
+        id: string;
+        name: string;
+        aliases: string[];
+        external_ids: string[];
+      }>
+    >`
+      select id, name, aliases, external_ids from projects
+      where tenant_id = ${fixture.tenantA} and team_id = ${fixture.teamA}
+        and external_ids @> ${JSON.stringify([`scope:${fixture.pluginA}:${scopeKey}`])}::jsonb
+    `;
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({
+      name: "new-local-name",
+      aliases: ["old-local-name"],
+    });
+    expect(projects[0]!.external_ids).toEqual(
+      expect.arrayContaining([
+        `scope:${fixture.pluginA}:${scopeKey}`,
+        `path-sha256:${"1".repeat(64)}`,
+        `path-sha256:${"2".repeat(64)}`,
+      ]),
+    );
+    const linkedFacts = await sql<Array<{ project_id: string }>>`
+      select payload->>'projectId' as project_id from session_facts
+      where tenant_id = ${fixture.tenantA}
+        and session_id in (${"8".repeat(64)}, ${"9".repeat(64)})
+      order by session_id
+    `;
+    expect(linkedFacts).toEqual([
+      { project_id: projects[0]!.id },
+      { project_id: projects[0]!.id },
+    ]);
+  });
+
+  it("keeps a recreated project separate even when it reuses the old name and path", async () => {
+    const oldProjectId = randomUUID();
+    const newScopeKey = "e".repeat(64);
+    const reusedFingerprint = "3".repeat(64);
+    await sql`
+      insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids)
+      values (${oldProjectId}, ${fixture.tenantA}, ${fixture.teamA}, 'recreated-project',
+        '[]'::jsonb, '[]'::jsonb,
+        ${JSON.stringify([`path-sha256:${reusedFingerprint}`, `scope:${fixture.pluginA}:${"f".repeat(64)}`])}::jsonb)
+    `;
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/session-contributions",
+      headers: {
+        authorization: `Bearer ${pluginToken}`,
+        "idempotency-key": "fixture-recreated-project",
+      },
+      payload: {
+        schemaVersion: "1.0",
+        periodKey: "fixture-current-a",
+        sessionKey: "7".repeat(64),
+        contentHash: "5".repeat(64),
+        project: {
+          id: null,
+          name: "recreated-project",
+          matchMethod: "path_discovered",
+          rootFingerprint: reusedFingerprint,
+          rootName: "recreated-project",
+          scopeKey: newScopeKey,
+        },
+        activity: {
+          startedAt: "2030-08-04T08:00:00.000Z",
+          endedAt: "2030-08-04T08:30:00.000Z",
+        },
+        title: "同路径新项目的工作",
+        summary: "确认同路径重建的项目不会并入旧项目。",
+        contributions: [
+          { kind: "progress", text: "完成新项目验证。", confidence: "high" },
+        ],
+        observedAt: "2030-08-04T09:00:00.000Z",
+        production: {
+          skillVersion: "partner-report-sync/0.4.5",
+          promptVersion: "2026-08-05.zh-session-value.v3",
+          schemaVersion: "1.0",
+          producer: "codex-skill",
+        },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+
+    const projects = await sql<
+      Array<{ id: string; name: string; external_ids: string[] }>
+    >`
+      select id, name, external_ids from projects
+      where tenant_id = ${fixture.tenantA} and team_id = ${fixture.teamA}
+        and (
+          id = ${oldProjectId}
+          or external_ids @> ${JSON.stringify([`scope:${fixture.pluginA}:${newScopeKey}`])}::jsonb
+        )
+      order by name
+    `;
+    expect(projects).toHaveLength(2);
+    const recreated = projects.find((project) => project.id !== oldProjectId)!;
+    expect(recreated.name).toBe("recreated-project (2)");
+    expect(recreated.external_ids).toEqual(
+      expect.arrayContaining([
+        `path-sha256:${reusedFingerprint}`,
+        `scope:${fixture.pluginA}:${newScopeKey}`,
+      ]),
+    );
+  });
+
   it("versions and atomically locks an Admin-reviewed Team Report", async () => {
     const reportId = randomUUID();
     await sql.begin(async (tx) => {
@@ -1940,6 +2115,154 @@ suite("tenant and role authorization", () => {
         await tx`delete from individual_reports where id = ${reportId ?? null}`;
         await tx`delete from work_item_snapshots where review_id = ${reviewId}`;
         await tx`delete from coverage_snapshots where id = ${coverageId}`;
+        await tx`delete from work_items where id = ${workItemId}`;
+        await tx`delete from reviews where id = ${reviewId}`;
+      });
+    }
+  });
+
+  it("keeps the final Work Card pending when completed evidence is missing", async () => {
+    const reviewId = randomUUID();
+    const workItemId = randomUUID();
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into reviews (
+          id, tenant_id, team_id, partner_id, period_id, state, pending_count
+        ) values (
+          ${reviewId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.currentPeriodA}, 'IN_PROGRESS', 1
+        )
+      `;
+      await tx`
+        insert into work_items (
+          id, tenant_id, team_id, partner_id, period_id, review_id, project_id,
+          title, status, review_status, fact_ids, payload
+        ) values (
+          ${workItemId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.currentPeriodA}, ${reviewId}, ${fixture.projectA},
+          '缺少完成结果', 'completed', 'pending', '[]'::jsonb,
+          '{"overview":"只有进展，没有完成结果。","dailyProgress":[]}'::jsonb
+        )
+      `;
+    });
+
+    try {
+      const decision = await app.inject({
+        method: "POST",
+        url: `/v1/reviews/${reviewId}/items/${workItemId}/decision`,
+        headers,
+        payload: { decision: "approve", baseVersion: 1 },
+      });
+      expect(decision.statusCode).toBe(409);
+      expect(decision.json()).toMatchObject({
+        code: "COMPLETION_EVIDENCE_REQUIRED",
+      });
+      const [reviews, items] = await Promise.all([
+        sql<
+          Array<{
+            state: string;
+            version: number;
+            pending_count: number;
+            approved_count: number;
+          }>
+        >`
+          select state, version, pending_count, approved_count
+          from reviews where id = ${reviewId}
+        `,
+        sql<Array<{ review_status: string }>>`
+          select review_status from work_items where id = ${workItemId}
+        `,
+      ]);
+      expect(reviews).toEqual([
+        {
+          state: "IN_PROGRESS",
+          version: 1,
+          pending_count: 1,
+          approved_count: 0,
+        },
+      ]);
+      expect(items).toEqual([{ review_status: "pending" }]);
+    } finally {
+      await sql.begin(async (tx) => {
+        await tx`delete from work_items where id = ${workItemId}`;
+        await tx`delete from reviews where id = ${reviewId}`;
+      });
+    }
+  });
+
+  it("rolls back a Web approval when completed evidence is missing", async () => {
+    const reviewId = randomUUID();
+    const workItemId = randomUUID();
+    let changeId: string | null = null;
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into reviews (
+          id, tenant_id, team_id, partner_id, period_id, state, pending_count
+        ) values (
+          ${reviewId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.currentPeriodA}, 'IN_PROGRESS', 1
+        )
+      `;
+      await tx`
+        insert into work_items (
+          id, tenant_id, team_id, partner_id, period_id, review_id, project_id,
+          title, status, review_status, fact_ids, payload
+        ) values (
+          ${workItemId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.currentPeriodA}, ${reviewId}, ${fixture.projectA},
+          'Web 缺少完成结果', 'completed', 'pending', '[]'::jsonb,
+          '{"overview":"只有进展，没有完成结果。","dailyProgress":[]}'::jsonb
+        )
+      `;
+    });
+
+    try {
+      const preview = await app.inject({
+        method: "POST",
+        url: `/v1/reviews/${reviewId}/changes/preview`,
+        headers,
+        payload: {
+          workItemIds: [workItemId],
+          baseVersion: 1,
+          operation: "approve",
+          source: "web",
+        },
+      });
+      expect(preview.statusCode).toBe(200);
+      changeId = preview.json().changeId;
+      const applied = await app.inject({
+        method: "POST",
+        url: `/v1/reviews/${reviewId}/changes/apply`,
+        headers,
+        payload: { changeId },
+      });
+      expect(applied.statusCode).toBe(409);
+      expect(applied.json()).toMatchObject({
+        code: "COMPLETION_EVIDENCE_REQUIRED",
+      });
+      const [reviews, items] = await Promise.all([
+        sql<
+          Array<{
+            version: number;
+            pending_count: number;
+            approved_count: number;
+          }>
+        >`
+          select version, pending_count, approved_count
+          from reviews where id = ${reviewId}
+        `,
+        sql<Array<{ review_status: string }>>`
+          select review_status from work_items where id = ${workItemId}
+        `,
+      ]);
+      expect(reviews).toEqual([
+        { version: 1, pending_count: 1, approved_count: 0 },
+      ]);
+      expect(items).toEqual([{ review_status: "pending" }]);
+    } finally {
+      await sql.begin(async (tx) => {
+        if (changeId)
+          await tx`delete from review_changes where id = ${changeId}`;
         await tx`delete from work_items where id = ${workItemId}`;
         await tx`delete from reviews where id = ${reviewId}`;
       });

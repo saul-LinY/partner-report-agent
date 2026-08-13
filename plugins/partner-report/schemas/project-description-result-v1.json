@@ -14,7 +14,10 @@
           "maxLength": 300
         }
       },
-      "required": ["schemaVersion", "description"],
+      "required": [
+        "schemaVersion",
+        "description"
+      ],
       "additionalProperties": false
     }
   },

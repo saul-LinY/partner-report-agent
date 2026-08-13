@@ -182,6 +182,66 @@ export type CompleteReviewResult = {
   idempotent?: boolean;
 };
 
+async function assertCompletedWorkItemHasSupport(
+  database: any,
+  actor: Pick<DomainActor, "tenantId">,
+  item: {
+    id: string;
+    title: string;
+    status: string;
+    payload: Record<string, unknown>;
+  },
+) {
+  if (item.status !== "completed") return;
+  const facts = await database<any[]>`
+    select sf.payload from work_item_facts wf
+    join session_facts sf on sf.id = wf.fact_id
+    where wf.work_item_id = ${item.id} and sf.tenant_id = ${actor.tenantId}
+  `;
+  const hasSupport =
+    facts.some(
+      (fact: any) =>
+        fact.payload.completionSupport === "evidence" ||
+        fact.payload.factOrigin === "partner_supplied" ||
+        (fact.payload.recordType === "session_contribution" &&
+          Array.isArray(fact.payload.contributions) &&
+          fact.payload.contributions.some(
+            (contribution: Record<string, unknown>) =>
+              contribution.kind === "outcome" &&
+              ["high", "medium"].includes(String(contribution.confidence)),
+          )),
+    ) ||
+    (Array.isArray(item.payload.partnerFacts) &&
+      item.payload.partnerFacts.length > 0);
+  if (!hasSupport)
+    throw new ApiError(
+      409,
+      "COMPLETION_EVIDENCE_REQUIRED",
+      `完成事项“${item.title}”缺少可信 Outcome 或 Partner 补充。`,
+    );
+}
+
+async function assertApprovedCompletedItemsHaveSupport(
+  database: any,
+  actor: Pick<DomainActor, "tenantId">,
+  reviewId: string,
+) {
+  const items = await database<
+    Array<{
+      id: string;
+      title: string;
+      status: string;
+      payload: Record<string, unknown>;
+    }>
+  >`
+    select id, title, status, payload from work_items
+    where review_id = ${reviewId} and tenant_id = ${actor.tenantId}
+      and review_status = 'approved' and status = 'completed'
+  `;
+  for (const item of items)
+    await assertCompletedWorkItemHasSupport(database, actor, item);
+}
+
 async function loadCompletedReviewResult(
   db: any,
   actor: Pick<DomainActor, "tenantId">,
@@ -292,30 +352,7 @@ export async function completeReview(
   for (const item of approvedItems.filter(
     (item) => item.status === "completed",
   )) {
-    const facts = await sql<any[]>`
-      select sf.payload from work_item_facts wf
-      join session_facts sf on sf.id = wf.fact_id
-      where wf.work_item_id = ${item.id} and sf.tenant_id = ${actor.tenantId}
-    `;
-    const hasSupport =
-      facts.some(
-        (fact) =>
-          fact.payload.completionSupport === "evidence" ||
-          fact.payload.factOrigin === "partner_supplied" ||
-          (fact.payload.recordType === "session_contribution" &&
-            Array.isArray(fact.payload.contributions) &&
-            fact.payload.contributions.some(
-              (contribution: Record<string, unknown>) =>
-                contribution.kind === "outcome" &&
-                contribution.confidence !== "low",
-            )),
-      ) || (item.payload.partnerFacts ?? []).length > 0;
-    if (!hasSupport)
-      throw new ApiError(
-        409,
-        "COMPLETION_EVIDENCE_REQUIRED",
-        `完成事项“${item.title}”缺少可信 Outcome 或 Partner 补充。`,
-      );
+    await assertCompletedWorkItemHasSupport(sql, actor, item);
   }
 
   const coverageRows = await sql<any[]>`
@@ -670,8 +707,16 @@ export async function decideReviewWorkItem(
   const targetStatus = decision === "approve" ? "approved" : "excluded";
   const result = await sql.begin(async (tx) => {
     const review = await loadReviewForUpdate(tx, actor, reviewId);
-    const items = await tx<{ id: string; review_status: string }[]>`
-      select id, review_status from work_items
+    const items = await tx<
+      Array<{
+        id: string;
+        title: string;
+        status: string;
+        review_status: string;
+        payload: Record<string, unknown>;
+      }>
+    >`
+      select id, title, status, review_status, payload from work_items
       where id = ${workItemId} and review_id = ${reviewId}
         and tenant_id = ${actor.tenantId}
       for update
@@ -712,6 +757,9 @@ export async function decideReviewWorkItem(
         "这张工作卡片已经处理。",
       );
 
+    if (decision === "approve")
+      await assertCompletedWorkItemHasSupport(tx, actor, item);
+
     const updated = await tx<{ id: string }[]>`
       update work_items set
         review_status = ${targetStatus}, updated_at = now()
@@ -725,6 +773,7 @@ export async function decideReviewWorkItem(
         "WORK_ITEM_NOT_PENDING",
         "这张工作卡片已经处理。",
       );
+    await assertApprovedCompletedItemsHaveSupport(tx, actor, reviewId);
     const completion = await recalculateReview(
       tx,
       actor,
@@ -1255,6 +1304,7 @@ export async function reviewRoutes(app: FastifyInstance) {
           `不支持的审核操作: ${change.operation}`,
         );
       }
+      await assertApprovedCompletedItemsHaveSupport(tx, actor, id);
       const completion = await recalculateReview(
         tx,
         actor,

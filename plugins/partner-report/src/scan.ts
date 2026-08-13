@@ -18,6 +18,7 @@ export type ProjectIdentity = {
     "exact_root" | "descendant_path" | "path_discovered" | "unassigned";
   rootFingerprint: string;
   rootName?: string;
+  scopeKey?: string;
 };
 
 export type ProgressTurn = {
@@ -256,6 +257,7 @@ function nearestGitRoot(cwd: string) {
 export function mappedProject(
   cwd: string | null | undefined,
   projects: ProjectPolicy[],
+  stableScope?: { pluginInstanceId: string; scopeKey: string },
 ): ProjectIdentity {
   if (!cwd) {
     return {
@@ -267,6 +269,32 @@ export function mappedProject(
   }
 
   const absoluteCwd = resolve(cwd);
+  if (stableScope) {
+    const discoveredRoot = nearestGitRoot(absoluteCwd) ?? absoluteCwd;
+    const rootFingerprint = sha256(discoveredRoot);
+    const stableExternalId = `scope:${stableScope.pluginInstanceId}:${stableScope.scopeKey}`;
+    const known = projects.find((project) =>
+      (project.external_ids ?? []).includes(stableExternalId),
+    );
+    if (known) {
+      return {
+        id: known.id,
+        name: known.name,
+        matchMethod:
+          discoveredRoot === absoluteCwd ? "exact_root" : "descendant_path",
+        rootFingerprint,
+      };
+    }
+    const rootName = basename(discoveredRoot) || "项目";
+    return {
+      id: null,
+      name: rootName,
+      matchMethod: "path_discovered",
+      rootFingerprint,
+      rootName,
+    };
+  }
+
   const configuredMatches = projects
     .flatMap((project) =>
       (project.allowed_paths ?? [])
@@ -333,6 +361,7 @@ export function buildSessionJob(input: {
   projects: ProjectPolicy[];
   period: CollectionPeriod;
   observedAt?: string;
+  scopeKey?: string;
 }) {
   const normalized = normalizeProgressTurns(input.turns);
   if (isPluginAdministrationSession(normalized)) return null;
@@ -345,7 +374,14 @@ export function buildSessionJob(input: {
   );
   if (selected.length === 0) return null;
 
-  const project = mappedProject(input.cwd, input.projects);
+  const project = mappedProject(
+    input.cwd,
+    input.projects,
+    input.scopeKey
+      ? { pluginInstanceId: input.pluginInstanceId, scopeKey: input.scopeKey }
+      : undefined,
+  );
+  if (input.scopeKey) project.scopeKey = input.scopeKey;
   const activity = {
     startedAt: selected[0]!.occurredAt ?? fallbackOccurredAt,
     endedAt: selected.at(-1)!.occurredAt ?? fallbackOccurredAt,

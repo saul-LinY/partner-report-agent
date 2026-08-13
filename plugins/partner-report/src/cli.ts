@@ -1263,6 +1263,35 @@ async function collectStart() {
     metadataEligible,
     { configuredRoots },
   );
+  const existingScopeKeys = new Set(
+    localScope.entries.map((entry) => entry.scopeKey),
+  );
+  const existingCandidates = allThreadDiscovery.candidates.filter((candidate) =>
+    existingScopeKeys.has(candidate.scopeKey),
+  );
+  if (existingCandidates.length > 0) {
+    const registeredScope =
+      await authenticatedRequest<RemoteProjectScopePolicy>(
+        "/v1/project-scope/candidates",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            periodKey: policy.currentPeriod.period_key,
+            initialDiscovery: false,
+            candidates: existingCandidates.map((candidate) => ({
+              scopeKey: candidate.scopeKey,
+              displayName: candidate.displayName,
+              sessionCount: candidate.sessionCount,
+            })),
+          }),
+        },
+      );
+    localScope = mergeDiscoveredRoots(
+      mergeRemoteProjectScope(localScope, registeredScope),
+      existingCandidates,
+    );
+    saveLocalProjectScope(localScope);
+  }
   const regularQueue: ScopedThreadSummary[] = authorizedProjectThreads(
     inWindow,
     allThreadDiscovery.threadScopes,
@@ -2082,6 +2111,7 @@ async function collectNext() {
         updatedAt: thread.updatedAt ?? summary.updatedAt,
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
+        scopeKey: summary.scopeKey,
         period:
           summary.collectionStartsAt || summary.collectionEndsAt
             ? {

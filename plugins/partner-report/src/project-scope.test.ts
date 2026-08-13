@@ -1,6 +1,7 @@
 import {
   mkdirSync,
   mkdtempSync,
+  renameSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -104,7 +105,7 @@ describe("project scope privacy boundary", () => {
       );
       expect(discovery.candidates).toHaveLength(1);
       expect(discovery.candidates[0]).toMatchObject({
-        localRoot: root,
+        localRoot: realpathSync.native(root),
         sessionCount: 2,
       });
       expect(discovery.threadScopes.get("thread-a")).toBe(
@@ -473,6 +474,184 @@ describe("project scope privacy boundary", () => {
         "project",
         "project",
       ]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps one Git project permission after the repository directory is renamed", () => {
+    const base = mkdtempSync(resolve(tmpdir(), "partner-report-rename-test-"));
+    const before = resolve(base, "old-name");
+    const after = resolve(base, "new-name");
+    mkdirSync(resolve(before, ".git"), { recursive: true });
+    writeFileSync(
+      resolve(before, ".git", "config"),
+      '[remote "origin"]\n\turl = git@github.com:example/stable.git\n',
+    );
+    try {
+      const initial = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [{ id: "before", cwd: before }],
+        { temporaryRoots: [] },
+      ).candidates[0]!;
+      const allowed = localScope([
+        {
+          ...initial,
+          status: "allowed",
+          effectiveFrom: "2026-08-01T00:00:00.000Z",
+          firstSeenPeriodKey: "2026-W31",
+          firstSeenAt: "2026-08-01T00:00:00.000Z",
+          lastSeenAt: "2026-08-01T00:00:00.000Z",
+        },
+      ]);
+      renameSync(before, after);
+      const renamed = discoverProjectScopes(
+        pluginInstanceId,
+        allowed,
+        [{ id: "after", cwd: after }],
+        { temporaryRoots: [] },
+      ).candidates[0]!;
+      expect(renamed).toMatchObject({
+        scopeKey: initial.scopeKey,
+        localRoot: realpathSync.native(after),
+        displayName: "new-name",
+      });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps one non-Git project permission after its directory is moved", () => {
+    const base = mkdtempSync(resolve(tmpdir(), "partner-report-move-test-"));
+    const before = resolve(base, "first", "project");
+    const after = resolve(base, "second", "project-renamed");
+    mkdirSync(before, { recursive: true });
+    mkdirSync(resolve(base, "second"), { recursive: true });
+    try {
+      const initial = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [{ id: "before", cwd: before }],
+        { temporaryRoots: [] },
+      ).candidates[0]!;
+      const allowed = localScope([
+        {
+          ...initial,
+          status: "allowed",
+          effectiveFrom: "2026-08-01T00:00:00.000Z",
+          firstSeenPeriodKey: "2026-W31",
+          firstSeenAt: "2026-08-01T00:00:00.000Z",
+          lastSeenAt: "2026-08-01T00:00:00.000Z",
+        },
+      ]);
+      renameSync(before, after);
+      const moved = discoverProjectScopes(
+        pluginInstanceId,
+        allowed,
+        [{ id: "after", cwd: after }],
+        { temporaryRoots: [] },
+      ).candidates[0]!;
+      expect(moved).toMatchObject({
+        scopeKey: initial.scopeKey,
+        localRoot: realpathSync.native(after),
+        displayName: "project-renamed",
+      });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a different project recreated at a deleted path as new", () => {
+    const base = mkdtempSync(
+      resolve(tmpdir(), "partner-report-recreate-test-"),
+    );
+    const root = resolve(base, "project");
+    mkdirSync(root);
+    try {
+      const initial = discoverProjectScopes(
+        pluginInstanceId,
+        localScope(),
+        [{ id: "before", cwd: root }],
+        { temporaryRoots: [] },
+      ).candidates[0]!;
+      const allowed = localScope([
+        {
+          ...initial,
+          status: "allowed",
+          effectiveFrom: "2026-08-01T00:00:00.000Z",
+          firstSeenPeriodKey: "2026-W31",
+          firstSeenAt: "2026-08-01T00:00:00.000Z",
+          lastSeenAt: "2026-08-01T00:00:00.000Z",
+        },
+      ]);
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      const recreated = discoverProjectScopes(
+        pluginInstanceId,
+        allowed,
+        [{ id: "after", cwd: root }],
+        { temporaryRoots: [] },
+      ).candidates[0]!;
+      expect(recreated.scopeKey).not.toBe(initial.scopeKey);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a deleted project's permission record without discovering it", () => {
+    const existing = localScope([
+      {
+        scopeKey: "7".repeat(64),
+        displayName: "deleted-project",
+        status: "allowed",
+        effectiveFrom: "2026-08-01T00:00:00.000Z",
+        firstSeenPeriodKey: "2026-W31",
+        firstSeenAt: "2026-08-01T00:00:00.000Z",
+        lastSeenAt: "2026-08-01T00:00:00.000Z",
+        sessionCount: 1,
+        localRoot: "/workspace/deleted-project",
+      },
+    ]);
+    const discovery = discoverProjectScopes(pluginInstanceId, existing, [], {
+      temporaryRoots: [],
+    });
+    expect(discovery.candidates).toEqual([]);
+    expect(existing.entries).toHaveLength(1);
+  });
+
+  it("maps an old Session path to the original project after deletion", () => {
+    const base = mkdtempSync(resolve(tmpdir(), "partner-report-delete-test-"));
+    const root = resolve(base, "deleted-project");
+    mkdirSync(root);
+    const initial = discoverProjectScopes(
+      pluginInstanceId,
+      localScope(),
+      [{ id: "before", cwd: root }],
+      { temporaryRoots: [] },
+    ).candidates[0]!;
+    const allowed = localScope([
+      {
+        ...initial,
+        status: "allowed",
+        effectiveFrom: "2026-08-01T00:00:00.000Z",
+        firstSeenPeriodKey: "2026-W31",
+        firstSeenAt: "2026-08-01T00:00:00.000Z",
+        lastSeenAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+    try {
+      const afterDeletion = discoverProjectScopes(
+        pluginInstanceId,
+        allowed,
+        [{ id: "old-session", cwd: root }],
+        { temporaryRoots: [] },
+      );
+      expect(afterDeletion.candidates[0]).toMatchObject({
+        scopeKey: initial.scopeKey,
+        localIdentity: initial.localIdentity,
+      });
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

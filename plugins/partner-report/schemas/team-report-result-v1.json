@@ -25,7 +25,11 @@
             "properties": {
               "key": {
                 "type": "string",
-                "enum": ["summary", "project_progress", "risks"]
+                "enum": [
+                  "summary",
+                  "project_progress",
+                  "risks"
+                ]
               },
               "title": {
                 "type": "string",
@@ -55,13 +59,20 @@
                       "minItems": 1
                     }
                   },
-                  "required": ["claim", "individualReportIds"],
+                  "required": [
+                    "claim",
+                    "individualReportIds"
+                  ],
                   "additionalProperties": false
                 },
                 "default": []
               }
             },
-            "required": ["key", "title", "markdown"],
+            "required": [
+              "key",
+              "title",
+              "markdown"
+            ],
             "additionalProperties": false
           },
           "minItems": 3,
@@ -104,7 +115,10 @@
             },
             "producer": {
               "type": "string",
-              "enum": ["codex-skill", "data-platform"]
+              "enum": [
+                "codex-skill",
+                "data-platform"
+              ]
             },
             "modelVersion": {
               "type": "string",

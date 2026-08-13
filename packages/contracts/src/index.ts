@@ -40,6 +40,10 @@ export const projectIdentitySchema: z.ZodTypeAny = z
     ]),
     rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     rootName: z.string().min(1).max(120).optional(),
+    scopeKey: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict()
   .superRefine((project, context) => {

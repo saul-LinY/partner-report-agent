@@ -4091,7 +4091,8 @@ var projectIdentitySchema = external_exports.object({
     "unassigned"
   ]),
   rootFingerprint: external_exports.string().regex(/^[a-f0-9]{64}$/),
-  rootName: external_exports.string().min(1).max(120).optional()
+  rootName: external_exports.string().min(1).max(120).optional(),
+  scopeKey: external_exports.string().regex(/^[a-f0-9]{64}$/).optional()
 }).strict().superRefine((project, context) => {
   if (project.matchMethod === "path_discovered" && !project.rootName) {
     context.addIssue({
@@ -4397,7 +4398,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-var PLUGIN_VERSION = "0.4.5";
+var PLUGIN_VERSION = "1.0.0";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
 var PERSISTENT_DATA_FILES = [
@@ -5483,7 +5484,7 @@ function nearestGitRoot(cwd) {
     current = parent;
   }
 }
-function mappedProject(cwd, projects) {
+function mappedProject(cwd, projects, stableScope) {
   if (!cwd) {
     return {
       id: null,
@@ -5493,6 +5494,30 @@ function mappedProject(cwd, projects) {
     };
   }
   const absoluteCwd = resolve3(cwd);
+  if (stableScope) {
+    const discoveredRoot2 = nearestGitRoot(absoluteCwd) ?? absoluteCwd;
+    const rootFingerprint2 = sha256(discoveredRoot2);
+    const stableExternalId = `scope:${stableScope.pluginInstanceId}:${stableScope.scopeKey}`;
+    const known2 = projects.find(
+      (project) => (project.external_ids ?? []).includes(stableExternalId)
+    );
+    if (known2) {
+      return {
+        id: known2.id,
+        name: known2.name,
+        matchMethod: discoveredRoot2 === absoluteCwd ? "exact_root" : "descendant_path",
+        rootFingerprint: rootFingerprint2
+      };
+    }
+    const rootName2 = basename(discoveredRoot2) || "\u9879\u76EE";
+    return {
+      id: null,
+      name: rootName2,
+      matchMethod: "path_discovered",
+      rootFingerprint: rootFingerprint2,
+      rootName: rootName2
+    };
+  }
   const configuredMatches = projects.flatMap(
     (project) => (project.allowed_paths ?? []).filter((root) => withinPath(absoluteCwd, root)).map((root) => ({ project, root: resolve3(root) }))
   ).sort((left, right) => right.root.length - left.root.length);
@@ -5543,7 +5568,12 @@ function buildSessionJob(input) {
     fallbackOccurredAt
   );
   if (selected.length === 0) return null;
-  const project = mappedProject(input.cwd, input.projects);
+  const project = mappedProject(
+    input.cwd,
+    input.projects,
+    input.scopeKey ? { pluginInstanceId: input.pluginInstanceId, scopeKey: input.scopeKey } : void 0
+  );
+  if (input.scopeKey) project.scopeKey = input.scopeKey;
   const activity = {
     startedAt: selected[0].occurredAt ?? fallbackOccurredAt,
     endedAt: selected.at(-1).occurredAt ?? fallbackOccurredAt
@@ -5698,6 +5728,7 @@ import {
   chmodSync as chmodSync3,
   existsSync as existsSync4,
   lstatSync,
+  statSync as statSync2,
   realpathSync,
   renameSync as renameSync2,
   writeFileSync as writeFileSync3,
@@ -5713,7 +5744,19 @@ function canonicalPath(path) {
   try {
     return realpathSync.native(absolute);
   } catch {
-    return absolute;
+    let existingParent = absolute;
+    const missingSegments = [];
+    while (!existsSync4(existingParent)) {
+      const parent = dirname2(existingParent);
+      if (parent === existingParent) return absolute;
+      missingSegments.unshift(basename2(existingParent));
+      existingParent = parent;
+    }
+    try {
+      return resolve4(realpathSync.native(existingParent), ...missingSegments);
+    } catch {
+      return absolute;
+    }
   }
 }
 function withinPath2(candidate, root) {
@@ -5746,6 +5789,58 @@ function outermostGitRoot(cwd) {
     if (parent === current) return outermost;
     current = parent;
   }
+}
+function normalizedGitRemote(value) {
+  const remote = value.trim();
+  if (!remote || remote.startsWith("/") || remote.startsWith("file:"))
+    return null;
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/.exec(remote);
+  if (scp?.[1] && scp[2])
+    return `${scp[1].toLowerCase()}/${scp[2].replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "")}`;
+  try {
+    const url = new URL(remote);
+    if (!url.hostname) return null;
+    return `${url.hostname.toLowerCase()}/${url.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "")}`;
+  } catch {
+    return null;
+  }
+}
+function gitRemoteIdentity(root) {
+  try {
+    const config = readFileSync3(resolve4(root, ".git", "config"), "utf8");
+    let remoteName = null;
+    const remotes = /* @__PURE__ */ new Map();
+    for (const line of config.split(/\r?\n/)) {
+      const section = /^\s*\[([^\]]+)]\s*$/.exec(line);
+      if (section) {
+        remoteName = /^remote\s+"([^"]+)"$/i.exec(section[1] ?? "")?.[1] ?? null;
+        continue;
+      }
+      if (!remoteName) continue;
+      const match = /^\s*url\s*=\s*(.+?)\s*$/.exec(line);
+      const normalized = match?.[1] ? normalizedGitRemote(match[1]) : null;
+      if (normalized) remotes.set(remoteName.toLowerCase(), normalized);
+    }
+    const stableRemote = remotes.get("origin") ?? [...remotes.values()].sort()[0];
+    return stableRemote ? `git-remote:${stableRemote}` : null;
+  } catch {
+    return null;
+  }
+}
+function projectLocalIdentity(scopeSalt, localRoot) {
+  const gitRoot = outermostGitRoot(localRoot);
+  const remote = gitRoot ? gitRemoteIdentity(gitRoot) : null;
+  let material = remote;
+  if (!material) {
+    try {
+      const stat = statSync2(gitRoot ?? localRoot, { bigint: true });
+      const birthtime = stat.birthtimeNs ?? stat.birthtimeMs;
+      material = `filesystem:${stat.dev}:${stat.ino}:${birthtime}`;
+    } catch {
+      return void 0;
+    }
+  }
+  return createHmac("sha256", scopeSalt).update(`partner-report/project-local-identity/v1:${material}`).digest("hex");
 }
 function defaultTemporaryRoots() {
   const codexHomes = new Set(
@@ -5807,7 +5902,7 @@ function isLocalProjectScope(value, pluginInstanceId) {
     return false;
   }
   return value.entries.every(
-    (entry) => isRecord(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string") && (entry.environmentKind === void 0 || ["configured", "git", "unknown"].includes(
+    (entry) => isRecord(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string") && (entry.localIdentity === void 0 || typeof entry.localIdentity === "string" && /^[a-f0-9]{64}$/.test(entry.localIdentity)) && (entry.environmentKind === void 0 || ["configured", "git", "unknown"].includes(
       String(entry.environmentKind)
     )) && (entry.lastSyncedStatus === void 0 || ["pending", "allowed", "denied"].includes(
       String(entry.lastSyncedStatus)
@@ -5845,6 +5940,7 @@ function mergeRemoteProjectScope(local, remote) {
       entry.scopeKey,
       {
         localRoot: entry.localRoot,
+        localIdentity: entry.localIdentity,
         environmentKind: entry.environmentKind,
         backfilledPeriodKey: entry.backfilledPeriodKey
       }
@@ -5857,6 +5953,7 @@ function mergeRemoteProjectScope(local, remote) {
     entries: remote.entries.map((entry) => ({
       ...entry,
       localRoot: localMetadata.get(entry.scopeKey)?.localRoot ?? null,
+      ...localMetadata.get(entry.scopeKey)?.localIdentity ? { localIdentity: localMetadata.get(entry.scopeKey).localIdentity } : {},
       lastSyncedStatus: entry.status,
       ...localMetadata.get(entry.scopeKey)?.backfilledPeriodKey !== void 0 ? {
         backfilledPeriodKey: localMetadata.get(entry.scopeKey).backfilledPeriodKey
@@ -5917,7 +6014,8 @@ function discoverProjectScopes(pluginInstanceId, local, summaries, options = {})
     return {
       ...entry,
       localRoot,
-      logicalRoot: environment.localRoot ?? localRoot
+      logicalRoot: environment.localRoot ?? localRoot,
+      localIdentity: entry.localIdentity ?? projectLocalIdentity(local.scopeSalt, localRoot)
     };
   }).sort((left, right) => right.localRoot.length - left.localRoot.length);
   const discovered = /* @__PURE__ */ new Map();
@@ -5927,20 +6025,37 @@ function discoverProjectScopes(pluginInstanceId, local, summaries, options = {})
     if (!summary.cwd || !environment.localRoot || environment.kind === "temporary")
       continue;
     const cwd = canonicalPath(summary.cwd);
-    const pathInherited = knownRoots.find(
+    const pathMatch = knownRoots.find(
       (entry) => withinPath2(cwd, entry.localRoot)
     );
-    const logicalMatches = knownRoots.filter(
-      (entry) => entry.logicalRoot === environment.localRoot
+    const environmentIdentity = projectLocalIdentity(
+      local.scopeSalt,
+      environment.localRoot
     );
-    const inherited = pathInherited ?? (logicalMatches.length === 1 ? logicalMatches[0] : void 0);
-    const localRoot = inherited && environment.kind === "unknown" ? inherited.localRoot : environment.localRoot;
-    const scopeKey = inherited?.scopeKey ?? anonymousProjectScopeKey(pluginInstanceId, local.scopeSalt, localRoot);
+    const pathIdentity = pathMatch ? projectLocalIdentity(local.scopeSalt, pathMatch.localRoot) : void 0;
+    const pathInherited = pathMatch && (!pathMatch.localIdentity || !pathIdentity || pathMatch.localIdentity === pathIdentity) ? pathMatch : void 0;
+    const logicalMatches = knownRoots.filter(
+      (entry) => entry.logicalRoot === environment.localRoot && (!entry.localIdentity || entry.localIdentity === environmentIdentity)
+    );
+    const identityMatches = environmentIdentity ? knownRoots.filter(
+      (entry) => entry.localIdentity === environmentIdentity
+    ) : [];
+    const inherited = pathInherited ?? (logicalMatches.length === 1 ? logicalMatches[0] : void 0) ?? (identityMatches.length === 1 ? identityMatches[0] : void 0);
+    const localRoot = pathInherited && environment.kind === "unknown" ? pathInherited.localRoot : environment.localRoot;
+    const localIdentity = localRoot === environment.localRoot ? environmentIdentity : projectLocalIdentity(local.scopeSalt, localRoot);
+    const scopeKey = inherited?.scopeKey ?? anonymousProjectScopeKey(
+      pluginInstanceId,
+      local.scopeSalt,
+      localIdentity ?? `path:${localRoot}`
+    );
     const current = discovered.get(scopeKey);
+    const preferredLocalRoot = current?.localIdentity && !localIdentity ? current.localRoot : localRoot;
+    const preferredLocalIdentity = localIdentity ?? inherited?.localIdentity ?? current?.localIdentity;
     discovered.set(scopeKey, {
       scopeKey,
-      displayName: inherited?.displayName ?? (basename2(localRoot) || "\u672A\u547D\u540D\u9879\u76EE"),
-      localRoot,
+      displayName: basename2(preferredLocalRoot) || inherited?.displayName || current?.displayName || "\u672A\u547D\u540D\u9879\u76EE",
+      localRoot: preferredLocalRoot,
+      ...preferredLocalIdentity ? { localIdentity: preferredLocalIdentity } : {},
       sessionCount: (current?.sessionCount ?? 0) + 1,
       environmentKind: environment.kind
     });
@@ -5968,6 +6083,7 @@ function mergeDiscoveredRoots(local, candidates) {
       candidate.scopeKey,
       {
         localRoot: candidate.localRoot,
+        localIdentity: candidate.localIdentity,
         environmentKind: candidate.environmentKind
       }
     ])
@@ -5980,6 +6096,7 @@ function mergeDiscoveredRoots(local, candidates) {
       return {
         ...entry,
         localRoot: discovered?.localRoot ?? entry.localRoot,
+        ...discovered?.localIdentity ? { localIdentity: discovered.localIdentity } : entry.localIdentity ? { localIdentity: entry.localIdentity } : {},
         ...environmentKind ? { environmentKind } : {}
       };
     })
@@ -7031,6 +7148,34 @@ async function collectStart() {
     metadataEligible,
     { configuredRoots }
   );
+  const existingScopeKeys = new Set(
+    localScope.entries.map((entry) => entry.scopeKey)
+  );
+  const existingCandidates = allThreadDiscovery.candidates.filter(
+    (candidate) => existingScopeKeys.has(candidate.scopeKey)
+  );
+  if (existingCandidates.length > 0) {
+    const registeredScope = await authenticatedRequest(
+      "/v1/project-scope/candidates",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          periodKey: policy.currentPeriod.period_key,
+          initialDiscovery: false,
+          candidates: existingCandidates.map((candidate) => ({
+            scopeKey: candidate.scopeKey,
+            displayName: candidate.displayName,
+            sessionCount: candidate.sessionCount
+          }))
+        })
+      }
+    );
+    localScope = mergeDiscoveredRoots(
+      mergeRemoteProjectScope(localScope, registeredScope),
+      existingCandidates
+    );
+    saveLocalProjectScope(localScope);
+  }
   const regularQueue = authorizedProjectThreads(
     inWindow,
     allThreadDiscovery.threadScopes,
@@ -7738,6 +7883,7 @@ async function collectNext() {
         updatedAt: thread.updatedAt ?? summary.updatedAt,
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
+        scopeKey: summary.scopeKey,
         period: summary.collectionStartsAt || summary.collectionEndsAt ? {
           ...manifest.period,
           starts_at: summary.collectionStartsAt ?? manifest.period.starts_at,

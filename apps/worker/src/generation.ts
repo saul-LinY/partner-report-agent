@@ -302,11 +302,55 @@ function validateAggregation(job: Job, output: unknown) {
       throw new Error(`PROJECT_DESCRIPTION_CHANGED:${group.projectKey}`);
     if (bucket.projectDescription && !group.projectDescription.trim())
       throw new Error(`PROJECT_DESCRIPTION_EMPTY:${group.projectKey}`);
+    const supportedStatus = projectStatusWithCompletionSupport(
+      group.status,
+      bucket,
+    );
+    if (supportedStatus !== group.status) {
+      group.status = supportedStatus;
+      if (!result.qualityWarnings.includes("COMPLETION_EVIDENCE_MISSING"))
+        result.qualityWarnings.push("COMPLETION_EVIDENCE_MISSING");
+    }
   }
   for (const projectKey of buckets.keys())
     if (!used.has(projectKey))
       throw new Error(`PROJECT_BUCKET_MISSING:${projectKey}`);
   return result;
+}
+
+export function bucketHasCompletionSupport(bucket: {
+  facts?: Array<{ payload?: Record<string, unknown> }>;
+}) {
+  return (bucket.facts ?? []).some(({ payload = {} }) => {
+    if (
+      payload.completionSupport === "evidence" ||
+      payload.factOrigin === "partner_supplied"
+    )
+      return true;
+    if (
+      payload.recordType !== "session_contribution" ||
+      !Array.isArray(payload.contributions)
+    )
+      return false;
+    return payload.contributions.some(
+      (contribution) =>
+        contribution &&
+        typeof contribution === "object" &&
+        (contribution as Record<string, unknown>).kind === "outcome" &&
+        ["high", "medium"].includes(
+          String((contribution as Record<string, unknown>).confidence),
+        ),
+    );
+  });
+}
+
+export function projectStatusWithCompletionSupport(
+  status: string,
+  bucket: { facts?: Array<{ payload?: Record<string, unknown> }> },
+) {
+  return status === "completed" && !bucketHasCompletionSupport(bucket)
+    ? "awaiting_validation"
+    : status;
 }
 
 function projectCardPayload(group: any, bucket?: any) {

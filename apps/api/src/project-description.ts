@@ -30,8 +30,8 @@ const projectDescriptionStateSchema = z
   })
   .strict();
 
-function pathExternalId(rootFingerprint: string) {
-  return `path-sha256:${rootFingerprint}`;
+function scopeExternalId(pluginInstanceId: string, scopeKey: string) {
+  return `scope:${pluginInstanceId}:${scopeKey}`;
 }
 
 async function allowedScope(
@@ -74,7 +74,7 @@ export async function loadProjectDescriptionState(
       ) candidate on true
       where p.tenant_id = ${identity.tenantId} and p.team_id = ${identity.teamId}
         and p.status = 'active'
-        and p.external_ids @> ${JSON.stringify([pathExternalId(requested.rootFingerprint)])}::jsonb
+        and p.external_ids @> ${JSON.stringify([scopeExternalId(identity.pluginInstanceId, requested.scopeKey)])}::jsonb
       limit 1
     `;
     const project = rows[0];
@@ -124,6 +124,7 @@ export async function registerProjectDescriptionCandidate(
       matchMethod: "path_discovered",
       rootFingerprint: input.rootFingerprint,
       rootName: scope.display_name,
+      scopeKey: input.scopeKey,
     });
     if (!project)
       throw new ApiError(
