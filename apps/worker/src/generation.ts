@@ -583,8 +583,11 @@ async function applyTeamReport(
     `;
     await tx`
       update agent_jobs set status = 'CANCELLED', lease_until = null,
-        error_code = 'SUPERSEDED_BY_COMPLETED_TEAM_REPORT',
-        error_message = 'Superseded by a completed Team Report job', updated_at = now()
+        error_code = coalesce(error_code, 'SUPERSEDED_BY_COMPLETED_TEAM_REPORT'),
+        error_message = coalesce(
+          error_message,
+          'Superseded by a completed Team Report job'
+        ), updated_at = now()
       where tenant_id = ${job.tenant_id} and id <> ${job.id}
         and type in ('GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT')
         and input_payload->>'reportId' = ${report.id}

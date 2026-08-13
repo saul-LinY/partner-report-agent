@@ -422,18 +422,20 @@ suite("synthetic report generation pipeline", () => {
     expect(lastTeamReportInstructions).toContain(
       `the complete allowlist is ["${reportId}"]`,
     );
-    expect(lastTeamReportInstructions).toContain("2026-08-11.team.v13");
+    expect(lastTeamReportInstructions).toContain("2026-08-12.team.v14");
     expect(teamReports[0].payload.markdown).toContain("### Synthetic Partner");
     expect(
       teamReports[0].payload.markdown.indexOf("### Synthetic Partner"),
     ).toBeLessThan(teamReports[0].payload.markdown.indexOf("#### 未识别项目"));
     const duplicateJobs = await sql<any[]>`
-      select status, error_code from agent_jobs where id = ${duplicateTeamJob}
+      select status, error_code, error_message
+      from agent_jobs where id = ${duplicateTeamJob}
     `;
     expect(duplicateJobs).toEqual([
       {
         status: "CANCELLED",
-        error_code: "SUPERSEDED_BY_COMPLETED_TEAM_REPORT",
+        error_code: "CENTRAL_GENERATION_FAILED",
+        error_message: "Synthetic duplicate failure",
       },
     ]);
     const periods = await sql<any[]>`

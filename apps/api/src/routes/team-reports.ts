@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { buildTeamReportIndividualReports } from "@partner-report/contracts";
 import { sqlClient as sql } from "@partner-report/db";
 import { ApiError, audit, requireWebActor, stableJsonHash } from "../common.js";
 
@@ -12,7 +13,7 @@ type IndividualReportSourceRow = {
   report_id: string | null;
   payload: unknown | null;
   work_item_snapshot: {
-    workItems?: Array<{ title?: unknown }>;
+    workItems?: unknown;
     noReportableActivity?: boolean;
   } | null;
 };
@@ -62,6 +63,14 @@ async function enqueueTeamReportForPeriod(
     );
   if (input.requireAllLocked && missingPartnerIds.length > 0) return null;
 
+  const approvedProjects = await tx<
+    Array<{ id: string; name: string; description: string }>
+  >`
+      select id, name, description from projects
+      where tenant_id = ${input.tenantId} and team_id = ${input.teamId}
+        and status = 'active' and description is not null
+    `;
+
   const previousRows = await tx<any[]>`
     select trv.id as version_id, previous_period.period_key, trv.payload
     from report_periods previous_period
@@ -79,26 +88,16 @@ async function enqueueTeamReportForPeriod(
     limit 1
   `;
   const source = {
-    individualReports: submitted.map((row) => ({
-      partnerId: row.partner_id,
-      partnerName: row.partner_name,
-      reportId: row.report_id,
-      payload: row.payload,
-      noReportableActivity:
-        row.work_item_snapshot?.noReportableActivity === true,
-      projectNames: [
-        ...new Set(
-          (Array.isArray(row.work_item_snapshot?.workItems)
-            ? row.work_item_snapshot.workItems
-            : []
-          )
-            .map((item) =>
-              typeof item.title === "string" ? item.title.trim() : "",
-            )
-            .filter(Boolean),
-        ),
-      ],
-    })),
+    individualReports: buildTeamReportIndividualReports(
+      submitted.map((row) => ({
+        partnerId: row.partner_id,
+        partnerName: row.partner_name,
+        reportId: row.report_id!,
+        payload: row.payload,
+        workItemSnapshot: row.work_item_snapshot,
+      })),
+      approvedProjects,
+    ),
     missingPartnerIds,
     previousTeamReport: previousRows[0] ?? null,
   };

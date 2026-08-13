@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+export { buildTeamReportIndividualReports } from "./team-report-source.js";
+export type {
+  TeamReportSourceIndividualReport,
+  TeamReportSourceProject,
+} from "./team-report-source.js";
+
 export const idSchema: z.ZodTypeAny = z.string().uuid();
 export const isoDateTimeSchema: z.ZodTypeAny = z
   .string()

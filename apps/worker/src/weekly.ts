@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { individualReportResultSchema } from "@partner-report/contracts";
+import {
+  buildTeamReportIndividualReports,
+  individualReportResultSchema,
+} from "@partner-report/contracts";
 import { stableJsonHash } from "@partner-report/contracts/hash";
 import {
   DEFAULT_WEEKLY_PERIOD_RULE,
@@ -532,15 +535,13 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
       const missingPartnerIds = reportRows
         .filter((row) => !row.report_id || !row.payload)
         .map((row) => row.partner_id);
-      const approvedProjectDescriptions = new Map(
-        (
-          await tx<Array<{ id: string; name: string; description: string }>>`
-            select id, name, description from projects
-            where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
-              and status = 'active' and description is not null
-          `
-        ).map((project) => [project.id, project]),
-      );
+      const approvedProjects = await tx<
+        Array<{ id: string; name: string; description: string }>
+      >`
+          select id, name, description from projects
+          where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
+            and status = 'active' and description is not null
+        `;
       if (reportRows.length === 0 || missingPartnerIds.length > 0) return 0;
       const previousRows = await tx<any[]>`
         select trv.id as version_id, previous_period.period_key, trv.payload
@@ -559,48 +560,16 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
         limit 1
       `;
       const source = {
-        individualReports: submitted.map((row) => ({
-          partnerId: row.partner_id,
-          partnerName: row.partner_name,
-          reportId: row.report_id,
-          payload: row.payload,
-          noReportableActivity:
-            row.work_item_snapshot?.noReportableActivity === true,
-          projectNames: [
-            ...new Set(
-              (Array.isArray(row.work_item_snapshot?.workItems)
-                ? row.work_item_snapshot.workItems
-                : []
-              )
-                .map((item: any) =>
-                  typeof item.title === "string" ? item.title.trim() : "",
-                )
-                .filter(Boolean),
-            ),
-          ],
-          projectDescriptions: [
-            ...new Map(
-              (Array.isArray(row.work_item_snapshot?.workItems)
-                ? row.work_item_snapshot.workItems
-                : []
-              )
-                .map((item: any) => {
-                  const project =
-                    typeof item.project_id === "string"
-                      ? approvedProjectDescriptions.get(item.project_id)
-                      : null;
-                  return [
-                    project?.name ??
-                      (typeof item.title === "string" ? item.title.trim() : ""),
-                    project?.description?.trim() ?? "",
-                  ];
-                })
-                .filter(([name, description]: string[]) =>
-                  Boolean(name && description),
-                ),
-            ).entries(),
-          ].map(([name, description]) => ({ name, description })),
-        })),
+        individualReports: buildTeamReportIndividualReports(
+          submitted.map((row) => ({
+            partnerId: row.partner_id,
+            partnerName: row.partner_name,
+            reportId: row.report_id,
+            payload: row.payload,
+            workItemSnapshot: row.work_item_snapshot,
+          })),
+          approvedProjects,
+        ),
         missingPartnerIds,
         previousTeamReport: previousRows[0] ?? null,
       };

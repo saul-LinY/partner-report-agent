@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
@@ -20,6 +20,19 @@ type ReviewData = {
 };
 
 type Decision = "approve" | "exclude";
+
+type ReviewCompletionResult = {
+  reportId?: string;
+  ignored?: boolean;
+};
+
+export function reviewNeedsCompletion(data: ReviewData | undefined) {
+  return Boolean(
+    data?.review.state === "IN_PROGRESS" &&
+      data.items.length > 0 &&
+      data.items.every((item) => item.review_status !== "pending"),
+  );
+}
 
 const statusLabels: Record<string, string> = {
   discussion: "讨论",
@@ -44,6 +57,7 @@ export function ReviewPage() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
+  const attemptedCompletion = useRef<string | null>(null);
   const query = useQuery({
     queryKey: ["review", reviewId],
     queryFn: () => api<ReviewData>(`/v1/reviews/${reviewId}`),
@@ -103,6 +117,32 @@ export function ReviewPage() {
       queryClient.invalidateQueries({ queryKey: ["review", reviewId] }),
   });
 
+  const completionMutation = useMutation({
+    mutationFn: () =>
+      api<ReviewCompletionResult>(`/v1/reviews/${reviewId}/complete`, {
+        method: "POST",
+        body: JSON.stringify({ baseVersion: query.data!.review.version }),
+      }),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["review", reviewId] });
+      await queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+      if (result.reportId) navigate(`/partner/report/${result.reportId}`);
+      else if (result.ignored) {
+        window.localStorage.removeItem("partner-report-simulated-partner");
+        navigate("/admin/reviews");
+      }
+    },
+  });
+
+  const completionKey = reviewNeedsCompletion(query.data)
+    ? `${reviewId}:${query.data!.review.version}`
+    : null;
+  useEffect(() => {
+    if (!completionKey || attemptedCompletion.current === completionKey) return;
+    attemptedCompletion.current = completionKey;
+    completionMutation.mutate();
+  }, [completionKey]);
+
   const regenerateMutation = useMutation({
     mutationFn: () =>
       api(`/v1/reviews/${reviewId}/items/${selected.id}/regenerate`, {
@@ -161,7 +201,25 @@ export function ReviewPage() {
           </p>
         </div>
       </header>
-      <ErrorBanner error={decisionMutation.error ?? regenerateMutation.error} />
+      <ErrorBanner
+        error={
+          decisionMutation.error ??
+          regenerateMutation.error ??
+          completionMutation.error
+        }
+      />
+
+      {reviewNeedsCompletion(data) && completionMutation.isError && (
+        <div className="review-completion-retry">
+          <Button
+            icon={<RefreshCw size={16} />}
+            loading={completionMutation.isPending}
+            onClick={() => completionMutation.mutate()}
+          >
+            继续生成报告
+          </Button>
+        </div>
+      )}
 
       <div className="review-layout project-card-review">
         <aside className="item-list">
