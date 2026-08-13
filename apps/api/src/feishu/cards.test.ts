@@ -277,6 +277,7 @@ describe("Feishu JSON 2.0 cards", () => {
     ]);
     expect(JSON.stringify(card)).toContain("项目描述");
     expect(JSON.stringify(card)).toContain("用于采集、审核并汇总");
+    expect(JSON.stringify(card)).not.toContain("状态：进行中");
     expect(findByElementId(card, "review_regen_input")).toMatchObject({
       tag: "input",
       name: "instruction",

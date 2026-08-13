@@ -825,7 +825,6 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
           safeMarkdownText(input.item.projectDescription, 600),
         ]
       : []),
-    `状态：${safeMarkdownText(input.item.status, 80)}`,
     "",
     safeMarkdownText(input.item.overview, 500),
     ...(dailyProgress.length > 0 ? ["", "**每日进展**", ...dailyProgress] : []),
