@@ -6,7 +6,7 @@ var __export = (target, all) => {
 };
 
 // src/cli.ts
-import { createHash as createHash3, randomBytes as randomBytes2, randomUUID } from "node:crypto";
+import { createHash as createHash3, randomBytes as randomBytes2, randomUUID as randomUUID2 } from "node:crypto";
 import {
   chmodSync as chmodSync4,
   mkdtempSync,
@@ -4388,12 +4388,16 @@ var pluginDiagnosticBatchSchema = external_exports.object({
 
 // src/config.ts
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { homedir } from "node:os";
@@ -4479,17 +4483,62 @@ function migratePersistentDataDirectory(source, target) {
     chmodSync(targetPath, 384);
   }
 }
+function prepareWritableDataDirectory(directory) {
+  const location = resolve(directory);
+  mkdirSync(location, { recursive: true, mode: 448 });
+  const probePath = resolve(location, `.write-probe-${randomUUID()}`);
+  let descriptor = null;
+  try {
+    descriptor = openSync(probePath, "wx", 384);
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+    if (existsSync(probePath)) unlinkSync(probePath);
+  }
+  return location;
+}
+function selectWritableDataDirectory(candidates, prepare = prepareWritableDataDirectory) {
+  const uniqueCandidates = [
+    ...new Set(candidates.filter((value) => Boolean(value)))
+  ];
+  let lastError;
+  for (const candidate of uniqueCandidates) {
+    try {
+      return prepare(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw Object.assign(
+    new Error(
+      "Partner Report \u672C\u5730\u6570\u636E\u76EE\u5F55\u4E0D\u53EF\u5199\u3002\u8BF7\u5141\u8BB8\u672C\u6B21\u4EFB\u52A1\u5199\u5165\u63D2\u4EF6\u6570\u636E\u76EE\u5F55\u540E\u91CD\u8BD5\u3002",
+      { cause: lastError }
+    ),
+    { code: "LOCAL_DATA_WRITE_PERMISSION_REQUIRED" }
+  );
+}
 function dataDirectory() {
   const runtimeDirectory = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   const explicitDirectory = process.env.PARTNER_REPORT_DATA;
   const stableDirectory = resolve(homedir(), ".partner-report-data");
   const rememberedDirectory = useKeychain() ? readKeychainValue(DATA_DIRECTORY_SERVICE) : null;
-  const location = resolve(explicitDirectory ?? stableDirectory);
-  mkdirSync(location, { recursive: true, mode: 448 });
+  const existingRememberedDirectory = rememberedDirectory && existsSync(rememberedDirectory) ? rememberedDirectory : null;
+  const location = selectWritableDataDirectory(
+    explicitDirectory ? [explicitDirectory] : [existingRememberedDirectory, stableDirectory, runtimeDirectory]
+  );
   if (!explicitDirectory) {
-    for (const legacyDirectory of [rememberedDirectory, runtimeDirectory]) {
+    for (const legacyDirectory of [
+      rememberedDirectory,
+      stableDirectory,
+      runtimeDirectory
+    ]) {
       if (legacyDirectory)
         migratePersistentDataDirectory(legacyDirectory, location);
+    }
+    if (useKeychain() && (!rememberedDirectory || resolve(rememberedDirectory) !== location)) {
+      try {
+        saveKeychainValue(DATA_DIRECTORY_SERVICE, location);
+      } catch {
+      }
     }
   }
   return location;
@@ -4737,7 +4786,7 @@ async function authenticatedRequest(path, init = {}) {
 
 // src/collection-config.ts
 var DEFAULT_COLLECTION_MODEL = "gpt-5.6";
-var DEFAULT_COLLECTION_REASONING_EFFORT = "low";
+var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
 var SCHEDULED_COLLECTION_PROMPT = [
   "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
@@ -4778,13 +4827,24 @@ var SCHEDULED_COLLECTION_TASK = {
   notifications: "all_runs",
   prompt: SCHEDULED_COLLECTION_PROMPT
 };
-var SCHEDULED_COLLECTION_PROMPT_POLICY = {
+var SCHEDULED_COLLECTION_TASK_POLICY = {
   automaticCheck: false,
   automaticRepair: false,
-  updateTrigger: "explicit_user_request_only",
+  createIfMissing: true,
   customPromptAllowed: true,
-  updateFields: ["prompt"],
-  preserveOtherConfiguration: true
+  promptUpdateTrigger: "explicit_user_request_only",
+  promptUpdateFields: ["prompt"],
+  fullResetTrigger: "explicit_user_request_only",
+  fullResetFields: [
+    "destination",
+    "project",
+    "schedule",
+    "model",
+    "reasoningEffort",
+    "notifications",
+    "prompt"
+  ],
+  preserveTaskIdentity: true
 };
 
 // src/collection-dedup.ts
@@ -4839,14 +4899,14 @@ import {
   readFileSync as readFileSync2,
   renameSync,
   statSync,
-  unlinkSync,
+  unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 var INITIAL_LOOKBACK_DAYS = 1;
 var INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 var INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1e3;
-var COLLECTION_LEASE_MS = 30 * 60 * 1e3;
+var COLLECTION_LEASE_MS = 5 * 60 * 1e3;
 function statePath(directory) {
   return resolve2(directory, "collection-state.json");
 }
@@ -5036,7 +5096,7 @@ function acquireCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ n
         { code: "COLLECTION_ALREADY_RUNNING" }
       );
     }
-    unlinkSync(path);
+    unlinkSync2(path);
   } else if (existsSync2(path)) {
     const age = now.getTime() - statSync(path).mtimeMs;
     if (age <= COLLECTION_LEASE_MS) {
@@ -5044,7 +5104,7 @@ function acquireCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ n
         code: "COLLECTION_ALREADY_RUNNING"
       });
     }
-    unlinkSync(path);
+    unlinkSync2(path);
   }
   const timestamp2 = now.toISOString();
   try {
@@ -5082,7 +5142,7 @@ function releaseCollectionLease(pluginInstanceId, runId, directory = dataDirecto
   const path = leasePath(directory);
   const lease = readLease(path);
   if (lease?.pluginInstanceId === pluginInstanceId && lease.runId === runId) {
-    unlinkSync(path);
+    unlinkSync2(path);
   }
 }
 
@@ -6392,8 +6452,8 @@ function scheduledTaskConfig() {
   output({
     status: "scheduled_task_config",
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    promptPolicy: SCHEDULED_COLLECTION_PROMPT_POLICY,
-    setupMode: "create_if_missing_or_update_prompt_on_explicit_request"
+    taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
+    setupMode: "create_if_missing_or_update_prompt_or_reset_task_on_explicit_request"
   });
 }
 async function performConnectivityTest(supplied) {
@@ -6584,7 +6644,7 @@ function connectedOutput(partnerId, deviceName, connectivity, projectScope) {
     connectivity,
     ...projectScope ?? {},
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    promptPolicy: SCHEDULED_COLLECTION_PROMPT_POLICY,
+    taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
     nextStep: "\u9996\u6B21\u8FDE\u63A5\u65F6\u521B\u5EFA\u7F3A\u5931\u7684\u540C\u540D Codex Scheduled Task\uFF1B\u5DF2\u6709\u4EFB\u52A1\u4FDD\u6301\u4E0D\u53D8\u3002"
   });
 }
@@ -7055,7 +7115,7 @@ async function collectStart() {
       )
     );
   }
-  const runId = randomUUID();
+  const runId = randomUUID2();
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
   acquireCollectionLease(config.pluginInstanceId, runId);
   let localState;
@@ -7500,7 +7560,7 @@ async function continueProjectDescriptionScan(runPath, manifest) {
   if (!next) return false;
   const paths = writeJob(
     runPath,
-    `project-description-${randomUUID()}`,
+    `project-description-${randomUUID2()}`,
     next.modelInput
   );
   scan.current = { ...next, ...paths, failures: 0 };
@@ -7913,7 +7973,7 @@ async function collectNext() {
         saveRun(absolute, manifest);
         continue;
       }
-      const jobId = randomUUID();
+      const jobId = randomUUID2();
       const paths = writeJob(absolute, jobId, job.modelInput);
       manifest.current = {
         jobId,

@@ -26,8 +26,8 @@ import {
 } from "./config.js";
 import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
 import {
-  SCHEDULED_COLLECTION_PROMPT_POLICY,
   SCHEDULED_COLLECTION_TASK,
+  SCHEDULED_COLLECTION_TASK_POLICY,
 } from "./collection-config.js";
 import {
   buildKnownSessionIndex,
@@ -348,8 +348,9 @@ function scheduledTaskConfig() {
   output({
     status: "scheduled_task_config",
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    promptPolicy: SCHEDULED_COLLECTION_PROMPT_POLICY,
-    setupMode: "create_if_missing_or_update_prompt_on_explicit_request",
+    taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
+    setupMode:
+      "create_if_missing_or_update_prompt_or_reset_task_on_explicit_request",
   });
 }
 
@@ -571,7 +572,7 @@ function connectedOutput(
     connectivity,
     ...(projectScope ?? {}),
     scheduledTask: SCHEDULED_COLLECTION_TASK,
-    promptPolicy: SCHEDULED_COLLECTION_PROMPT_POLICY,
+    taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
     nextStep:
       "首次连接时创建缺失的同名 Codex Scheduled Task；已有任务保持不变。",
   });

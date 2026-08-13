@@ -25,20 +25,21 @@ Skill 自身可能从 Codex 缓存路径加载，该路径不代表当前已安�
 node "<PLUGIN_PATH>/dist/cli.mjs" <COMMAND>
 ```
 
-## 定时任务 Prompt 管理
+## 定时任务管理
 
-普通聊天调用和每次定时采集都不得检查、比较或修改现有定时任务的 Prompt。用户在 Scheduled 面板中修改的 Prompt 始终保留，Prompt 与插件内置默认值不同不构成错误，也不得阻止采集、查询、权限修改或排除项管理。
+普通聊天调用和每次定时采集都不得检查、比较或修改现有定时任务的配置。用户在 Scheduled 面板中修改的配置始终保留，与插件内置默认值不同不构成错误，也不得阻止采集、查询、权限修改或排除项管理。
 
-只有以下两种情况才运行：
+只有以下三种情况才运行：
 
 ```bash
 node "<PLUGIN_PATH>/dist/cli.mjs" scheduled-task-config
 ```
 
-1. 首次 `connect` 成功后：使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。任务不存在时，严格使用 CLI 返回的 `scheduledTask` 全部字段创建；任务存在时保持原样，不比较或更新 Prompt，也不修改其他配置。
+1. 首次 `connect` 成功后：使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection` 的任务。任务不存在时，严格使用 CLI 返回的 `scheduledTask` 全部字段创建；任务存在时保持原样，不比较或修改任何配置。
 2. 用户明确要求修改该任务的 Prompt 时：查找精确名称的任务，只更新 `prompt` 字段。用户提供了新 Prompt 时使用用户原文；用户明确要求“恢复默认 Prompt”时才使用 CLI 返回的 `scheduledTask.prompt`。
+3. 用户明确要求“重置整个定时任务”或同义表达时：查找精确名称的任务，存在时在原任务上使用 CLI 返回的 `scheduledTask` 全部字段恢复默认配置；不存在时使用全部字段重新创建。不得先删除现有任务，不得创建重复任务。重置会恢复 destination、project、schedule、timezone、model、reasoning effort、notifications 和 prompt；任务身份保持不变。
 
-任何主动 Prompt 更新都不得修改 destination、project、schedule、timezone、model、reasoning effort、notifications、启用状态或其他配置。更新失败时只报告本次主动修改没有生效，不影响之后独立发起的采集。Prompt 更新只影响后续运行，当前已经启动的任务继续按当前上下文执行。
+仅修改 Prompt 时不得修改 destination、project、schedule、timezone、model、reasoning effort、notifications、启用状态或其他配置。重置整个任务时只恢复 CLI `scheduledTask` 返回的默认字段，不修改任务身份或 CLI 未返回的其他状态。主动更新失败时只报告本次修改没有生效，不影响之后独立发起的采集。配置修改只影响后续运行，当前已经启动的任务继续按当前上下文执行。
 
 ## 连接
 
@@ -52,6 +53,8 @@ node "<PLUGIN_PATH>/dist/cli.mjs" connect --server <SERVER_URL> --binding-code <
 
 在 macOS 沙箱环境中，`collect-start`、`collect-submit`、`collect-review`、`status` 等已连接命令需要读取 Keychain。如果当前客户端提供命令权限提升，第一次执行就申请必要权限，不要先进行一次注定失败的无权限探测。`KEYCHAIN_ACCESS_REQUIRED` 表示权限不足，不代表 Token 丢失；不得因此重新绑定或启用明文文件 Token。
 
+本地持久状态默认继续使用已经记忆且可写的数据目录。默认目录在后台沙箱中不可写而运行时提供 `PLUGIN_DATA` 时，CLI 会自动迁移持久状态并改用该插件可写目录，不要求用户重新绑定或重复审批；临时 Run 和租约不会迁移。`LOCAL_DATA_WRITE_PERMISSION_REQUIRED` 表示当前运行没有任何可写的插件数据目录，本次不得读取或上传 Session，也不得把它报告为提取失败；只说明定时任务需要获得插件数据目录的最小写入权限后重试。
+
 `REFRESH_TOKEN_INVALID` 表示本机 Keychain 与中台凭据已经失配。CLI 会自动向当前绑定的飞书账号发送连接恢复确认卡，并返回 `auth_recovery_required`；此时不得反复重试、删除 `project-scope.json` 或读取 Session。用户确认后，下一次定时运行会自动领取新凭据、验证连接并继续采集；用户也可以在普通 Session 中说“继续采集”立即执行。恢复只轮换原 Plugin Instance 的凭据，原有本地权限文件、中台项目权限、飞书身份和采集状态继续有效。只有自动恢复无法发起时，才请 Admin 使用“重新绑定”恢复码作为兜底。
 
 用户指出本地保存的中台地址错误或中台地址已经迁移时，使用以下命令只更新地址并验证连接，不得重新绑定：
@@ -64,7 +67,7 @@ node "<PLUGIN_PATH>/dist/cli.mjs" server-url-set --server <SERVER_URL>
 
 绑定成功后立即扫描项目元数据并向 Partner 工作邮箱发送飞书项目范围审核卡；不发送身份审核卡。项目卡投递完成或进入项目审批等待后，绑定命令结束。后续定时任务只同步已审批项目权限，权限仍为 pending 时重新发送项目范围提醒并结束，不读取 Session。
 
-首次连接时如果同名任务不存在，默认创建为：新聊天、无项目、每天北京时间 14:30、`gpt-5.6`、轻度推理、所有运行通知。任务一旦存在，普通运行不得自动修改它的 Prompt 或任何其他配置；只有用户明确要求时才按上述规则主动更新 Prompt。不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
+首次连接时如果同名任务不存在，默认创建为：新聊天、无项目、每天北京时间 14:30、`gpt-5.6`、中等推理、所有运行通知。任务一旦存在，普通运行不得自动修改它的 Prompt 或任何其他配置；只有用户明确要求时才按上述规则主动修改 Prompt 或重置整个任务。不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
 
 ## 项目采集权限
 

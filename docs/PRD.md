@@ -1,6 +1,6 @@
 # Partner Report Agent 产品需求文档
 
-> MVP 实现决策（2026-08-04，2026-08-12 修订）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 14:30、`gpt-5.6` 和 `low` 推理，并通知所有运行，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度、通知策略和 Prompt。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；普通运行不检查或修复 Prompt，只有用户明确要求时才只更新 Prompt 字段。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
+> MVP 实现决策（2026-08-04，2026-08-13 修订）：Plugin 由无项目的独立 Codex Scheduled Task 在新聊天中调用；首次创建任务默认每天北京时间 14:30、`gpt-5.6` 和 `medium` 推理，并通知所有运行，之后 Partner 可在 Scheduled 面板修改运行时间、模型、推理强度、通知策略和 Prompt。任务当前选择的模型直接逐 Session 提取，只处理包含用户问题和正常 `final_answer` 的 Complete Turn，并完成过滤、基础事实提取、项目目录识别和可靠上传；Plugin 不另行启动或配置模型，正常链路不使用每 Turn 生命周期 Hook 或高频 Runner。绑定成功即按文档中的采集范围默认启用，不设置独立上传授权步骤。Skill 仅在同名任务不存在时创建默认任务；普通运行不检查或修复任务配置。只有用户明确要求时才修改 Prompt，或在原任务上重置全部官方默认配置。跨 Session 聚合、工作卡片总结、审核修改、个人 Report 生成与重新生成统一由数据中台调用大模型完成。Partner 不登录数据中台，Team Admin 以唯一工作邮箱创建 Partner，并可为同一 Partner 分配多个绑定码。当前阶段不接入飞书和 Monitor，两轮审核由 Admin 在 Web 中代表 Partner 使用真实数据完成。
 
 > 采集状态修订（2026-08-05）：首次运行只采集最近 1 天；后续按 Plugin 本地成功运行游标和 24 小时重叠窗口筛选候选 Session。已接收与已忽略 Session 均使用用户稳定目录中的本地匿名 hash ledger 防重，并与中台状态合并；hash 只覆盖周期内完整问答，不包含标题、项目 ID 或匹配方式等可变元数据。跨运行租约阻止自动和手动采集并发。只有完整成功的 Run 才推进游标。所有 Session 提取指令以及上传的标题、摘要和贡献正文使用中文。任务级 automation memory 只保存安全运行摘要，不作为防重事实源。
 
@@ -376,7 +376,7 @@ tenant_id
    - 是否允许访问 Report Service 网络域名。
 9. 系统执行一次只读预检，展示可发现 Session 数量，不立即上传完整数据。
 10. 系统执行一次测试同步，展示读取、排除、失败和待处理数量。
-11. 测试同步成功后确认 Daily Collection Task 已启用；后续 Marketplace 兼容升级或重装复用用户稳定目录 `~/.partner-report-data`、Binding Code 和 Plugin Instance，不重复绑定，也不丢失 accepted/ignored 去重 ledger。旧版运行时 `PLUGIN_DATA` 中的持久文件自动迁移，临时 Run 和租约不迁移。
+11. 测试同步成功后确认 Daily Collection Task 已启用；后续 Marketplace 兼容升级或重装优先复用仍存在且可写的已记忆数据目录、Binding Code 和 Plugin Instance，不重复绑定，也不丢失 accepted/ignored 去重 ledger。没有可用记忆目录时默认使用 `~/.partner-report-data`；后台沙箱无法写入默认目录且运行时提供 `PLUGIN_DATA` 时，自动迁移到该插件可写目录并记住选择。迁移只包含持久文件，不包含临时 Run 和租约；所有候选目录都不可写时返回 `LOCAL_DATA_WRITE_PERMISSION_REQUIRED`，不得把权限错误误判为采集失败。
 
 ### 9.2 每日 Session 发现与本地提取
 
@@ -528,7 +528,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 插件必须可由 GitHub Marketplace 稳定 Release 通过 Codex 官方途径安装和升级；生产入口不得直接跟随未验证的 `main`。
 - Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新输入 Binding Code 或重新配置项目。
 - 用户稳定目录中的 `collection-state.json` 必须包含 Schema 版本、Plugin Instance 归属、accepted/ignored 匿名 hash ledger，并使用 `0600` 原子写入；Plugin 更新或重装必须无损复用或迁移该状态。Daily Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
-- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `collect-start` 入口；每次 Skill 运行必须通过 Codex 官方能力检查一次同名任务，任务不存在时自动创建默认任务，任务存在时只比较并修复中文 Prompt，不得比较或修改调度、模型、推理、通知、项目或其他配置。Prompt 必须声明首次 1 天边界、增量防重和 automation memory 最小化规则。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
+- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `collect-start` 入口；首次连接时通过 Codex 官方能力查找同名任务，任务不存在时自动创建默认任务，任务存在时保持原样。普通运行不得检查或修复任务配置；只有用户明确要求时才只修改 Prompt，或原地重置 destination、project、schedule、timezone、model、reasoning effort、notifications 和 prompt 的全部官方默认值，不得删除后重建或产生重复任务。Prompt 必须声明首次 1 天边界、增量防重和 automation memory 最小化规则。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
 - Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
 - Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。
 - Admin 页面必须完整展示新生成的 Binding Code，并提供一键复制；关闭生成弹窗后仍可在对应 Partner 下查看和复制。Binding Code 不得通过 Partner、Plugin 或公开接口返回。

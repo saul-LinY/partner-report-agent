@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   SCHEDULED_COLLECTION_PROMPT,
-  SCHEDULED_COLLECTION_PROMPT_POLICY,
   SCHEDULED_COLLECTION_TASK,
+  SCHEDULED_COLLECTION_TASK_POLICY,
 } from "./collection-config.js";
 
 describe("scheduled collection prompt", () => {
@@ -75,23 +75,32 @@ describe("scheduled collection prompt", () => {
         timezone: "Asia/Shanghai",
       },
       model: "gpt-5.6",
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
       notifications: "all_runs",
     });
   });
 
-  it("updates only the prompt after an explicit user request", () => {
-    expect(SCHEDULED_COLLECTION_PROMPT_POLICY).toEqual({
+  it("supports explicit prompt updates and full task resets", () => {
+    expect(SCHEDULED_COLLECTION_TASK_POLICY).toEqual({
       automaticCheck: false,
       automaticRepair: false,
-      updateTrigger: "explicit_user_request_only",
+      createIfMissing: true,
       customPromptAllowed: true,
-      updateFields: ["prompt"],
-      preserveOtherConfiguration: true,
+      promptUpdateTrigger: "explicit_user_request_only",
+      promptUpdateFields: ["prompt"],
+      fullResetTrigger: "explicit_user_request_only",
+      fullResetFields: [
+        "destination",
+        "project",
+        "schedule",
+        "model",
+        "reasoningEffort",
+        "notifications",
+        "prompt",
+      ],
+      preserveTaskIdentity: true,
     });
-    expect(SCHEDULED_COLLECTION_PROMPT_POLICY).not.toHaveProperty("frequency");
-    expect(SCHEDULED_COLLECTION_PROMPT_POLICY).not.toHaveProperty(
-      "failureMode",
-    );
+    expect(SCHEDULED_COLLECTION_TASK_POLICY).not.toHaveProperty("frequency");
+    expect(SCHEDULED_COLLECTION_TASK_POLICY).not.toHaveProperty("failureMode");
   });
 });

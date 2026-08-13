@@ -305,7 +305,7 @@ describe("collection lease", () => {
       acquireCollectionLease(
         pluginInstanceId,
         "run-two",
-        new Date("2026-08-05T01:31:00.000Z"),
+        new Date("2026-08-05T01:06:00.000Z"),
         directory,
       ),
     ).not.toThrow();

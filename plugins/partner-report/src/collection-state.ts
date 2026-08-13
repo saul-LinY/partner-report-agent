@@ -13,7 +13,7 @@ import { dataDirectory } from "./config.js";
 export const INITIAL_LOOKBACK_DAYS = 1;
 export const INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 export const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1_000;
-export const COLLECTION_LEASE_MS = 30 * 60 * 1_000;
+export const COLLECTION_LEASE_MS = 5 * 60 * 1_000;
 
 type ProcessedSessionState = {
   contentHash: string;

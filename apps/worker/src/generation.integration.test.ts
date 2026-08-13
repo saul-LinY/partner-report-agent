@@ -155,6 +155,7 @@ suite("synthetic report generation pipeline", () => {
     delete process.env.MODEL_API_BASE_URL;
     await sql.begin(async (tx) => {
       await tx`delete from outbox_events where tenant_id = ${fixture.tenant}`;
+      await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;

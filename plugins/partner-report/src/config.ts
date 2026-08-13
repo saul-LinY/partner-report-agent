@@ -1,10 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -129,6 +133,44 @@ export function migratePersistentDataDirectory(source: string, target: string) {
   }
 }
 
+function prepareWritableDataDirectory(directory: string) {
+  const location = resolve(directory);
+  mkdirSync(location, { recursive: true, mode: 0o700 });
+  const probePath = resolve(location, `.write-probe-${randomUUID()}`);
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(probePath, "wx", 0o600);
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+    if (existsSync(probePath)) unlinkSync(probePath);
+  }
+  return location;
+}
+
+export function selectWritableDataDirectory(
+  candidates: Array<string | null | undefined>,
+  prepare = prepareWritableDataDirectory,
+) {
+  const uniqueCandidates = [
+    ...new Set(candidates.filter((value): value is string => Boolean(value))),
+  ];
+  let lastError: unknown;
+  for (const candidate of uniqueCandidates) {
+    try {
+      return prepare(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw Object.assign(
+    new Error(
+      "Partner Report 本地数据目录不可写。请允许本次任务写入插件数据目录后重试。",
+      { cause: lastError },
+    ),
+    { code: "LOCAL_DATA_WRITE_PERMISSION_REQUIRED" },
+  );
+}
+
 export function dataDirectory() {
   const runtimeDirectory =
     process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
@@ -137,12 +179,33 @@ export function dataDirectory() {
   const rememberedDirectory = useKeychain()
     ? readKeychainValue(DATA_DIRECTORY_SERVICE)
     : null;
-  const location = resolve(explicitDirectory ?? stableDirectory);
-  mkdirSync(location, { recursive: true, mode: 0o700 });
+  const existingRememberedDirectory =
+    rememberedDirectory && existsSync(rememberedDirectory)
+      ? rememberedDirectory
+      : null;
+  const location = selectWritableDataDirectory(
+    explicitDirectory
+      ? [explicitDirectory]
+      : [existingRememberedDirectory, stableDirectory, runtimeDirectory],
+  );
   if (!explicitDirectory) {
-    for (const legacyDirectory of [rememberedDirectory, runtimeDirectory]) {
+    for (const legacyDirectory of [
+      rememberedDirectory,
+      stableDirectory,
+      runtimeDirectory,
+    ]) {
       if (legacyDirectory)
         migratePersistentDataDirectory(legacyDirectory, location);
+    }
+    if (
+      useKeychain() &&
+      (!rememberedDirectory || resolve(rememberedDirectory) !== location)
+    ) {
+      try {
+        saveKeychainValue(DATA_DIRECTORY_SERVICE, location);
+      } catch {
+        // The selected directory remains valid for this run; saveConfig retries later.
+      }
     }
   }
   return location;

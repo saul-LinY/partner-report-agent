@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   migratePersistentDataDirectory,
   normalizeServerUrl,
+  selectWritableDataDirectory,
 } from "./config.js";
 
 describe("normalizeServerUrl", () => {
@@ -74,5 +75,61 @@ describe("persistent plugin data", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("keeps the preferred writable directory for existing users", () => {
+    const attempts: string[] = [];
+    const selected = selectWritableDataDirectory(
+      ["/preferred", "/plugin-data"],
+      (candidate) => {
+        attempts.push(candidate);
+        return candidate;
+      },
+    );
+
+    expect(selected).toBe("/preferred");
+    expect(attempts).toEqual(["/preferred"]);
+  });
+
+  it("falls back to plugin data when the preferred directory is read-only", () => {
+    const attempts: string[] = [];
+    const selected = selectWritableDataDirectory(
+      ["/read-only", "/plugin-data"],
+      (candidate) => {
+        attempts.push(candidate);
+        if (candidate === "/read-only")
+          throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+        return candidate;
+      },
+    );
+
+    expect(selected).toBe("/plugin-data");
+    expect(attempts).toEqual(["/read-only", "/plugin-data"]);
+  });
+
+  it("keeps using a remembered writable directory before other fallbacks", () => {
+    const attempts: string[] = [];
+    const selected = selectWritableDataDirectory(
+      ["/remembered", "/stable", "/plugin-data"],
+      (candidate) => {
+        attempts.push(candidate);
+        return candidate;
+      },
+    );
+
+    expect(selected).toBe("/remembered");
+    expect(attempts).toEqual(["/remembered"]);
+  });
+
+  it("returns a stable permission error when no data directory is writable", () => {
+    expect(() =>
+      selectWritableDataDirectory(["/one", "/two"], () => {
+        throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "LOCAL_DATA_WRITE_PERMISSION_REQUIRED",
+      }),
+    );
   });
 });

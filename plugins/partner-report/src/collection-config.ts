@@ -1,5 +1,5 @@
 export const DEFAULT_COLLECTION_MODEL = "gpt-5.6";
-export const DEFAULT_COLLECTION_REASONING_EFFORT = "low";
+export const DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
 
 export const SCHEDULED_COLLECTION_PROMPT = [
   "使用 $partner-report-sync 采集当前 Partner Report 周期内符合条件的 Codex Session。",
@@ -43,11 +43,22 @@ export const SCHEDULED_COLLECTION_TASK = {
   prompt: SCHEDULED_COLLECTION_PROMPT,
 } as const;
 
-export const SCHEDULED_COLLECTION_PROMPT_POLICY = {
+export const SCHEDULED_COLLECTION_TASK_POLICY = {
   automaticCheck: false,
   automaticRepair: false,
-  updateTrigger: "explicit_user_request_only",
+  createIfMissing: true,
   customPromptAllowed: true,
-  updateFields: ["prompt"],
-  preserveOtherConfiguration: true,
+  promptUpdateTrigger: "explicit_user_request_only",
+  promptUpdateFields: ["prompt"],
+  fullResetTrigger: "explicit_user_request_only",
+  fullResetFields: [
+    "destination",
+    "project",
+    "schedule",
+    "model",
+    "reasoningEffort",
+    "notifications",
+    "prompt",
+  ],
+  preserveTaskIdentity: true,
 } as const;
