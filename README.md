@@ -1,5 +1,7 @@
 # Partner Report Agent
 
+部署认证服务时参阅 [Google 登录配置](docs/GOOGLE_AUTH.md)。
+
 ## 用户安装与配置
 
 开始前，请向团队管理员获取数据中台地址和绑定码，然后在终端执行：

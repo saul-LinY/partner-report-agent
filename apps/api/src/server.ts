@@ -3,11 +3,12 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import formbody from "@fastify/formbody";
 import { ZodError } from "zod";
 import { closeDatabase } from "@partner-report/db";
-import { ApiError } from "./common.js";
+import { ApiError } from "./api-error.js";
 import { adminRoutes } from "./routes/admin.js";
-import { authRoutes } from "./routes/auth.js";
+import { authRoutes, type AuthRouteOptions } from "./routes/auth.js";
 import { factRoutes } from "./routes/facts.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { pluginRoutes } from "./routes/plugin.js";
@@ -20,7 +21,9 @@ import {
   startFeishuIntegration,
 } from "./feishu/integration.js";
 
-export async function buildApp(options: { logger?: boolean } = {}) {
+export async function buildApp(
+  options: { logger?: boolean; auth?: AuthRouteOptions } = {},
+) {
   const app = Fastify({
     logger:
       options.logger === false
@@ -34,6 +37,8 @@ export async function buildApp(options: { logger?: boolean } = {}) {
               "body.password",
               "body.deviceCode",
               "body.refreshToken",
+              "body.code",
+              "body.id_token",
             ],
           },
     bodyLimit: 4 * 1024 * 1024,
@@ -41,6 +46,7 @@ export async function buildApp(options: { logger?: boolean } = {}) {
   });
 
   await app.register(cookie);
+  await app.register(formbody);
   await app.register(cors, {
     origin: process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311",
     credentials: true,
@@ -49,6 +55,7 @@ export async function buildApp(options: { logger?: boolean } = {}) {
 
   app.addHook("onRequest", async (request) => {
     if (["POST", "PATCH", "DELETE"].includes(request.method)) {
+      if (request.url.split("?", 1)[0] === "/auth/google/callback") return;
       const origin = request.headers.origin;
       const expected = process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311";
       if (origin && origin !== expected)
@@ -67,6 +74,25 @@ export async function buildApp(options: { logger?: boolean } = {}) {
       });
     }
     if (error instanceof ApiError) {
+      if (
+        request.method === "POST" &&
+        request.url.split("?", 1)[0] === "/auth/google/callback"
+      ) {
+        const message = error.message
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+        return reply
+          .status(error.statusCode)
+          .header("Cache-Control", "no-store")
+          .header("Referrer-Policy", "no-referrer")
+          .type("text/html; charset=utf-8")
+          .send(
+            `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Google 登录失败</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif;background:#f5f7f8;color:#182026}.panel{width:min(420px,calc(100% - 40px));padding:32px;background:#fff;border:1px solid #dce2e5;border-radius:8px}h1{margin:0 0 12px;font-size:22px}p{color:#59646d;line-height:1.6}a{display:inline-block;margin-top:12px;color:#1769aa}</style></head><body><main class="panel"><h1>Google 登录失败</h1><p>${message}</p><a href="${process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311"}/login">返回登录页</a></main></body></html>`,
+          );
+      }
       return reply.status(error.statusCode).send({
         code: error.code,
         message: error.message,
@@ -102,7 +128,7 @@ export async function buildApp(options: { logger?: boolean } = {}) {
     time: new Date().toISOString(),
     feishu: getFeishuRuntimeStatus(),
   }));
-  await app.register(authRoutes);
+  await app.register(authRoutes, options.auth ?? {});
   await app.register(adminRoutes);
   await app.register(pluginRoutes);
   await app.register(factRoutes);

@@ -2,8 +2,11 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { FastifyRequest } from "fastify";
 import { stableJsonHash } from "@partner-report/contracts/hash";
 import { sqlClient as sql } from "@partner-report/db";
+import { ApiError } from "./api-error.js";
+import { readSessionToken, SESSION_COOKIE_NAME } from "./auth-security.js";
 
 export { stableJsonHash };
+export { ApiError } from "./api-error.js";
 
 export type DomainActor = {
   actorType: string;
@@ -31,17 +34,6 @@ export type PluginActor = DomainActor & {
   version: string;
 };
 
-export class ApiError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    public readonly code: string,
-    message: string,
-    public readonly details?: unknown,
-  ) {
-    super(message);
-  }
-}
-
 export function sha256(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -68,7 +60,10 @@ export async function requireWebActor(
   request: FastifyRequest,
   role?: "admin" | "partner",
 ) {
-  const token = request.cookies.pra_session;
+  const token = readSessionToken(
+    request.cookies[SESSION_COOKIE_NAME],
+    process.env.SESSION_SECRET?.trim(),
+  );
   if (!token) throw new ApiError(401, "UNAUTHENTICATED", "请先登录。");
 
   const rows = await sql<WebActor[]>`

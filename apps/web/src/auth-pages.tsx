@@ -1,20 +1,37 @@
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { ArrowRight, KeyRound, Link2, ShieldCheck } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  ArrowRight,
+  KeyRound,
+  Link2,
+  LoaderCircle,
+  ShieldCheck,
+} from "lucide-react";
 import { useLocation } from "wouter";
 import { api } from "./api.js";
 import { Button, ErrorBanner, Field, SuccessBanner } from "./components.js";
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
-  const [email, setEmail] = useState("saul@laien.io");
-  const [password, setPassword] = useState("123456");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const requestedNext = new URLSearchParams(window.location.search).get("next");
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  const next =
+    requestedNext?.startsWith("/") && !requestedNext.startsWith("//")
+      ? requestedNext
+      : currentPath === "/" || currentPath.startsWith("/login")
+        ? "/admin"
+        : currentPath;
   const login = useMutation({
     mutationFn: () =>
       api("/v1/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       }),
-    onSuccess,
+    onSuccess: () => {
+      window.history.replaceState(null, "", next);
+      onSuccess();
+    },
   });
   return (
     <div className="auth-page auth-page-login">
@@ -60,11 +77,132 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             登录
           </Button>
         </form>
+        <div className="auth-divider">
+          <span>或</span>
+        </div>
+        <GoogleLoginButton next={next} />
         <div className="auth-security">
           <ShieldCheck size={16} />
-          <span>本地账号 · HttpOnly Session</span>
+          <span>Google 或本地账号 · HttpOnly Session</span>
         </div>
       </section>
+    </div>
+  );
+}
+
+type GoogleLoginConfig = {
+  clientId: string;
+  loginUri: string;
+  state: string;
+  nonce: string;
+};
+
+type GoogleIdentityApi = {
+  accounts: {
+    id: {
+      initialize: (options: {
+        client_id: string;
+        login_uri: string;
+        ux_mode: "redirect";
+        nonce: string;
+        auto_select: boolean;
+      }) => void;
+      renderButton: (
+        parent: HTMLElement,
+        options: {
+          type: "standard";
+          theme: "outline";
+          size: "large";
+          text: "signin_with";
+          shape: "rectangular";
+          logo_alignment: "left";
+          width: number;
+          locale: string;
+          state: string;
+        },
+      ) => void;
+    };
+  };
+};
+
+declare global {
+  interface Window {
+    google?: GoogleIdentityApi;
+  }
+}
+
+let googleScriptPromise: Promise<void> | null = null;
+
+function loadGoogleIdentityScript() {
+  if (window.google) return Promise.resolve();
+  if (googleScriptPromise) return googleScriptPromise;
+  googleScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client?hl=zh_CN";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("无法加载 Google 登录组件。"));
+    document.head.append(script);
+  });
+  return googleScriptPromise;
+}
+
+function GoogleLoginButton({ next }: { next: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [renderError, setRenderError] = useState<Error | null>(null);
+  const config = useQuery({
+    queryKey: ["google-login-config", next],
+    queryFn: () =>
+      api<GoogleLoginConfig>(`/auth/google?next=${encodeURIComponent(next)}`),
+    retry: false,
+    staleTime: 0,
+  });
+
+  useEffect(() => {
+    if (!config.data || !containerRef.current) return;
+    let cancelled = false;
+    loadGoogleIdentityScript()
+      .then(() => {
+        if (cancelled || !window.google || !containerRef.current) return;
+        window.google.accounts.id.initialize({
+          client_id: config.data.clientId,
+          login_uri: config.data.loginUri,
+          ux_mode: "redirect",
+          nonce: config.data.nonce,
+          auto_select: false,
+        });
+        containerRef.current.replaceChildren();
+        window.google.accounts.id.renderButton(containerRef.current, {
+          type: "standard",
+          theme: "outline",
+          size: "large",
+          text: "signin_with",
+          shape: "rectangular",
+          logo_alignment: "left",
+          width: Math.min(496, containerRef.current.clientWidth),
+          locale: "zh_CN",
+          state: config.data.state,
+        });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setRenderError(
+            error instanceof Error
+              ? error
+              : new Error("无法加载 Google 登录组件。"),
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [config.data]);
+
+  const error = config.error ?? renderError;
+  if (error) return <ErrorBanner error={error} />;
+  return (
+    <div className="google-login-container" ref={containerRef}>
+      <LoaderCircle className="spin" size={18} />
     </div>
   );
 }

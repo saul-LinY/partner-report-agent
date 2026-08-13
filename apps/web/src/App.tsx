@@ -44,7 +44,17 @@ export function App() {
         <span>加载管理台</span>
       </div>
     );
-  if (meQuery.isError) return <Login onSuccess={() => meQuery.refetch()} />;
+  if (meQuery.isError) {
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (!window.location.pathname.startsWith("/login")) {
+      window.history.replaceState(
+        null,
+        "",
+        `/login?next=${encodeURIComponent(current)}`,
+      );
+    }
+    return <Login onSuccess={() => meQuery.refetch()} />;
+  }
   if (!meQuery.data) return null;
   return <AuthenticatedApp me={meQuery.data} />;
 }

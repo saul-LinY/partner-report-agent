@@ -1479,6 +1479,28 @@ select:focus {
 .auth-panel form .button {
   margin-top: 4px;
 }
+.auth-divider {
+  margin: 20px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+}
+.google-login-container {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .auth-security {
   margin-top: 24px;
   display: flex;
