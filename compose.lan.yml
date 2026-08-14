@@ -58,6 +58,7 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:?VITE_API_URL is required}
         VITE_GOOGLE_LOGIN_ENABLED: ${VITE_GOOGLE_LOGIN_ENABLED:-false}
+        VITE_LOCAL_LOGIN_ENABLED: ${VITE_LOCAL_LOGIN_ENABLED:-true}
     depends_on:
       api:
         condition: service_healthy

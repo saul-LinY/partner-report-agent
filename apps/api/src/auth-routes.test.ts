@@ -92,6 +92,28 @@ describe("Google auth HTTP security", () => {
     expect(response.headers["set-cookie"]).toContain("Path=/");
     expect(response.headers["set-cookie"]).toContain("Max-Age=0");
   });
+
+  it("rejects local password login when it is disabled", async () => {
+    const previous = process.env.LOCAL_LOGIN_ENABLED;
+    process.env.LOCAL_LOGIN_ENABLED = "false";
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        payload: {
+          email: "saul@laien.io",
+          password: "not-used",
+        },
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({
+        code: "LOCAL_LOGIN_DISABLED",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.LOCAL_LOGIN_ENABLED;
+      else process.env.LOCAL_LOGIN_ENABLED = previous;
+    }
+  });
 });
 
 describe("Google auth configuration failure", () => {

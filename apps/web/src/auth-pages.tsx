@@ -14,6 +14,8 @@ import { Button, ErrorBanner, Field, SuccessBanner } from "./components.js";
 export function Login({ onSuccess }: { onSuccess: () => void }) {
   const googleLoginEnabled =
     import.meta.env.VITE_GOOGLE_LOGIN_ENABLED !== "false";
+  const localLoginEnabled =
+    import.meta.env.VITE_LOCAL_LOGIN_ENABLED !== "false";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const requestedNext = new URLSearchParams(window.location.search).get("next");
@@ -46,52 +48,60 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
           <h1>登录工作台</h1>
           <p>Session 贡献、工作卡片与报告状态集中在这里。</p>
         </div>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            login.mutate();
-          }}
-        >
-          <ErrorBanner error={login.error} />
-          <Field label="邮箱">
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              required
-            />
-          </Field>
-          <Field label="密码">
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </Field>
-          <Button
-            type="submit"
-            loading={login.isPending}
-            icon={<ArrowRight size={17} />}
+        {localLoginEnabled ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              login.mutate();
+            }}
           >
-            登录
-          </Button>
-        </form>
+            <ErrorBanner error={login.error} />
+            <Field label="邮箱">
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </Field>
+            <Field label="密码">
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </Field>
+            <Button
+              type="submit"
+              loading={login.isPending}
+              icon={<ArrowRight size={17} />}
+            >
+              登录
+            </Button>
+          </form>
+        ) : null}
         {googleLoginEnabled ? (
           <>
-            <div className="auth-divider">
-              <span>或</span>
-            </div>
+            {localLoginEnabled ? (
+              <div className="auth-divider">
+                <span>或</span>
+              </div>
+            ) : null}
             <GoogleLoginButton next={next} />
           </>
         ) : null}
         <div className="auth-security">
           <ShieldCheck size={16} />
           <span>
-            {googleLoginEnabled ? "Google 或本地账号" : "本地账号"} · HttpOnly
-            Session
+            {googleLoginEnabled && localLoginEnabled
+              ? "Google 或本地账号"
+              : googleLoginEnabled
+                ? "Google 账号"
+                : "本地账号"}{" "}
+            · HttpOnly Session
           </span>
         </div>
       </section>

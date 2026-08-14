@@ -103,6 +103,13 @@ export async function authRoutes(
       config: ReturnType<typeof loadGoogleAuthConfig>,
     ) => OAuth2Client);
   const localLogin = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (process.env.LOCAL_LOGIN_ENABLED === "false") {
+      throw new ApiError(
+        403,
+        "LOCAL_LOGIN_DISABLED",
+        "本地账号密码登录已关闭，请使用 Google 登录。",
+      );
+    }
     const input = loginSchema.parse(request.body);
     const rows = await sql<{ id: string; password_hash: string }[]>`
       select id, password_hash from users
