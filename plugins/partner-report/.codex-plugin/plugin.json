@@ -1,6 +1,6 @@
 {
   "name": "partner-report",
-  "version": "1.0.0+codex.20260813075317",
+  "version": "1.0.0+codex.20260814083150",
   "description": "\u7b5b\u9009 Codex Session\uff0c\u5e76\u53ea\u540c\u6b65\u6709\u610f\u4e49\u7684\u4e2d\u6587\u9879\u76ee\u8d21\u732e\u3002",
   "author": {
     "name": "Saul",
@@ -8,7 +8,11 @@
   },
   "homepage": "https://github.com/saul-LinY/partner-report-agent#readme",
   "repository": "https://github.com/saul-LinY/partner-report-agent",
-  "keywords": ["codex", "weekly-report", "project-progress"],
+  "keywords": [
+    "codex",
+    "weekly-report",
+    "project-progress"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Partner Report",

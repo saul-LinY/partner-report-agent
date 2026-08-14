@@ -8,6 +8,19 @@ type Pending = {
   timer: NodeJS.Timeout;
 };
 
+export const CODEX_THREAD_LIST_TIMEOUT_MS = 120_000;
+
+function createTimeoutError(method: string, timeoutMs: number) {
+  const error = new Error(`${method} timed out after ${timeoutMs}ms`) as Error & {
+    code: string;
+  };
+  error.code =
+    method === "thread/list"
+      ? "CODEX_SESSION_LIST_TIMEOUT"
+      : "CODEX_APP_SERVER_TIMEOUT";
+  return error;
+}
+
 export class CodexAppServer {
   private process: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
@@ -78,7 +91,7 @@ export class CodexAppServer {
     return new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+        reject(createTimeoutError(method, timeoutMs));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.process!.stdin.write(`${JSON.stringify({ method, id, params })}\n`);
@@ -94,13 +107,17 @@ export class CodexAppServer {
     const threads: any[] = [];
     let cursor: string | null = null;
     do {
-      const result = await this.request("thread/list", {
-        ...(cursor ? { cursor } : {}),
-        limit: 100,
-        sortKey: "updated_at",
-        sortDirection: "desc",
-        sourceKinds: ["cli", "vscode", "appServer"],
-      });
+      const result = await this.request(
+        "thread/list",
+        {
+          ...(cursor ? { cursor } : {}),
+          limit: 100,
+          sortKey: "updated_at",
+          sortDirection: "desc",
+          sourceKinds: ["cli", "vscode", "appServer"],
+        },
+        CODEX_THREAD_LIST_TIMEOUT_MS,
+      );
       threads.push(...(result.data ?? []));
       cursor = result.nextCursor ?? null;
     } while (cursor && threads.length < 2_000);

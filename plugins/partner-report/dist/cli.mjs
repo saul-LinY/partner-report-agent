@@ -5284,6 +5284,12 @@ function countJobOutcomes(outcomes) {
 // src/app-server.ts
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
+function createTimeoutError(method, timeoutMs) {
+  const error = new Error(`${method} timed out after ${timeoutMs}ms`);
+  error.code = method === "thread/list" ? "CODEX_SESSION_LIST_TIMEOUT" : "CODEX_APP_SERVER_TIMEOUT";
+  return error;
+}
 var CodexAppServer = class {
   constructor(codexBin = process.env.CODEX_BIN ?? "codex") {
     this.codexBin = codexBin;
@@ -5353,7 +5359,7 @@ var CodexAppServer = class {
     return new Promise((resolve7, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+        reject(createTimeoutError(method, timeoutMs));
       }, timeoutMs);
       this.pending.set(id, { resolve: resolve7, reject, timer });
       this.process.stdin.write(`${JSON.stringify({ method, id, params })}
@@ -5369,13 +5375,17 @@ var CodexAppServer = class {
     const threads = [];
     let cursor = null;
     do {
-      const result = await this.request("thread/list", {
-        ...cursor ? { cursor } : {},
-        limit: 100,
-        sortKey: "updated_at",
-        sortDirection: "desc",
-        sourceKinds: ["cli", "vscode", "appServer"]
-      });
+      const result = await this.request(
+        "thread/list",
+        {
+          ...cursor ? { cursor } : {},
+          limit: 100,
+          sortKey: "updated_at",
+          sortDirection: "desc",
+          sourceKinds: ["cli", "vscode", "appServer"]
+        },
+        CODEX_THREAD_LIST_TIMEOUT_MS
+      );
       threads.push(...result.data ?? []);
       cursor = result.nextCursor ?? null;
     } while (cursor && threads.length < 2e3);
