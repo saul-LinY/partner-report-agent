@@ -1,0 +1,35 @@
+FROM node:22-bookworm-slim AS dependencies
+
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json vitest.config.ts ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/worker/package.json apps/worker/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY plugins/partner-report/package.json plugins/partner-report/package.json
+
+RUN npm ci
+
+FROM dependencies AS platform
+
+COPY apps ./apps
+COPY packages ./packages
+COPY plugins ./plugins
+
+FROM dependencies AS web-build
+
+ARG VITE_API_URL
+ARG VITE_GOOGLE_LOGIN_ENABLED=false
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_GOOGLE_LOGIN_ENABLED=$VITE_GOOGLE_LOGIN_ENABLED
+
+COPY apps/web ./apps/web
+
+RUN npm run build -w @partner-report/web
+
+FROM nginx:1.29-alpine AS web
+
+COPY deploy/nginx.lan.conf /etc/nginx/conf.d/default.conf
+COPY --from=web-build /app/apps/web/dist /usr/share/nginx/html

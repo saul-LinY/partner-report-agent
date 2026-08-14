@@ -12,6 +12,8 @@ import { api } from "./api.js";
 import { Button, ErrorBanner, Field, SuccessBanner } from "./components.js";
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
+  const googleLoginEnabled =
+    import.meta.env.VITE_GOOGLE_LOGIN_ENABLED !== "false";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const requestedNext = new URLSearchParams(window.location.search).get("next");
@@ -77,13 +79,20 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             登录
           </Button>
         </form>
-        <div className="auth-divider">
-          <span>或</span>
-        </div>
-        <GoogleLoginButton next={next} />
+        {googleLoginEnabled ? (
+          <>
+            <div className="auth-divider">
+              <span>或</span>
+            </div>
+            <GoogleLoginButton next={next} />
+          </>
+        ) : null}
         <div className="auth-security">
           <ShieldCheck size={16} />
-          <span>Google 或本地账号 · HttpOnly Session</span>
+          <span>
+            {googleLoginEnabled ? "Google 或本地账号" : "本地账号"} · HttpOnly
+            Session
+          </span>
         </div>
       </section>
     </div>

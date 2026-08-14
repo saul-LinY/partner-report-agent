@@ -9,6 +9,7 @@ test-results/
 dogfood-output/
 .partner-report-data/
 .env
+.env.server
 *.log
 *.sqlite
 *.sqlite-shm
