@@ -38,6 +38,7 @@ import {
   acquireCollectionLease,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
+  initialProjectDiscoveryNeedsResume,
   initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
@@ -605,11 +606,12 @@ async function discoverProjectScopeAfterBinding() {
   }
 
   const runStartedAt = new Date().toISOString();
+  const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
   const server = new CodexAppServer();
   let listed: any[];
   try {
     await server.connect();
-    listed = await server.listThreads();
+    listed = await server.listThreads({ updatedSince: scanStartsAt });
   } finally {
     server.close();
   }
@@ -626,9 +628,8 @@ async function discoverProjectScopeAfterBinding() {
       !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
       !isPluginSystemThread(summary as unknown as Record<string, unknown>),
   );
-  const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
   const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
-    threadIsInKnownScanWindow(summary.createdAt, scanStartsAt, runStartedAt),
+    threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt),
   );
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
@@ -724,8 +725,22 @@ async function connectivityTest() {
         }
       : undefined,
   );
-  const policy = await fetchPolicy();
-  connectedOutput(policy.partnerId, config.deviceName, connectivity);
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  const projectScope = initialProjectDiscoveryNeedsResume(
+    Boolean(pending),
+    remoteScope.initialized,
+  )
+    ? await discoverProjectScopeAfterBinding()
+    : undefined;
+  connectedOutput(
+    policy.partnerId,
+    config.deviceName,
+    connectivity,
+    projectScope,
+  );
 }
 
 function summaryFromThread(value: any): ThreadSummary | null {
@@ -785,11 +800,14 @@ function metadataEligibleThreads(
   );
 }
 
-async function listCollectionThreadMetadata(config: PluginConfig) {
+async function listCollectionThreadMetadata(
+  config: PluginConfig,
+  updatedSince: string,
+) {
   const server = new CodexAppServer();
   try {
     await server.connect();
-    const summaries = (await server.listThreads())
+    const summaries = (await server.listThreads({ updatedSince }))
       .map(summaryFromThread)
       .filter((value): value is ThreadSummary => Boolean(value));
     return {
@@ -1193,8 +1211,12 @@ async function collectStart() {
   let summaries: ThreadSummary[];
   let metadataEligible: ThreadSummary[];
   try {
-    ({ summaries, metadataEligible } =
-      await listCollectionThreadMetadata(config));
+    // Collection may need the full report period for an approved-scope backfill.
+    // Project discovery applies its separate seven-day window below.
+    ({ summaries, metadataEligible } = await listCollectionThreadMetadata(
+      config,
+      policy.currentPeriod.starts_at,
+    ));
   } catch (error) {
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
@@ -1213,7 +1235,7 @@ async function collectStart() {
     const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
     const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
       threadIsInKnownScanWindow(
-        summary.createdAt,
+        summary.updatedAt,
         initialProjectScopeStart,
         runStartedAt,
       ),
@@ -1885,8 +1907,12 @@ async function startEndOfRunScopeScan(
   if (!scan || scan.completed) return false;
 
   const config = loadConfig()!;
-  const { summaries, metadataEligible } =
-    await listCollectionThreadMetadata(config);
+  const scanStartedAt = new Date().toISOString();
+  const scanStartsAt = initialProjectScopeStartAt(scanStartedAt);
+  const { summaries, metadataEligible } = await listCollectionThreadMetadata(
+    config,
+    scanStartsAt,
+  );
   manifest.counts.discovered = Math.max(
     manifest.counts.discovered,
     summaries.length,
@@ -1899,9 +1925,8 @@ async function startEndOfRunScopeScan(
     );
   const localScope = inspection.scope;
   const scanCompletedAt = new Date().toISOString();
-  const scanStartsAt = initialProjectScopeStartAt(scanCompletedAt);
   const discoverySummaries = metadataEligible.filter((summary) =>
-    threadIsInKnownScanWindow(summary.createdAt, scanStartsAt, scanCompletedAt),
+    threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, scanCompletedAt),
   );
   const discovery = discoverProjectScopes(
     manifest.pluginInstanceId,

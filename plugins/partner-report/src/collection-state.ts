@@ -15,6 +15,13 @@ export const INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 export const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1_000;
 export const COLLECTION_LEASE_MS = 5 * 60 * 1_000;
 
+export function initialProjectDiscoveryNeedsResume(
+  hasPendingConnectivityChallenge: boolean,
+  remoteScopeInitialized: boolean,
+) {
+  return hasPendingConnectivityChallenge || !remoteScopeInitialized;
+}
+
 type ProcessedSessionState = {
   contentHash: string;
   processedAt: string;

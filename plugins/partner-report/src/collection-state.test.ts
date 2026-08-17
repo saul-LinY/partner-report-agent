@@ -6,6 +6,7 @@ import {
   acquireCollectionLease,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
+  initialProjectDiscoveryNeedsResume,
   initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
@@ -38,6 +39,12 @@ afterEach(() => {
 });
 
 describe("collection state", () => {
+  it("resumes only incomplete initial project discovery", () => {
+    expect(initialProjectDiscoveryNeedsResume(true, true)).toBe(true);
+    expect(initialProjectDiscoveryNeedsResume(false, false)).toBe(true);
+    expect(initialProjectDiscoveryNeedsResume(false, true)).toBe(false);
+  });
+
   it("limits the first collection to the latest day", () => {
     const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
     initializeCollectionFloor(

@@ -8,10 +8,16 @@ type Pending = {
   timer: NodeJS.Timeout;
 };
 
+type ThreadListOptions = {
+  updatedSince?: string | number;
+};
+
 export const CODEX_THREAD_LIST_TIMEOUT_MS = 120_000;
 
 function createTimeoutError(method: string, timeoutMs: number) {
-  const error = new Error(`${method} timed out after ${timeoutMs}ms`) as Error & {
+  const error = new Error(
+    `${method} timed out after ${timeoutMs}ms`,
+  ) as Error & {
     code: string;
   };
   error.code =
@@ -19,6 +25,25 @@ function createTimeoutError(method: string, timeoutMs: number) {
       ? "CODEX_SESSION_LIST_TIMEOUT"
       : "CODEX_APP_SERVER_TIMEOUT";
   return error;
+}
+
+function timestamp(value: unknown) {
+  if (typeof value === "string") return new Date(value).getTime();
+  if (typeof value !== "number") return Number.NaN;
+  return value > 10_000_000_000 ? value : value * 1_000;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function threadUpdatedAt(thread: Record<string, unknown>) {
+  return timestamp(
+    thread.updatedAt ??
+      thread.updated_at ??
+      thread.createdAt ??
+      thread.created_at,
+  );
 }
 
 export class CodexAppServer {
@@ -103,23 +128,68 @@ export class CodexAppServer {
     this.process.stdin.write(`${JSON.stringify({ method, params })}\n`);
   }
 
-  async listThreads() {
+  async listThreads(options: ThreadListOptions = {}) {
     const threads: any[] = [];
     let cursor: string | null = null;
+    const updatedSince =
+      options.updatedSince === undefined
+        ? null
+        : timestamp(options.updatedSince);
+    if (updatedSince !== null && !Number.isFinite(updatedSince))
+      throw new Error("Session 活动扫描开始时间无效。");
+    let page = 0;
     do {
-      const result = await this.request(
-        "thread/list",
-        {
-          ...(cursor ? { cursor } : {}),
-          limit: 100,
-          sortKey: "updated_at",
-          sortDirection: "desc",
-          sourceKinds: ["cli", "vscode", "appServer"],
-        },
-        CODEX_THREAD_LIST_TIMEOUT_MS,
-      );
-      threads.push(...(result.data ?? []));
-      cursor = result.nextCursor ?? null;
+      page += 1;
+      let result: any;
+      try {
+        result = await this.request(
+          "thread/list",
+          {
+            ...(cursor ? { cursor } : {}),
+            limit: 100,
+            sortKey: "updated_at",
+            sortDirection: "desc",
+            sourceKinds: ["cli", "vscode", "appServer"],
+            archived: false,
+            useStateDbOnly: true,
+          },
+          CODEX_THREAD_LIST_TIMEOUT_MS,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const stderr = this.stderr.trim();
+        const wrapped = new Error(
+          `thread/list 第 ${page} 页失败：${message}${stderr ? `；Codex app-server: ${stderr}` : ""}`,
+        );
+        Object.assign(wrapped, {
+          code:
+            error && typeof error === "object" && "code" in error
+              ? String(error.code)
+              : "CODEX_SESSION_LIST_FAILED",
+        });
+        throw wrapped;
+      }
+      const data: Record<string, unknown>[] = Array.isArray(result.data)
+        ? result.data.filter(isRecord)
+        : [];
+      const activity = data.map((thread) => ({
+        thread,
+        updatedAt: threadUpdatedAt(thread),
+      }));
+      const recent =
+        updatedSince === null
+          ? data
+          : activity
+              .filter((item) => item.updatedAt >= updatedSince)
+              .map((item) => item.thread);
+      threads.push(...recent);
+      const reachedCutoff =
+        updatedSince !== null &&
+        activity.some(
+          (item) =>
+            Number.isFinite(item.updatedAt) && item.updatedAt < updatedSince,
+        );
+      cursor = reachedCutoff ? null : (result.nextCursor ?? null);
     } while (cursor && threads.length < 2_000);
     return threads;
   }

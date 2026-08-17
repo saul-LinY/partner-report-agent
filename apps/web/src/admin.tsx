@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   Copy,
   KeyRound,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -233,6 +234,7 @@ function Operations({ data }: { data: Overview }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [codeFor, setCodeFor] = useState<any | null>(null);
   const [scopeFor, setScopeFor] = useState<PartnerConnection | null>(null);
+  const [editPartner, setEditPartner] = useState<any | null>(null);
   const [removePartner, setRemovePartner] = useState<any | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const refresh = () =>
@@ -338,7 +340,21 @@ function Operations({ data }: { data: Overview }) {
                     className={`health-dot health-${connection.connectionState}`}
                   />
                   <div className="plugin-person-cell">
-                    <strong>{connection.partnerName}</strong>
+                    <div className="plugin-person-name">
+                      <strong title={connection.partnerName}>
+                        {connection.partnerName}
+                      </strong>
+                      <button
+                        className="icon-button partner-name-edit"
+                        type="button"
+                        title="编辑姓名"
+                        aria-label={`编辑 ${connection.partnerName} 的姓名`}
+                        disabled={!partner}
+                        onClick={() => setEditPartner(partner)}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
                     <span>{connection.partnerEmail}</span>
                   </div>
                   <div className="binding-code-cell">
@@ -482,6 +498,16 @@ function Operations({ data }: { data: Overview }) {
           onCreated={refresh}
         />
       )}
+      {editPartner && (
+        <EditPartnerNameModal
+          partner={editPartner}
+          onClose={() => setEditPartner(null)}
+          onUpdated={() => {
+            setEditPartner(null);
+            refresh();
+          }}
+        />
+      )}
       {scopeFor && (
         <ProjectScopeModal
           connection={scopeFor}
@@ -499,6 +525,73 @@ function Operations({ data }: { data: Overview }) {
         />
       )}
     </div>
+  );
+}
+
+function EditPartnerNameModal({
+  partner,
+  onClose,
+  onUpdated,
+}: {
+  partner: { id: string; display_name: string; email: string };
+  onClose: () => void;
+  onUpdated: () => void;
+}) {
+  const [displayName, setDisplayName] = useState(partner.display_name);
+  const normalizedName = displayName.trim();
+  const mutation = useMutation({
+    mutationFn: () =>
+      api(`/v1/admin/partners/${partner.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ displayName: normalizedName }),
+      }),
+    onSuccess: onUpdated,
+  });
+
+  return (
+    <Modal
+      title="编辑姓名"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            icon={<Save size={16} />}
+            loading={mutation.isPending}
+            disabled={
+              !normalizedName || normalizedName === partner.display_name
+            }
+            onClick={() => mutation.mutate()}
+          >
+            保存
+          </Button>
+        </>
+      }
+    >
+      <ErrorBanner error={mutation.error} />
+      <Field label="姓名">
+        <input
+          value={displayName}
+          maxLength={120}
+          autoFocus
+          onChange={(event) => setDisplayName(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              normalizedName &&
+              normalizedName !== partner.display_name &&
+              !mutation.isPending
+            )
+              mutation.mutate();
+          }}
+        />
+      </Field>
+      <Field label="工作邮箱">
+        <input value={partner.email} readOnly />
+      </Field>
+    </Modal>
   );
 }
 

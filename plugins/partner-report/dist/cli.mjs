@@ -4793,7 +4793,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u63A5\u8FD1\u8FD0\u884C\u65F6\u95F4\u4E0A\u9650\u65F6\u505C\u6B62\u9886\u53D6\u65B0 Job\uFF1B\u5F53\u524D Job \u65E0\u6CD5\u5B8C\u6210\u65F6\u4F7F\u7528 collect-defer\uFF0C\u4FDD\u7559\u961F\u5217\u5230\u4E0B\u4E00\u6B21\u8FD0\u884C\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
-  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u53EA\u8BFB\u53D6 thread/list \u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u65B0\u5EFA\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
+  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u901A\u8FC7 thread/list \u53EA\u8BFB\u53D6 Codex \u72B6\u6001\u6570\u636E\u5E93\u4E2D\u7684\u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u6709\u5B9E\u9645\u6D3B\u52A8\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
   "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
   "\u9996\u6B21\u6388\u6743\u5B8C\u6210\u540E\u7684\u65E5\u5E38\u8FD0\u884C\u5FC5\u987B\u5148\u6309\u73B0\u6709\u6743\u9650\u5B8C\u6210\u5168\u90E8 Session \u63D0\u53D6\u548C\u4E0A\u4F20\uFF1B\u5DF2\u6709\u6388\u6743\u961F\u5217\u6E05\u7A7A\u540E\u624D\u91CD\u65B0\u8BFB\u53D6 thread/list \u5143\u6570\u636E\u626B\u63CF\u65B0\u9879\u76EE\u3002\u53D1\u73B0\u65B0\u9879\u76EE\u65F6\u767B\u8BB0\u5E76\u53D1\u9001\u98DE\u4E66\u8303\u56F4\u5361\uFF0C\u5361\u7247\u786E\u8BA4\u9001\u8FBE\u540E\u7B49\u5F85\u7528\u6237\u5BA1\u6279 30 \u5206\u949F\uFF1B\u53CA\u65F6\u5141\u8BB8\u5219\u628A\u65B0\u9879\u76EE\u672C\u5468\u671F Session \u8FFD\u52A0\u5230\u5F53\u524D\u961F\u5217\uFF0C\u62D2\u7EDD\u6216\u8D85\u65F6\u5219\u6B63\u5E38\u7ED3\u675F\u4E14\u4FDD\u6301\u4E2D\u53F0\u72B6\u6001\uFF0C\u7A0D\u540E\u5141\u8BB8\u65F6\u7531\u4E0B\u4E00\u6B21\u8FD0\u884C\u8865\u91C7\u672C\u5468\u671F\u3002",
   "\u5DF2\u6709\u6388\u6743\u9879\u76EE\u7684 Session \u961F\u5217\u6E05\u7A7A\u540E\u3001\u626B\u63CF\u65B0\u9879\u76EE\u4E4B\u524D\uFF0C\u68C0\u67E5\u6BCF\u4E2A\u5DF2\u6388\u6743\u9879\u76EE\u7684\u6574\u4F53\u63CF\u8FF0\u3002\u53EA\u8BFB\u53D6\u672C\u673A\u9879\u76EE\u8BF4\u660E\u6587\u4EF6\u3001\u9879\u76EE\u6E05\u5355\u548C\u9876\u5C42\u76EE\u5F55\u751F\u6210\u8BED\u4E49\u6307\u7EB9\uFF1B\u4E2D\u53F0\u6CA1\u6709\u63CF\u8FF0\u6216\u8BED\u4E49\u6307\u7EB9\u53D8\u5316\u65F6\u624D\u751F\u6210\u7EA6 150 \u5B57\u4E2D\u6587\u5019\u9009\u63CF\u8FF0\uFF0C\u672A\u53D8\u5316\u5219\u590D\u7528\u3002\u63CF\u8FF0 Job \u5931\u8D25\u4E0D\u5F97\u963B\u65AD\u5176\u4ED6\u9879\u76EE\u6216\u65B0\u9879\u76EE\u626B\u63CF\u3002",
@@ -4907,6 +4907,9 @@ var INITIAL_LOOKBACK_DAYS = 1;
 var INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 var INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1e3;
 var COLLECTION_LEASE_MS = 5 * 60 * 1e3;
+function initialProjectDiscoveryNeedsResume(hasPendingConnectivityChallenge, remoteScopeInitialized) {
+  return hasPendingConnectivityChallenge || !remoteScopeInitialized;
+}
 function statePath(directory) {
   return resolve2(directory, "collection-state.json");
 }
@@ -5011,8 +5014,8 @@ function collectionWindow(state, period, runStartedAt) {
 }
 function threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
   if (updatedAt == null) return true;
-  const timestamp2 = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
-  return Number.isFinite(timestamp2) && timestamp2 >= new Date(scanStartsAt).getTime() && timestamp2 <= new Date(scanEndsAt).getTime();
+  const timestamp3 = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
+  return Number.isFinite(timestamp3) && timestamp3 >= new Date(scanStartsAt).getTime() && timestamp3 <= new Date(scanEndsAt).getTime();
 }
 function initialProjectScopeStartAt(runStartedAt) {
   const runStart = new Date(runStartedAt);
@@ -5106,7 +5109,7 @@ function acquireCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ n
     }
     unlinkSync2(path);
   }
-  const timestamp2 = now.toISOString();
+  const timestamp3 = now.toISOString();
   try {
     writeLease(
       path,
@@ -5114,8 +5117,8 @@ function acquireCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ n
         schemaVersion: "1.0",
         pluginInstanceId,
         runId,
-        acquiredAt: timestamp2,
-        heartbeatAt: timestamp2
+        acquiredAt: timestamp3,
+        heartbeatAt: timestamp3
       },
       true
     );
@@ -5286,9 +5289,24 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
 function createTimeoutError(method, timeoutMs) {
-  const error = new Error(`${method} timed out after ${timeoutMs}ms`);
+  const error = new Error(
+    `${method} timed out after ${timeoutMs}ms`
+  );
   error.code = method === "thread/list" ? "CODEX_SESSION_LIST_TIMEOUT" : "CODEX_APP_SERVER_TIMEOUT";
   return error;
+}
+function timestamp(value) {
+  if (typeof value === "string") return new Date(value).getTime();
+  if (typeof value !== "number") return Number.NaN;
+  return value > 1e10 ? value : value * 1e3;
+}
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+function threadUpdatedAt(thread) {
+  return timestamp(
+    thread.updatedAt ?? thread.updated_at ?? thread.createdAt ?? thread.created_at
+  );
 }
 var CodexAppServer = class {
   constructor(codexBin = process.env.CODEX_BIN ?? "codex") {
@@ -5371,23 +5389,52 @@ var CodexAppServer = class {
     this.process.stdin.write(`${JSON.stringify({ method, params })}
 `);
   }
-  async listThreads() {
+  async listThreads(options = {}) {
     const threads = [];
     let cursor = null;
+    const updatedSince = options.updatedSince === void 0 ? null : timestamp(options.updatedSince);
+    if (updatedSince !== null && !Number.isFinite(updatedSince))
+      throw new Error("Session \u6D3B\u52A8\u626B\u63CF\u5F00\u59CB\u65F6\u95F4\u65E0\u6548\u3002");
+    let page = 0;
     do {
-      const result = await this.request(
-        "thread/list",
-        {
-          ...cursor ? { cursor } : {},
-          limit: 100,
-          sortKey: "updated_at",
-          sortDirection: "desc",
-          sourceKinds: ["cli", "vscode", "appServer"]
-        },
-        CODEX_THREAD_LIST_TIMEOUT_MS
+      page += 1;
+      let result;
+      try {
+        result = await this.request(
+          "thread/list",
+          {
+            ...cursor ? { cursor } : {},
+            limit: 100,
+            sortKey: "updated_at",
+            sortDirection: "desc",
+            sourceKinds: ["cli", "vscode", "appServer"],
+            archived: false,
+            useStateDbOnly: true
+          },
+          CODEX_THREAD_LIST_TIMEOUT_MS
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const stderr = this.stderr.trim();
+        const wrapped = new Error(
+          `thread/list \u7B2C ${page} \u9875\u5931\u8D25\uFF1A${message}${stderr ? `\uFF1BCodex app-server: ${stderr}` : ""}`
+        );
+        Object.assign(wrapped, {
+          code: error && typeof error === "object" && "code" in error ? String(error.code) : "CODEX_SESSION_LIST_FAILED"
+        });
+        throw wrapped;
+      }
+      const data = Array.isArray(result.data) ? result.data.filter(isRecord) : [];
+      const activity = data.map((thread) => ({
+        thread,
+        updatedAt: threadUpdatedAt(thread)
+      }));
+      const recent = updatedSince === null ? data : activity.filter((item) => item.updatedAt >= updatedSince).map((item) => item.thread);
+      threads.push(...recent);
+      const reachedCutoff = updatedSince !== null && activity.some(
+        (item) => Number.isFinite(item.updatedAt) && item.updatedAt < updatedSince
       );
-      threads.push(...result.data ?? []);
-      cursor = result.nextCursor ?? null;
+      cursor = reachedCutoff ? null : result.nextCursor ?? null;
     } while (cursor && threads.length < 2e3);
     return threads;
   }
@@ -5442,13 +5489,13 @@ function containsSensitive(value) {
 function safeText(value, maxLength = 16e3) {
   return redactSensitive(value).text.slice(0, maxLength);
 }
-function timestamp(value) {
+function timestamp2(value) {
   if (typeof value === "string") return new Date(value).getTime();
   if (typeof value !== "number") return Number.NaN;
   return value > 1e10 ? value : value * 1e3;
 }
 function toIso(value) {
-  const time = timestamp(value);
+  const time = timestamp2(value);
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 function textContent(content) {
@@ -5963,16 +6010,16 @@ function newLocalScope(pluginInstanceId) {
     entries: []
   };
 }
-function isRecord(value) {
+function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function isLocalProjectScope(value, pluginInstanceId) {
-  if (!isRecord(value)) return false;
+  if (!isRecord2(value)) return false;
   if (value.schemaVersion !== "1.0" || value.pluginInstanceId !== pluginInstanceId || typeof value.scopeSalt !== "string" || !/^[a-f0-9]{64}$/.test(value.scopeSalt) || typeof value.identityConfirmed !== "boolean" || !Number.isInteger(value.version) || value.version < 0 || typeof value.initialized !== "boolean" || value.initializedAt !== null && typeof value.initializedAt !== "string" || !Array.isArray(value.entries)) {
     return false;
   }
   return value.entries.every(
-    (entry) => isRecord(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string") && (entry.localIdentity === void 0 || typeof entry.localIdentity === "string" && /^[a-f0-9]{64}$/.test(entry.localIdentity)) && (entry.environmentKind === void 0 || ["configured", "git", "unknown"].includes(
+    (entry) => isRecord2(entry) && typeof entry.scopeKey === "string" && /^[a-f0-9]{64}$/.test(entry.scopeKey) && typeof entry.displayName === "string" && ["pending", "allowed", "denied"].includes(String(entry.status)) && (entry.effectiveFrom === null || typeof entry.effectiveFrom === "string") && typeof entry.firstSeenPeriodKey === "string" && typeof entry.firstSeenAt === "string" && typeof entry.lastSeenAt === "string" && Number.isInteger(entry.sessionCount) && entry.sessionCount >= 0 && (entry.localRoot === null || typeof entry.localRoot === "string") && (entry.localIdentity === void 0 || typeof entry.localIdentity === "string" && /^[a-f0-9]{64}$/.test(entry.localIdentity)) && (entry.environmentKind === void 0 || ["configured", "git", "unknown"].includes(
       String(entry.environmentKind)
     )) && (entry.lastSyncedStatus === void 0 || ["pending", "allowed", "denied"].includes(
       String(entry.lastSyncedStatus)
@@ -6681,11 +6728,12 @@ async function discoverProjectScopeAfterBinding() {
     );
   }
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
   const server = new CodexAppServer();
   let listed;
   try {
     await server.connect();
-    listed = await server.listThreads();
+    listed = await server.listThreads({ updatedSince: scanStartsAt });
   } finally {
     server.close();
   }
@@ -6695,9 +6743,8 @@ async function discoverProjectScopeAfterBinding() {
   const metadataEligible = summaries.filter(
     (summary) => summary.id !== currentSessionId && !summary.archived && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
   );
-  const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
   const permissionDiscoverySummaries = metadataEligible.filter(
-    (summary) => threadIsInKnownScanWindow(summary.createdAt, scanStartsAt, runStartedAt)
+    (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt)
   );
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
@@ -6787,8 +6834,20 @@ async function connectivityTest() {
       capabilityVersion: "1.0"
     } : void 0
   );
-  const policy = await fetchPolicy();
-  connectedOutput(policy.partnerId, config.deviceName, connectivity);
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope()
+  ]);
+  const projectScope = initialProjectDiscoveryNeedsResume(
+    Boolean(pending),
+    remoteScope.initialized
+  ) ? await discoverProjectScopeAfterBinding() : void 0;
+  connectedOutput(
+    policy.partnerId,
+    config.deviceName,
+    connectivity,
+    projectScope
+  );
 }
 function summaryFromThread(value) {
   if (!value?.id) return null;
@@ -6815,11 +6874,11 @@ function metadataEligibleThreads(summaries, config) {
     (summary) => summary.id !== currentSessionId && !summary.archived && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
   );
 }
-async function listCollectionThreadMetadata(config) {
+async function listCollectionThreadMetadata(config, updatedSince) {
   const server = new CodexAppServer();
   try {
     await server.connect();
-    const summaries = (await server.listThreads()).map(summaryFromThread).filter((value) => Boolean(value));
+    const summaries = (await server.listThreads({ updatedSince })).map(summaryFromThread).filter((value) => Boolean(value));
     return {
       summaries,
       metadataEligible: metadataEligibleThreads(summaries, config)
@@ -7151,7 +7210,10 @@ async function collectStart() {
   let summaries;
   let metadataEligible;
   try {
-    ({ summaries, metadataEligible } = await listCollectionThreadMetadata(config));
+    ({ summaries, metadataEligible } = await listCollectionThreadMetadata(
+      config,
+      policy.currentPeriod.starts_at
+    ));
   } catch (error) {
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
@@ -7168,7 +7230,7 @@ async function collectStart() {
     const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
     const permissionDiscoverySummaries = metadataEligible.filter(
       (summary) => threadIsInKnownScanWindow(
-        summary.createdAt,
+        summary.updatedAt,
         initialProjectScopeStart,
         runStartedAt
       )
@@ -7754,7 +7816,12 @@ async function startEndOfRunScopeScan(runPath, manifest) {
   const scan = manifest.endOfRunScopeScan;
   if (!scan || scan.completed) return false;
   const config = loadConfig();
-  const { summaries, metadataEligible } = await listCollectionThreadMetadata(config);
+  const scanStartedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const scanStartsAt = initialProjectScopeStartAt(scanStartedAt);
+  const { summaries, metadataEligible } = await listCollectionThreadMetadata(
+    config,
+    scanStartsAt
+  );
   manifest.counts.discovered = Math.max(
     manifest.counts.discovered,
     summaries.length
@@ -7767,9 +7834,8 @@ async function startEndOfRunScopeScan(runPath, manifest) {
     );
   const localScope = inspection.scope;
   const scanCompletedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const scanStartsAt = initialProjectScopeStartAt(scanCompletedAt);
   const discoverySummaries = metadataEligible.filter(
-    (summary) => threadIsInKnownScanWindow(summary.createdAt, scanStartsAt, scanCompletedAt)
+    (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, scanCompletedAt)
   );
   const discovery = discoverProjectScopes(
     manifest.pluginInstanceId,

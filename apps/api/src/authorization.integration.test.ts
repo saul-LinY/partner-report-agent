@@ -192,6 +192,22 @@ suite("tenant and role authorization", () => {
       connectivityStatus: "verified",
       alreadyVerified: false,
     });
+    const connectivityState = await sql<
+      Array<{
+        last_connectivity_error_code: string | null;
+        last_connectivity_error_at: Date | null;
+      }>
+    >`
+      select last_connectivity_error_code, last_connectivity_error_at
+      from plugin_instances
+      where id = ${claim.json().pluginInstanceId}
+    `;
+    expect(connectivityState).toEqual([
+      {
+        last_connectivity_error_code: null,
+        last_connectivity_error_at: null,
+      },
+    ]);
     const repeatedConnectivity = await app.inject({
       method: "POST",
       url: "/v1/plugin-instances/me/connectivity-test",
@@ -757,6 +773,38 @@ suite("tenant and role authorization", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().period.id).toBe(fixture.periodA);
     expect(response.json().review.id).toBe(fixture.reviewA);
+  });
+
+  it("lets an Admin rename a Partner with a normalized display name", async () => {
+    const partnerId = randomUUID();
+    try {
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (
+          ${partnerId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${`rename-${partnerId}@local.test`}, 'Original Name'
+        )
+      `;
+      const renamed = await app.inject({
+        method: "PATCH",
+        url: `/v1/admin/partners/${partnerId}`,
+        headers,
+        payload: { displayName: "  Updated Name  " },
+      });
+      expect(renamed.statusCode).toBe(200);
+      expect(renamed.json().display_name).toBe("Updated Name");
+
+      const invalid = await app.inject({
+        method: "PATCH",
+        url: `/v1/admin/partners/${partnerId}`,
+        headers,
+        payload: { displayName: "   " },
+      });
+      expect(invalid.statusCode).toBe(400);
+    } finally {
+      await sql`delete from audit_events where target_id = ${partnerId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+    }
   });
 
   it("returns project cards through the first-review workspace", async () => {

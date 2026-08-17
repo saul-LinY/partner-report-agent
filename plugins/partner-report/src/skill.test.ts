@@ -66,13 +66,15 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("持续执行 `project-scope-card-wait`");
     expect(skill).toContain("`project_scope_no_candidates`");
     expect(skill).toContain(
-      "绑定命令完成后才允许通过 `thread/list` 读取元数据",
+      "绑定命令完成后才允许通过 `thread/list` 只读取 Codex 状态数据库中的元数据",
     );
     expect(skill).not.toContain("feishu_identity_confirmation_required");
     expect(skill).not.toContain("identity-wait");
     expect(skill).toContain("多个 worktree 归并为一个逻辑项目");
     expect(skill).toContain("每个项目至少 1 个 Session 即登记");
-    expect(skill).toContain("最近 7 天新建且未归档");
+    expect(skill).toContain("最近 7 天有实际活动且未归档");
+    expect(skill).toContain("只读取 Codex 状态数据库");
+    expect(skill).toContain("自动继续尚未完成的首次项目发现");
     expect(skill).toContain("不依赖 Codex 侧边栏项目列表");
     expect(skill).toContain("project-scope-sync");
     expect(skill).toContain("pending 项目保持待审批");

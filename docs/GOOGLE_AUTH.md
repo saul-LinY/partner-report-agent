@@ -18,8 +18,6 @@ GOOGLE_CLIENT_ID=360156811535-vui327cl8rb6onbi9i0nnedufcj5v2hv.apps.googleuserco
 GOOGLE_REDIRECT_URI=http://localhost:4310/auth/google/callback
 GOOGLE_ALLOWED_DOMAIN=
 GOOGLE_ALLOWED_EMAILS=
-LOCAL_LOGIN_ENABLED=true
-VITE_LOCAL_LOGIN_ENABLED=true
 SESSION_SECRET=
 AUTH_COOKIE_SECURE=false
 WEB_ORIGIN=http://localhost:4311
@@ -55,13 +53,9 @@ https://example.com/auth/google/callback
 ```env
 GOOGLE_CLIENT_ID=360156811535-vui327cl8rb6onbi9i0nnedufcj5v2hv.apps.googleusercontent.com
 GOOGLE_REDIRECT_URI=https://example.com/auth/google/callback
-GOOGLE_ALLOWED_DOMAIN=
-GOOGLE_ALLOWED_EMAILS=<allowed-email-1>,<allowed-email-2>
 SESSION_SECRET=<secret-manager-random-value-at-least-32-characters>
 AUTH_COOKIE_SECURE=true
 WEB_ORIGIN=https://example.com
-LOCAL_LOGIN_ENABLED=false
-VITE_LOCAL_LOGIN_ENABLED=false
 ```
 
 Redirect URI 必须逐字符匹配，协议、域名、端口、路径以及末尾斜杠都不能不同。环境变量中的 Client ID 必须属于配置该 Redirect URI 的 Web OAuth Client。

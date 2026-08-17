@@ -740,6 +740,8 @@ export async function pluginRoutes(app: FastifyInstance) {
           version = ${input.pluginVersion}, connectivity_status = 'verified',
           connectivity_verified_at = coalesce(connectivity_verified_at, now()),
           last_connectivity_attempt_at = now(),
+          last_connectivity_error_code = null,
+          last_connectivity_error_at = null,
           last_connectivity_request_id = ${request.id},
           connectivity_challenge_consumed_at = coalesce(connectivity_challenge_consumed_at, now()),
           updated_at = now()

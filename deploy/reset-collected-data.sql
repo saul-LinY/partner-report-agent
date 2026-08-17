@@ -84,3 +84,4 @@ union all select 'session_facts', count(*) from session_facts
 union all select 'individual_reports', count(*) from individual_reports
 union all select 'team_reports', count(*) from team_reports
 order by entity;
+

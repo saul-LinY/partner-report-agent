@@ -47,7 +47,7 @@ const teamUpdateSchema = z.object({
 });
 
 const partnerUpdateSchema = z.object({
-  displayName: z.string().min(1).max(120).optional(),
+  displayName: z.string().trim().min(1).max(120).optional(),
   status: z.enum(["active", "suspended"]).optional(),
   preferences: z.record(z.unknown()).optional(),
 });

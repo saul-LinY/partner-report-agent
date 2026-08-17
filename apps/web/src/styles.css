@@ -1919,6 +1919,20 @@ select:focus {
   color: var(--muted);
   font-size: 10px;
 }
+.plugin-person-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.plugin-person-name strong {
+  min-width: 0;
+}
+.plugin-person-name .partner-name-edit {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  color: var(--muted);
+}
 .plugin-state-badges {
   display: grid;
   justify-items: start;

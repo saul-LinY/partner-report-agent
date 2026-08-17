@@ -27,6 +27,12 @@ describe("scheduled collection prompt", () => {
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("本地项目权限文件缺失");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("绑定命令负责项目发现");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "只读取 Codex 状态数据库中的元数据",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "最近 7 天有实际活动且未归档",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("重新发送项目范围审核提醒");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("worktree 合并");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
