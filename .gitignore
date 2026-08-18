@@ -10,6 +10,7 @@ dogfood-output/
 .partner-report-data/
 .env
 .env.server
+.env.server.before-*
 *.log
 *.sqlite
 *.sqlite-shm

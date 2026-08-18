@@ -1,0 +1,164 @@
+<svg width="1440" height="920" viewBox="0 0 1440 920" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#1F2937" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2 2L10 6L2 10" stroke="#4B5563" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #F7F8FA; }
+      .title { fill: #111827; font: 700 34px Inter, "Noto Sans SC", Arial, sans-serif; }
+      .subtitle { fill: #5B6472; font: 400 17px Inter, "Noto Sans SC", Arial, sans-serif; }
+      .section-title { fill: #111827; font: 700 21px Inter, "Noto Sans SC", Arial, sans-serif; }
+      .label { fill: #1F2937; font: 650 16px Inter, "Noto Sans SC", Arial, sans-serif; }
+      .body { fill: #4B5563; font: 400 13px Inter, "Noto Sans SC", Arial, sans-serif; }
+      .small { fill: #6B7280; font: 400 12px Inter, "Noto Sans SC", Arial, sans-serif; }
+      .pill { fill: #374151; font: 650 12px Inter, "Noto Sans SC", Arial, sans-serif; }
+      .card { fill: #FFFFFF; stroke: #E2E8F0; stroke-width: 1.4; rx: 8; filter: url(#shadow); }
+      .soft-card { fill: #FFFFFF; stroke: #E5E7EB; stroke-width: 1.2; rx: 8; }
+      .agent { fill: #ECFDF5; stroke: #86EFAC; stroke-width: 1.3; rx: 8; }
+      .adapter { fill: #EFF6FF; stroke: #93C5FD; stroke-width: 1.3; rx: 8; }
+      .core { fill: #FFF7ED; stroke: #FDBA74; stroke-width: 1.4; rx: 8; }
+      .evidence { fill: #F8FAFC; stroke: #CBD5E1; stroke-width: 1.2; rx: 8; }
+      .output { fill: #FDF2F8; stroke: #F9A8D4; stroke-width: 1.3; rx: 8; }
+      .line { stroke: #64748B; stroke-width: 2.2; marker-end: url(#arrow); }
+      .dash { stroke: #94A3B8; stroke-width: 2; stroke-dasharray: 7 7; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1440" height="920"/>
+
+  <text x="88" y="76" class="title">Agent 工作台架构构想</text>
+  <text x="88" y="108" class="subtitle">把 Codex、Claude、DeepSeek、Trae、Harness 等工具接入同一个本地控制面板，用统一事件和真实证据生成最终总结。</text>
+
+  <rect x="76" y="144" width="1288" height="670" rx="18" fill="#FFFFFF" stroke="#E5E7EB"/>
+
+  <text x="116" y="195" class="section-title">1. 用户正在使用的 Agent</text>
+  <text x="116" y="221" class="body">不替代它们，只把它们接进来</text>
+
+  <rect x="112" y="258" width="208" height="58" class="agent"/>
+  <text x="140" y="292" class="label">Codex CLI</text>
+  <text x="252" y="292" class="small">session / hook</text>
+
+  <rect x="112" y="338" width="208" height="58" class="agent"/>
+  <text x="140" y="372" class="label">Claude Code</text>
+  <text x="252" y="372" class="small">transcript</text>
+
+  <rect x="112" y="418" width="208" height="58" class="agent"/>
+  <text x="140" y="452" class="label">DeepSeek</text>
+  <text x="252" y="452" class="small">CLI / API</text>
+
+  <rect x="112" y="498" width="208" height="58" class="agent"/>
+  <text x="140" y="532" class="label">Trae / IDE</text>
+  <text x="252" y="532" class="small">扩展 / 日志</text>
+
+  <rect x="112" y="578" width="208" height="58" class="agent"/>
+  <text x="140" y="612" class="label">Harness / CI</text>
+  <text x="252" y="612" class="small">pipeline</text>
+
+  <path d="M324 287H408" class="line"/>
+  <path d="M324 367H408" class="line"/>
+  <path d="M324 447H408" class="line"/>
+  <path d="M324 527H408" class="line"/>
+  <path d="M324 607H408" class="line"/>
+
+  <text x="428" y="195" class="section-title">2. 适配层</text>
+  <text x="428" y="221" class="body">把不同工具的说法翻译成统一格式</text>
+
+  <rect x="412" y="250" width="236" height="420" class="card"/>
+  <rect x="442" y="282" width="176" height="42" class="adapter"/>
+  <text x="474" y="309" class="label">Codex Adapter</text>
+
+  <rect x="442" y="346" width="176" height="42" class="adapter"/>
+  <text x="466" y="373" class="label">Claude Adapter</text>
+
+  <rect x="442" y="410" width="176" height="42" class="adapter"/>
+  <text x="461" y="437" class="label">DeepSeek Adapter</text>
+
+  <rect x="442" y="474" width="176" height="42" class="adapter"/>
+  <text x="480" y="501" class="label">IDE Adapter</text>
+
+  <rect x="442" y="538" width="176" height="42" class="adapter"/>
+  <text x="469" y="565" class="label">CI Adapter</text>
+
+  <rect x="442" y="602" width="176" height="42" class="adapter"/>
+  <text x="463" y="629" class="label">MCP Server</text>
+
+  <path d="M650 461H728" class="line"/>
+
+  <text x="748" y="195" class="section-title">3. 本地工作台核心</text>
+  <text x="748" y="221" class="body">用户桌面 App 看到的是这一层</text>
+
+  <rect x="724" y="250" width="286" height="420" class="card"/>
+
+  <rect x="760" y="282" width="214" height="48" class="core"/>
+  <text x="805" y="312" class="label">桌面控制面板</text>
+
+  <rect x="760" y="350" width="214" height="48" class="core"/>
+  <text x="812" y="380" class="label">本地后台服务</text>
+
+  <rect x="760" y="418" width="214" height="48" class="core"/>
+  <text x="805" y="448" class="label">统一事件协议</text>
+
+  <rect x="760" y="486" width="214" height="48" class="core"/>
+  <text x="820" y="516" class="label">事件数据库</text>
+
+  <rect x="760" y="554" width="214" height="48" class="core"/>
+  <text x="814" y="584" class="label">报告生成引擎</text>
+
+  <path d="M868 331V346" class="dash"/>
+  <path d="M868 399V414" class="dash"/>
+  <path d="M868 467V482" class="dash"/>
+  <path d="M868 535V550" class="dash"/>
+
+  <path d="M1012 461H1094" class="line"/>
+
+  <text x="1116" y="195" class="section-title">4. 最终给用户看的结果</text>
+  <text x="1116" y="221" class="body">不是杂乱日志，而是可读总结</text>
+
+  <rect x="1098" y="250" width="218" height="420" class="card"/>
+
+  <rect x="1128" y="292" width="158" height="52" class="output"/>
+  <text x="1173" y="323" class="label">任务时间线</text>
+
+  <rect x="1128" y="374" width="158" height="52" class="output"/>
+  <text x="1173" y="405" class="label">变更摘要</text>
+
+  <rect x="1128" y="456" width="158" height="52" class="output"/>
+  <text x="1173" y="487" class="label">测试结果</text>
+
+  <rect x="1128" y="538" width="158" height="52" class="output"/>
+  <text x="1173" y="569" class="label">最终报告</text>
+
+  <text x="116" y="730" class="section-title">关键点：Session 是加分项，真实证据才是底座</text>
+  <text x="116" y="758" class="body">能拿到 agent 的 session / transcript 就记录；拿不到时，仍然可以通过 git、文件、命令、测试、CI 等信息还原可靠工作过程。</text>
+
+  <rect x="114" y="784" width="190" height="48" class="evidence"/>
+  <text x="153" y="813" class="label">Git Diff</text>
+
+  <rect x="328" y="784" width="190" height="48" class="evidence"/>
+  <text x="365" y="813" class="label">文件变化</text>
+
+  <rect x="542" y="784" width="190" height="48" class="evidence"/>
+  <text x="579" y="813" class="label">命令日志</text>
+
+  <rect x="756" y="784" width="190" height="48" class="evidence"/>
+  <text x="793" y="813" class="label">测试报告</text>
+
+  <rect x="970" y="784" width="190" height="48" class="evidence"/>
+  <text x="1015" y="813" class="label">CI 结果</text>
+
+  <rect x="1184" y="784" width="132" height="48" class="evidence"/>
+  <text x="1216" y="813" class="label">Artifact</text>
+
+  <path d="M209 784C209 716 780 708 842 610" class="dash"/>
+  <path d="M423 784C423 726 797 708 850 610" class="dash"/>
+  <path d="M637 784C637 730 813 708 858 610" class="dash"/>
+  <path d="M851 784V606" class="dash"/>
+  <path d="M1065 784C1065 726 925 706 876 610" class="dash"/>
+  <path d="M1250 784C1250 716 944 708 884 610" class="dash"/>
+
+  <rect x="76" y="846" width="1288" height="1" fill="#E5E7EB"/>
+  <text x="88" y="882" class="small">一句话：做一个本地 Agent 工作台，把多个 AI 编程工具的过程翻译成统一事件，再用代码变更和测试结果生成可信报告。</text>
+</svg>
