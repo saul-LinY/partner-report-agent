@@ -8,8 +8,10 @@
 
 ```bash
 codex plugin marketplace add saul-LinY/partner-report-agent
-codex plugin add partner-report@partner-report-marketplace
+npm run plugin:install
 ```
+
+安装脚本会完成四件事：刷新 Git Marketplace、安装或升级插件、只把 `partner-report` 自带 MCP 设为自动通过、把旧版 Keychain 凭据迁移到稳定数据目录。它不会修改 Codex 全局的“帮我批准”或“完全访问权限”。普通升级重复运行同一命令即可，不需要重新绑定。
 
 使用下面的命令确认插件已安装：
 

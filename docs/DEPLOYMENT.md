@@ -40,7 +40,7 @@ PARTNER_REPORT_SERVER_URL=http://172.20.10.14:4310
 
 局域网 IP 改变后，更新三个公开 URL 并重启 API、Web。Docker Compose 只把 PostgreSQL 发布到 `127.0.0.1:54329`，不得为了插件连接而开放数据库端口。
 
-Partner 设备连接局域网 HTTP 时必须明确接受明文传输风险：
+Partner 设备连接局域网 HTTP 时必须明确接受明文传输风险。正常用户流程应在 Codex 对话中由 `partner-report` MCP 的 `connect` 工具完成；下面的 CLI 仅用于部署排障：
 
 ```bash
 node "<installed-plugin-path>/dist/cli.mjs" connect \
@@ -67,7 +67,21 @@ npm run preview -w @partner-report/web -- --host 172.20.10.14
 
 ## Partner 设备
 
-用户通过 GitHub Marketplace 安装插件后，在新 Codex 会话中说：
+用户通过 Marketplace 安装或升级插件时，统一运行仓库中的安装脚本：
+
+```bash
+npm run plugin:install
+```
+
+该脚本先刷新 Git Marketplace，再幂等执行插件安装，并通过 Codex 配置接口只设置：
+
+```toml
+[plugins."partner-report".mcp_servers."partner-report"]
+enabled = true
+default_tools_approval_mode = "approve"
+```
+
+它不修改全局权限模式。升级时插件名和 MCP Server 名保持不变，因此原授权继续有效；脚本仍会复核配置，并把旧 Keychain Token 一次性迁移到稳定 `0600` 文件。完成后重启 Codex 桌面端，在新会话中先手动验证一次。需要读取本机 Session 的定时任务运行时，电脑必须开机且桌面端保持运行。在新会话中说：
 
 ```text
 使用 $partner-report-sync 连接 https://report-api.example.com

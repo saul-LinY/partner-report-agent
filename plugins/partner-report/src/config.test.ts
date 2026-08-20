@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +11,9 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   migratePersistentDataDirectory,
+  loadSecret,
   normalizeServerUrl,
+  saveSecret,
   selectWritableDataDirectory,
 } from "./config.js";
 
@@ -51,6 +54,21 @@ describe("normalizeServerUrl", () => {
 });
 
 describe("persistent plugin data", () => {
+  it("stores new credentials in the stable file with owner-only permissions", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "partner-report-secret-test-"));
+    const previous = process.env.PARTNER_REPORT_DATA;
+    process.env.PARTNER_REPORT_DATA = root;
+    try {
+      saveSecret("instance-1", "access", "secret-value");
+      expect(loadSecret("instance-1", "access")).toBe("secret-value");
+      expect(statSync(resolve(root, "secrets.json")).mode & 0o777).toBe(0o600);
+    } finally {
+      if (previous === undefined) delete process.env.PARTNER_REPORT_DATA;
+      else process.env.PARTNER_REPORT_DATA = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("migrates durable state without copying transient locks", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-config-test-"));
     const source = resolve(root, "old-plugin-data");

@@ -17,11 +17,12 @@ describe("scheduled collection prompt", () => {
       "本地 accepted/ignored 哈希记录和中台哈希",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("采集和终态审查两个阶段");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-review");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("任何 nextCommand");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect-defer");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect_review");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("任何 nextTool");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("collect_defer");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("连续三次真实失败");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("禁止批量 collect-skip");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("禁止批量 collect_skip");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("不得运行 CLI 或 shell");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "deferred、failedExtract 和 notProcessed",
     );

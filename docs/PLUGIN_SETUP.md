@@ -13,7 +13,7 @@
 
 ```bash
 codex plugin marketplace add saul-LinY/partner-report-agent
-codex plugin add partner-report@partner-report-marketplace
+npm run plugin:install
 ```
 
 使用下面的命令确认插件已安装：
@@ -22,7 +22,11 @@ codex plugin add partner-report@partner-report-marketplace
 codex plugin list
 ```
 
-列表中出现 `partner-report` 后，重启 Codex，并新建一个对话。
+安装脚本只授权 `partner-report` 插件自带的 MCP 工具自动运行，不会把整个 Codex 改成完全访问，也不会改变用户当前的全局权限模式。旧版升级时，它会把 Keychain 中的插件凭据一次性迁移到 `~/.partner-report-data/secrets.json`；之后定时任务不再访问 Keychain。
+
+列表中出现 `partner-report` 后，重启 Codex，并新建一个对话。以后升级仍运行 `npm run plugin:install`，普通兼容升级不需要重新绑定或重新授权。
+
+定时任务请在 Codex/ChatGPT 桌面端的 Scheduled 中创建和管理，VS Code 插件只用于开发和普通会话测试。首次创建任务前，先在桌面端新对话中手动运行一次 `$partner-report-sync`，确认 MCP 连接、项目权限和上传链路正常。需要读取本机 Session 的定时任务运行时，电脑必须开机且桌面端保持运行。
 
 ## 2. 连接 Partner Report
 
@@ -34,7 +38,7 @@ codex plugin list
 绑定码是：PR-XXXX-XXXX
 ```
 
-Codex 会自动完成连接测试，并创建每日采集任务。过程中如出现网络或系统权限确认，请核对操作内容后允许。
+Codex 会通过插件 MCP 自动完成连接测试，并创建每日采集任务。安装脚本完成后，后续定时采集不应再出现 CLI、目录写入或 Keychain 的二次确认。
 
 ## 3. 确认身份和项目范围
 

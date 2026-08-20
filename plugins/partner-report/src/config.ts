@@ -79,15 +79,8 @@ export function normalizeServerUrl(value: string, allowInsecureHttp = false) {
   return url.toString().replace(/\/$/, "");
 }
 
-function useKeychain() {
-  return (
-    process.platform === "darwin" &&
-    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
-  );
-}
-
 function readKeychainValue(service: string) {
-  if (!useKeychain()) return null;
+  if (process.platform !== "darwin") return null;
   try {
     return (
       execFileSync(
@@ -99,23 +92,6 @@ function readKeychainValue(service: string) {
   } catch {
     return null;
   }
-}
-
-function saveKeychainValue(service: string, value: string) {
-  execFileSync(
-    "security",
-    [
-      "add-generic-password",
-      "-a",
-      "partner-report",
-      "-s",
-      service,
-      "-w",
-      value,
-      "-U",
-    ],
-    { stdio: "ignore" },
-  );
 }
 
 export function migratePersistentDataDirectory(source: string, target: string) {
@@ -176,36 +152,15 @@ export function dataDirectory() {
     process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   const explicitDirectory = process.env.PARTNER_REPORT_DATA;
   const stableDirectory = resolve(homedir(), ".partner-report-data");
-  const rememberedDirectory = useKeychain()
-    ? readKeychainValue(DATA_DIRECTORY_SERVICE)
-    : null;
-  const existingRememberedDirectory =
-    rememberedDirectory && existsSync(rememberedDirectory)
-      ? rememberedDirectory
-      : null;
   const location = selectWritableDataDirectory(
     explicitDirectory
       ? [explicitDirectory]
-      : [existingRememberedDirectory, stableDirectory, runtimeDirectory],
+      : [stableDirectory, runtimeDirectory],
   );
   if (!explicitDirectory) {
-    for (const legacyDirectory of [
-      rememberedDirectory,
-      stableDirectory,
-      runtimeDirectory,
-    ]) {
+    for (const legacyDirectory of [stableDirectory, runtimeDirectory]) {
       if (legacyDirectory)
         migratePersistentDataDirectory(legacyDirectory, location);
-    }
-    if (
-      useKeychain() &&
-      (!rememberedDirectory || resolve(rememberedDirectory) !== location)
-    ) {
-      try {
-        saveKeychainValue(DATA_DIRECTORY_SERVICE, location);
-      } catch {
-        // The selected directory remains valid for this run; saveConfig retries later.
-      }
     }
   }
   return location;
@@ -222,15 +177,6 @@ function fallbackSecretsPath() {
 export function loadConfig(required = true): PluginConfig | null {
   const path = configPath();
   if (!existsSync(path)) {
-    const bootstrap = readKeychainValue(BOOTSTRAP_CONFIG_SERVICE);
-    if (bootstrap) {
-      const config = JSON.parse(bootstrap) as PluginConfig;
-      writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, {
-        mode: 0o600,
-      });
-      chmodSync(path, 0o600);
-      return config;
-    }
     if (required)
       throw new Error("Plugin 尚未连接。请先运行 partner-report connect。");
     return null;
@@ -243,10 +189,6 @@ export function saveConfig(config: PluginConfig) {
   const path = resolve(directory, "config.json");
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
-  if (useKeychain()) {
-    saveKeychainValue(DATA_DIRECTORY_SERVICE, directory);
-    saveKeychainValue(BOOTSTRAP_CONFIG_SERVICE, JSON.stringify(config));
-  }
 }
 
 type SecretKind = "access" | "refresh" | "recovery";
@@ -255,16 +197,7 @@ function keychainService(instanceId: string, kind: SecretKind) {
   return `partner-report:${instanceId}:${kind}`;
 }
 
-function mayUseFileSecrets() {
-  return (
-    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS === "1" ||
-    process.platform !== "darwin"
-  );
-}
-
 function saveFileSecret(instanceId: string, kind: SecretKind, value: string) {
-  if (!mayUseFileSecrets())
-    throw new Error("macOS Keychain 不可用，且未允许文件 Token fallback。");
   const path = fallbackSecretsPath();
   const existing = existsSync(path)
     ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, string>)
@@ -279,93 +212,73 @@ export function saveSecret(
   kind: SecretKind,
   value: string,
 ) {
-  if (
-    process.platform === "darwin" &&
-    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
-  ) {
-    try {
-      execFileSync(
-        "security",
-        [
-          "add-generic-password",
-          "-a",
-          "partner-report",
-          "-s",
-          keychainService(instanceId, kind),
-          "-w",
-          value,
-          "-U",
-        ],
-        { stdio: "ignore" },
-      );
-      return;
-    } catch {
-      // An explicit file fallback is required so credentials never silently land in plaintext.
-    }
-  }
   saveFileSecret(instanceId, kind, value);
 }
 
 export function loadSecret(instanceId: string, kind: SecretKind) {
-  if (
-    process.platform === "darwin" &&
-    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
-  ) {
-    try {
-      return execFileSync(
-        "security",
-        [
-          "find-generic-password",
-          "-a",
-          "partner-report",
-          "-s",
-          keychainService(instanceId, kind),
-          "-w",
-        ],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-      ).trim();
-    } catch {
-      throw Object.assign(
-        new Error(`无法从 macOS Keychain 读取 ${kind} Token。`),
-        { code: "KEYCHAIN_ACCESS_REQUIRED" },
-      );
+  const path = fallbackSecretsPath();
+  if (existsSync(path)) {
+    const secrets = JSON.parse(readFileSync(path, "utf8")) as Record<
+      string,
+      string
+    >;
+    const value = secrets[`${instanceId}:${kind}`];
+    if (value) return value;
+  }
+
+  // Existing macOS installs used Keychain. Migrate each value once, then all
+  // scheduled runs use the stable file without touching Keychain again.
+  const legacyValue = readKeychainValue(keychainService(instanceId, kind));
+  if (legacyValue) {
+    saveFileSecret(instanceId, kind, legacyValue);
+    return legacyValue;
+  }
+  throw Object.assign(new Error(`Plugin ${kind} Token 不存在，请重新连接。`), {
+    code:
+      process.platform === "darwin"
+        ? "CREDENTIAL_MIGRATION_REQUIRED"
+        : "PLUGIN_TOKEN_MISSING",
+  });
+}
+
+export function migrateLegacyInstallation() {
+  const target = dataDirectory();
+  const rememberedDirectory = readKeychainValue(DATA_DIRECTORY_SERVICE);
+  if (rememberedDirectory)
+    migratePersistentDataDirectory(rememberedDirectory, target);
+
+  let config = loadConfig(false);
+  if (!config) {
+    const bootstrap = readKeychainValue(BOOTSTRAP_CONFIG_SERVICE);
+    if (bootstrap) {
+      config = JSON.parse(bootstrap) as PluginConfig;
+      saveConfig(config);
     }
   }
-  const path = fallbackSecretsPath();
-  if (!existsSync(path)) throw new Error("Plugin Token 不存在，请重新连接。");
-  const secrets = JSON.parse(readFileSync(path, "utf8")) as Record<
-    string,
-    string
-  >;
-  const value = secrets[`${instanceId}:${kind}`];
-  if (!value) throw new Error(`Plugin ${kind} Token 不存在，请重新连接。`);
-  return value;
+  if (!config) return { status: "not_connected", migratedSecrets: 0 };
+
+  let migratedSecrets = 0;
+  for (const kind of ["access", "refresh", "recovery"] as const) {
+    const path = fallbackSecretsPath();
+    const existing = existsSync(path)
+      ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, string>)[
+          `${config.pluginInstanceId}:${kind}`
+        ]
+      : null;
+    if (existing) continue;
+    const value = readKeychainValue(
+      keychainService(config.pluginInstanceId, kind),
+    );
+    if (!value) continue;
+    saveFileSecret(config.pluginInstanceId, kind, value);
+    migratedSecrets += 1;
+  }
+  loadSecret(config.pluginInstanceId, "access");
+  loadSecret(config.pluginInstanceId, "refresh");
+  return { status: "credentials_ready", migratedSecrets };
 }
 
 export function removeSecrets(instanceId: string) {
-  if (
-    process.platform === "darwin" &&
-    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
-  ) {
-    for (const kind of ["access", "refresh", "recovery"] as const) {
-      try {
-        execFileSync(
-          "security",
-          [
-            "delete-generic-password",
-            "-a",
-            "partner-report",
-            "-s",
-            keychainService(instanceId, kind),
-          ],
-          { stdio: "ignore" },
-        );
-      } catch {
-        /* already absent */
-      }
-    }
-    return;
-  }
   const path = fallbackSecretsPath();
   if (!existsSync(path)) return;
   const secrets = JSON.parse(readFileSync(path, "utf8")) as Record<
@@ -379,27 +292,6 @@ export function removeSecrets(instanceId: string) {
 }
 
 export function removeSecret(instanceId: string, kind: SecretKind) {
-  if (
-    process.platform === "darwin" &&
-    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1"
-  ) {
-    try {
-      execFileSync(
-        "security",
-        [
-          "delete-generic-password",
-          "-a",
-          "partner-report",
-          "-s",
-          keychainService(instanceId, kind),
-        ],
-        { stdio: "ignore" },
-      );
-    } catch {
-      /* already absent */
-    }
-    return;
-  }
   const path = fallbackSecretsPath();
   if (!existsSync(path)) return;
   const secrets = JSON.parse(readFileSync(path, "utf8")) as Record<

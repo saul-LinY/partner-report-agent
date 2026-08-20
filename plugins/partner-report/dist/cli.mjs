@@ -4438,11 +4438,8 @@ function normalizeServerUrl(value, allowInsecureHttp = false) {
   url.pathname = url.pathname.replace(/\/+$/, "");
   return url.toString().replace(/\/$/, "");
 }
-function useKeychain() {
-  return process.platform === "darwin" && process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1";
-}
 function readKeychainValue(service) {
-  if (!useKeychain()) return null;
+  if (process.platform !== "darwin") return null;
   try {
     return execFileSync(
       "security",
@@ -4452,22 +4449,6 @@ function readKeychainValue(service) {
   } catch {
     return null;
   }
-}
-function saveKeychainValue(service, value) {
-  execFileSync(
-    "security",
-    [
-      "add-generic-password",
-      "-a",
-      "partner-report",
-      "-s",
-      service,
-      "-w",
-      value,
-      "-U"
-    ],
-    { stdio: "ignore" }
-  );
 }
 function migratePersistentDataDirectory(source, target) {
   const sourceDirectory = resolve(source);
@@ -4520,25 +4501,13 @@ function dataDirectory() {
   const runtimeDirectory = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   const explicitDirectory = process.env.PARTNER_REPORT_DATA;
   const stableDirectory = resolve(homedir(), ".partner-report-data");
-  const rememberedDirectory = useKeychain() ? readKeychainValue(DATA_DIRECTORY_SERVICE) : null;
-  const existingRememberedDirectory = rememberedDirectory && existsSync(rememberedDirectory) ? rememberedDirectory : null;
   const location = selectWritableDataDirectory(
-    explicitDirectory ? [explicitDirectory] : [existingRememberedDirectory, stableDirectory, runtimeDirectory]
+    explicitDirectory ? [explicitDirectory] : [stableDirectory, runtimeDirectory]
   );
   if (!explicitDirectory) {
-    for (const legacyDirectory of [
-      rememberedDirectory,
-      stableDirectory,
-      runtimeDirectory
-    ]) {
+    for (const legacyDirectory of [stableDirectory, runtimeDirectory]) {
       if (legacyDirectory)
         migratePersistentDataDirectory(legacyDirectory, location);
-    }
-    if (useKeychain() && (!rememberedDirectory || resolve(rememberedDirectory) !== location)) {
-      try {
-        saveKeychainValue(DATA_DIRECTORY_SERVICE, location);
-      } catch {
-      }
     }
   }
   return location;
@@ -4552,16 +4521,6 @@ function fallbackSecretsPath() {
 function loadConfig(required = true) {
   const path = configPath();
   if (!existsSync(path)) {
-    const bootstrap = readKeychainValue(BOOTSTRAP_CONFIG_SERVICE);
-    if (bootstrap) {
-      const config = JSON.parse(bootstrap);
-      writeFileSync(path, `${JSON.stringify(config, null, 2)}
-`, {
-        mode: 384
-      });
-      chmodSync(path, 384);
-      return config;
-    }
     if (required)
       throw new Error("Plugin \u5C1A\u672A\u8FDE\u63A5\u3002\u8BF7\u5148\u8FD0\u884C partner-report connect\u3002");
     return null;
@@ -4574,20 +4533,11 @@ function saveConfig(config) {
   writeFileSync(path, `${JSON.stringify(config, null, 2)}
 `, { mode: 384 });
   chmodSync(path, 384);
-  if (useKeychain()) {
-    saveKeychainValue(DATA_DIRECTORY_SERVICE, directory);
-    saveKeychainValue(BOOTSTRAP_CONFIG_SERVICE, JSON.stringify(config));
-  }
 }
 function keychainService(instanceId, kind) {
   return `partner-report:${instanceId}:${kind}`;
 }
-function mayUseFileSecrets() {
-  return process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS === "1" || process.platform !== "darwin";
-}
 function saveFileSecret(instanceId, kind, value) {
-  if (!mayUseFileSecrets())
-    throw new Error("macOS Keychain \u4E0D\u53EF\u7528\uFF0C\u4E14\u672A\u5141\u8BB8\u6587\u4EF6 Token fallback\u3002");
   const path = fallbackSecretsPath();
   const existing = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
   existing[`${instanceId}:${kind}`] = value;
@@ -4596,77 +4546,55 @@ function saveFileSecret(instanceId, kind, value) {
   chmodSync(path, 384);
 }
 function saveSecret(instanceId, kind, value) {
-  if (process.platform === "darwin" && process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1") {
-    try {
-      execFileSync(
-        "security",
-        [
-          "add-generic-password",
-          "-a",
-          "partner-report",
-          "-s",
-          keychainService(instanceId, kind),
-          "-w",
-          value,
-          "-U"
-        ],
-        { stdio: "ignore" }
-      );
-      return;
-    } catch {
-    }
-  }
   saveFileSecret(instanceId, kind, value);
 }
 function loadSecret(instanceId, kind) {
-  if (process.platform === "darwin" && process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1") {
-    try {
-      return execFileSync(
-        "security",
-        [
-          "find-generic-password",
-          "-a",
-          "partner-report",
-          "-s",
-          keychainService(instanceId, kind),
-          "-w"
-        ],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
-      ).trim();
-    } catch {
-      throw Object.assign(
-        new Error(`\u65E0\u6CD5\u4ECE macOS Keychain \u8BFB\u53D6 ${kind} Token\u3002`),
-        { code: "KEYCHAIN_ACCESS_REQUIRED" }
-      );
+  const path = fallbackSecretsPath();
+  if (existsSync(path)) {
+    const secrets = JSON.parse(readFileSync(path, "utf8"));
+    const value = secrets[`${instanceId}:${kind}`];
+    if (value) return value;
+  }
+  const legacyValue = readKeychainValue(keychainService(instanceId, kind));
+  if (legacyValue) {
+    saveFileSecret(instanceId, kind, legacyValue);
+    return legacyValue;
+  }
+  throw Object.assign(new Error(`Plugin ${kind} Token \u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u3002`), {
+    code: process.platform === "darwin" ? "CREDENTIAL_MIGRATION_REQUIRED" : "PLUGIN_TOKEN_MISSING"
+  });
+}
+function migrateLegacyInstallation() {
+  const target = dataDirectory();
+  const rememberedDirectory = readKeychainValue(DATA_DIRECTORY_SERVICE);
+  if (rememberedDirectory)
+    migratePersistentDataDirectory(rememberedDirectory, target);
+  let config = loadConfig(false);
+  if (!config) {
+    const bootstrap = readKeychainValue(BOOTSTRAP_CONFIG_SERVICE);
+    if (bootstrap) {
+      config = JSON.parse(bootstrap);
+      saveConfig(config);
     }
   }
-  const path = fallbackSecretsPath();
-  if (!existsSync(path)) throw new Error("Plugin Token \u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u3002");
-  const secrets = JSON.parse(readFileSync(path, "utf8"));
-  const value = secrets[`${instanceId}:${kind}`];
-  if (!value) throw new Error(`Plugin ${kind} Token \u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u3002`);
-  return value;
+  if (!config) return { status: "not_connected", migratedSecrets: 0 };
+  let migratedSecrets = 0;
+  for (const kind of ["access", "refresh", "recovery"]) {
+    const path = fallbackSecretsPath();
+    const existing = existsSync(path) ? JSON.parse(readFileSync(path, "utf8"))[`${config.pluginInstanceId}:${kind}`] : null;
+    if (existing) continue;
+    const value = readKeychainValue(
+      keychainService(config.pluginInstanceId, kind)
+    );
+    if (!value) continue;
+    saveFileSecret(config.pluginInstanceId, kind, value);
+    migratedSecrets += 1;
+  }
+  loadSecret(config.pluginInstanceId, "access");
+  loadSecret(config.pluginInstanceId, "refresh");
+  return { status: "credentials_ready", migratedSecrets };
 }
 function removeSecrets(instanceId) {
-  if (process.platform === "darwin" && process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1") {
-    for (const kind of ["access", "refresh", "recovery"]) {
-      try {
-        execFileSync(
-          "security",
-          [
-            "delete-generic-password",
-            "-a",
-            "partner-report",
-            "-s",
-            keychainService(instanceId, kind)
-          ],
-          { stdio: "ignore" }
-        );
-      } catch {
-      }
-    }
-    return;
-  }
   const path = fallbackSecretsPath();
   if (!existsSync(path)) return;
   const secrets = JSON.parse(readFileSync(path, "utf8"));
@@ -4677,23 +4605,6 @@ function removeSecrets(instanceId) {
 `, { mode: 384 });
 }
 function removeSecret(instanceId, kind) {
-  if (process.platform === "darwin" && process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS !== "1") {
-    try {
-      execFileSync(
-        "security",
-        [
-          "delete-generic-password",
-          "-a",
-          "partner-report",
-          "-s",
-          keychainService(instanceId, kind)
-        ],
-        { stdio: "ignore" }
-      );
-    } catch {
-    }
-    return;
-  }
   const path = fallbackSecretsPath();
   if (!existsSync(path)) return;
   const secrets = JSON.parse(readFileSync(path, "utf8"));
@@ -4790,8 +4701,8 @@ var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
 var SCHEDULED_COLLECTION_PROMPT = [
   "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
-  "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528\u63D2\u4EF6 CLI\uFF0C\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
-  "\u63A5\u8FD1\u8FD0\u884C\u65F6\u95F4\u4E0A\u9650\u65F6\u505C\u6B62\u9886\u53D6\u65B0 Job\uFF1B\u5F53\u524D Job \u65E0\u6CD5\u5B8C\u6210\u65F6\u4F7F\u7528 collect-defer\uFF0C\u4FDD\u7559\u961F\u5217\u5230\u4E0B\u4E00\u6B21\u8FD0\u884C\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
+  "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528 partner-report MCP \u5DE5\u5177\uFF0C\u4E0D\u5F97\u8FD0\u884C CLI \u6216 shell\uFF1B\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
+  "\u63A5\u8FD1\u8FD0\u884C\u65F6\u95F4\u4E0A\u9650\u65F6\u505C\u6B62\u9886\u53D6\u65B0 Job\uFF1B\u5F53\u524D Job \u65E0\u6CD5\u5B8C\u6210\u65F6\u4F7F\u7528 collect_defer\uFF0C\u4FDD\u7559\u961F\u5217\u5230\u4E0B\u4E00\u6B21\u8FD0\u884C\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
   "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
   "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u901A\u8FC7 thread/list \u53EA\u8BFB\u53D6 Codex \u72B6\u6001\u6570\u636E\u5E93\u4E2D\u7684\u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u6709\u5B9E\u9645\u6D3B\u52A8\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
   "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
@@ -4802,16 +4713,16 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
   "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\uFF0C\u5E76\u91C7\u7528\u901A\u4FD7\u3001\u7CBE\u7B80\u3001\u76F4\u63A5\u7684\u8868\u8FBE\uFF0C\u907F\u514D\u672F\u8BED\u5806\u780C\u3001\u91CD\u590D\u80CC\u666F\u548C\u6D41\u7A0B\u5957\u8BDD\u3002",
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
-  "Schema\u3001\u4E2D\u6587\u6216\u5B89\u5168\u6821\u9A8C\u5931\u8D25\u5FC5\u987B\u5728\u540C\u4E00\u4E2A\u7ED3\u679C\u6587\u4EF6\u5185\u4FEE\u6B63\u4E14\u6700\u591A\u4E09\u6B21\uFF1B\u53EA\u6709\u540C\u4E00 Job \u8FDE\u7EED\u4E09\u6B21\u771F\u5B9E\u5931\u8D25\u540E\u624D\u80FD\u6309 CLI \u8FD4\u56DE\u7684\u5B89\u5168\u539F\u56E0\u7801\u4F7F\u7528 EXTRACT_FAILED\uFF0C\u7981\u6B62\u6279\u91CF collect-skip\u3002",
+  "Schema\u3001\u4E2D\u6587\u6216\u5B89\u5168\u6821\u9A8C\u5931\u8D25\u5FC5\u987B\u4FEE\u6B63\u540C\u4E00 Job \u7684\u7ED3\u6784\u5316\u7ED3\u679C\u4E14\u6700\u591A\u4E09\u6B21\uFF1B\u53EA\u6709\u540C\u4E00 Job \u8FDE\u7EED\u4E09\u6B21\u771F\u5B9E\u5931\u8D25\u540E\u624D\u80FD\u6309 MCP \u8FD4\u56DE\u7684\u5B89\u5168\u539F\u56E0\u7801\u4F7F\u7528 EXTRACT_FAILED\uFF0C\u7981\u6B62\u6279\u91CF collect_skip\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "CLI \u8FD4\u56DE started\u3001job\u3001validation_failed\u3001uploaded\u3001ignored\u3001skipped\u3001deferred\u3001project_description_job\u3001project_description_validation_failed\u3001project_description_uploaded\u3001project_description_skipped\u3001review_required\u3001project_scope_card_delivery_pending\u3001project_scope_end_scan_card_waiting\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextCommand \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u6267\u884C\u5BF9\u5E94\u7684\u4E0B\u4E00\u6B65\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
-  "project_scope_card_delivery_pending \u5FC5\u987B\u6301\u7EED\u6267\u884C project-scope-card-wait\uFF1B\u53EA\u6709 CLI \u89C2\u5BDF\u5230\u98DE\u4E66\u5361\u7247\u7248\u672C\u5DF2\u6210\u529F\u6295\u9012\u540E\u624D\u4F1A\u8FD4\u56DE project_scope_approval_required\u3002",
-  "project_scope_end_scan_card_waiting\u3001project_scope_approval_waiting \u548C project_scope_approved \u5C5E\u4E8E\u540C\u4E00\u4E2A\u65E5\u5E38 Run\uFF0C\u5FC5\u987B\u6267\u884C\u5404\u81EA\u8FD4\u56DE\u7684 collect-next\uFF0C\u4E0D\u5F97\u6539\u7528 project-scope-card-wait\u3002",
-  "CLI \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u786E\u8BA4\u53D1\u9001\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
-  "CLI \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextCommand \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
-  "\u961F\u5217\u5B8C\u6574\u5904\u7406\u6216\u56E0\u65F6\u95F4\u9884\u7B97\u5B89\u5168\u5EF6\u540E\u540E\u5FC5\u987B\u6267\u884C collect-review\uFF1B\u5BA1\u67E5\u5FC5\u987B\u533A\u5206 deferred\u3001failedExtract \u548C notProcessed\uFF0C\u53EA\u6709\u8BE5\u547D\u4EE4\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextCommand \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
-  "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 CLI \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
+  "MCP \u8FD4\u56DE started\u3001job\u3001validation_failed\u3001uploaded\u3001ignored\u3001skipped\u3001deferred\u3001project_description_job\u3001project_description_validation_failed\u3001project_description_uploaded\u3001project_description_skipped\u3001review_required\u3001project_scope_card_delivery_pending\u3001project_scope_end_scan_card_waiting\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextTool \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u8C03\u7528\u5BF9\u5E94\u5DE5\u5177\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "project_scope_card_delivery_pending \u5FC5\u987B\u6301\u7EED\u8C03\u7528 project_scope_card_wait\uFF1B\u53EA\u6709 MCP \u89C2\u5BDF\u5230\u98DE\u4E66\u5361\u7247\u7248\u672C\u5DF2\u6210\u529F\u6295\u9012\u540E\u624D\u4F1A\u8FD4\u56DE project_scope_approval_required\u3002",
+  "project_scope_end_scan_card_waiting\u3001project_scope_approval_waiting \u548C project_scope_approved \u5C5E\u4E8E\u540C\u4E00\u4E2A\u65E5\u5E38 Run\uFF0C\u5FC5\u987B\u6309 nextTool \u8C03\u7528 collect_next\uFF0C\u4E0D\u5F97\u6539\u7528 project_scope_card_wait\u3002",
+  "MCP \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextTool \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u786E\u8BA4\u53D1\u9001\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
+  "MCP \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextTool \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
+  "\u961F\u5217\u5B8C\u6574\u5904\u7406\u6216\u56E0\u65F6\u95F4\u9884\u7B97\u5B89\u5168\u5EF6\u540E\u540E\u5FC5\u987B\u8C03\u7528 collect_review\uFF1B\u5BA1\u67E5\u5FC5\u987B\u533A\u5206 deferred\u3001failedExtract \u548C notProcessed\uFF0C\u53EA\u6709\u8BE5\u5DE5\u5177\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextTool \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
+  "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 MCP \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
   "\u6700\u7EC8\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
 ].join(" ");
 var SCHEDULED_COLLECTION_TASK = {
@@ -5900,8 +5811,11 @@ function outermostGitRoot(cwd) {
   let outermost = null;
   for (; ; ) {
     const marker = resolve4(current, ".git");
-    if (existsSync4(marker))
-      outermost = linkedWorktreeCommonRoot(marker) ?? current;
+    if (existsSync4(marker)) {
+      const linkedRoot = linkedWorktreeCommonRoot(marker);
+      const validDirectory = lstatSync(marker).isDirectory() && (existsSync4(resolve4(marker, "HEAD")) || existsSync4(resolve4(marker, "config")));
+      if (linkedRoot || validDirectory) outermost = linkedRoot ?? current;
+    }
     const parent = dirname2(current);
     if (parent === current) return outermost;
     current = parent;
@@ -7563,6 +7477,7 @@ function projectDescriptionJobOutput(runPath, current) {
   output({
     status: "project_description_job",
     runPath,
+    jobId: current.jobId ?? basename3(current.inputPath).replace(/-input\.json$/, ""),
     projectName: current.projectName,
     inputPath: current.inputPath,
     resultPath: current.resultPath,
@@ -7630,12 +7545,9 @@ async function continueProjectDescriptionScan(runPath, manifest) {
   }
   const next = scan.queue[scan.cursor++];
   if (!next) return false;
-  const paths = writeJob(
-    runPath,
-    `project-description-${randomUUID2()}`,
-    next.modelInput
-  );
-  scan.current = { ...next, ...paths, failures: 0 };
+  const jobId = `project-description-${randomUUID2()}`;
+  const paths = writeJob(runPath, jobId, next.modelInput);
+  scan.current = { ...next, jobId, ...paths, failures: 0 };
   saveRun(runPath, manifest);
   projectDescriptionJobOutput(runPath, scan.current);
   return true;
@@ -8469,6 +8381,7 @@ function help() {
       "connectivity-test",
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
+      "migrate-credentials",
       "collect-start [--force]",
       "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
@@ -8516,6 +8429,8 @@ async function runCommand() {
   else if (command === "connectivity-test") await connectivityTest();
   else if (command === "server-url-set") await setServerUrl();
   else if (command === "scheduled-task-config") scheduledTaskConfig();
+  else if (command === "migrate-credentials")
+    output(migrateLegacyInstallation());
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
   else if (command === "project-scope-card-wait") await projectScopeCardWait();

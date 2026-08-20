@@ -93,6 +93,8 @@ describe("project scope privacy boundary", () => {
     const nested = resolve(root, "packages", "nested");
     mkdirSync(resolve(root, ".git"));
     mkdirSync(resolve(nested, ".git"), { recursive: true });
+    writeFileSync(resolve(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(resolve(nested, ".git", "HEAD"), "ref: refs/heads/main\n");
     try {
       const discovery = discoverProjectScopes(
         pluginInstanceId,

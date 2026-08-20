@@ -376,7 +376,7 @@ tenant_id
    - 是否允许访问 Report Service 网络域名。
 9. 系统执行一次只读预检，展示可发现 Session 数量，不立即上传完整数据。
 10. 系统执行一次测试同步，展示读取、排除、失败和待处理数量。
-11. 测试同步成功后确认 Daily Collection Task 已启用；后续 Marketplace 兼容升级或重装优先复用仍存在且可写的已记忆数据目录、Binding Code 和 Plugin Instance，不重复绑定，也不丢失 accepted/ignored 去重 ledger。没有可用记忆目录时默认使用 `~/.partner-report-data`；后台沙箱无法写入默认目录且运行时提供 `PLUGIN_DATA` 时，自动迁移到该插件可写目录并记住选择。迁移只包含持久文件，不包含临时 Run 和租约；所有候选目录都不可写时返回 `LOCAL_DATA_WRITE_PERMISSION_REQUIRED`，不得把权限错误误判为采集失败。
+11. 测试同步成功后确认 Daily Collection Task 已启用；后续 Marketplace 兼容升级或重装保持稳定的 Plugin 和 MCP Server 标识，复用 `~/.partner-report-data` 中的 Binding、项目权限和 accepted/ignored 去重 ledger。安装脚本只把 Partner Report MCP 设置为自动通过，不修改 Codex 全局权限；旧版 Keychain Token 在升级时一次性迁移到权限为 `0600` 的 `secrets.json`，定时任务不再访问 Keychain。显式 `PARTNER_REPORT_DATA` 可覆盖默认目录，运行时 `PLUGIN_DATA` 只作为旧数据迁移后备；所有候选目录都不可写时返回 `LOCAL_DATA_WRITE_PERMISSION_REQUIRED`。
 
 ### 9.2 每日 Session 发现与本地提取
 
@@ -528,7 +528,7 @@ Monitor 的飞书身份或接收群、消息发送时间和报告模板均由 Te
 - 插件必须可由 GitHub Marketplace 稳定 Release 通过 Codex 官方途径安装和升级；生产入口不得直接跟随未验证的 `main`。
 - Plugin 代码版本与本地配置必须分离；兼容升级不得要求重新输入 Binding Code 或重新配置项目。
 - 用户稳定目录中的 `collection-state.json` 必须包含 Schema 版本、Plugin Instance 归属、accepted/ignored 匿名 hash ledger，并使用 `0600` 原子写入；Plugin 更新或重装必须无损复用或迁移该状态。Daily Collection Task 的计划、最近运行状态和升级变化必须在发布说明及 Admin 状态中明确展示。
-- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的 `collect-start` 入口；首次连接时通过 Codex 官方能力查找同名任务，任务不存在时自动创建默认任务，任务存在时保持原样。普通运行不得检查或修复任务配置；只有用户明确要求时才只修改 Prompt，或原地重置 destination、project、schedule、timezone、model、reasoning effort、notifications 和 prompt 的全部官方默认值，不得删除后重建或产生重复任务。Prompt 必须声明首次 1 天边界、增量防重和 automation memory 最小化规则。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
+- Plugin 必须提供可由 Codex Scheduled Task 稳定调用的本地 MCP `collect_start` 工具，定时链路不得让模型执行 CLI、读写 Job 临时文件或申请额外 shell 权限；首次连接时通过 Codex 官方能力查找同名任务，任务不存在时自动创建默认任务，任务存在时保持原样。普通运行不得检查或修复任务配置；只有用户明确要求时才只修改 Prompt，或原地重置 destination、project、schedule、timezone、model、reasoning effort、notifications 和 prompt 的全部官方默认值，不得删除后重建或产生重复任务。Prompt 必须声明首次 1 天边界、增量防重、`nextTool` 终态协议和 automation memory 最小化规则。正常链路不得要求 Partner 信任每 Turn 触发的 `Stop` 或 `SessionEnd` Hook。
 - Admin 必须以标准化后的唯一工作邮箱创建 Partner；服务端使用稳定内部 `partner_id` 作为数据关联键，不直接使用邮箱作为外键。
 - Admin 必须可以为同一个 Partner 创建多个 Binding Code；每个 Code 对应一个独立 Plugin Instance 和设备来源。
 - Admin 页面必须完整展示新生成的 Binding Code，并提供一键复制；关闭生成弹窗后仍可在对应 Partner 下查看和复制。Binding Code 不得通过 Partner、Plugin 或公开接口返回。

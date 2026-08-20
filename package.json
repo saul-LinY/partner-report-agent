@@ -17,6 +17,7 @@
     "dev": "concurrently -k -n api,web,worker -c cyan,green,yellow \"npm run dev -w @partner-report/api\" \"npm run dev -w @partner-report/web\" \"npm run dev -w @partner-report/worker\"",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "plugin:install": "node scripts/install-partner-report.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces --if-present"

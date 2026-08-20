@@ -4,14 +4,16 @@
   "private": true,
   "type": "module",
   "bin": {
-    "partner-report": "./dist/cli.mjs"
+    "partner-report": "./dist/cli.mjs",
+    "partner-report-setup": "./dist/setup.mjs"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/cli.mjs --banner:js='#!/usr/bin/env node' && chmod +x dist/cli.mjs",
+    "build": "esbuild src/cli.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/cli.mjs --banner:js='#!/usr/bin/env node' && esbuild src/mcp.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/mcp.mjs --banner:js='#!/usr/bin/env node' && esbuild src/setup.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/setup.mjs --banner:js='#!/usr/bin/env node' && chmod +x dist/cli.mjs dist/mcp.mjs dist/setup.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. plugins/partner-report/src"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@partner-report/contracts": "0.1.0",
     "zod": "^3.24.0"
   },

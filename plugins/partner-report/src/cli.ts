@@ -17,6 +17,7 @@ import {
   PLUGIN_VERSION,
   loadConfig,
   loadSecret,
+  migrateLegacyInstallation,
   normalizeServerUrl,
   removeSecret,
   removeSecrets,
@@ -183,6 +184,7 @@ type ProjectDescriptionQueueItem = {
 };
 
 type ProjectDescriptionCurrent = ProjectDescriptionQueueItem & {
+  jobId?: string;
   inputPath: string;
   resultPath: string;
   failures: number;
@@ -1609,6 +1611,8 @@ function projectDescriptionJobOutput(
   output({
     status: "project_description_job",
     runPath,
+    jobId:
+      current.jobId ?? basename(current.inputPath).replace(/-input\.json$/, ""),
     projectName: current.projectName,
     inputPath: current.inputPath,
     resultPath: current.resultPath,
@@ -1692,12 +1696,9 @@ async function continueProjectDescriptionScan(
   }
   const next = scan.queue[scan.cursor++];
   if (!next) return false;
-  const paths = writeJob(
-    runPath,
-    `project-description-${randomUUID()}`,
-    next.modelInput,
-  );
-  scan.current = { ...next, ...paths, failures: 0 };
+  const jobId = `project-description-${randomUUID()}`;
+  const paths = writeJob(runPath, jobId, next.modelInput);
+  scan.current = { ...next, jobId, ...paths, failures: 0 };
   saveRun(runPath, manifest);
   projectDescriptionJobOutput(runPath, scan.current);
   return true;
@@ -2632,6 +2633,7 @@ function help() {
       "connectivity-test",
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
+      "migrate-credentials",
       "collect-start [--force]",
       "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
@@ -2684,6 +2686,8 @@ async function runCommand() {
   else if (command === "connectivity-test") await connectivityTest();
   else if (command === "server-url-set") await setServerUrl();
   else if (command === "scheduled-task-config") scheduledTaskConfig();
+  else if (command === "migrate-credentials")
+    output(migrateLegacyInstallation());
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
   else if (command === "project-scope-card-wait") await projectScopeCardWait();

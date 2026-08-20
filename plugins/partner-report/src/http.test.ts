@@ -11,13 +11,11 @@ describe.sequential("authenticatedRequest", () => {
   beforeEach(() => {
     directory = mkdtempSync(resolve(tmpdir(), "partner-report-http-test-"));
     process.env.PARTNER_REPORT_DATA = directory;
-    process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS = "1";
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env.PARTNER_REPORT_DATA;
-    delete process.env.PARTNER_REPORT_ALLOW_FILE_TOKENS;
     rmSync(directory, { recursive: true, force: true });
   });
 

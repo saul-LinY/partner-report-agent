@@ -128,8 +128,14 @@ function outermostGitRoot(cwd: string) {
   let outermost: string | null = null;
   for (;;) {
     const marker = resolve(current, ".git");
-    if (existsSync(marker))
-      outermost = linkedWorktreeCommonRoot(marker) ?? current;
+    if (existsSync(marker)) {
+      const linkedRoot = linkedWorktreeCommonRoot(marker);
+      const validDirectory =
+        lstatSync(marker).isDirectory() &&
+        (existsSync(resolve(marker, "HEAD")) ||
+          existsSync(resolve(marker, "config")));
+      if (linkedRoot || validDirectory) outermost = linkedRoot ?? current;
+    }
     const parent = dirname(current);
     if (parent === current) return outermost;
     current = parent;
