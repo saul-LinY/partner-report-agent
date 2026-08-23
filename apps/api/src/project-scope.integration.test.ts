@@ -1,12 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
 import { ApiError, type DomainActor } from "./common.js";
-import { FeishuDeliveryService } from "./feishu/delivery.js";
 import {
   beginProjectScopeBootstrap,
   decideProjectScopes,
-  loadProjectScopeCardDeliveryStatus,
   registerProjectScopeCandidates,
 } from "./project-scope.js";
 
@@ -18,11 +16,9 @@ suite("project scope persistence", () => {
     teamId: randomUUID(),
     partnerId: randomUUID(),
     pluginInstanceId: randomUUID(),
-    feishuBindingId: randomUUID(),
     periodId: randomUUID(),
   };
   const periodEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1_000);
-  const feishuAppId = `cli_scope_test_${fixture.feishuBindingId}`;
   const actor: DomainActor = {
     actorType: "plugin",
     actorId: fixture.pluginInstanceId,
@@ -70,12 +66,9 @@ suite("project scope persistence", () => {
   afterAll(async () => {
     await sql.begin(async (tx) => {
       await tx`delete from audit_events where tenant_id = ${fixture.tenantId}`;
-      await tx`delete from outbox_events where tenant_id = ${fixture.tenantId}`;
-      await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_entries where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_policies where tenant_id = ${fixture.tenantId}`;
       await tx`delete from report_periods where tenant_id = ${fixture.tenantId}`;
-      await tx`delete from feishu_partner_bindings where tenant_id = ${fixture.tenantId}`;
       await tx`delete from plugin_instances where id = ${fixture.pluginInstanceId}`;
       await tx`delete from partners where id = ${fixture.partnerId}`;
       await tx`delete from teams where id = ${fixture.teamId}`;
@@ -97,44 +90,11 @@ suite("project scope persistence", () => {
         },
       ],
     });
-    await expect(
-      loadProjectScopeCardDeliveryStatus(identity, {
-        periodKey: "scope-period",
-        version: first.version,
-      }),
-    ).resolves.toMatchObject({ status: "pending" });
     expect(first).toMatchObject({
       version: 2,
       initialized: false,
       entries: [{ scopeKey: firstKey }, { scopeKey: "d".repeat(64) }],
     });
-    const messageId = `om_${randomUUID()}`;
-    const sendInteractiveCard = vi.fn(async () => ({ messageId }));
-    const updateInteractiveCard = vi.fn(async () => undefined);
-    const deliveryService = new FeishuDeliveryService({
-      appId: feishuAppId,
-      messageClient: { sendInteractiveCard, updateInteractiveCard },
-    });
-    await expect(
-      deliveryService.deliverScope({
-        tenantId: fixture.tenantId,
-        teamId: fixture.teamId,
-        partnerId: fixture.partnerId,
-        pluginInstanceId: fixture.pluginInstanceId,
-        periodKey: "scope-period",
-      }),
-    ).resolves.toMatchObject({
-      outcome: "sent",
-      messageId,
-      domainVersion: first.version,
-    });
-    await expect(
-      loadProjectScopeCardDeliveryStatus(identity, {
-        periodKey: "scope-period",
-        version: first.version,
-      }),
-    ).resolves.toMatchObject({ status: "sent" });
-
     const initialized = await decideProjectScopes(
       actor,
       fixture.pluginInstanceId,
@@ -243,34 +203,6 @@ suite("project scope persistence", () => {
         },
       ],
     });
-    await expect(
-      loadProjectScopeCardDeliveryStatus(identity, {
-        periodKey: "scope-period",
-        version: rediscovered.version,
-      }),
-    ).resolves.toMatchObject({ status: "pending" });
-    await expect(
-      deliveryService.deliverScope({
-        tenantId: fixture.tenantId,
-        teamId: fixture.teamId,
-        partnerId: fixture.partnerId,
-        pluginInstanceId: fixture.pluginInstanceId,
-        periodKey: "scope-period",
-      }),
-    ).resolves.toMatchObject({
-      outcome: "updated",
-      messageId,
-      domainVersion: rediscovered.version,
-    });
-    expect(sendInteractiveCard).toHaveBeenCalledTimes(1);
-    expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
-    await expect(
-      loadProjectScopeCardDeliveryStatus(identity, {
-        periodKey: "scope-period",
-        version: rediscovered.version,
-      }),
-    ).resolves.toMatchObject({ status: "sent" });
-
     const reapproved = await decideProjectScopes(
       actor,
       fixture.pluginInstanceId,

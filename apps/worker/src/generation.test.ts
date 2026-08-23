@@ -11,7 +11,6 @@ import {
   injectApprovedProjectDescriptions,
   normalizeTeamReportSummary,
   projectStatusWithCompletionSupport,
-  reportInstructions,
 } from "./generation.js";
 
 describe("reader-facing generation instructions", () => {
@@ -29,16 +28,6 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("user's correction as authoritative");
     expect(instructions).toContain("projectDescription only");
     expect(instructions).toContain("2026-08-12.project-card.v3");
-  });
-
-  it("asks individual reports to stay readable and avoid repetition", () => {
-    const instructions = reportInstructions("test-model");
-
-    expect(instructions).toContain("simplified Chinese");
-    expect(instructions).toContain("colleague without technical context");
-    expect(instructions).toContain("Do not repeat the same fact");
-    expect(instructions).toContain('write only "无相关内容"');
-    expect(instructions).toContain("2026-08-10.individual-review.v2");
   });
 });
 
@@ -93,9 +82,9 @@ describe("project completion support", () => {
 
 describe("Team Report numbering", () => {
   it("builds an honest Team Report when every person has no reportable record", () => {
-    const reportId = "11111111-1111-4111-8111-111111111111";
+    const snapshotId = "11111111-1111-4111-8111-111111111111";
     const report = buildNoActivityTeamReport(
-      [{ partnerId: "partner-a", partnerName: "林勇", reportId }],
+      [{ partnerId: "partner-a", partnerName: "林勇", snapshotId }],
       "gpt-5.6-sol",
     );
 

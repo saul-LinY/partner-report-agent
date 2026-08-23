@@ -71,6 +71,14 @@ describe("Google auth HTTP security", () => {
     expect(admin.statusCode).toBe(401);
   });
 
+  it("does not expose development login outside development mode", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/dev-login",
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
   it("rejects a tampered signed session before database access", async () => {
     const response = await app.inject({
       method: "GET",

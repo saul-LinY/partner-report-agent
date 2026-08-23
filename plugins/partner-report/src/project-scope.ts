@@ -648,23 +648,6 @@ export function scopeIsActive(
   );
 }
 
-export function scopeNeedsCurrentPeriodBackfill(
-  entry: LocalProjectScopeEntry,
-  initializedAt: string | null,
-  periodKey: string,
-) {
-  if (
-    entry.status !== "allowed" ||
-    entry.firstSeenPeriodKey !== periodKey ||
-    entry.backfilledPeriodKey === periodKey ||
-    !initializedAt
-  )
-    return false;
-  return (
-    new Date(entry.firstSeenAt).getTime() > new Date(initializedAt).getTime()
-  );
-}
-
 export function authorizedProjectThreads<T extends { id: string }>(
   summaries: T[],
   threadScopes: Map<string, string>,
@@ -672,9 +655,15 @@ export function authorizedProjectThreads<T extends { id: string }>(
   now = new Date(),
 ) {
   const policies = new Map(entries.map((entry) => [entry.scopeKey, entry]));
-  return summaries.flatMap((summary): Array<T & { scopeKey: string }> => {
-    const scopeKey = threadScopes.get(summary.id);
-    if (!scopeKey || !scopeIsActive(policies.get(scopeKey), now)) return [];
-    return [{ ...summary, scopeKey }];
-  });
+  return summaries.flatMap(
+    (summary): Array<T & { scopeKey: string; collectionStartsAt: string }> => {
+      const scopeKey = threadScopes.get(summary.id);
+      const policy = scopeKey ? policies.get(scopeKey) : undefined;
+      if (!scopeKey || !scopeIsActive(policy, now) || !policy?.effectiveFrom)
+        return [];
+      return [
+        { ...summary, scopeKey, collectionStartsAt: policy.effectiveFrom },
+      ];
+    },
+  );
 }

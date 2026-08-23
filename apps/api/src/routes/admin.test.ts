@@ -1,13 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  feishuBindingState,
-  feishuConnectionState,
-  feishuDeliveryState,
   nextManualRetryMaxAttempts,
   partnerReviewProgress,
   pluginConnectivityStatus,
   pluginRunStatus,
-  projectScopeDeliveryMode,
 } from "./admin.js";
 
 describe("Admin agent job retry", () => {
@@ -15,16 +11,6 @@ describe("Admin agent job retry", () => {
     expect(nextManualRetryMaxAttempts(3, 3)).toBe(6);
     expect(nextManualRetryMaxAttempts(2, 10)).toBe(10);
     expect(nextManualRetryMaxAttempts(11, 10)).toBe(14);
-  });
-});
-
-describe("Project scope delivery mode", () => {
-  it("resends approvals while pending projects remain", () => {
-    expect(projectScopeDeliveryMode(3)).toBe("review");
-  });
-
-  it("sends a read-only status after every project is reviewed", () => {
-    expect(projectScopeDeliveryMode(0)).toBe("status");
   });
 });
 
@@ -105,74 +91,8 @@ describe("Plugin Fleet status projection", () => {
   });
 });
 
-describe("Feishu connection status projection", () => {
-  it("keeps binding state independent from delivery state", () => {
-    expect(
-      feishuBindingState({
-        enabled: false,
-        status: "active",
-        openIdPresent: true,
-      }),
-    ).toBe("disabled");
-    expect(
-      feishuBindingState({
-        enabled: true,
-        status: null,
-        openIdPresent: false,
-      }),
-    ).toBe("not_connected");
-    expect(
-      feishuBindingState({
-        enabled: true,
-        status: "pending",
-        openIdPresent: false,
-      }),
-    ).toBe("pending");
-    expect(
-      feishuBindingState({
-        enabled: true,
-        status: "active",
-        openIdPresent: true,
-      }),
-    ).toBe("connected");
-    expect(
-      feishuBindingState({
-        enabled: true,
-        status: "active",
-        openIdPresent: false,
-      }),
-    ).toBe("invalid");
-  });
-
-  it("projects successful, in-flight and failed deliveries", () => {
-    expect(feishuDeliveryState(null)).toBe("idle");
-    expect(feishuDeliveryState("sent")).toBe("healthy");
-    expect(feishuDeliveryState("confirmed")).toBe("healthy");
-    expect(feishuDeliveryState("sending")).toBe("sending");
-    expect(feishuDeliveryState("deferred")).toBe("deferred");
-    expect(feishuDeliveryState("retry_wait")).toBe("retrying");
-    expect(feishuDeliveryState("failed")).toBe("failed");
-    expect(feishuDeliveryState("unexpected")).toBe("unknown");
-  });
-
-  it("surfaces delivery problems before and after the Partner is bound", () => {
-    expect(feishuConnectionState("pending", "retrying")).toBe("delivery_error");
-    expect(feishuConnectionState("connected", "sending")).toBe(
-      "delivery_pending",
-    );
-    expect(feishuConnectionState("connected", "retrying")).toBe(
-      "delivery_error",
-    );
-    expect(feishuConnectionState("connected", "healthy")).toBe("connected");
-    expect(feishuConnectionState("connected", "unknown")).toBe(
-      "delivery_error",
-    );
-    expect(feishuConnectionState("disabled", "healthy")).toBe("disabled");
-  });
-});
-
 describe("Partner review progress projection", () => {
-  it("keeps card counts visible throughout the personal report flow", () => {
+  it("keeps card counts visible throughout Work Card review", () => {
     const base = {
       reviewId: "review-1",
       periodKey: "2026-W31",
@@ -180,7 +100,6 @@ describe("Partner review progress projection", () => {
       pendingCount: 1,
       approvedCount: 2,
       excludedCount: 1,
-      reportStatus: null,
     };
     expect(partnerReviewProgress(base)).toEqual({
       periodKey: "2026-W31",
@@ -195,7 +114,7 @@ describe("Partner review progress projection", () => {
       partnerReviewProgress({
         ...base,
         pendingCount: 0,
-        reportStatus: "LOCKED",
+        reviewState: "ITEMS_APPROVED",
       }),
     ).toMatchObject({ stage: "completed", reviewed: 3, total: 3 });
   });
@@ -209,7 +128,6 @@ describe("Partner review progress projection", () => {
         pendingCount: null,
         approvedCount: null,
         excludedCount: null,
-        reportStatus: null,
       }),
     ).toEqual({
       periodKey: null,

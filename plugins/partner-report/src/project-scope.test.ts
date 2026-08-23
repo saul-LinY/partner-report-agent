@@ -19,7 +19,6 @@ import {
   mergeRemoteProjectScope,
   saveLocalProjectScope,
   scopeIsActive,
-  scopeNeedsCurrentPeriodBackfill,
   threadMayBeRead,
   type LocalProjectScope,
 } from "./project-scope.js";
@@ -164,35 +163,6 @@ describe("project scope privacy boundary", () => {
     expect(scopeIsActive(merged.entries[0], new Date("2026-08-09"))).toBe(true);
   });
 
-  it("backfills a later-approved project once in its discovery period", () => {
-    const entry: LocalProjectScope["entries"][number] = {
-      scopeKey: "b".repeat(64),
-      displayName: "new-project",
-      status: "allowed",
-      effectiveFrom: "2026-08-06T11:00:00.000Z",
-      firstSeenPeriodKey: "2026-W32",
-      firstSeenAt: "2026-08-06T10:30:00.000Z",
-      lastSeenAt: "2026-08-06T10:30:00.000Z",
-      sessionCount: 1,
-      localRoot: "/workspace/new-project",
-    };
-    expect(
-      scopeNeedsCurrentPeriodBackfill(
-        entry,
-        "2026-08-06T10:00:00.000Z",
-        "2026-W32",
-      ),
-    ).toBe(true);
-    entry.backfilledPeriodKey = "2026-W32";
-    expect(
-      scopeNeedsCurrentPeriodBackfill(
-        entry,
-        "2026-08-06T10:00:00.000Z",
-        "2026-W32",
-      ),
-    ).toBe(false);
-  });
-
   it("turns local status edits into versioned central decisions", () => {
     const scopeKey = "d".repeat(64);
     const remote = {
@@ -321,7 +291,13 @@ describe("project scope privacy boundary", () => {
         entries,
         new Date("2026-08-06T00:00:00.000Z"),
       ),
-    ).toEqual([{ id: "active-thread", scopeKey: activeKey }]);
+    ).toEqual([
+      {
+        id: "active-thread",
+        scopeKey: activeKey,
+        collectionStartsAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
   });
 
   it("filters explicit temporary environments but not a directory name alone", () => {

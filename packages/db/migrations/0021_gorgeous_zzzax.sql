@@ -1,0 +1,1 @@
+ALTER TABLE "plugin_instances" ADD COLUMN "client_kind" text DEFAULT 'collector' NOT NULL;

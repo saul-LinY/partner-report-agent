@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  buildTeamReportIndividualReports,
-  individualReportResultSchema,
-} from "@partner-report/contracts";
+import { buildTeamReportWorkCards } from "@partner-report/contracts";
 import { stableJsonHash } from "@partner-report/contracts/hash";
 import {
   DEFAULT_WEEKLY_PERIOD_RULE,
@@ -35,79 +32,6 @@ type AggregationFact = {
   payload: Record<string, any>;
   source_occurred_at?: Date | string | null;
 };
-
-const noActivitySectionContent: Record<
-  string,
-  { title: string; markdown: string }
-> = {
-  summary: {
-    title: "本周概览",
-    markdown: "本周期未采集到可用于汇报的工作记录。",
-  },
-  achievements: {
-    title: "主要成果",
-    markdown: "无可核对的工作记录，因此不对成果作出判断。",
-  },
-  project_progress: {
-    title: "项目进展",
-    markdown: "无可核对的项目记录，因此不对项目进展作出判断。",
-  },
-  risks: {
-    title: "风险与阻塞",
-    markdown: "无可核对的工作记录，因此不对风险与阻塞作出判断。",
-  },
-  next_priorities: {
-    title: "下周重点",
-    markdown: "无可核对的工作记录，因此不填写后续安排。",
-  },
-  coordination: {
-    title: "协作事项",
-    markdown: "无可核对的工作记录，因此不填写协作事项。",
-  },
-  coverage: {
-    title: "记录覆盖范围",
-    markdown:
-      "本报告只说明中台未采集到可用于本周期汇报的记录，不代表本周期没有开展工作。",
-  },
-};
-
-export function buildNoActivityIndividualReport() {
-  const sections = [
-    "summary",
-    "achievements",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coordination",
-    "coverage",
-  ].map((key) => ({
-    key,
-    ...noActivitySectionContent[key]!,
-    claims: [],
-  }));
-  const title = "本周期个人周报：无可汇报记录";
-  return individualReportResultSchema.parse({
-    schemaVersion: "1.0",
-    title,
-    summary:
-      "本周期未采集到可用于汇报的工作记录；这只表示中台缺少报告依据，不代表本周期没有开展工作。",
-    sections,
-    markdown: [
-      `# ${title}`,
-      ...sections.map(
-        (section: { title: string; markdown: string }) =>
-          `## ${section.title}\n\n${section.markdown}`,
-      ),
-    ].join("\n\n"),
-    qualityWarnings: ["NO_REPORTABLE_ACTIVITY_COLLECTED"],
-    production: {
-      skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-11.no-activity.v1",
-      schemaVersion: "1.0",
-      producer: "data-platform",
-    },
-  });
-}
 
 export function buildProjectBuckets(
   facts: AggregationFact[],
@@ -365,7 +289,6 @@ export async function scheduleDueWeeklyReports(
           };
           const checksum = stableJsonHash(snapshotPayload);
           const workItemSnapshotId = randomUUID();
-          const report = buildNoActivityIndividualReport();
           await tx`
             update reviews set state = 'ITEMS_APPROVED',
               approved_count = 0, excluded_count = 0, pending_count = 0,
@@ -383,19 +306,6 @@ export async function scheduleDueWeeklyReports(
               ${checksum}, ${JSON.stringify(snapshotPayload)}::jsonb,
               'system', 'weekly-cutoff', now()
             )
-          `;
-          await tx`
-            insert into individual_reports (
-              id, tenant_id, team_id, partner_id, period_id, snapshot_id,
-              status, content_revision, title, summary, markdown, payload,
-              source_checksum, generator_version, submitted_at, locked_at
-            ) values (
-              ${randomUUID()}, ${period.tenant_id}, ${period.team_id},
-              ${partnerId}, ${period.id}, ${workItemSnapshotId}, 'LOCKED', 1,
-              ${report.title}, ${report.summary}, ${report.markdown},
-              ${JSON.stringify(report)}::jsonb, ${checksum},
-              'partner-report-platform/0.3.0 (no-activity)', now(), now()
-            ) on conflict (tenant_id, partner_id, period_id) do nothing
           `;
           continue;
         }
@@ -443,68 +353,7 @@ export async function scheduleDueWeeklyReports(
   return { closedPeriods, aggregationJobs, teamReportJobs };
 }
 
-/** Ensure users with no report/review card still receive pending scope approval. */
-export async function scheduleProjectScopeFallbacks(now = new Date()) {
-  const candidates = await sql<
-    Array<{
-      tenant_id: string;
-      team_id: string;
-      partner_id: string;
-      plugin_instance_id: string;
-      period_key: string;
-    }>
-  >`
-    select psp.tenant_id, psp.team_id, psp.partner_id,
-      psp.plugin_instance_id, rp.period_key
-    from project_scope_policies psp
-    join plugin_instances pi on pi.id = psp.plugin_instance_id
-      and pi.tenant_id = psp.tenant_id and pi.status = 'active'
-    join lateral (
-      select period_key, submission_deadline_at
-      from report_periods
-      where tenant_id = psp.tenant_id and team_id = psp.team_id
-        and status in ('facts_frozen', 'closed')
-        and submission_deadline_at <= ${now.toISOString()}
-      order by starts_at desc
-      limit 1
-    ) rp on true
-    where psp.initialized = true
-      and exists (
-        select 1 from project_scope_entries pse
-        where pse.plugin_instance_id = psp.plugin_instance_id
-          and pse.status = 'pending'
-      )
-      and not exists (
-        select 1 from outbox_events oe
-        where oe.tenant_id = psp.tenant_id
-          and oe.event_type = 'project_scope.period.review_ready'
-          and oe.aggregate_id = psp.plugin_instance_id::text
-          and oe.payload->>'periodKey' = rp.period_key
-      )
-    order by rp.submission_deadline_at, psp.created_at
-    limit 100
-  `;
-  for (const candidate of candidates) {
-    await sql`
-      insert into outbox_events (
-        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-      ) values (
-        ${randomUUID()}, ${candidate.tenant_id},
-        'project_scope.period.review_ready', 'plugin_instance',
-        ${candidate.plugin_instance_id},
-        ${JSON.stringify({
-          teamId: candidate.team_id,
-          partnerId: candidate.partner_id,
-          pluginInstanceId: candidate.plugin_instance_id,
-          periodKey: candidate.period_key,
-        })}::jsonb
-      )
-    `;
-  }
-  return candidates.length;
-}
-
-/** Generate a Team Report once every cutoff participant has a locked report. */
+/** Generate a Team Report once every cutoff participant has confirmed Work Cards. */
 export async function scheduleDueTeamReports(onlyPeriodId?: string) {
   const periods = await sql<any[]>`
     select rp.* from report_periods rp
@@ -515,25 +364,35 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
   let queued = 0;
   for (const period of periods) {
     const result = await sql.begin(async (tx) => {
-      const reportRows = await tx<any[]>`
+      const sourceRows = await tx<any[]>`
         select r.partner_id, p.display_name as partner_name,
-          ir.id as report_id, ir.payload, wis.payload as work_item_snapshot
+          r.state as review_state, wis.id as snapshot_id,
+          wis.payload as work_item_snapshot
         from reviews r
         join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
-        left join individual_reports ir on ir.tenant_id = r.tenant_id
-          and ir.partner_id = r.partner_id and ir.period_id = r.period_id
-          and ir.status = 'LOCKED'
-        left join work_item_snapshots wis on wis.id = ir.snapshot_id
-          and wis.tenant_id = ir.tenant_id
+        left join lateral (
+          select snapshot.id, snapshot.payload
+          from work_item_snapshots snapshot
+          where snapshot.tenant_id = r.tenant_id and snapshot.review_id = r.id
+          order by snapshot.created_at desc limit 1
+        ) wis on true
         where r.tenant_id = ${period.tenant_id} and r.team_id = ${period.team_id}
           and r.period_id = ${period.id}
         order by p.display_name
       `;
-      const submitted = reportRows.filter(
-        (row) => row.report_id && row.payload,
+      const confirmed = sourceRows.filter(
+        (row) =>
+          ["ITEMS_APPROVED", "ITEMS_DISMISSED"].includes(row.review_state) &&
+          row.snapshot_id &&
+          row.work_item_snapshot,
       );
-      const missingPartnerIds = reportRows
-        .filter((row) => !row.report_id || !row.payload)
+      const missingPartnerIds = sourceRows
+        .filter(
+          (row) =>
+            !["ITEMS_APPROVED", "ITEMS_DISMISSED"].includes(row.review_state) ||
+            !row.snapshot_id ||
+            !row.work_item_snapshot,
+        )
         .map((row) => row.partner_id);
       const approvedProjects = await tx<
         Array<{ id: string; name: string; description: string }>
@@ -542,7 +401,7 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
           where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
             and status = 'active' and description is not null
         `;
-      if (reportRows.length === 0 || missingPartnerIds.length > 0) return 0;
+      if (sourceRows.length === 0 || missingPartnerIds.length > 0) return 0;
       const previousRows = await tx<any[]>`
         select trv.id as version_id, previous_period.period_key, trv.payload
         from report_periods previous_period
@@ -560,12 +419,11 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
         limit 1
       `;
       const source = {
-        individualReports: buildTeamReportIndividualReports(
-          submitted.map((row) => ({
+        workCards: buildTeamReportWorkCards(
+          confirmed.map((row) => ({
             partnerId: row.partner_id,
             partnerName: row.partner_name,
-            reportId: row.report_id,
-            payload: row.payload,
+            snapshotId: row.snapshot_id,
             workItemSnapshot: row.work_item_snapshot,
           })),
           approvedProjects,

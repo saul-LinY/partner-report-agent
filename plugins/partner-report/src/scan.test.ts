@@ -259,6 +259,49 @@ describe("safe Session input", () => {
     expect(changed.contentHash).not.toBe(first.contentHash);
   });
 
+  it("keeps an unuploaded turn hash stable when the report period rolls over", () => {
+    const input = {
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      cwd: "/work/main",
+      turns: [completeTurn("one")],
+      projects,
+    };
+    const first = buildSessionJob({ ...input, period })!;
+    const next = buildSessionJob({
+      ...input,
+      period: { ...period, period_key: "2026-W33" },
+    })!;
+    expect(next.contentHash).toBe(first.contentHash);
+  });
+
+  it("sends only newly completed turns from an existing Session", () => {
+    const first = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      cwd: "/work/main",
+      turns: [completeTurn("one")],
+      projects,
+      period,
+    })!;
+    const incremental = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      cwd: "/work/main",
+      turns: [
+        completeTurn("one"),
+        completeTurn("two", "2026-08-05T04:00:00.000Z"),
+      ],
+      projects,
+      period,
+      processedTurnKeys: first.turnKeys,
+    })!;
+    expect(incremental.turnKeys).toHaveLength(1);
+    expect(incremental.modelInput.session.turns).toEqual([
+      expect.objectContaining({ occurredAt: "2026-08-05T04:00:00.000Z" }),
+    ]);
+  });
+
   it("requires Chinese titles, summaries, and contribution text", () => {
     expect(
       firstNonChineseContributionField({

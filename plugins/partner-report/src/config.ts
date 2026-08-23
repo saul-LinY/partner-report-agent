@@ -3,16 +3,19 @@ import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
-  copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 export const PLUGIN_VERSION = "1.0.0";
 
@@ -37,12 +40,10 @@ export type PluginConfig = {
 
 const DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 const BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
-const PERSISTENT_DATA_FILES = [
-  "config.json",
-  "collection-state.json",
-  "project-scope.json",
-  "secrets.json",
-] as const;
+export const PARTNER_REPORT_APP_GROUP =
+  "9RN69TVL38.partnerreport.shared";
+export const PARTNER_REPORT_DATA_DIRECTORY = "PartnerReportPluginData";
+export const PARTNER_REPORT_UNBOUND_MARKER = "PartnerReportPluginUnbound";
 
 export function normalizeServerUrl(value: string, allowInsecureHttp = false) {
   const raw = value.trim();
@@ -94,19 +95,72 @@ function readKeychainValue(service: string) {
   }
 }
 
-export function migratePersistentDataDirectory(source: string, target: string) {
+export function macOSAppGroupDirectory(home = homedir()) {
+  return resolve(
+    home,
+    "Library",
+    "Group Containers",
+    PARTNER_REPORT_APP_GROUP,
+  );
+}
+
+export function defaultDataDirectory(
+  home = homedir(),
+  platform = process.platform,
+) {
+  return platform === "darwin"
+    ? resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_DATA_DIRECTORY)
+    : resolve(home, ".partner-report-data");
+}
+
+function unboundMarkerPath(home = homedir()) {
+  return resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_UNBOUND_MARKER);
+}
+
+export function clearPluginUnboundMarker() {
+  if (process.platform !== "darwin") return;
+  rmSync(unboundMarkerPath(), { force: true });
+}
+
+export function migratePersistentDataDirectory(
+  source: string,
+  target: string,
+  removeSource = false,
+) {
   const sourceDirectory = resolve(source);
   const targetDirectory = resolve(target);
   if (sourceDirectory === targetDirectory || !existsSync(sourceDirectory))
     return;
-  mkdirSync(targetDirectory, { recursive: true, mode: 0o700 });
-  for (const filename of PERSISTENT_DATA_FILES) {
-    const sourcePath = resolve(sourceDirectory, filename);
-    const targetPath = resolve(targetDirectory, filename);
-    if (!existsSync(sourcePath) || existsSync(targetPath)) continue;
-    copyFileSync(sourcePath, targetPath);
-    chmodSync(targetPath, 0o600);
+
+  mkdirSync(dirname(targetDirectory), { recursive: true, mode: 0o700 });
+  for (const entry of readdirSync(sourceDirectory)) {
+    if (
+      entry === "collection.lock" ||
+      entry.startsWith(".write-probe-") ||
+      entry.endsWith(".tmp")
+    )
+      rmSync(resolve(sourceDirectory, entry), { recursive: true, force: true });
   }
+  if (removeSource && !existsSync(targetDirectory)) {
+    try {
+      renameSync(sourceDirectory, targetDirectory);
+      return;
+    } catch {
+      // Cross-volume moves fall back to a verified recursive copy below.
+    }
+  }
+
+  mkdirSync(targetDirectory, { recursive: true, mode: 0o700 });
+  for (const entry of readdirSync(sourceDirectory)) {
+    const sourcePath = resolve(sourceDirectory, entry);
+    const targetPath = resolve(targetDirectory, entry);
+    if (!existsSync(targetPath))
+      cpSync(sourcePath, targetPath, {
+        recursive: true,
+        preserveTimestamps: true,
+      });
+  }
+  if (removeSource) rmSync(sourceDirectory, { recursive: true, force: true });
 }
 
 function prepareWritableDataDirectory(directory: string) {
@@ -151,16 +205,32 @@ export function dataDirectory() {
   const runtimeDirectory =
     process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   const explicitDirectory = process.env.PARTNER_REPORT_DATA;
-  const stableDirectory = resolve(homedir(), ".partner-report-data");
+  const legacyStableDirectory = resolve(homedir(), ".partner-report-data");
+  const stableDirectory = defaultDataDirectory();
+  if (
+    !explicitDirectory &&
+    process.platform === "darwin" &&
+    existsSync(unboundMarkerPath())
+  )
+    throw Object.assign(
+      new Error("Partner Report 插件已解除绑定，请重新连接后再采集。"),
+      { code: "PLUGIN_UNBOUND" },
+    );
+  if (!explicitDirectory && process.platform === "darwin")
+    migratePersistentDataDirectory(
+      legacyStableDirectory,
+      stableDirectory,
+      true,
+    );
   const location = selectWritableDataDirectory(
     explicitDirectory
       ? [explicitDirectory]
       : [stableDirectory, runtimeDirectory],
   );
   if (!explicitDirectory) {
-    for (const legacyDirectory of [stableDirectory, runtimeDirectory]) {
+    for (const legacyDirectory of [runtimeDirectory]) {
       if (legacyDirectory)
-        migratePersistentDataDirectory(legacyDirectory, location);
+        migratePersistentDataDirectory(legacyDirectory, location, true);
     }
   }
   return location;

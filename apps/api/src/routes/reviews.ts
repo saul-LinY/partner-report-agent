@@ -177,7 +177,6 @@ async function recalculateReview(
 export type CompleteReviewResult = {
   ignored?: boolean;
   snapshotId?: string;
-  reportId?: string;
   checksum?: string;
   idempotent?: boolean;
 };
@@ -252,21 +251,22 @@ async function loadCompletedReviewResult(
     where id = ${reviewId} and tenant_id = ${actor.tenantId}
     limit 1
   `;
-  if (reviews[0]?.state === "ITEMS_DISMISSED")
-    return { ignored: true, idempotent: true };
-  if (reviews[0]?.state !== "ITEMS_APPROVED") return null;
+  if (!["ITEMS_APPROVED", "ITEMS_DISMISSED"].includes(reviews[0]?.state ?? ""))
+    return null;
   const existing = await db<any[]>`
-    select ir.id as report_id, ir.snapshot_id, wis.checksum
-    from individual_reports ir
-    join work_item_snapshots wis on wis.id = ir.snapshot_id
-    where ir.tenant_id = ${actor.tenantId} and wis.review_id = ${reviewId}
-    order by ir.created_at desc limit 1
+    select id as snapshot_id, checksum, payload
+    from work_item_snapshots
+    where tenant_id = ${actor.tenantId} and review_id = ${reviewId}
+    order by created_at desc limit 1
   `;
-  if (!existing[0]) return null;
+  if (!existing[0])
+    return reviews[0]?.state === "ITEMS_DISMISSED"
+      ? { ignored: true, idempotent: true }
+      : null;
   return {
     snapshotId: existing[0].snapshot_id,
-    reportId: existing[0].report_id,
     checksum: existing[0].checksum,
+    ignored: existing[0].payload?.noReportableActivity === true,
     idempotent: true,
   };
 }
@@ -321,33 +321,6 @@ export async function completeReview(
   const approvedItems = items.filter(
     (item) => item.review_status === "approved",
   );
-  if (approvedItems.length === 0) {
-    return sql.begin(async (tx) => {
-      const claimed = await tx<{ id: string }[]>`
-        update reviews set state = 'ITEMS_DISMISSED', updated_at = now()
-        where id = ${reviewId} and tenant_id = ${actor.tenantId}
-          and state = 'IN_PROGRESS' and version = ${baseVersion}
-        returning id
-      `;
-      if (!claimed[0]) {
-        const existing = await loadCompletedReviewResult(tx, actor, reviewId);
-        if (existing) return existing;
-        throw new ApiError(
-          409,
-          "VERSION_CONFLICT",
-          "Review 已更新，请刷新后重试。",
-        );
-      }
-      await tx`
-        insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-        values (
-          ${randomUUID()}, ${actor.tenantId}, 'work_items.all_dismissed', 'review', ${reviewId},
-          ${JSON.stringify({ excludedWorkItemIds: items.map((item) => item.id) })}::jsonb
-        )
-      `;
-      return { ignored: true };
-    });
-  }
 
   for (const item of approvedItems.filter(
     (item) => item.status === "completed",
@@ -374,47 +347,14 @@ export async function completeReview(
       .filter((item) => item.review_status === "excluded")
       .map((item) => item.id),
     coverage: coverage.payload,
+    noReportableActivity: approvedItems.length === 0,
   };
   const checksum = stableJsonHash(payload);
   const snapshotId = randomUUID();
-  const nextReportId = randomUUID();
-  let templates = await sql<any[]>`
-    select rt.* from report_periods rp
-    join report_templates rt on rt.id = rp.template_id and rt.tenant_id = rp.tenant_id
-    where rp.id = ${review.period_id} and rp.tenant_id = ${actor.tenantId}
-      and rp.team_id = ${actor.teamId}
-    limit 1
-  `;
-  if (!templates[0])
-    templates = await sql<any[]>`
-      select * from report_templates
-      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and is_default = true
-      order by version desc limit 1
-    `;
-  const partners = await sql<any[]>`
-    select preferences from partners
-    where id = ${actor.partnerId} and tenant_id = ${actor.tenantId}
-  `;
-  const previousReports = await sql<any[]>`
-    select previous_report.id as report_id, previous_report.payload
-    from report_periods current_period
-    join report_periods previous_period
-      on previous_period.tenant_id = current_period.tenant_id
-      and previous_period.team_id = current_period.team_id
-      and previous_period.starts_at < current_period.starts_at
-    join individual_reports previous_report
-      on previous_report.period_id = previous_period.id
-      and previous_report.tenant_id = current_period.tenant_id
-      and previous_report.partner_id = ${actor.partnerId}
-      and previous_report.status = 'LOCKED'
-    where current_period.id = ${review.period_id}
-    order by previous_period.starts_at desc limit 1
-  `;
 
   return sql.begin(async (tx) => {
     const claimed = await tx<{ id: string }[]>`
-      update reviews set state = 'ITEMS_APPROVED', updated_at = now()
+      update reviews set state = ${approvedItems.length === 0 ? "ITEMS_DISMISSED" : "ITEMS_APPROVED"}, updated_at = now()
       where id = ${reviewId} and tenant_id = ${actor.tenantId}
         and state = 'IN_PROGRESS' and version = ${baseVersion}
       returning id
@@ -485,65 +425,11 @@ export async function completeReview(
         ${actor.actorId}, now()
       )
     `;
-    const reportRows = await tx<{ id: string }[]>`
-      insert into individual_reports (
-        id, tenant_id, team_id, partner_id, period_id, snapshot_id,
-        status, source_checksum
-      ) values (
-        ${nextReportId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
-        ${review.period_id}, ${snapshotId}, 'REPORT_DRAFT', ${checksum}
-      )
-      on conflict (tenant_id, partner_id, period_id) do update set
-        team_id = excluded.team_id,
-        snapshot_id = excluded.snapshot_id,
-        status = 'REPORT_DRAFT',
-        title = null,
-        summary = null,
-        markdown = null,
-        payload = null,
-        preferences = '{}'::jsonb,
-        source_checksum = excluded.source_checksum,
-        generator_version = null,
-        submitted_at = null,
-        locked_at = null,
-        updated_at = now()
-      returning id
-    `;
-    const reportId = reportRows[0]!.id;
-    await tx`
-      insert into agent_jobs (
-        id, tenant_id, team_id, partner_id, plugin_instance_id, type,
-        idempotency_key, input_payload
-      ) values (
-        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, null,
-        'GENERATE_INDIVIDUAL_REPORT', ${`report:${snapshotId}:${checksum}`},
-        ${JSON.stringify({
-          schemaVersion: "1.0",
-          reportId,
-          snapshotId,
-          sourceChecksum: checksum,
-          generatorVersion: "partner-report-platform/0.3.0",
-          workItems: payload.workItems,
-          coverage: coverage.payload,
-          template: templates[0] ?? null,
-          preferences: partners[0]?.preferences ?? {},
-          previousReport: previousReports[0] ?? null,
-          constraints: {
-            claimsRequireWorkItemIds: true,
-            noUnsupportedPercentages: true,
-          },
-        })}::jsonb
-      )
-    `;
-    await tx`
-      insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-      values (
-        ${randomUUID()}, ${actor.tenantId}, 'work_items.snapshot.approved',
-        'work_item_snapshot', ${snapshotId},
-        ${JSON.stringify({ reportId, checksum })}::jsonb
-      )
-    `;
-    return { snapshotId, reportId, checksum };
+    return {
+      snapshotId,
+      checksum,
+      ...(approvedItems.length === 0 ? { ignored: true } : {}),
+    };
   });
 }
 
@@ -665,19 +551,6 @@ export async function regenerateReviewWorkItem(
         })}::jsonb
       )
     `;
-    await tx`
-      insert into outbox_events (
-        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-      ) values (
-        ${randomUUID()}, ${actor.tenantId}, 'work_item.regeneration.requested',
-        'review', ${reviewId},
-        ${JSON.stringify({
-          itemId: workItemId,
-          jobId,
-          version: completion.version,
-        })}::jsonb
-      )
-    `;
     return { jobId, status: "PENDING" as const, version: completion.version };
   });
 }
@@ -780,19 +653,6 @@ export async function decideReviewWorkItem(
       reviewId,
       review.version,
     );
-    await tx`
-      insert into outbox_events (
-        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-      ) values (
-        ${randomUUID()}, ${actor.tenantId}, 'work_item.review.changed',
-        'review', ${reviewId},
-        ${JSON.stringify({
-          itemId: workItemId,
-          decision,
-          version: completion.version,
-        })}::jsonb
-      )
-    `;
     return {
       ...completion,
       state: review.state,
@@ -852,43 +712,33 @@ export async function reviewRoutes(app: FastifyInstance) {
         plugin: pluginRows[0] ?? null,
         jobs: jobRows,
         review: null,
-        report: null,
         coverage: null,
         collection: null,
       };
-    const [reviewRows, reportRows, coverageRows, collectionRows] =
-      await Promise.all([
-        sql<any[]>`
+    const [reviewRows, coverageRows, collectionRows] = await Promise.all([
+      sql<any[]>`
         select r.*, rp.period_key, rp.cutoff_at
         from reviews r
         join report_periods rp on rp.id = r.period_id
         where r.tenant_id = ${actor.tenantId} and r.partner_id = ${actor.partnerId}
         order by rp.starts_at desc, r.created_at desc limit 1
       `,
-        sql<any[]>`
-        select r.*, rp.period_key
-        from individual_reports r
-        join report_periods rp on rp.id = r.period_id
-        where r.tenant_id = ${actor.tenantId} and r.partner_id = ${actor.partnerId}
-        order by rp.starts_at desc, r.created_at desc limit 1
-      `,
-        sql<any[]>`
+      sql<any[]>`
         select * from coverage_snapshots where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
           and period_id = ${period.id} order by created_at desc limit 1
       `,
-        sql<any[]>`
+      sql<any[]>`
         select count(*)::int as fact_count
         from session_facts
         where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
           and period_id = ${period.id} and excluded = false
       `,
-      ]);
+    ]);
     return {
       period,
       plugin: pluginRows[0] ?? null,
       jobs: jobRows,
       review: reviewRows[0] ?? null,
-      report: reportRows[0] ?? null,
       coverage: coverageRows[0]?.payload ?? null,
       collection: {
         factCount: collectionRows[0]?.fact_count ?? 0,
@@ -992,10 +842,7 @@ export async function reviewRoutes(app: FastifyInstance) {
         result.finalized.ignored ? id : result.finalized.snapshotId!,
         result.finalized.ignored
           ? undefined
-          : {
-              reportId: result.finalized.reportId,
-              checksum: result.finalized.checksum,
-            },
+          : { checksum: result.finalized.checksum },
       );
     }
     return {
@@ -1315,13 +1162,6 @@ export async function reviewRoutes(app: FastifyInstance) {
         await tx`update reviews set state = 'WAITING_LOCAL_REANALYSIS', updated_at = now() where id = ${id}`;
       }
       await tx`update review_changes set status = 'applied', applied_at = now() where id = ${changeId}`;
-      await tx`
-        insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-        values (
-          ${randomUUID()}, ${actor.tenantId}, 'review.change.applied', 'review', ${id},
-          ${JSON.stringify({ changeId, operation: change.operation, source: change.source })}::jsonb
-        )
-      `;
       return { ...completion, idempotent: false };
     });
     if (applyResult.idempotent)
@@ -1357,9 +1197,7 @@ export async function reviewRoutes(app: FastifyInstance) {
           : "work_items.snapshot.approved",
         result.ignored ? "review" : "work_item_snapshot",
         result.ignored ? id : result.snapshotId!,
-        result.ignored
-          ? undefined
-          : { reportId: result.reportId, checksum: result.checksum },
+        result.ignored ? undefined : { checksum: result.checksum },
       );
     return result;
   });
@@ -1384,22 +1222,19 @@ export async function reviewRoutes(app: FastifyInstance) {
           "当前 Review 不能重新打开。",
         );
 
-      const reports = await tx<any[]>`
-        select ir.id, ir.status from individual_reports ir
-        join work_item_snapshots wis
-          on wis.id = ir.snapshot_id and wis.tenant_id = ir.tenant_id
-          and wis.team_id = ir.team_id and wis.partner_id = ir.partner_id
-        where wis.review_id = ${id} and ir.tenant_id = ${actor.tenantId}
-          and ir.team_id = ${actor.teamId} and ir.partner_id = ${actor.partnerId}
-        order by ir.created_at desc limit 1
-        for update of ir
+      const teamReports = await tx<any[]>`
+        select tr.id, tr.status from team_reports tr
+        where tr.period_id = ${review.period_id}
+          and tr.tenant_id = ${actor.tenantId} and tr.team_id = ${actor.teamId}
+        limit 1
+        for update
       `;
-      const report = reports[0];
-      if (report && ["SUBMITTED", "LOCKED"].includes(report.status))
+      const teamReport = teamReports[0];
+      if (teamReport?.status === "LOCKED")
         throw new ApiError(
           409,
-          "REPORT_LOCKED",
-          "Report 已提交，不能重新打开事实审核。",
+          "TEAM_REPORT_LOCKED",
+          "团队周报已完成，不能重新打开工作卡片审核。",
         );
 
       const versions = await tx<Array<{ version: number }>>`
@@ -1416,34 +1251,11 @@ export async function reviewRoutes(app: FastifyInstance) {
           "VERSION_CONFLICT",
           "Review 已更新，请刷新后重试。",
         );
-      if (report) {
-        const returned = await tx<Array<{ id: string }>>`
-          update individual_reports set
-            status = 'RETURNED_TO_ITEMS', updated_at = now()
-          where id = ${report.id} and tenant_id = ${actor.tenantId}
-            and team_id = ${actor.teamId} and partner_id = ${actor.partnerId}
-            and status not in ('SUBMITTED', 'LOCKED')
-          returning id
-        `;
-        if (!returned[0])
-          throw new ApiError(
-            409,
-            "REPORT_LOCKED",
-            "Report 已提交，不能重新打开事实审核。",
-          );
-      }
-      await tx`
-        insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-        values (${randomUUID()}, ${actor.tenantId}, 'review.reopened', 'review', ${id}, ${JSON.stringify({ reportId: report?.id ?? null })}::jsonb)
-      `;
       return {
-        reportId: typeof report?.id === "string" ? report.id : null,
         version: versions[0].version,
       };
     });
-    await audit(request, actor, "review.reopened", "review", id, {
-      reportId: result.reportId,
-    });
+    await audit(request, actor, "review.reopened", "review", id);
     return { id, state: "IN_PROGRESS", version: result.version };
   });
 }

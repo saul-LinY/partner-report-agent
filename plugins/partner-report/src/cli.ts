@@ -1,8 +1,11 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync,
-  mkdtempSync,
+  existsSync,
+  mkdirSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,10 +18,12 @@ import {
 } from "@partner-report/contracts";
 import {
   PLUGIN_VERSION,
+  dataDirectory,
   loadConfig,
   loadSecret,
   migrateLegacyInstallation,
   normalizeServerUrl,
+  clearPluginUnboundMarker,
   removeSecret,
   removeSecrets,
   saveConfig,
@@ -43,8 +48,10 @@ import {
   initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
+  processedTurnKeys,
   recordAcceptedSession,
   recordIgnoredSession,
+  recordProcessedTurns,
   refreshCollectionLease,
   releaseCollectionLease,
   reviewCollectionCompletion,
@@ -72,6 +79,7 @@ import {
 } from "./collection-run.js";
 import { CodexAppServer } from "./app-server.js";
 import {
+  anonymousSessionKey,
   buildSessionJob,
   containsSensitive,
   firstNonChineseContributionField,
@@ -91,20 +99,24 @@ import {
   mergeRemoteProjectScope,
   saveLocalProjectScope,
   scopeIsActive,
-  scopeNeedsCurrentPeriodBackfill,
   threadMayBeRead,
   type LocalProjectScope,
   type RemoteProjectScopePolicy,
 } from "./project-scope.js";
-import {
-  decodeWaitPeriod,
-  waitForCondition,
-  waitForConditionAndContinue,
-} from "./poll-wait.js";
+import { waitForCondition } from "./poll-wait.js";
 import {
   buildProjectDescriptionSource,
   projectDescriptionIsChinese,
 } from "./project-description.js";
+import {
+  installScheduledCollectionTask,
+  type ScheduledTaskInstallation,
+} from "./scheduled-task.js";
+import {
+  enqueuePluginLog,
+  flushPluginLogs,
+  pluginErrorDetails,
+} from "./telemetry.js";
 
 type Policy = {
   pluginInstanceId: string;
@@ -133,12 +145,6 @@ type RecoveryTokenResponse = ConnectivityChallenge & {
   refreshToken: string;
   expiresAt: string;
   pluginInstanceId: string;
-};
-
-type ProjectScopeCardStatus = {
-  status: "pending" | "sent";
-  policyVersion: number;
-  retryAfterSeconds: number;
 };
 
 type ThreadSummary = {
@@ -170,9 +176,6 @@ type ScopeApprovalWait = {
 
 type EndOfRunScopeScan = {
   completed: boolean;
-  cardPolicyVersion: number | null;
-  cardDeliveryDeadlineAt: number | null;
-  cardDeliveryAttempt: number;
 };
 
 type ProjectDescriptionQueueItem = {
@@ -222,6 +225,7 @@ type CurrentJob = {
   inputPath: string;
   resultPath: string;
   expected: any;
+  turnKeys?: string[];
   failures: ExtractionFailure[];
 };
 
@@ -251,11 +255,10 @@ type RunManifest = {
   approvalWait?: ScopeApprovalWait | null;
   endOfRunScopeScan?: EndOfRunScopeScan;
   projectDescriptionScan?: ProjectDescriptionScan;
-  scopeBackfillKeys?: string[];
 };
 
 const RUN_PREFIX = "partner-report-run-";
-const POLL_TOTAL_MS = 10 * 60_000;
+const RUNS_DIRECTORY = "collection-runs";
 const POLL_SEGMENT_MS = 45_000;
 
 function option(name: string, fallback?: string) {
@@ -269,6 +272,45 @@ function flag(name: string) {
 }
 
 function output(value: unknown) {
+  if (
+    value &&
+    typeof value === "object" &&
+    "status" in value &&
+    typeof value.status === "string"
+  ) {
+    const event = value as Record<string, unknown>;
+    let runId: string | undefined;
+    if (typeof event.runPath === "string") {
+      try {
+        runId = readRun(event.runPath).manifest.runId;
+      } catch {
+        runId = undefined;
+      }
+    }
+    enqueuePluginLog({
+      runId,
+      level:
+        value.status.includes("failed") || value.status === "error"
+          ? "error"
+          : value.status.includes("waiting") ||
+              value.status.includes("deferred")
+            ? "warning"
+            : "info",
+      stage: (process.argv[2] ?? "plugin").replaceAll("-", "_"),
+      eventCode: value.status,
+      message: `插件命令返回状态：${value.status}`,
+      details: {
+        periodKey: event.periodKey,
+        queued: event.queued,
+        processed: event.processed,
+        uploaded: event.uploaded,
+        ignored: event.ignored,
+        skipped: event.skipped,
+        failedExtract: event.failedExtract,
+        checkpointAdvanced: event.checkpointAdvanced,
+      },
+    });
+  }
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
@@ -450,7 +492,7 @@ async function setServerUrl() {
 function authRecoveryOutput(expiresAt: string) {
   output({
     status: "auth_recovery_required",
-    message: "连接恢复确认卡已发送到飞书。确认后，下次运行会自动继续。",
+    message: "连接恢复申请已发送到工作看板应用。确认后，下次运行会自动继续。",
     expiresAt,
     checkpointAdvanced: false,
     counts: {
@@ -565,6 +607,7 @@ function connectedOutput(
   deviceName: string,
   connectivity: Record<string, unknown>,
   projectScope?: Record<string, unknown>,
+  scheduledTaskInstallation?: ScheduledTaskInstallation,
 ) {
   const config = loadConfig()!;
   output({
@@ -575,9 +618,12 @@ function connectedOutput(
     connectivity,
     ...(projectScope ?? {}),
     scheduledTask: SCHEDULED_COLLECTION_TASK,
+    scheduledTaskInstallation,
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
     nextStep:
-      "首次连接时创建缺失的同名 Codex Scheduled Task；已有任务保持不变。",
+      scheduledTaskInstallation?.status === "failed"
+        ? "绑定已保留，但 Codex Scheduled Task 自动创建失败；修复本地写入权限后运行连接检查会自动重试。"
+        : "Codex Scheduled Task 已由插件自动确保存在；已有同名任务保持不变。",
   });
 }
 
@@ -692,6 +738,7 @@ async function connect() {
       }),
     },
   );
+  clearPluginUnboundMarker();
   const existing = loadConfig(false);
   if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
     removeSecrets(existing.pluginInstanceId);
@@ -711,8 +758,15 @@ async function connect() {
     excludedPaths: existing?.excludedPaths ?? [],
   });
   const connectivity = await performConnectivityTest(tokens);
+  const scheduledTaskInstallation = installScheduledCollectionTask();
   const projectScope = await discoverProjectScopeAfterBinding();
-  connectedOutput(tokens.partnerId, deviceName, connectivity, projectScope);
+  connectedOutput(
+    tokens.partnerId,
+    deviceName,
+    connectivity,
+    projectScope,
+    scheduledTaskInstallation,
+  );
 }
 
 async function connectivityTest() {
@@ -727,6 +781,7 @@ async function connectivityTest() {
         }
       : undefined,
   );
+  const scheduledTaskInstallation = installScheduledCollectionTask();
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope(),
@@ -742,6 +797,7 @@ async function connectivityTest() {
     config.deviceName,
     connectivity,
     projectScope,
+    scheduledTaskInstallation,
   );
 }
 
@@ -835,50 +891,7 @@ function projectScopeApprovalRequired(
     read: 0,
     uploaded: 0,
     message:
-      "项目范围卡已发送，项目采集范围尚未审批，未读取任何 Session 内容。请在飞书卡片中完成审批。",
-  };
-}
-
-function projectScopeCardWaitCommand(input: {
-  periodKey: string;
-  version: number;
-  deadlineAt: number;
-  attempt: number;
-}) {
-  return [
-    "project-scope-card-wait",
-    `--period-key ${Buffer.from(input.periodKey, "utf8").toString("base64url")}`,
-    `--version ${input.version}`,
-    `--deadline ${Math.trunc(input.deadlineAt)}`,
-    `--attempt ${Math.max(0, Math.trunc(input.attempt))}`,
-    ...(flag("force") ? ["--force"] : []),
-  ].join(" ");
-}
-
-function projectScopeCardDeliveryPending(input: {
-  periodKey: string;
-  version: number;
-  deadlineAt?: number;
-  attempt?: number;
-  lastErrorCode?: string | null;
-}) {
-  const deadlineAt = input.deadlineAt ?? Date.now() + POLL_TOTAL_MS;
-  const attempt = input.attempt ?? 0;
-  return {
-    status: "project_scope_card_delivery_pending",
-    waiting: true,
-    periodKey: input.periodKey,
-    policyVersion: input.version,
-    read: 0,
-    uploaded: 0,
-    ...(input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {}),
-    nextCommand: projectScopeCardWaitCommand({
-      periodKey: input.periodKey,
-      version: input.version,
-      deadlineAt,
-      attempt,
-    }),
-    message: "项目范围卡已幂等登记，当前任务正在等待飞书确认投递成功。",
+      "发现了尚未审批的项目，未读取任何 Session 内容。请在工作看板应用中完成采集权限审批。",
   };
 }
 
@@ -908,129 +921,15 @@ async function projectScopePendingStatus(
       body: JSON.stringify({ periodKey }),
     });
   }
-  const cardStatus = await fetchProjectScopeCardStatus(
-    periodKey,
-    localScope.version,
-  ).catch((error) => ({
-    status: "pending" as const,
-    policyVersion: localScope.version,
-    retryAfterSeconds: 3,
-    lastErrorCode:
-      error instanceof HttpError
-        ? error.code
-        : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
-  }));
-  if (cardStatus.status !== "sent")
-    return projectScopeCardDeliveryPending({
-      periodKey,
-      version: localScope.version,
-      lastErrorCode:
-        "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null,
-    });
   return projectScopeApprovalRequired(periodKey, localScope);
 }
 
-async function fetchProjectScopeCardStatus(
-  periodKey: string,
-  version: number,
-  init: RequestInit = {},
-) {
-  const query = new URLSearchParams({
-    periodKey,
-    version: String(version),
-  });
-  return authenticatedRequest<ProjectScopeCardStatus>(
-    `/v1/project-scope/card-status?${query.toString()}`,
-    init,
-  );
-}
-
-async function projectScopeCardWait() {
-  const periodKey = decodeWaitPeriod(option("period-key"));
-  const version = Number(option("version"));
-  if (periodKey === "unknown" || !Number.isInteger(version) || version < 1)
-    throw new Error("项目范围卡等待参数无效。");
-  const rawDeadline = Number(option("deadline"));
-  const deadlineAt = Number.isFinite(rawDeadline)
-    ? Math.min(rawDeadline, Date.now() + POLL_TOTAL_MS)
-    : Date.now() + POLL_TOTAL_MS;
-  const rawAttempt = Number(option("attempt", "0"));
-  const attempt =
-    Number.isInteger(rawAttempt) && rawAttempt >= 0 ? rawAttempt : 0;
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  process.once("SIGINT", cancel);
-  process.once("SIGTERM", cancel);
-  try {
-    const flow = await waitForConditionAndContinue(
-      {
-        check: async () => {
-          const requestTimeoutMs = Math.max(
-            1,
-            Math.min(15_000, deadlineAt - Date.now()),
-          );
-          const signal = AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(requestTimeoutMs),
-          ]);
-          return (
-            (await fetchProjectScopeCardStatus(periodKey, version, { signal }))
-              .status === "sent"
-          );
-        },
-        deadlineAt,
-        segmentDurationMs: POLL_SEGMENT_MS,
-        attempt,
-        signal: controller.signal,
-        errorCode: (error) =>
-          error instanceof HttpError
-            ? error.code
-            : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
-      },
-      async () => {
-        const remote = await fetchProjectScope();
-        if (remote.initialized) return collectStart();
-        const local = cacheRemoteProjectScope(remote);
-        return output(projectScopeApprovalRequired(periodKey, local.scope));
-      },
-    );
-    if (flow.continued) return flow.value;
-    const result = flow.wait;
-    if (result.status === "pending")
-      return output(
-        projectScopeCardDeliveryPending({
-          periodKey,
-          version,
-          deadlineAt,
-          attempt: result.attempt,
-          lastErrorCode: result.lastErrorCode,
-        }),
-      );
-    if (result.status === "cancelled")
-      return output({
-        status: "project_scope_card_wait_cancelled",
-        waiting: false,
-        read: 0,
-        uploaded: 0,
-        message: "已取消项目范围卡投递等待，未读取或上传 Session。",
-      });
-    return output({
-      status: "project_scope_card_wait_timed_out",
-      waiting: false,
-      read: 0,
-      uploaded: 0,
-      ...(result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {}),
-      message:
-        "当前执行环境的卡片投递等待时间已到，未读取或上传 Session；下次采集会继续检查。",
-    });
-  } finally {
-    process.removeListener("SIGINT", cancel);
-    process.removeListener("SIGTERM", cancel);
-  }
-}
-
 function createRun(manifest: RunManifest) {
-  const runDirectory = mkdtempSync(resolve(tmpdir(), RUN_PREFIX));
+  const root = resolve(dataDirectory(), RUNS_DIRECTORY);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  chmodSync(root, 0o700);
+  const runDirectory = resolve(root, `${RUN_PREFIX}${manifest.runId}`);
+  mkdirSync(runDirectory, { mode: 0o700 });
   chmodSync(runDirectory, 0o700);
   const runPath = resolve(runDirectory, "run.json");
   writeFileSync(runPath, `${JSON.stringify(manifest, null, 2)}\n`, {
@@ -1043,17 +942,54 @@ function createRun(manifest: RunManifest) {
 function assertRunPath(runPath: string) {
   const absolute = resolve(runPath);
   const runDirectory = dirname(absolute);
-  const outsideTemp = relative(resolve(tmpdir()), runDirectory).startsWith(
-    "..",
-  );
+  const stableRoot = resolve(dataDirectory(), RUNS_DIRECTORY);
+  const withinStableRoot = !relative(stableRoot, runDirectory).startsWith("..");
+  const withinLegacyTemp = !relative(
+    resolve(tmpdir()),
+    runDirectory,
+  ).startsWith("..");
   if (
-    outsideTemp ||
+    (!withinStableRoot && !withinLegacyTemp) ||
     !basename(runDirectory).startsWith(RUN_PREFIX) ||
     basename(absolute) !== "run.json"
   ) {
     throw new Error("Run 路径不属于 Partner Report 临时目录。");
   }
   return absolute;
+}
+
+function storedRuns(pluginInstanceId: string) {
+  const root = resolve(dataDirectory(), RUNS_DIRECTORY);
+  if (!existsSync(root))
+    return [] as Array<{ path: string; manifest: RunManifest }>;
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory() || !entry.name.startsWith(RUN_PREFIX)) return [];
+    const path = resolve(root, entry.name, "run.json");
+    try {
+      const manifest = JSON.parse(readFileSync(path, "utf8")) as RunManifest;
+      return manifest.pluginInstanceId === pluginInstanceId
+        ? [{ path, manifest }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function takeResumableRun(pluginInstanceId: string, periodKey: string) {
+  let resumable: { path: string; manifest: RunManifest } | null = null;
+  for (const run of storedRuns(pluginInstanceId)) {
+    if (
+      run.manifest.period?.period_key === periodKey &&
+      !run.manifest.stopReason
+    ) {
+      if (!resumable || run.manifest.createdAt > resumable.manifest.createdAt)
+        resumable = run;
+      continue;
+    }
+    rmSync(dirname(run.path), { recursive: true, force: true });
+  }
+  return resumable;
 }
 
 function readRun(runPath: string) {
@@ -1091,9 +1027,15 @@ function readRun(runPath: string) {
 }
 
 function saveRun(runPath: string, manifest: RunManifest) {
-  writeFileSync(runPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+  const temporary = resolve(
+    dirname(runPath),
+    `.run.${process.pid}.${Date.now()}.tmp`,
+  );
+  writeFileSync(temporary, `${JSON.stringify(manifest, null, 2)}\n`, {
     mode: 0o600,
   });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, runPath);
   chmodSync(runPath, 0o600);
 }
 
@@ -1155,6 +1097,28 @@ async function postCollectionStatus(
       coverage,
     }),
   });
+  enqueuePluginLog({
+    runId: manifest.runId,
+    level: checkpointEligible ? "info" : "warning",
+    stage: "collection",
+    eventCode: `collection.${phase}`,
+    message:
+      phase === "completed" ? "本次采集已完成并上报结果。" : "本次采集已开始。",
+    details: {
+      periodKey: manifest.period.period_key,
+      discovered: counts.discovered,
+      eligible: counts.eligible,
+      read: counts.read,
+      uploaded: counts.uploaded,
+      unchanged: counts.unchanged,
+      deferred: counts.deferred,
+      skipped: counts.skipped,
+      failedRead: counts.failedRead,
+      failedExtract: counts.failedExtract,
+      checkpointEligible,
+    },
+  });
+  await flushPluginLogs();
 }
 
 async function collectStart() {
@@ -1174,6 +1138,31 @@ async function collectStart() {
   );
   const remoteScope = synchronizedScope.remote;
   let localScope: LocalProjectScope = synchronizedScope.scope;
+
+  const resumable = takeResumableRun(
+    config.pluginInstanceId,
+    policy.currentPeriod.period_key,
+  );
+  if (resumable) {
+    acquireCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
+    try {
+      const { absolute, manifest } = readRun(resumable.path);
+      manifest.deadlineAt = collectionDeadline(new Date().toISOString());
+      saveRun(absolute, manifest);
+      await postCollectionStatus(config, manifest, "started");
+      return output({
+        status: "resumed",
+        runPath: absolute,
+        periodKey: manifest.period.period_key,
+        queued: manifest.queue.length,
+        processed: manifest.cursor,
+        nextCommand: `collect-next --run ${absolute}`,
+      });
+    } catch (error) {
+      releaseCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
+      throw error;
+    }
+  }
 
   if (
     !remoteScope.initialized &&
@@ -1213,11 +1202,13 @@ async function collectStart() {
   let summaries: ThreadSummary[];
   let metadataEligible: ThreadSummary[];
   try {
-    // Collection may need the full report period for an approved-scope backfill.
-    // Project discovery applies its separate seven-day window below.
+    // Project discovery applies its separate seven-day metadata window below.
+    const metadataStartsAt = localScope.initialized
+      ? window.scanStartsAt
+      : initialProjectScopeStartAt(runStartedAt);
     ({ summaries, metadataEligible } = await listCollectionThreadMetadata(
       config,
-      policy.currentPeriod.starts_at,
+      metadataStartsAt,
     ));
   } catch (error) {
     releaseCollectionLease(config.pluginInstanceId, runId);
@@ -1339,41 +1330,7 @@ async function collectStart() {
     localAccepted: localState.acceptedSessions,
     localIgnored: localState.ignoredSessions,
   });
-  const fullPeriodSummaries = metadataEligible.filter((summary) =>
-    threadIsInKnownScanWindow(
-      summary.updatedAt,
-      policy.currentPeriod!.starts_at,
-      runStartedAt,
-    ),
-  );
-  const scopeBackfillKeys = new Set(
-    localScope.entries
-      .filter((entry) =>
-        scopeNeedsCurrentPeriodBackfill(
-          entry,
-          localScope.initializedAt,
-          policy.currentPeriod!.period_key,
-        ),
-      )
-      .map((entry) => entry.scopeKey),
-  );
-  const fullPeriodQueue = authorizedProjectThreads(
-    fullPeriodSummaries,
-    allThreadDiscovery.threadScopes,
-    localScope.entries,
-  )
-    .filter((summary) => scopeBackfillKeys.has(summary.scopeKey))
-    .map((summary) => ({
-      ...summary,
-      collectionStartsAt: policy.currentPeriod!.starts_at,
-    }));
   const queue = [...regularQueue];
-  const queuedIds = new Set(queue.map((summary) => summary.id));
-  for (const summary of fullPeriodQueue) {
-    if (queuedIds.has(summary.id)) continue;
-    queue.push(summary);
-    queuedIds.add(summary.id);
-  }
   const inWindowIds = new Set(inWindow.map((summary) => summary.id));
   const queuedOutsideWindow = queue.filter(
     (summary) => !inWindowIds.has(summary.id),
@@ -1424,9 +1381,6 @@ async function collectStart() {
     approvalWait: null,
     endOfRunScopeScan: {
       completed: false,
-      cardPolicyVersion: null,
-      cardDeliveryDeadlineAt: null,
-      cardDeliveryAttempt: 0,
     },
     projectDescriptionScan: {
       initialized: false,
@@ -1437,7 +1391,6 @@ async function collectStart() {
       unchanged: 0,
       failed: 0,
     },
-    scopeBackfillKeys: [...scopeBackfillKeys],
   };
   let runPath: string | null = null;
   try {
@@ -1539,21 +1492,6 @@ async function finishRun(
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
     saveCollectionState(state);
-    const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
-    if (backfillKeys.size > 0) {
-      const local = inspectLocalProjectScope(manifest.pluginInstanceId);
-      if (local.state === "valid") {
-        local.scope.entries = local.scope.entries.map((entry) =>
-          backfillKeys.has(entry.scopeKey)
-            ? {
-                ...entry,
-                backfilledPeriodKey: manifest.period.period_key,
-              }
-            : entry,
-        );
-        saveLocalProjectScope(local.scope);
-      }
-    }
   }
   const summary = {
     status: "completed",
@@ -1798,7 +1736,19 @@ async function continueScopeApprovalWait(
     for (const summary of wait.deferredQueue) {
       if (!approvedKeys.has(summary.scopeKey) || queuedIds.has(summary.id))
         continue;
-      manifest.queue.push(summary);
+      const effectiveFrom = local.entries.find(
+        (entry) => entry.scopeKey === summary.scopeKey,
+      )?.effectiveFrom;
+      if (!effectiveFrom) continue;
+      manifest.queue.push({
+        ...summary,
+        collectionStartsAt: new Date(
+          Math.max(
+            new Date(manifest.period.starts_at).getTime(),
+            new Date(effectiveFrom).getTime(),
+          ),
+        ).toISOString(),
+      });
       queuedIds.add(summary.id);
       appended += 1;
       if (
@@ -1816,9 +1766,6 @@ async function continueScopeApprovalWait(
         );
     }
     if (approvedKeys.size > 0) {
-      const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
-      for (const scopeKey of approvedKeys) backfillKeys.add(scopeKey);
-      manifest.scopeBackfillKeys = [...backfillKeys];
       manifest.deadlineAt = collectionDeadline(new Date().toISOString());
       manifest.projectDescriptionScan = {
         initialized: false,
@@ -1988,8 +1935,7 @@ async function startEndOfRunScopeScan(
       .map((summary) => summary.id),
   );
   const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
-  const reportPeriodStartsAt =
-    manifest.reportPeriodStartsAt ?? manifest.period.starts_at;
+  const reportPeriodStartsAt = manifest.period.starts_at;
   const collectionEndsAt = new Date(
     Math.min(
       new Date(manifest.reportPeriodEndsAt ?? scanCompletedAt).getTime(),
@@ -2011,7 +1957,7 @@ async function startEndOfRunScopeScan(
         {
           ...summary,
           scopeKey,
-          collectionStartsAt: reportPeriodStartsAt,
+          collectionStartsAt: manifest.period.starts_at,
           collectionEndsAt,
           ...(initialThreadIds.has(summary.id)
             ? {
@@ -2031,61 +1977,9 @@ async function startEndOfRunScopeScan(
     deferredQueue,
   };
   scan.completed = true;
-  scan.cardPolicyVersion = registeredScope.version;
-  scan.cardDeliveryDeadlineAt = Date.now() + POLL_TOTAL_MS;
+  manifest.approvalWait.deadlineAt = projectScopeApprovalDeadline();
   saveRun(runPath, manifest);
-  return continueEndOfRunCardDeliveryWait(runPath, manifest);
-}
-
-async function continueEndOfRunCardDeliveryWait(
-  runPath: string,
-  manifest: RunManifest,
-): Promise<boolean> {
-  const scan = manifest.endOfRunScopeScan;
-  const wait = manifest.approvalWait;
-  if (!scan?.cardPolicyVersion || !scan.cardDeliveryDeadlineAt || !wait)
-    return false;
-  const result = await waitForCondition({
-    check: async () =>
-      (
-        await fetchProjectScopeCardStatus(
-          manifest.period.period_key,
-          scan.cardPolicyVersion!,
-        )
-      ).status === "sent",
-    deadlineAt: scan.cardDeliveryDeadlineAt,
-    segmentDurationMs: POLL_SEGMENT_MS,
-    attempt: scan.cardDeliveryAttempt,
-    errorCode: (error) =>
-      error instanceof HttpError
-        ? error.code
-        : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE",
-  });
-  scan.cardDeliveryAttempt = result.attempt;
-  if (result.status === "confirmed") {
-    scan.cardPolicyVersion = null;
-    scan.cardDeliveryDeadlineAt = null;
-    wait.deadlineAt = projectScopeApprovalDeadline();
-    saveRun(runPath, manifest);
-    return continueScopeApprovalWait(runPath, manifest);
-  }
-  if (result.status === "timed_out") {
-    manifest.approvalWait = null;
-    scan.cardPolicyVersion = null;
-    scan.cardDeliveryDeadlineAt = null;
-    saveRun(runPath, manifest);
-    return false;
-  }
-  saveRun(runPath, manifest);
-  const lastErrorCode = "lastErrorCode" in result ? result.lastErrorCode : null;
-  output({
-    status: "project_scope_end_scan_card_waiting",
-    runPath,
-    pendingProjects: wait.scopeKeys.length,
-    ...(lastErrorCode ? { lastErrorCode } : {}),
-    nextCommand: `collect-next --run ${runPath}`,
-  });
-  return true;
+  return continueScopeApprovalWait(runPath, manifest);
 }
 
 async function collectNext() {
@@ -2130,6 +2024,11 @@ async function collectNext() {
         saveRun(absolute, manifest);
         continue;
       }
+      const sessionKey = anonymousSessionKey(
+        manifest.pluginInstanceId,
+        summary.id,
+      );
+      const collectionState = loadCollectionState(manifest.pluginInstanceId);
       const job = buildSessionJob({
         pluginInstanceId: manifest.pluginInstanceId,
         sessionId: summary.id,
@@ -2139,12 +2038,21 @@ async function collectNext() {
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
         scopeKey: summary.scopeKey,
+        processedTurnKeys: manifest.force
+          ? []
+          : processedTurnKeys(collectionState, sessionKey),
         period:
           summary.collectionStartsAt || summary.collectionEndsAt
             ? {
                 ...manifest.period,
-                starts_at:
-                  summary.collectionStartsAt ?? manifest.period.starts_at,
+                starts_at: new Date(
+                  Math.max(
+                    new Date(manifest.period.starts_at).getTime(),
+                    new Date(
+                      summary.collectionStartsAt ?? manifest.period.starts_at,
+                    ).getTime(),
+                  ),
+                ).toISOString(),
                 ends_at: summary.collectionEndsAt ?? manifest.period.ends_at,
               }
             : manifest.period,
@@ -2168,6 +2076,12 @@ async function collectNext() {
         if (knownDecision === "accepted")
           recordAcceptedSession(state, job.sessionKey, job.contentHash);
         else recordIgnoredSession(state, job.sessionKey, job.contentHash);
+        recordProcessedTurns(
+          state,
+          job.sessionKey,
+          job.turnKeys,
+          knownDecision,
+        );
         saveCollectionState(state);
         if (knownDecision === "accepted") manifest.counts.unchanged += 1;
         else manifest.counts.cachedIgnored += 1;
@@ -2182,6 +2096,7 @@ async function collectNext() {
         expected: immutableContributionFromRequirements(
           job.modelInput.outputRequirements.include.contribution,
         ),
+        turnKeys: job.turnKeys,
         failures: [],
       };
       manifest.claimedJobs += 1;
@@ -2193,7 +2108,6 @@ async function collectNext() {
   }
   if (await continueProjectDescriptionScan(absolute, manifest)) return;
   if (await startEndOfRunScopeScan(absolute, manifest)) return;
-  if (await continueEndOfRunCardDeliveryWait(absolute, manifest)) return;
   if (await continueScopeApprovalWait(absolute, manifest)) return;
   output({
     status: "review_required",
@@ -2341,6 +2255,12 @@ async function collectSubmit() {
       current.expected.sessionKey,
       current.expected.contentHash,
     );
+    recordProcessedTurns(
+      state,
+      current.expected.sessionKey,
+      current.turnKeys ?? [],
+      "ignored",
+    );
     saveCollectionState(state);
     manifest.knownSessions[current.expected.sessionKey] = {
       contentHashes: [current.expected.contentHash],
@@ -2408,6 +2328,12 @@ async function collectSubmit() {
     state,
     result.contribution.sessionKey,
     result.contribution.contentHash,
+  );
+  recordProcessedTurns(
+    state,
+    result.contribution.sessionKey,
+    current.turnKeys ?? [],
+    "accepted",
   );
   saveCollectionState(state);
   manifest.knownSessions[result.contribution.sessionKey] = {
@@ -2554,7 +2480,9 @@ async function changeProjectScope(decision: "allow" | "deny") {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error("本地采集权限尚未建立，请先运行采集并在飞书完成首次审批。"),
+      new Error(
+        "本地采集权限尚未建立，请先运行采集并在工作看板应用完成首次审批。",
+      ),
       { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" },
     );
   const remote = await fetchProjectScope();
@@ -2690,7 +2618,6 @@ async function runCommand() {
     output(migrateLegacyInstallation());
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
-  else if (command === "project-scope-card-wait") await projectScopeCardWait();
   else if (command === "collect-next") await collectNext();
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
@@ -2711,9 +2638,62 @@ async function runCommand() {
   else help();
 }
 
+const commandStartedAt = Date.now();
+let commandRunId: string | undefined;
+const commandRunPath = option("run");
+if (commandRunPath) {
+  try {
+    commandRunId = readRun(commandRunPath).manifest.runId;
+  } catch {
+    commandRunId = undefined;
+  }
+}
+
+await flushPluginLogs();
+enqueuePluginLog({
+  runId: commandRunId,
+  level: "info",
+  stage: command.replaceAll("-", "_"),
+  eventCode: "command.started",
+  message: `插件命令开始：${command}`,
+  details: { command },
+});
+await flushPluginLogs();
+
 try {
   await runCommand();
+  enqueuePluginLog({
+    runId: commandRunId,
+    level: "info",
+    stage: command.replaceAll("-", "_"),
+    eventCode: "command.completed",
+    message: `插件命令完成：${command}`,
+    durationMs: Date.now() - commandStartedAt,
+    details: { command },
+  });
+  await flushPluginLogs();
 } catch (error) {
+  const diagnostic = pluginErrorDetails(error);
+  enqueuePluginLog({
+    runId: commandRunId,
+    level: "error",
+    stage: command.replaceAll("-", "_"),
+    eventCode: diagnostic.code,
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+    durationMs: Date.now() - commandStartedAt,
+    requestId: diagnostic.requestId,
+    retryable:
+      diagnostic.status === 408 ||
+      diagnostic.status === 429 ||
+      (diagnostic.status !== undefined && diagnostic.status >= 500),
+    details: {
+      command,
+      httpStatus: diagnostic.status,
+      ...(diagnostic.details ?? {}),
+    },
+  });
+  await flushPluginLogs();
   if (
     recoveryAwareCommands.has(command) &&
     error instanceof HttpError &&

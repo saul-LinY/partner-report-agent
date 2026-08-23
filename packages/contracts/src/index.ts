@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-export { buildTeamReportIndividualReports } from "./team-report-source.js";
+export { buildTeamReportWorkCards } from "./team-report-source.js";
 export type {
-  TeamReportSourceIndividualReport,
+  TeamReportSourceWorkCards,
   TeamReportSourceProject,
 } from "./team-report-source.js";
 
@@ -215,39 +215,9 @@ export const projectDescriptionCandidateSchema: z.ZodTypeAny = z
   })
   .strict();
 
-export const reportClaimSchema: z.ZodTypeAny = z.object({
-  claim: z.string().min(1).max(800),
-  workItemIds: z.array(idSchema).min(1),
-});
-
-export const reportSectionSchema: z.ZodTypeAny = z.object({
-  key: z.enum([
-    "summary",
-    "achievements",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coordination",
-    "coverage",
-  ]),
-  title: z.string().min(1).max(100),
-  markdown: z.string().max(12000),
-  claims: z.array(reportClaimSchema).default([]),
-});
-
-export const individualReportResultSchema: z.ZodTypeAny = z.object({
-  schemaVersion: z.literal("1.0"),
-  title: z.string().min(1).max(200),
-  summary: z.string().min(1).max(1200),
-  sections: z.array(reportSectionSchema).length(7),
-  markdown: z.string().min(1).max(60000),
-  qualityWarnings: z.array(z.string()).default([]),
-  production: productionMetadataSchema,
-});
-
 export const teamReportClaimSchema: z.ZodTypeAny = z.object({
   claim: z.string().min(1).max(1000),
-  individualReportIds: z.array(idSchema).min(1),
+  workCardSnapshotIds: z.array(idSchema).min(1),
 });
 
 export const teamReportSectionSchema: z.ZodTypeAny = z.object({
@@ -285,8 +255,6 @@ export const teamReportResultSchema: z.ZodTypeAny = z.object({
 
 export const agentJobTypeSchema: z.ZodTypeAny = z.enum([
   "AGGREGATE_WORK_ITEMS",
-  "GENERATE_INDIVIDUAL_REPORT",
-  "REGENERATE_INDIVIDUAL_REPORT",
   "GENERATE_TEAM_REPORT",
   "REGENERATE_TEAM_REPORT",
   "REANALYZE_SESSIONS",
@@ -312,7 +280,7 @@ export const reviewChangeRequestSchema: z.ZodTypeAny = z.object({
   baseVersion: z.number().int().positive(),
   operation: reviewOperationSchema,
   value: z.unknown().optional(),
-  source: z.enum(["web", "feishu"]).default("web"),
+  source: z.literal("web").default("web"),
 });
 
 export const heartbeatSchema: z.ZodTypeAny = z.object({
@@ -410,6 +378,37 @@ export const pluginDiagnosticBatchSchema: z.ZodTypeAny = z
   })
   .strict();
 
+export const pluginLogLevelSchema: z.ZodTypeAny = z.enum([
+  "debug",
+  "info",
+  "warning",
+  "error",
+]);
+
+export const pluginLogEventSchema: z.ZodTypeAny = z
+  .object({
+    eventId: z.string().uuid(),
+    runId: z.string().uuid().optional(),
+    level: pluginLogLevelSchema,
+    stage: z.string().trim().min(1).max(80),
+    eventCode: z.string().trim().min(1).max(120),
+    message: z.string().trim().min(1).max(4000),
+    stack: z.string().max(16000).optional(),
+    occurredAt: isoDateTimeSchema,
+    retryable: z.boolean().default(false),
+    attempt: z.number().int().positive().max(100).optional(),
+    durationMs: z.number().int().nonnegative().max(86_400_000).optional(),
+    requestId: z.string().min(1).max(120).optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const pluginLogBatchSchema: z.ZodTypeAny = z
+  .object({
+    events: z.array(pluginLogEventSchema).min(1).max(50),
+  })
+  .strict();
+
 const sensitivePatterns = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/g,
   /\bBearer\s+[A-Za-z0-9._~-]{16,}\b/gi,
@@ -423,30 +422,6 @@ export function containsSensitiveValue(value: unknown) {
     pattern.lastIndex = 0;
     return pattern.test(text);
   });
-}
-
-export function assertReportSemantics(report: {
-  sections: Array<{ key: string; claims?: unknown[] }>;
-}) {
-  const required = [
-    "summary",
-    "achievements",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coordination",
-    "coverage",
-  ];
-  const actual = new Set(report.sections.map((section) => section.key));
-  if (
-    actual.size !== required.length ||
-    required.some((key) => !actual.has(key))
-  ) {
-    throw new Error("Report must contain each required section exactly once.");
-  }
-  if (!report.sections.some((section) => (section.claims?.length ?? 0) > 0)) {
-    throw new Error("Report must cite at least one current Work Item claim.");
-  }
 }
 
 export function assertTeamReportSemantics(report: {

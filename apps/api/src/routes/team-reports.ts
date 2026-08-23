@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { buildTeamReportIndividualReports } from "@partner-report/contracts";
+import { buildTeamReportWorkCards } from "@partner-report/contracts";
 import { sqlClient as sql } from "@partner-report/db";
 import { ApiError, audit, requireWebActor, stableJsonHash } from "../common.js";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 
-type IndividualReportSourceRow = {
+type WorkCardSourceRow = {
   partner_id: string;
   partner_name: string;
-  report_id: string | null;
-  payload: unknown | null;
+  review_state: string;
+  snapshot_id: string | null;
   work_item_snapshot: {
     workItems?: unknown;
     noReportableActivity?: boolean;
@@ -37,29 +37,41 @@ async function enqueueTeamReportForPeriod(
   const period = periodRows[0];
   if (!period) throw new ApiError(404, "PERIOD_NOT_FOUND", "所选周期不存在。");
 
-  const reportRows = (await tx`
+  const sourceRows = (await tx`
     select r.partner_id, p.display_name as partner_name,
-      ir.id as report_id, ir.payload, wis.payload as work_item_snapshot
+      r.state as review_state, wis.id as snapshot_id,
+      wis.payload as work_item_snapshot
     from reviews r
     join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
-    left join individual_reports ir on ir.tenant_id = r.tenant_id
-      and ir.partner_id = r.partner_id and ir.period_id = r.period_id
-      and ir.status = 'LOCKED'
-    left join work_item_snapshots wis on wis.id = ir.snapshot_id
-      and wis.tenant_id = ir.tenant_id
+    left join lateral (
+      select snapshot.id, snapshot.payload
+      from work_item_snapshots snapshot
+      where snapshot.tenant_id = r.tenant_id and snapshot.review_id = r.id
+      order by snapshot.created_at desc limit 1
+    ) wis on true
     where r.tenant_id = ${input.tenantId} and r.team_id = ${input.teamId}
       and r.period_id = ${input.periodId}
     order by p.display_name
-  `) as IndividualReportSourceRow[];
-  const submitted = reportRows.filter((row) => row.report_id && row.payload);
-  const missingPartnerIds = reportRows
-    .filter((row) => !row.report_id || !row.payload)
+  `) as WorkCardSourceRow[];
+  const confirmed = sourceRows.filter(
+    (row) =>
+      ["ITEMS_APPROVED", "ITEMS_DISMISSED"].includes(row.review_state) &&
+      row.snapshot_id &&
+      row.work_item_snapshot,
+  );
+  const missingPartnerIds = sourceRows
+    .filter(
+      (row) =>
+        !["ITEMS_APPROVED", "ITEMS_DISMISSED"].includes(row.review_state) ||
+        !row.snapshot_id ||
+        !row.work_item_snapshot,
+    )
     .map((row) => row.partner_id);
-  if (submitted.length === 0)
+  if (confirmed.length === 0)
     throw new ApiError(
       409,
-      "NO_LOCKED_INDIVIDUAL_REPORTS",
-      "该周期还没有最终确认的个人 Report。",
+      "NO_CONFIRMED_WORK_CARDS",
+      "该周期还没有最终确认的工作卡片。",
     );
   if (input.requireAllLocked && missingPartnerIds.length > 0) return null;
 
@@ -88,12 +100,11 @@ async function enqueueTeamReportForPeriod(
     limit 1
   `;
   const source = {
-    individualReports: buildTeamReportIndividualReports(
-      submitted.map((row) => ({
+    workCards: buildTeamReportWorkCards(
+      confirmed.map((row) => ({
         partnerId: row.partner_id,
         partnerName: row.partner_name,
-        reportId: row.report_id!,
-        payload: row.payload,
+        snapshotId: row.snapshot_id!,
         workItemSnapshot: row.work_item_snapshot,
       })),
       approvedProjects,
@@ -155,7 +166,7 @@ async function enqueueTeamReportForPeriod(
     reportId: teamReportRows[0]!.id,
     jobId: inserted[0]?.id ?? null,
     queued: Boolean(inserted[0]),
-    individualReportCount: submitted.length,
+    workCardSnapshotCount: confirmed.length,
     missingPartnerIds,
   };
 }
@@ -165,22 +176,25 @@ export { enqueueTeamReportForPeriod };
 export async function teamReportRoutes(app: FastifyInstance) {
   app.get("/v1/admin/report-archive", async (request) => {
     const actor = await requireWebActor(request, "admin");
-    const [individualReportRows, teamReportRows] = await Promise.all([
+    const [workCardRows, teamReportRows] = await Promise.all([
       sql<any[]>`
           select rp.id as period_id, rp.period_key, rp.starts_at, rp.ends_at,
             p.id as partner_id, p.display_name as partner_name,
-            p.email as partner_email, ir.id as report_id, ir.locked_at,
-            ir.title as report_title, ir.summary as report_summary,
+            p.email as partner_email, wis.approved_at,
             wis.payload as work_item_snapshot
-          from individual_reports ir
-          join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
-          join report_periods rp on rp.id = ir.period_id
-            and rp.tenant_id = ir.tenant_id
-          join work_item_snapshots wis on wis.id = ir.snapshot_id
-            and wis.tenant_id = ir.tenant_id
-          where ir.tenant_id = ${actor.tenantId}
-            and ir.team_id = ${actor.teamId} and ir.status = 'LOCKED'
-            and ir.payload is not null
+          from reviews r
+          join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
+          join report_periods rp on rp.id = r.period_id
+            and rp.tenant_id = r.tenant_id
+          join lateral (
+            select snapshot.approved_at, snapshot.payload
+            from work_item_snapshots snapshot
+            where snapshot.tenant_id = r.tenant_id and snapshot.review_id = r.id
+            order by snapshot.created_at desc limit 1
+          ) wis on true
+          where r.tenant_id = ${actor.tenantId}
+            and r.team_id = ${actor.teamId}
+            and r.state in ('ITEMS_APPROVED', 'ITEMS_DISMISSED')
           order by rp.starts_at desc, p.display_name
         `,
       sql<any[]>`
@@ -215,18 +229,12 @@ export async function teamReportRoutes(app: FastifyInstance) {
       return period;
     };
 
-    for (const row of individualReportRows) {
+    for (const row of workCardRows) {
       const period = ensurePeriod(row);
       period.people.push({
         id: row.partner_id,
         name: row.partner_name,
         email: row.partner_email,
-        individualReport: {
-          id: row.report_id,
-          title: row.report_title,
-          summary: row.report_summary,
-          lockedAt: row.locked_at,
-        },
         workItems: Array.isArray(row.work_item_snapshot?.workItems)
           ? row.work_item_snapshot.workItems.map((item: any) => ({
               id: item.id,
@@ -235,7 +243,7 @@ export async function teamReportRoutes(app: FastifyInstance) {
               reviewStatus: item.review_status,
               overview: item.payload?.overview ?? item.payload?.summary ?? "",
               includedInReport: true,
-              createdAt: item.updated_at ?? item.created_at ?? row.locked_at,
+              createdAt: item.updated_at ?? item.created_at ?? row.approved_at,
             }))
           : [],
       });
@@ -259,94 +267,21 @@ export async function teamReportRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get("/v1/admin/individual-reports", async (request) => {
-    const actor = await requireWebActor(request, "admin");
-    return sql<any[]>`
-      select ir.id, ir.status, ir.locked_at,
-        p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
-        rp.id as period_id, rp.period_key, rp.starts_at, rp.ends_at,
-        ir.title, ir.summary
-      from individual_reports ir
-      join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
-      join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
-      where ir.tenant_id = ${actor.tenantId} and ir.team_id = ${actor.teamId}
-        and ir.status = 'LOCKED' and ir.payload is not null
-      order by rp.starts_at desc, p.display_name
-    `;
-  });
-
   app.get("/v1/admin/work-item-archives", async (request) => {
     const actor = await requireWebActor(request, "admin");
     return sql<any[]>`
-      select ir.id, ir.id as report_id, ir.locked_at,
+      select wis.id, wis.id as snapshot_id, wis.approved_at as locked_at,
         p.id as partner_id, p.display_name as partner_name,
         p.email as partner_email, rp.id as period_id, rp.period_key,
         rp.starts_at, rp.ends_at,
         jsonb_array_length(coalesce(wis.payload->'workItems', '[]'::jsonb))::int as work_item_count,
         jsonb_array_length(coalesce(wis.payload->'workItems', '[]'::jsonb))::int as included_work_item_count
-      from individual_reports ir
-      join work_item_snapshots wis on wis.id = ir.snapshot_id
-        and wis.tenant_id = ir.tenant_id
-      join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
-      join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
-      where ir.tenant_id = ${actor.tenantId} and ir.team_id = ${actor.teamId}
-        and ir.status = 'LOCKED'
+      from work_item_snapshots wis
+      join partners p on p.id = wis.partner_id and p.tenant_id = wis.tenant_id
+      join report_periods rp on rp.id = wis.period_id and rp.tenant_id = wis.tenant_id
+      where wis.tenant_id = ${actor.tenantId} and wis.team_id = ${actor.teamId}
       order by rp.starts_at desc, p.display_name
     `;
-  });
-
-  app.get("/v1/admin/individual-reports/:id", async (request) => {
-    const actor = await requireWebActor(request, "admin");
-    const { id } = paramsSchema.parse(request.params);
-    const reports = await sql<any[]>`
-      select ir.id, ir.status, ir.locked_at, ir.snapshot_id,
-        ir.title, ir.summary, ir.markdown, ir.payload, ir.source_checksum,
-        ir.generator_version, ir.updated_at,
-        p.display_name as partner_name, p.email as partner_email,
-        rp.period_key, rp.starts_at, rp.ends_at
-      from individual_reports ir
-      join partners p on p.id = ir.partner_id and p.tenant_id = ir.tenant_id
-      join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
-      where ir.id = ${id} and ir.tenant_id = ${actor.tenantId}
-        and ir.team_id = ${actor.teamId} and ir.status = 'LOCKED'
-      limit 1
-    `;
-    if (!reports[0])
-      throw new ApiError(404, "NOT_FOUND", "个人 Report 归档不存在。");
-    const snapshotRows = await sql<any[]>`
-      select id, review_id, review_version, checksum, payload, approved_at
-      from work_item_snapshots
-      where tenant_id = ${actor.tenantId} and id = ${reports[0].snapshot_id}
-      limit 1
-    `;
-    const workItems = Array.isArray(snapshotRows[0]?.payload?.workItems)
-      ? snapshotRows[0].payload.workItems.map((item: any) => ({
-          id: item.id,
-          title: item.title,
-          status: item.status,
-          reviewStatus: item.review_status,
-          factIds: item.fact_ids,
-          payload: item.payload,
-          includedInReport: true,
-          createdAt:
-            item.updated_at ?? item.created_at ?? snapshotRows[0].approved_at,
-        }))
-      : [];
-    return {
-      report: reports[0],
-      current: {
-        id: reports[0].id,
-        title: reports[0].title,
-        summary: reports[0].summary,
-        markdown: reports[0].markdown,
-        payload: reports[0].payload,
-        source_checksum: reports[0].source_checksum,
-        generator_version: reports[0].generator_version,
-        created_at: reports[0].updated_at,
-      },
-      workItemSnapshot: snapshotRows[0] ?? null,
-      workItems,
-    };
   });
 
   app.get("/v1/admin/team-reports", async (request) => {
@@ -400,7 +335,7 @@ export async function teamReportRoutes(app: FastifyInstance) {
       throw new ApiError(
         409,
         "TEAM_REPORT_WAITING_FOR_REVIEWS",
-        "仍有人员尚未完成个人 Report 审核，暂不能生成 Team Report。",
+        "仍有人员尚未完成工作卡片审核，暂不能生成 Team Report。",
       );
     await audit(
       request,
@@ -411,7 +346,7 @@ export async function teamReportRoutes(app: FastifyInstance) {
       {
         periodId: input.periodId,
         jobId: result.jobId,
-        individualReportCount: result.individualReportCount,
+        workCardSnapshotCount: result.workCardSnapshotCount,
         missingPartnerIds: result.missingPartnerIds,
       },
     );

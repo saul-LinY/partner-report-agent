@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   aggregationResultSchema,
-  individualReportResultSchema,
   projectDescriptionResultSchema,
   sessionContributionSchema,
   sessionExtractionResultSchema,
@@ -32,10 +31,6 @@ const schemas = {
   "aggregation-result-v1.json": toJsonSchema(
     aggregationResultSchema,
     "AggregationResultV1",
-  ),
-  "individual-report-result-v1.json": toJsonSchema(
-    individualReportResultSchema,
-    "IndividualReportResultV1",
   ),
   "project-description-result-v1.json": toJsonSchema(
     projectDescriptionResultSchema,

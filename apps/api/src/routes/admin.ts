@@ -158,71 +158,8 @@ export function pluginRunStatus(row: {
   return "healthy";
 }
 
-export function projectScopeDeliveryMode(pendingCount: number) {
-  return pendingCount > 0 ? "review" : "status";
-}
-
-export type FeishuBindingState =
-  "disabled" | "not_connected" | "pending" | "connected" | "invalid";
-
-export type FeishuDeliveryState =
-  | "idle"
-  | "pending"
-  | "sending"
-  | "healthy"
-  | "retrying"
-  | "failed"
-  | "deferred"
-  | "unknown";
-
-export type FeishuConnectionState =
-  FeishuBindingState | "delivery_error" | "delivery_pending";
-
-export function feishuBindingState(row: {
-  enabled: boolean;
-  status: string | null;
-  openIdPresent: boolean;
-}): FeishuBindingState {
-  if (!row.enabled) return "disabled";
-  if (!row.status) return "not_connected";
-  if (row.status === "pending") return "pending";
-  if (row.status === "active" && row.openIdPresent) return "connected";
-  return "invalid";
-}
-
-export function feishuDeliveryState(
-  status: string | null,
-): FeishuDeliveryState {
-  if (!status) return "idle";
-  if (["sent", "confirmed"].includes(status)) return "healthy";
-  if (status === "retry_wait") return "retrying";
-  if (status === "failed") return "failed";
-  if (status === "pending") return "pending";
-  if (status === "sending") return "sending";
-  if (status === "deferred") return "deferred";
-  return "unknown";
-}
-
-export function feishuConnectionState(
-  binding: FeishuBindingState,
-  delivery: FeishuDeliveryState,
-): FeishuConnectionState {
-  if (["disabled", "not_connected", "invalid"].includes(binding))
-    return binding;
-  if (["retrying", "failed", "unknown"].includes(delivery))
-    return "delivery_error";
-  if (binding === "pending") return "pending";
-  if (["pending", "sending", "deferred"].includes(delivery))
-    return "delivery_pending";
-  return "connected";
-}
-
 export type PartnerReviewStage =
-  | "not_started"
-  | "reviewing_cards"
-  | "generating_report"
-  | "reviewing_report"
-  | "completed";
+  "not_started" | "reviewing_cards" | "completed";
 
 export function partnerReviewProgress(row: {
   reviewId: string | null;
@@ -231,7 +168,6 @@ export function partnerReviewProgress(row: {
   pendingCount: number | null;
   approvedCount: number | null;
   excludedCount: number | null;
-  reportStatus: string | null;
 }) {
   const pending = Math.max(0, row.pendingCount ?? 0);
   const approved = Math.max(0, row.approvedCount ?? 0);
@@ -240,14 +176,11 @@ export function partnerReviewProgress(row: {
   const total = pending + reviewed;
   let stage: PartnerReviewStage = "not_started";
   if (row.reviewId) {
-    if (row.reportStatus === "LOCKED") stage = "completed";
-    else if (row.reportStatus === "REPORT_REVIEW") stage = "reviewing_report";
-    else if (
-      row.reportStatus === "REPORT_DRAFT" ||
-      row.reviewState === "ITEMS_APPROVED"
+    stage = ["ITEMS_APPROVED", "ITEMS_DISMISSED"].includes(
+      row.reviewState ?? "",
     )
-      stage = "generating_report";
-    else stage = "reviewing_cards";
+      ? "completed"
+      : "reviewing_cards";
   }
   return {
     periodKey: row.periodKey,
@@ -261,7 +194,6 @@ export function partnerReviewProgress(row: {
 }
 
 export async function adminRoutes(app: FastifyInstance) {
-  const feishuAppId = process.env.FEISHU_APP_ID?.trim() || null;
   app.get("/v1/admin/overview", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const [
@@ -279,52 +211,17 @@ export async function adminRoutes(app: FastifyInstance) {
       >`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
       sql<any[]>`
         select p.id, p.display_name, p.email, p.status, p.preferences, p.user_id, p.created_at,
-          fb.status as feishu_binding_status,
-          (fb.open_id is not null) as feishu_open_id_present,
-          fb.verified_at as feishu_verified_at,
-          fd.kind as feishu_delivery_kind,
-          fd.status as feishu_delivery_status,
-          fd.updated_at as feishu_delivery_updated_at,
-          fd.last_error_code as feishu_delivery_error_code,
-          fd.next_retry_at as feishu_delivery_next_retry_at,
           latest_review.review_id, latest_review.period_key as review_period_key,
           latest_review.review_state, latest_review.pending_count,
-          latest_review.approved_count, latest_review.excluded_count,
-          latest_review.report_status
+          latest_review.approved_count, latest_review.excluded_count
         from partners p
-        left join lateral (
-          select b.app_id, b.status, b.open_id, b.verified_at
-          from feishu_partner_bindings b
-          where b.tenant_id = p.tenant_id and b.team_id = p.team_id
-            and b.partner_id = p.id
-            and b.app_id = ${feishuAppId}
-          order by b.updated_at desc
-          limit 1
-        ) fb on true
-        left join lateral (
-          select d.kind, d.status, d.updated_at, d.last_error_code, d.next_retry_at
-          from feishu_deliveries d
-          where d.tenant_id = p.tenant_id and d.team_id = p.team_id
-            and d.partner_id = p.id
-            and split_part(d.idempotency_key, ':', 2) = fb.app_id
-          order by case
-            when d.status in ('retry_wait', 'failed') then 0
-            when d.status in ('pending', 'sending', 'deferred') then 1
-            when d.status in ('sent', 'confirmed') then 2
-            else 0
-          end, d.updated_at desc
-          limit 1
-        ) fd on fb.app_id is not null
         left join lateral (
           select r.id as review_id, r.state as review_state,
             r.pending_count, r.approved_count, r.excluded_count,
-            rp.period_key, ir.status as report_status
+            rp.period_key
           from reviews r
           join report_periods rp on rp.id = r.period_id
             and rp.tenant_id = r.tenant_id and rp.team_id = r.team_id
-          left join individual_reports ir on ir.tenant_id = r.tenant_id
-            and ir.team_id = r.team_id and ir.partner_id = r.partner_id
-            and ir.period_id = r.period_id
           where r.tenant_id = p.tenant_id and r.team_id = p.team_id
             and r.partner_id = p.id
           order by rp.starts_at desc, r.created_at desc
@@ -348,7 +245,8 @@ export async function adminRoutes(app: FastifyInstance) {
       `,
       sql<any[]>`
         select
-          pi.id, pi.tenant_id, pi.team_id, pi.partner_id, pi.device_name, pi.version, pi.status,
+          pi.id, pi.tenant_id, pi.team_id, pi.partner_id, pi.device_name, pi.version,
+          pi.client_kind, pi.status,
           pi.access_expires_at, pi.last_heartbeat_at, pi.last_hook_at, pi.last_runner_at,
           pi.last_scan_at, pi.last_sync_at, pi.next_due_at, pi.runner_state, pi.dirty_sessions,
           pi.extracting_sessions, pi.pending_local_jobs, pi.retry_count, pi.last_error_code,
@@ -420,17 +318,12 @@ export async function adminRoutes(app: FastifyInstance) {
         select r.id as review_id, r.state as review_state, r.version as review_version,
           r.pending_count, r.approved_count, r.excluded_count, r.updated_at,
           p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
-          rp.period_key, ir.id as report_id, ir.status as report_status, ir.content_revision
+          rp.period_key
         from reviews r
         join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
         join report_periods rp on rp.id = r.period_id and rp.tenant_id = r.tenant_id
-        left join individual_reports ir on ir.partner_id = r.partner_id and ir.period_id = r.period_id
-          and ir.tenant_id = r.tenant_id
         where r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
-          and (
-            r.state in ('PENDING', 'IN_PROGRESS')
-            or ir.status in ('REPORT_DRAFT', 'REPORT_REVIEW')
-          )
+          and r.state in ('PENDING', 'IN_PROGRESS')
         order by r.updated_at desc limit 100
       `,
     ]);
@@ -458,8 +351,14 @@ export async function adminRoutes(app: FastifyInstance) {
         plugins.find(
           (candidate) =>
             candidate.partner_id === partner.id &&
+            candidate.client_kind === "collector" &&
             candidate.status === "active",
-        ) ?? plugins.find((candidate) => candidate.partner_id === partner.id);
+        ) ??
+        plugins.find(
+          (candidate) =>
+            candidate.partner_id === partner.id &&
+            candidate.client_kind === "collector",
+        );
       const connectionState = !plugin
         ? "not_connected"
         : plugin.status !== "active"
@@ -469,12 +368,6 @@ export async function adminRoutes(app: FastifyInstance) {
             : plugin.last_sync_at
               ? "active"
               : "connected";
-      const bindingState = feishuBindingState({
-        enabled: feishuAppId !== null,
-        status: partner.feishu_binding_status,
-        openIdPresent: partner.feishu_open_id_present === true,
-      });
-      const deliveryState = feishuDeliveryState(partner.feishu_delivery_status);
       return {
         partnerId: partner.id,
         partnerName: partner.display_name,
@@ -492,19 +385,7 @@ export async function adminRoutes(app: FastifyInstance) {
           pendingCount: partner.pending_count ?? null,
           approvedCount: partner.approved_count ?? null,
           excludedCount: partner.excluded_count ?? null,
-          reportStatus: partner.report_status ?? null,
         }),
-        feishu: {
-          state: feishuConnectionState(bindingState, deliveryState),
-          bindingState,
-          deliveryState,
-          verifiedAt: partner.feishu_verified_at ?? null,
-          lastDeliveryKind: partner.feishu_delivery_kind ?? null,
-          lastDeliveryStatus: partner.feishu_delivery_status ?? null,
-          lastDeliveryAt: partner.feishu_delivery_updated_at ?? null,
-          lastErrorCode: partner.feishu_delivery_error_code ?? null,
-          nextRetryAt: partner.feishu_delivery_next_retry_at ?? null,
-        },
       };
     });
     const partners = partnerRows.map((partner) => ({
@@ -522,6 +403,7 @@ export async function adminRoutes(app: FastifyInstance) {
       partners,
       periods: periodRows,
       projects: projectRows,
+      plugins,
       connections,
       jobs: jobRows,
       bindingCodes: bindingRows,
@@ -631,150 +513,6 @@ export async function adminRoutes(app: FastifyInstance) {
       instances,
     };
   });
-
-  app.post(
-    "/v1/admin/partners/:id/project-scopes/deliver",
-    async (request, reply) => {
-      const actor = await requireWebActor(request, "admin");
-      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-      const feishuAppId = process.env.FEISHU_APP_ID?.trim();
-      if (!feishuAppId)
-        throw new ApiError(
-          503,
-          "FEISHU_NOT_CONFIGURED",
-          "飞书卡片投递尚未启用。",
-        );
-
-      const [partners, periods, policies] = await Promise.all([
-        sql<Array<{ id: string }>>`
-          select id from partners
-          where id = ${id} and tenant_id = ${actor.tenantId}
-            and team_id = ${actor.teamId} and status = 'active'
-          limit 1
-        `,
-        sql<Array<{ period_key: string }>>`
-          select period_key from report_periods
-          where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-          order by
-            case when starts_at <= now() and ends_at >= now() then 0 else 1 end,
-            starts_at desc
-          limit 1
-        `,
-        sql<
-          Array<{
-            plugin_instance_id: string;
-            total_count: number;
-            pending_count: number;
-          }>
-        >`
-          select psp.plugin_instance_id,
-            count(pse.id)::int as total_count,
-            count(pse.id) filter (where pse.status = 'pending')::int as pending_count
-          from project_scope_policies psp
-          join plugin_instances pi on pi.id = psp.plugin_instance_id
-            and pi.tenant_id = psp.tenant_id and pi.team_id = psp.team_id
-            and pi.partner_id = psp.partner_id and pi.status = 'active'
-          left join project_scope_entries pse
-            on pse.plugin_instance_id = psp.plugin_instance_id
-            and pse.tenant_id = psp.tenant_id
-            and pse.team_id = psp.team_id and pse.partner_id = psp.partner_id
-          where psp.tenant_id = ${actor.tenantId}
-            and psp.team_id = ${actor.teamId} and psp.partner_id = ${id}
-          group by psp.plugin_instance_id, psp.created_at
-          order by psp.created_at asc
-        `,
-      ]);
-      if (!partners[0])
-        throw new ApiError(404, "NOT_FOUND", "Partner 不存在。");
-      const period = periods[0];
-      if (!period)
-        throw new ApiError(
-          409,
-          "REPORT_PERIOD_MISSING",
-          "尚无报告周期，无法生成权限卡片。",
-        );
-
-      const totalCount = policies.reduce(
-        (sum, policy) => sum + policy.total_count,
-        0,
-      );
-      const pendingCount = policies.reduce(
-        (sum, policy) => sum + policy.pending_count,
-        0,
-      );
-      if (totalCount === 0)
-        throw new ApiError(
-          409,
-          "PROJECT_SCOPE_EMPTY",
-          "尚未发现可发送的项目权限。",
-        );
-      const mode = projectScopeDeliveryMode(pendingCount);
-      const targets = policies.filter((policy) =>
-        mode === "review" ? policy.pending_count > 0 : policy.total_count > 0,
-      );
-      const requestId = randomUUID();
-
-      await sql.begin(async (tx) => {
-        for (const target of targets) {
-          const aggregateId = `${target.plugin_instance_id}:${period.period_key}`;
-          const canonicalIdempotencyKey = `scope:${feishuAppId}:${id}:${aggregateId}`;
-          await tx`
-            update feishu_deliveries set
-              idempotency_key = idempotency_key || ':superseded:' || ${requestId},
-              status = case
-                when status in ('pending', 'sending', 'retry_wait', 'failed', 'deferred')
-                  then 'cancelled'
-                else status
-              end,
-              next_retry_at = null, updated_at = now()
-            where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-              and partner_id = ${id} and kind = 'scope'
-              and aggregate_type = 'project_scope'
-              and aggregate_id = ${aggregateId}
-              and idempotency_key = ${canonicalIdempotencyKey}
-          `;
-          await tx`
-            insert into outbox_events (
-              id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-            ) values (
-              ${randomUUID()}, ${actor.tenantId},
-              'project_scope.delivery.requested', 'plugin_instance',
-              ${target.plugin_instance_id},
-              ${JSON.stringify({
-                teamId: actor.teamId,
-                partnerId: id,
-                periodKey: period.period_key,
-                requestedBy: actor.userId,
-                requestId,
-              })}::jsonb
-            )
-          `;
-        }
-      });
-      await audit(
-        request,
-        actor,
-        "project_scope.delivery.requested",
-        "partner",
-        id,
-        {
-          mode,
-          pendingCount,
-          totalCount,
-          targetCount: targets.length,
-          periodKey: period.period_key,
-          requestId,
-        },
-      );
-      return reply.code(202).send({
-        queued: true,
-        mode,
-        queuedCount: targets.length,
-        pendingCount,
-        totalCount,
-      });
-    },
-  );
 
   app.post("/v1/admin/partners", async (request) => {
     const actor = await requireWebActor(request, "admin");
@@ -898,24 +636,6 @@ export async function adminRoutes(app: FastifyInstance) {
           and team_id = ${actor.teamId} and status = 'active'
         returning id
       `;
-      const feishuBindings = await tx<{ id: string }[]>`
-        update feishu_partner_bindings set
-          status = 'revoked', open_id = null, union_id = null,
-          tenant_key = null, verified_at = null, updated_at = now()
-        where partner_id = ${id} and tenant_id = ${actor.tenantId}
-          and team_id = ${actor.teamId} and status <> 'revoked'
-        returning id
-      `;
-      const feishuDeliveries = await tx<{ id: string }[]>`
-        update feishu_deliveries set
-          status = 'cancelled', next_retry_at = null,
-          last_error_code = 'PARTNER_REMOVED', last_error_message = null,
-          updated_at = now()
-        where partner_id = ${id} and tenant_id = ${actor.tenantId}
-          and team_id = ${actor.teamId}
-          and status in ('pending', 'sending', 'retry_wait', 'failed', 'deferred')
-        returning id
-      `;
       if (partner.user_id) {
         await tx`
           update memberships m set
@@ -938,8 +658,6 @@ export async function adminRoutes(app: FastifyInstance) {
         ...partner,
         revokedPluginCount: plugins.length,
         revokedBindingCodeCount: bindingCodes.length,
-        revokedFeishuBindingCount: feishuBindings.length,
-        cancelledFeishuDeliveryCount: feishuDeliveries.length,
       };
     });
     if (!removed)
@@ -948,16 +666,12 @@ export async function adminRoutes(app: FastifyInstance) {
       email: removed.email,
       revokedPluginCount: removed.revokedPluginCount,
       revokedBindingCodeCount: removed.revokedBindingCodeCount,
-      revokedFeishuBindingCount: removed.revokedFeishuBindingCount,
-      cancelledFeishuDeliveryCount: removed.cancelledFeishuDeliveryCount,
     });
     return {
       ok: true,
       partnerId: id,
       revokedPluginCount: removed.revokedPluginCount,
       revokedBindingCodeCount: removed.revokedBindingCodeCount,
-      revokedFeishuBindingCount: removed.revokedFeishuBindingCount,
-      cancelledFeishuDeliveryCount: removed.cancelledFeishuDeliveryCount,
     };
   });
 

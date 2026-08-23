@@ -56,7 +56,7 @@ if (existing.length === 0) {
     await tx`
       insert into report_templates (id, tenant_id, team_id, name, sections, is_default)
       values (
-        ${templateId}, ${tenantId}, ${teamId}, '默认个人周报',
+        ${templateId}, ${tenantId}, ${teamId}, '默认团队汇总素材',
         ${JSON.stringify(["本期摘要", "关键成果", "项目进展", "风险与阻塞", "下一期重点", "需协调事项", "数据覆盖"])}::jsonb,
         true
       )

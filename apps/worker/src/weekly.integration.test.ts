@@ -24,8 +24,11 @@ suite("weekly report scheduling", () => {
     await sql.begin(async (tx) => {
       await tx`insert into tenants (id, name) values (${fixture.tenant}, 'Weekly Fixture')`;
       await tx`
-        insert into teams (id, tenant_id, name, timezone, report_type)
-        values (${fixture.team}, ${fixture.tenant}, 'Weekly Team', 'Asia/Shanghai', 'weekly')
+        insert into teams (id, tenant_id, name, timezone, report_type, period_rule)
+        values (
+          ${fixture.team}, ${fixture.tenant}, 'Weekly Team', 'Asia/Shanghai', 'weekly',
+          '{"frequency":"weekly","weekStartsOn":1,"factCutoffWeekday":5,"factCutoffTime":"14:00"}'::jsonb
+        )
       `;
       await tx`
         insert into partners (id, tenant_id, team_id, email, display_name)
@@ -59,11 +62,9 @@ suite("weekly report scheduling", () => {
 
   afterAll(async () => {
     await sql.begin(async (tx) => {
-      await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
-      await tx`delete from individual_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_item_snapshots where tenant_id = ${fixture.tenant}`;
       await tx`
         delete from work_item_facts
@@ -71,6 +72,7 @@ suite("weekly report scheduling", () => {
           select id from work_items where tenant_id = ${fixture.tenant}
         )
       `;
+      await tx`delete from work_item_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_items where tenant_id = ${fixture.tenant}`;
       await tx`delete from reviews where tenant_id = ${fixture.tenant}`;
       await tx`delete from fact_snapshots where tenant_id = ${fixture.tenant}`;
@@ -114,35 +116,27 @@ suite("weekly report scheduling", () => {
       teamReportJobs: 0,
     });
 
-    const [periods, reviews, jobs, emptyReports, emptySnapshots] =
-      await Promise.all([
-        sql<any[]>`
+    const [periods, reviews, jobs, emptySnapshots] = await Promise.all([
+      sql<any[]>`
         select period_key, status from report_periods
         where team_id = ${fixture.team} order by starts_at
       `,
-        sql<any[]>`
+      sql<any[]>`
         select partner_id, state from reviews
         where period_id = ${fixture.period} order by partner_id
       `,
-        sql<any[]>`
+      sql<any[]>`
         select type, status, idempotency_key, input_payload
         from agent_jobs where tenant_id = ${fixture.tenant}
       `,
-        sql<any[]>`
-        select status, title, summary, payload, generator_version
-        from individual_reports
-        where tenant_id = ${fixture.tenant}
-          and partner_id = ${fixture.emptyPartner}
-          and period_id = ${fixture.period}
-      `,
-        sql<any[]>`
+      sql<any[]>`
         select payload, approved_by_actor_type, approved_by_actor_id
         from work_item_snapshots
         where tenant_id = ${fixture.tenant}
           and partner_id = ${fixture.emptyPartner}
           and period_id = ${fixture.period}
       `,
-      ]);
+    ]);
     expect(periods).toEqual([
       { period_key: "2026-W31", status: "facts_frozen" },
       { period_key: "2026-W32", status: "open" },
@@ -171,16 +165,6 @@ suite("weekly report scheduling", () => {
       },
     });
     expect(jobs[0].input_payload).not.toHaveProperty("autoAdvanceAtCutoff");
-    expect(emptyReports).toHaveLength(1);
-    expect(emptyReports[0]).toMatchObject({
-      status: "LOCKED",
-      title: "本周期个人周报：无可汇报记录",
-      summary: expect.stringContaining("不代表本周期没有开展工作"),
-      generator_version: "partner-report-platform/0.3.0 (no-activity)",
-      payload: {
-        qualityWarnings: ["NO_REPORTABLE_ACTIVITY_COLLECTED"],
-      },
-    });
     expect(emptySnapshots).toEqual([
       expect.objectContaining({
         approved_by_actor_type: "system",
@@ -268,8 +252,11 @@ suite("weekly reporting with no collected activity", () => {
     await sql.begin(async (tx) => {
       await tx`insert into tenants (id, name) values (${fixture.tenant}, 'Empty Weekly Fixture')`;
       await tx`
-        insert into teams (id, tenant_id, name, timezone, report_type)
-        values (${fixture.team}, ${fixture.tenant}, 'Empty Weekly Team', 'Asia/Shanghai', 'weekly')
+        insert into teams (id, tenant_id, name, timezone, report_type, period_rule)
+        values (
+          ${fixture.team}, ${fixture.tenant}, 'Empty Weekly Team', 'Asia/Shanghai', 'weekly',
+          '{"frequency":"weekly","weekStartsOn":1,"factCutoffWeekday":5,"factCutoffTime":"14:00"}'::jsonb
+        )
       `;
       await tx`
         insert into partners (id, tenant_id, team_id, email, display_name)
@@ -291,11 +278,9 @@ suite("weekly reporting with no collected activity", () => {
 
   afterAll(async () => {
     await sql.begin(async (tx) => {
-      await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
-      await tx`delete from individual_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_item_snapshots where tenant_id = ${fixture.tenant}`;
       await tx`
         delete from work_item_facts
@@ -303,6 +288,7 @@ suite("weekly reporting with no collected activity", () => {
           select id from work_items where tenant_id = ${fixture.tenant}
         )
       `;
+      await tx`delete from work_item_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_items where tenant_id = ${fixture.tenant}`;
       await tx`delete from reviews where tenant_id = ${fixture.tenant}`;
       await tx`delete from fact_snapshots where tenant_id = ${fixture.tenant}`;
@@ -313,7 +299,7 @@ suite("weekly reporting with no collected activity", () => {
     });
   });
 
-  it("locks an honest empty report and completes the Team Report without Feishu", async () => {
+  it("locks an honest empty source and completes the Team Report", async () => {
     expect(
       await scheduleDueWeeklyReports(
         new Date("2026-08-07T06:00:00.000Z"),
@@ -333,7 +319,7 @@ suite("weekly reporting with no collected activity", () => {
       {
         type: "GENERATE_TEAM_REPORT",
         input_payload: {
-          individualReports: [
+          workCards: [
             {
               partnerId: fixture.partner,
               noReportableActivity: true,
@@ -349,7 +335,7 @@ suite("weekly reporting with no collected activity", () => {
       type: "GENERATE_TEAM_REPORT",
     });
 
-    const [reports, periods, outbox] = await Promise.all([
+    const [reports, periods] = await Promise.all([
       sql<any[]>`
         select tr.status, tr.missing_partner_ids, trv.payload
         from team_reports tr
@@ -358,9 +344,6 @@ suite("weekly reporting with no collected activity", () => {
       `,
       sql<any[]>`
         select status from report_periods where id = ${fixture.period}
-      `,
-      sql<any[]>`
-        select id from outbox_events where tenant_id = ${fixture.tenant}
       `,
     ]);
     expect(reports).toMatchObject([
@@ -375,6 +358,5 @@ suite("weekly reporting with no collected activity", () => {
       },
     ]);
     expect(periods).toEqual([{ status: "completed" }]);
-    expect(outbox).toEqual([]);
   });
 });

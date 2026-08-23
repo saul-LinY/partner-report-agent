@@ -53,7 +53,7 @@ export const teams = pgTable(
       frequency: "weekly",
       weekStartsOn: 1,
       factCutoffWeekday: 5,
-      factCutoffTime: "14:00",
+      factCutoffTime: "17:00",
     }),
     evidenceExcerptEnabled: boolean("evidence_excerpt_enabled")
       .notNull()
@@ -66,7 +66,7 @@ export const teams = pgTable(
       .default(120),
     collectionGraceMinutes: integer("collection_grace_minutes")
       .notNull()
-      .default(120),
+      .default(0),
     minimumPluginVersion: text("minimum_plugin_version")
       .notNull()
       .default("0.2.0"),
@@ -152,115 +152,6 @@ export const externalIdentities = pgTable(
       table.tenantId,
       table.provider,
       table.externalSubject,
-    ),
-  ],
-);
-
-export const feishuPartnerBindings = pgTable(
-  "feishu_partner_bindings",
-  {
-    id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
-    teamId: uuid("team_id")
-      .notNull()
-      .references(() => teams.id),
-    partnerId: uuid("partner_id")
-      .notNull()
-      .references(() => partners.id),
-    appId: text("app_id").notNull(),
-    openId: text("open_id"),
-    unionId: text("union_id"),
-    tenantKey: text("tenant_key"),
-    status: text("status").notNull().default("pending"),
-    verifiedAt: timestamp("verified_at", { withTimezone: true }),
-    ...timestamps(),
-  },
-  (table) => [
-    uniqueIndex("feishu_partner_bindings_partner_app_unique").on(
-      table.tenantId,
-      table.partnerId,
-      table.appId,
-    ),
-    uniqueIndex("feishu_partner_bindings_app_open_unique").on(
-      table.appId,
-      table.openId,
-    ),
-    index("feishu_partner_bindings_team_status_idx").on(
-      table.tenantId,
-      table.teamId,
-      table.status,
-    ),
-  ],
-);
-
-export const feishuInboxEvents = pgTable(
-  "feishu_inbox_events",
-  {
-    id: uuid("id").primaryKey(),
-    eventId: text("event_id").notNull(),
-    eventType: text("event_type").notNull(),
-    status: text("status").notNull().default("received"),
-    sanitizedPayload: jsonb("sanitized_payload").notNull().default({}),
-    errorCode: text("error_code"),
-    errorMessage: text("error_message"),
-    receivedAt: timestamp("received_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    processedAt: timestamp("processed_at", { withTimezone: true }),
-    ...timestamps(),
-  },
-  (table) => [
-    uniqueIndex("feishu_inbox_events_event_unique").on(table.eventId),
-    index("feishu_inbox_events_status_received_idx").on(
-      table.status,
-      table.receivedAt,
-    ),
-  ],
-);
-
-export const feishuDeliveries = pgTable(
-  "feishu_deliveries",
-  {
-    id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
-    teamId: uuid("team_id")
-      .notNull()
-      .references(() => teams.id),
-    partnerId: uuid("partner_id")
-      .notNull()
-      .references(() => partners.id),
-    kind: text("kind").notNull(),
-    aggregateType: text("aggregate_type").notNull(),
-    aggregateId: text("aggregate_id").notNull(),
-    receiveId: text("receive_id").notNull(),
-    receiveIdType: text("receive_id_type").notNull(),
-    messageId: text("message_id"),
-    domainVersion: integer("domain_version"),
-    status: text("status").notNull().default("pending"),
-    attemptCount: integer("attempt_count").notNull().default(0),
-    lastErrorCode: text("last_error_code"),
-    lastErrorMessage: text("last_error_message"),
-    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
-    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
-    sentAt: timestamp("sent_at", { withTimezone: true }),
-    idempotencyKey: text("idempotency_key").notNull(),
-    ...timestamps(),
-  },
-  (table) => [
-    uniqueIndex("feishu_deliveries_idempotency_unique").on(
-      table.tenantId,
-      table.idempotencyKey,
-    ),
-    uniqueIndex("feishu_deliveries_message_unique").on(table.messageId),
-    index("feishu_deliveries_retry_idx").on(table.status, table.nextRetryAt),
-    index("feishu_deliveries_aggregate_idx").on(
-      table.tenantId,
-      table.aggregateType,
-      table.aggregateId,
     ),
   ],
 );
@@ -435,6 +326,7 @@ export const pluginInstances = pgTable(
       .references(() => partners.id),
     deviceName: text("device_name").notNull(),
     version: text("version").notNull(),
+    clientKind: text("client_kind").notNull().default("collector"),
     status: text("status").notNull().default("active"),
     accessTokenHash: text("access_token_hash").notNull(),
     refreshTokenHash: text("refresh_token_hash").notNull(),
@@ -643,6 +535,56 @@ export const pluginDiagnosticEvents = pgTable(
     index("plugin_diagnostic_events_recent_idx").on(
       table.tenantId,
       table.pluginInstanceId,
+      table.occurredAt,
+    ),
+  ],
+);
+
+export const pluginLogEvents = pgTable(
+  "plugin_log_events",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id),
+    runId: uuid("run_id"),
+    level: text("level").notNull(),
+    stage: text("stage").notNull(),
+    eventCode: text("event_code").notNull(),
+    message: text("message").notNull(),
+    stack: text("stack"),
+    retryable: boolean("retryable").notNull().default(false),
+    attempt: integer("attempt"),
+    durationMs: integer("duration_ms"),
+    requestId: text("request_id"),
+    details: jsonb("details").notNull().default({}),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("plugin_log_events_instance_event_unique").on(
+      table.pluginInstanceId,
+      table.id,
+    ),
+    index("plugin_log_events_instance_recent_idx").on(
+      table.tenantId,
+      table.pluginInstanceId,
+      table.occurredAt,
+    ),
+    index("plugin_log_events_run_recent_idx").on(
+      table.tenantId,
+      table.runId,
       table.occurredAt,
     ),
   ],
@@ -984,12 +926,57 @@ export const workItemFacts = pgTable(
   {
     workItemId: uuid("work_item_id")
       .notNull()
-      .references(() => workItems.id),
+      .references(() => workItems.id, { onDelete: "cascade" }),
     factId: uuid("fact_id")
       .notNull()
       .references(() => sessionFacts.id),
   },
   (table) => [primaryKey({ columns: [table.workItemId, table.factId] })],
+);
+
+export const workItemVersions = pgTable(
+  "work_item_versions",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    periodId: uuid("period_id")
+      .notNull()
+      .references(() => reportPeriods.id),
+    reviewId: uuid("review_id")
+      .notNull()
+      .references(() => reviews.id),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    status: text("status").notNull(),
+    payload: jsonb("payload").notNull(),
+    instruction: text("instruction"),
+    source: text("source").notNull().default("generated"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("work_item_versions_item_version_unique").on(
+      table.workItemId,
+      table.version,
+    ),
+    index("work_item_versions_review_idx").on(
+      table.tenantId,
+      table.reviewId,
+      table.createdAt,
+    ),
+  ],
 );
 
 export const reviewChanges = pgTable(
@@ -1092,47 +1079,6 @@ export const agentJobs = pgTable(
   ],
 );
 
-export const individualReports = pgTable(
-  "individual_reports",
-  {
-    id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
-    teamId: uuid("team_id")
-      .notNull()
-      .references(() => teams.id),
-    partnerId: uuid("partner_id")
-      .notNull()
-      .references(() => partners.id),
-    periodId: uuid("period_id")
-      .notNull()
-      .references(() => reportPeriods.id),
-    snapshotId: uuid("snapshot_id")
-      .notNull()
-      .references(() => workItemSnapshots.id),
-    status: text("status").notNull().default("REPORT_DRAFT"),
-    contentRevision: integer("content_revision").notNull().default(0),
-    title: text("title"),
-    summary: text("summary"),
-    markdown: text("markdown"),
-    payload: jsonb("payload"),
-    preferences: jsonb("preferences").notNull().default({}),
-    sourceChecksum: text("source_checksum"),
-    generatorVersion: text("generator_version"),
-    submittedAt: timestamp("submitted_at", { withTimezone: true }),
-    lockedAt: timestamp("locked_at", { withTimezone: true }),
-    ...timestamps(),
-  },
-  (table) => [
-    uniqueIndex("individual_reports_partner_period_unique").on(
-      table.tenantId,
-      table.partnerId,
-      table.periodId,
-    ),
-  ],
-);
-
 export const teamReports = pgTable(
   "team_reports",
   {
@@ -1214,26 +1160,5 @@ export const auditEvents = pgTable(
   },
   (table) => [
     index("audit_tenant_created_idx").on(table.tenantId, table.createdAt),
-  ],
-);
-
-export const outboxEvents = pgTable(
-  "outbox_events",
-  {
-    id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
-    eventType: text("event_type").notNull(),
-    aggregateType: text("aggregate_type").notNull(),
-    aggregateId: text("aggregate_id").notNull(),
-    payload: jsonb("payload").notNull(),
-    publishedAt: timestamp("published_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index("outbox_unpublished_idx").on(table.publishedAt, table.createdAt),
   ],
 );

@@ -27,7 +27,6 @@ import {
 import {
   beginProjectScopeBootstrap,
   decideProjectScopes,
-  loadProjectScopeCardDeliveryStatus,
   loadProjectScopePolicy,
   registerProjectScopeCandidates,
 } from "../project-scope.js";
@@ -52,6 +51,7 @@ const claimSchema = z.object({
   bindingCode: z.string().min(8).max(80),
   deviceName: z.string().min(1).max(120),
   pluginVersion: z.string().min(1).max(40),
+  clientKind: z.enum(["collector", "widget"]).default("collector"),
 });
 
 function accessExpiry() {
@@ -119,6 +119,7 @@ export async function pluginRoutes(app: FastifyInstance) {
         const recovered = await tx<{ id: string }[]>`
           update plugin_instances set
             device_name = ${input.deviceName}, version = ${input.pluginVersion},
+            client_kind = ${input.clientKind},
             access_token_hash = ${sha256(accessToken)},
             refresh_token_hash = ${sha256(refreshToken)},
             access_expires_at = ${expiresAt.toISOString()},
@@ -139,12 +140,13 @@ export async function pluginRoutes(app: FastifyInstance) {
         await tx`
           insert into plugin_instances (
             id, tenant_id, team_id, partner_id, device_name, version,
+            client_kind,
             access_token_hash, refresh_token_hash, access_expires_at,
             connectivity_status, connectivity_challenge_hash,
             connectivity_challenge_expires_at
           ) values (
             ${pluginInstanceId}, ${row.tenant_id}, ${row.team_id}, ${row.partner_id},
-            ${input.deviceName}, ${input.pluginVersion}, ${sha256(accessToken)},
+            ${input.deviceName}, ${input.pluginVersion}, ${input.clientKind}, ${sha256(accessToken)},
             ${sha256(refreshToken)}, ${expiresAt.toISOString()}, 'pending',
             ${connectivity.challengeHash}, ${connectivity.challengeExpiresAt.toISOString()}
           )
@@ -170,7 +172,7 @@ export async function pluginRoutes(app: FastifyInstance) {
           ${randomUUID()}, ${row.tenant_id}, ${row.team_id}, 'plugin', ${pluginInstanceId},
           ${recoveryInstanceId ? "plugin.binding.recovered" : "plugin.binding.claimed"},
           'plugin_binding_code', ${row.id}, ${request.id},
-          ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
+          ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion, clientKind: input.clientKind })}::jsonb
         )
       `;
       return { row, pluginInstanceId };
@@ -234,12 +236,8 @@ export async function pluginRoutes(app: FastifyInstance) {
       const plugins = await tx<any[]>`
           select pi.id, pi.tenant_id, pi.team_id, pi.partner_id
           from plugin_instances pi
-          join feishu_partner_bindings fpb
-            on fpb.tenant_id = pi.tenant_id and fpb.team_id = pi.team_id
-            and fpb.partner_id = pi.partner_id and fpb.status = 'active'
-            and fpb.open_id is not null
-            and fpb.app_id = ${process.env.FEISHU_APP_ID ?? ""}
           where pi.id = ${input.pluginInstanceId} and pi.status = 'active'
+            and pi.client_kind = 'collector'
             and pi.device_name = ${input.deviceName}
           limit 1
           for update of pi
@@ -264,32 +262,19 @@ export async function pluginRoutes(app: FastifyInstance) {
             ${plugin.partner_id}, ${input.pluginInstanceId}, ${expiresAt.toISOString()}
           )
         `;
-      await tx`
-          insert into outbox_events (
-            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-          ) values (
-            ${randomUUID()}, ${plugin.tenant_id},
-            'plugin.binding.recovery.requested', 'device_authorization', ${id},
-            ${JSON.stringify({
-              teamId: plugin.team_id,
-              partnerId: plugin.partner_id,
-              pluginInstanceId: input.pluginInstanceId,
-            })}::jsonb
-          )
-        `;
       return "created" as const;
     });
     if (created === "already_pending")
       throw new ApiError(
         409,
         "PLUGIN_RECOVERY_ALREADY_PENDING",
-        "连接恢复申请已经发送，请先在飞书确认。",
+        "连接恢复申请已经存在，请在工作看板应用中确认。",
       );
     if (created !== "created")
       throw new ApiError(
         404,
         "PLUGIN_RECOVERY_NOT_AVAILABLE",
-        "当前插件连接无法通过飞书恢复。",
+        "当前插件连接无法恢复。",
       );
     return { status: "pending", expiresAt };
   });
@@ -535,11 +520,6 @@ export async function pluginRoutes(app: FastifyInstance) {
     return result;
   });
 
-  app.get("/v1/project-scope/card-status", async (request) => {
-    const actor = await requirePluginActor(request);
-    return loadProjectScopeCardDeliveryStatus(actor, request.query);
-  });
-
   app.post("/v1/project-scope/candidates", async (request) => {
     const actor = await requirePluginActor(request);
     const policy = await registerProjectScopeCandidates(actor, request.body);
@@ -579,50 +559,13 @@ export async function pluginRoutes(app: FastifyInstance) {
       limit 1
     `;
     const policy = policies[0];
-    if (!policy || policy.initialized || policy.pending_count < 1)
-      return { reminded: false, policy: await loadProjectScopePolicy(actor) };
-
-    await sql.begin(async (tx) => {
-      const periods = await tx<Array<{ period_key: string }>>`
-        select period_key from report_periods
-        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-          and period_key = ${input.periodKey}
-          and status = 'open' and starts_at <= now() and ends_at >= now()
-        limit 1
-      `;
-      if (!periods[0])
-        throw new ApiError(
-          404,
-          "REPORT_PERIOD_MISSING",
-          "当前周期不存在或未开放。",
-        );
-      const aggregateId = `${actor.pluginInstanceId}:${input.periodKey}`;
-      await tx`
-        update feishu_deliveries set
-          message_id = null, domain_version = null, status = 'pending',
-          sent_at = null, next_retry_at = null, last_attempt_at = null,
-          last_error_code = null, last_error_message = null, updated_at = now()
-        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-          and partner_id = ${actor.partnerId} and kind = 'scope'
-          and aggregate_type = 'project_scope' and aggregate_id = ${aggregateId}
-      `;
-      await tx`
-        insert into outbox_events (
-          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-        ) values (
-          ${randomUUID()}, ${actor.tenantId}, 'project_scope.period.review_ready',
-          'plugin_instance', ${actor.pluginInstanceId},
-          ${JSON.stringify({
-            teamId: actor.teamId,
-            partnerId: actor.partnerId,
-            pluginInstanceId: actor.pluginInstanceId,
-            periodKey: input.periodKey,
-            version: policy.version,
-          })}::jsonb
-        )
-      `;
-    });
-    return { reminded: true, policy: await loadProjectScopePolicy(actor) };
+    return {
+      reminded: Boolean(
+        policy && !policy.initialized && policy.pending_count > 0,
+      ),
+      periodKey: input.periodKey,
+      policy: await loadProjectScopePolicy(actor),
+    };
   });
 
   app.post("/v1/project-scope/bootstrap", async (request) => {

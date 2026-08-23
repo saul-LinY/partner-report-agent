@@ -1,6 +1,7 @@
-const API_URL =
-  import.meta.env.VITE_API_URL ??
-  `${window.location.protocol}//${window.location.hostname}:4310`;
+const API_URL = import.meta.env.DEV
+  ? ""
+  : (import.meta.env.VITE_API_URL ??
+    `${window.location.protocol}//${window.location.hostname}:4310`);
 
 export class ApiClientError extends Error {
   constructor(

@@ -42,32 +42,6 @@ describe("MCP output adapter", () => {
     });
   });
 
-  it("preserves structured card wait state without exposing shell syntax", () => {
-    expect(
-      withNextTool({
-        status: "project_scope_card_delivery_pending",
-        periodKey: "2026-W34",
-        policyVersion: 7,
-        nextCommand:
-          "project-scope-card-wait --period-key abc --version 7 --deadline 123456 --attempt 2",
-      }),
-    ).toEqual({
-      status: "project_scope_card_delivery_pending",
-      periodKey: "2026-W34",
-      policyVersion: 7,
-      nextTool: {
-        name: "project_scope_card_wait",
-        arguments: {
-          periodKey: "2026-W34",
-          version: 7,
-          deadline: 123456,
-          attempt: 2,
-          force: false,
-        },
-      },
-    });
-  });
-
   it("returns Job input while hiding internal input and result paths", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-mcp-output-"));
     const inputPath = resolve(root, "input.json");

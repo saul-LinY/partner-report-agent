@@ -21,7 +21,13 @@ import {
   setSessionCookie,
   verifyGoogleIdentity,
 } from "../auth-security.js";
-import { ApiError, randomToken, requireWebActor, sha256 } from "../common.js";
+import {
+  ApiError,
+  isDevelopmentLoginEnabled,
+  randomToken,
+  requireWebActor,
+  sha256,
+} from "../common.js";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -121,6 +127,35 @@ export async function authRoutes(
       throw new ApiError(401, "INVALID_CREDENTIALS", "邮箱或密码不正确。");
     }
     await createWebSession(request, reply, user.id);
+    return { ok: true };
+  };
+
+  const developmentLogin = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    const preferredEmail =
+      process.env.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase() ?? "";
+    const rows = await sql<{ id: string }[]>`
+      select u.id
+      from users u
+      join memberships m on m.user_id = u.id
+      where u.status = 'active'
+        and m.roles @> '["admin"]'::jsonb
+      order by
+        case when lower(u.email) = ${preferredEmail} then 0 else 1 end,
+        m.created_at asc
+      limit 1
+    `;
+    const admin = rows[0];
+    if (!admin) {
+      throw new ApiError(
+        503,
+        "DEV_ADMIN_NOT_FOUND",
+        "数据库中没有可用于开发环境免登录的有效管理员。",
+      );
+    }
+    await createWebSession(request, reply, admin.id);
     return { ok: true };
   };
 
@@ -274,6 +309,9 @@ export async function authRoutes(
   });
 
   app.post("/v1/auth/login", localLogin);
+  if (isDevelopmentLoginEnabled()) {
+    app.post("/v1/auth/dev-login", developmentLogin);
+  }
   app.post("/v1/auth/logout", logout);
   app.post("/auth/logout", logout);
   app.get("/v1/me", currentUser);

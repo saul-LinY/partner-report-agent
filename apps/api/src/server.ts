@@ -7,23 +7,27 @@ import formbody from "@fastify/formbody";
 import { ZodError } from "zod";
 import { closeDatabase } from "@partner-report/db";
 import { ApiError } from "./api-error.js";
+import { isDevelopmentLoginEnabled } from "./common.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes, type AuthRouteOptions } from "./routes/auth.js";
 import { factRoutes } from "./routes/facts.js";
 import { jobRoutes } from "./routes/jobs.js";
+import { observabilityRoutes } from "./routes/observability.js";
+import { widgetRoutes } from "./routes/widget.js";
 import { pluginRoutes } from "./routes/plugin.js";
-import { reportRoutes } from "./routes/reports.js";
 import { teamReportRoutes } from "./routes/team-reports.js";
 import { reviewRoutes } from "./routes/reviews.js";
-import { loadFeishuConfig } from "./feishu/config.js";
-import {
-  getFeishuRuntimeStatus,
-  startFeishuIntegration,
-} from "./feishu/integration.js";
 
 export async function buildApp(
   options: { logger?: boolean; auth?: AuthRouteOptions } = {},
 ) {
+  const webOrigin = process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311";
+  const allowedWebOrigins = new Set([
+    webOrigin,
+    ...(isDevelopmentLoginEnabled()
+      ? ["http://localhost:4311", "http://127.0.0.1:4311"]
+      : []),
+  ]);
   const app = Fastify({
     logger:
       options.logger === false
@@ -48,7 +52,7 @@ export async function buildApp(
   await app.register(cookie);
   await app.register(formbody);
   await app.register(cors, {
-    origin: process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311",
+    origin: [...allowedWebOrigins],
     credentials: true,
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   });
@@ -57,8 +61,7 @@ export async function buildApp(
     if (["POST", "PATCH", "DELETE"].includes(request.method)) {
       if (request.url.split("?", 1)[0] === "/auth/google/callback") return;
       const origin = request.headers.origin;
-      const expected = process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311";
-      if (origin && origin !== expected)
+      if (origin && !allowedWebOrigins.has(origin))
         throw new ApiError(403, "ORIGIN_FORBIDDEN", "请求来源不受信任。");
     }
   });
@@ -126,42 +129,25 @@ export async function buildApp(
   app.get("/health", async () => ({
     status: "ok",
     time: new Date().toISOString(),
-    feishu: getFeishuRuntimeStatus(),
   }));
   await app.register(authRoutes, options.auth ?? {});
   await app.register(adminRoutes);
   await app.register(pluginRoutes);
+  await app.register(observabilityRoutes);
+  await app.register(widgetRoutes);
   await app.register(factRoutes);
   await app.register(jobRoutes);
   await app.register(reviewRoutes);
-  await app.register(reportRoutes);
   await app.register(teamReportRoutes);
   return app;
 }
 
 async function start() {
-  const feishuConfig = loadFeishuConfig();
   const app = await buildApp();
   const host = process.env.API_HOST ?? "0.0.0.0";
   const port = Number(process.env.API_PORT ?? 4310);
   await app.listen({ host, port });
-  const feishu = feishuConfig
-    ? await startFeishuIntegration(
-        feishuConfig,
-        {
-          info: (context, message) => app.log.info(context, message),
-          warn: (context, message) => app.log.warn(context, message),
-          error: (context, message) => app.log.error(context, message),
-        },
-        {
-          reviewDeliveryEnabled:
-            process.env.FEISHU_REVIEW_DELIVERY_ENABLED !== "false",
-        },
-      )
-    : null;
-
   const shutdown = async () => {
-    await feishu?.stop();
     await app.close();
     await closeDatabase();
     process.exit(0);

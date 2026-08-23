@@ -1,8 +1,5 @@
 import { closeDatabase, sqlClient as sql } from "@partner-report/db";
-import {
-  scheduleDueWeeklyReports,
-  scheduleProjectScopeFallbacks,
-} from "./weekly.js";
+import { scheduleDueWeeklyReports } from "./weekly.js";
 import { processNextGenerationJob } from "./generation.js";
 
 let stopping = false;
@@ -19,9 +16,6 @@ async function tick() {
       `Queued ${weekly.teamReportJobs} Team Report generation job(s).`,
     );
   }
-  const scopeFallbacks = await scheduleProjectScopeFallbacks();
-  if (scopeFallbacks > 0)
-    console.log(`Queued ${scopeFallbacks} project scope fallback card(s).`);
   const generation = await processNextGenerationJob();
   if (generation.processed)
     console.log("Central generation job processed", generation);

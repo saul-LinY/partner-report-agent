@@ -25,11 +25,12 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 普通聊天调用和每次定时采集都不得检查、比较或修改现有定时任务。用户在 Scheduled 面板中的修改始终保留，与插件内置默认值不同不构成错误。
 
-只有以下情况才调用 `scheduled_task_config`：
+`connect` 在绑定和连通性验证成功后由插件自身幂等创建精确名称 `Partner Report daily collection` 的 Codex Scheduled Task。任务不存在时自动创建；已有同名任务时完整保留用户配置，不得重复创建或覆盖。连接恢复也会重试缺失任务。检查 `scheduledTaskInstallation`：`created` 和 `existing` 都表示成功；`failed` 表示绑定仍有效，但必须明确报告自动创建失败和安全错误码。
 
-1. 首次 `connect` 成功后：使用官方 Codex Scheduled Task 能力查找精确名称 `Partner Report daily collection`。不存在时使用工具返回的 `scheduledTask` 全部字段创建；存在时保持原样。
-2. 用户明确要求修改该任务 Prompt 时：只更新 `prompt`。用户提供新 Prompt 时使用原文；明确要求“恢复默认 Prompt”时才用工具返回的默认 Prompt。
-3. 用户明确要求“重置整个定时任务”时：在原任务上恢复工具返回的全部默认字段；不存在时重新创建。不得先删除，不得创建重复任务，任务身份保持不变。
+首次连接不得再调用 Codex 自动化工具创建任务，也不得要求用户进入 Scheduled 面板手动配置。只有以下情况才调用 `scheduled_task_config`：
+
+1. 用户明确要求修改该任务 Prompt 时：只更新 `prompt`。用户提供新 Prompt 时使用原文；明确要求“恢复默认 Prompt”时才用工具返回的默认 Prompt。
+2. 用户明确要求“重置整个定时任务”时：在原任务上恢复工具返回的全部默认字段；不存在时重新创建。不得先删除，不得创建重复任务，任务身份保持不变。
 
 仅修改 Prompt 时不得修改 destination、project、schedule、timezone、model、reasoning effort、notifications、启用状态或其他配置。重置时不修改工具未返回的状态。
 
@@ -37,19 +38,19 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 向用户索取数据中台 API URL 和 Admin 生成的绑定码，然后调用 `connect`。远程地址必须使用 HTTPS；本机回环地址允许 HTTP。只有用户明确确认同一可信测试局域网时，才可把 `allowInsecureHttp` 设为 `true`。
 
-新绑定的 Token 直接保存在用户稳定数据目录 `~/.partner-report-data/secrets.json`，权限为 `0600`。正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain。
+新绑定的 Token 在 macOS 上直接保存在工作看板 App Group 的插件数据目录中，权限为 `0600`；其他系统继续使用用户稳定数据目录。正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain。
 
 旧版安装升级后应在普通交互会话中调用一次 `migrate_credentials`。该工具只把旧 Keychain 凭据复制到稳定文件，不改变 Plugin Instance、项目权限或采集游标。迁移完成后定时任务不再访问 Keychain。`CREDENTIAL_MIGRATION_REQUIRED` 表示一次性迁移尚未完成，不代表 Token 失效；不得因此重新绑定。
 
-持久状态优先使用 `PARTNER_REPORT_DATA`，否则使用 `~/.partner-report-data`；运行时插件目录只作为旧数据迁移后备。`LOCAL_DATA_WRITE_PERMISSION_REQUIRED` 表示 MCP 进程也无法写入任何稳定目录，本次不得读取或上传 Session。
+持久状态优先使用 `PARTNER_REPORT_DATA`；否则 macOS 使用工作看板 App Group 的插件数据目录，其他系统使用用户稳定数据目录。旧版目录和运行时插件目录只作为一次性迁移来源，迁移不修改 Codex 定时任务。`LOCAL_DATA_WRITE_PERMISSION_REQUIRED` 表示 MCP 进程也无法写入任何稳定目录，本次不得读取或上传 Session；`PLUGIN_UNBOUND` 表示用户已在工作看板解除绑定，本次不得读取或上传 Session。
 
 绑定后的连通性检查或首次项目发现失败时，保留绑定并调用 `connectivity_test`，不得重新领取绑定码。只有候选项目已登记、进入审核卡等待，或明确返回没有候选项目时，才可报告首次激活完成。
 
-`REFRESH_TOKEN_INVALID` 会触发飞书连接恢复卡并返回 `auth_recovery_required`。不得反复重试、删除本地状态或读取 Session。用户确认后，下一次定时运行会自动领取新凭据并继续。
+`REFRESH_TOKEN_INVALID` 会在工作看板应用中创建连接恢复申请并返回 `auth_recovery_required`。不得反复重试、删除本地状态或读取 Session。用户确认后，下一次定时运行会自动领取新凭据并继续。
 
 中台地址迁移时调用 `server_url_set`，保留 Plugin Instance、Token、项目权限和采集状态。可信局域网 HTTP 仍须显式设置 `allowInsecureHttp: true`。
 
-首次连接时如果同名任务不存在，默认创建为：新聊天、无项目、每天北京时间 14:30、`gpt-5.6`、中等推理、所有运行通知。不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
+首次连接时如果同名任务不存在，默认创建为：新聊天、无项目、每天北京时间 16:00、`gpt-5.6-sol`、中等推理、所有运行通知。不得创建 Hook、延续任务、后台 Runner、worktree 或项目级定时任务。
 
 ## 项目采集权限
 
@@ -61,13 +62,11 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 权限单位只有顶层逻辑项目一层：子目录、新 Session 和嵌套 Git 仓库继承同一权限；同一 Git 仓库的多个 worktree 归并为一个逻辑项目；同名但不同仓库不得合并。系统任务、官方自动化、Codex 临时目录、系统临时目录和已归档 Session 在登记前排除。每个项目至少 1 个 Session 即登记，不依赖 Codex 侧边栏项目列表。pending 项目保持待审批，授权前不得读取。
 
-首次审批完成后，日常运行先处理已有授权项目；队列清空后才重新读取 `thread/list` 元数据发现新项目。新项目卡送达后等待审批 30 分钟：及时允许则追加到当前 Run；拒绝或超时则结束等待。超时项目保持 pending，下一次运行补采本周期。
+首次审批完成后，日常运行先处理已有授权项目；队列清空后才重新读取 `thread/list` 元数据发现新项目。新项目卡送达后等待审批 30 分钟：及时允许则只处理授权生效后新增的完整问答；拒绝或超时则结束等待。超时项目保持 pending，后续运行也不得回采授权前内容。
 
 ## 采集 Session
 
 调用 `collect_start`，普通定时或手动采集必须使用 `force: false`。只有用户明确要求恢复重算时才可使用 `force: true`。
-
-如果返回 `project_scope_card_delivery_pending`，按 `nextTool` 持续调用 `project_scope_card_wait`。该工具只查询同一张卡的投递状态，不得重复登记候选。
 
 如果返回 `project_scope_no_candidates`，表示临时环境过滤后没有待审批项目，是零读取、零上传的正常终态。不得等待卡片或记录为失败。
 
@@ -75,13 +74,15 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 本地持久状态同时服务自动和手动运行：
 
-- 第一次运行只采集运行开始前最近 1 天，并且不早于当前 Report Period 开始时间。
-- 后续运行以上次完整成功运行的开始时间为增量游标，并保留 24 小时重叠窗口。
-- 已接收和已忽略 Session 的匿名 key、稳定 hash 与处理时间保存在 `collection-state.json`；插件更新或重装不得删除。
+- 第一次运行不回采历史 Session。采集下界是插件首次激活时间和项目授权生效时间中较晚者。
+- 后续运行以上次完整成功运行的开始时间为增量游标，并保留 24 小时元数据重叠窗口；模型只接收尚未处理的新增完整问答。
+- 已接收和已忽略 Session 的匿名 key、稳定 hash、匿名回合断点与处理时间保存在 `collection-state.json`；插件更新或重装不得删除。
 - 项目权限版本、匿名键盐值和本机根目录映射保存在 `project-scope.json`；正常更新不得删除。
 - `status` 和 `project_scope_list` 只能查询，不能代替首次审批。
-- 完整问答未变化时直接跳过，模型不会再次读取、判断或上传；不维护 Turn 游标。
+- 已处理的匿名回合直接跳过；同一旧 Session 后续新增的完整问答仍会独立判断和上传。
 - 跨运行租约阻止自动任务和手动任务并发提取。
+- 未完成 Run 以仅当前用户可读写的权限保存在稳定数据目录；任务或设备中断后，同一周期的下一次运行从原队列继续。
+- 周报截止后旧周期锁定。尚未上传的匿名回合在下一次运行按上传成功时的开放周期归档，作为下一周期普通工作，不添加迟到或补采标签。
 - 只有 `completed`、`checkpointAdvanced: true` 且无读写或提取失败时才推进成功游标。
 
 `collect_start` 返回 `started` 后，按 `nextTool` 调用 `collect_next`。`queued` 只是粗筛候选数，不是模型需要处理的数量。
@@ -120,7 +121,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 最终只返回中文的周期 key、采集起止时间、`checkpointAdvanced`、安全 warning，以及分开的 `uploaded`、`ignored`、`skipped`、`failedExtract`、`deferred`、`notProcessed` 聚合计数。不得输出 Session 文本、本地路径、指纹或标识。
 
-Job 输入、结果和安全失败审计在终态审查完成前由 MCP 保留，完成后统一清理。不得自行清理临时 Run。
+Job 输入、结果和安全失败审计在终态审查完成前由 MCP 以私有文件权限保留，完成后统一清理。不得自行清理 Run。
 
 ## Automation Memory
 
@@ -132,4 +133,4 @@ Job 输入、结果和安全失败审计在终态审查完成前由 MCP 保留�
 
 根据用户要求调用 `exclusion_set`，选择 `kind: "session"` 或 `kind: "path"`，用 `excluded` 决定添加或移除。路径排除包含所有后代路径，并且始终保留在本地。
 
-用户只询问健康状态时调用 `status`。报告插件版本、连通性、当前周期、中台和本地处理计数、采集下界、上次成功时间、排除数量，以及允许、拒绝和待审批项目数量。`projectScopeLocalState` 不是 `valid` 或 `projectScopeRequiresApproval` 为 true 时，明确说明采集会先等待飞书审批。当前周期缺失不代表连接失败。
+用户只询问健康状态时调用 `status`。报告插件版本、连通性、当前周期、中台和本地处理计数、采集下界、上次成功时间、排除数量，以及允许、拒绝和待审批项目数量。`projectScopeLocalState` 不是 `valid` 或 `projectScopeRequiresApproval` 为 true 时，明确说明采集会先等待工作看板应用审批。当前周期缺失不代表连接失败。

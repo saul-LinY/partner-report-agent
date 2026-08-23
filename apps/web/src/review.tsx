@@ -29,8 +29,8 @@ type ReviewCompletionResult = {
 export function reviewNeedsCompletion(data: ReviewData | undefined) {
   return Boolean(
     data?.review.state === "IN_PROGRESS" &&
-      data.items.length > 0 &&
-      data.items.every((item) => item.review_status !== "pending"),
+    data.items.length > 0 &&
+    data.items.every((item) => item.review_status !== "pending"),
   );
 }
 
@@ -107,7 +107,7 @@ export function ReviewPage() {
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["review", reviewId] });
       await queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
-      if (result.reportId) navigate(`/partner/report/${result.reportId}`);
+      if (result.reportId) navigate("/admin/reviews");
       else if (result.ignored) {
         window.localStorage.removeItem("partner-report-simulated-partner");
         navigate("/admin/reviews");
@@ -126,7 +126,7 @@ export function ReviewPage() {
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["review", reviewId] });
       await queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
-      if (result.reportId) navigate(`/partner/report/${result.reportId}`);
+      if (result.reportId) navigate("/admin/reviews");
       else if (result.ignored) {
         window.localStorage.removeItem("partner-report-simulated-partner");
         navigate("/admin/reviews");

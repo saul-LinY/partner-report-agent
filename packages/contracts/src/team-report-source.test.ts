@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { buildTeamReportIndividualReports } from "./team-report-source.js";
+import { buildTeamReportWorkCards } from "./team-report-source.js";
 
-describe("buildTeamReportIndividualReports", () => {
+describe("buildTeamReportWorkCards", () => {
   it("builds the shared project names and approved descriptions", () => {
     expect(
-      buildTeamReportIndividualReports(
+      buildTeamReportWorkCards(
         [
           {
             partnerId: "partner-1",
             partnerName: "测试成员",
-            reportId: "report-1",
-            payload: { summary: "本周摘要" },
+            snapshotId: "snapshot-1",
             workItemSnapshot: {
               workItems: [
                 { project_id: "project-1", title: "旧项目名称" },
@@ -32,8 +31,12 @@ describe("buildTeamReportIndividualReports", () => {
       {
         partnerId: "partner-1",
         partnerName: "测试成员",
-        reportId: "report-1",
-        payload: { summary: "本周摘要" },
+        snapshotId: "snapshot-1",
+        workItems: [
+          { project_id: "project-1", title: "旧项目名称" },
+          { project_id: "project-1", title: "旧项目名称" },
+          { project_id: null, title: "未识别项目" },
+        ],
         noReportableActivity: false,
         projectNames: ["旧项目名称", "未识别项目"],
         projectDescriptions: [

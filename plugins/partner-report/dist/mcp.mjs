@@ -25997,19 +25997,6 @@ function withNextTool(result) {
         ...causeCode ? { causeCode } : {}
       }
     };
-  } else if (nextCommand.startsWith("project-scope-card-wait")) {
-    const deadline = Number(nextCommand.match(/--deadline\s+(\d+)/)?.[1]);
-    const attempt = Number(nextCommand.match(/--attempt\s+(\d+)/)?.[1]);
-    nextTool = {
-      name: "project_scope_card_wait",
-      arguments: {
-        periodKey: result.periodKey,
-        version: result.policyVersion,
-        deadline,
-        attempt,
-        force: nextCommand.includes("--force")
-      }
-    };
   }
   return nextTool ? { ...rest, nextTool } : rest;
 }
@@ -26220,33 +26207,6 @@ registerTool(
     annotations: networkWrite
   },
   ({ force }) => execute(() => invokeCli("collect-start", force ? ["--force"] : []))
-);
-registerTool(
-  "project_scope_card_wait",
-  {
-    description: "\u7B49\u5F85\u9996\u6B21\u9879\u76EE\u8303\u56F4\u5361\u7247\u9001\u8FBE\uFF0C\u53C2\u6570\u5FC5\u987B\u6765\u81EA\u4E0A\u4E00\u5DE5\u5177\u7ED3\u679C\u3002",
-    inputSchema: {
-      periodKey: external_exports.string().min(1),
-      version: external_exports.number().int().nonnegative(),
-      deadline: external_exports.number().int().positive(),
-      attempt: external_exports.number().int().nonnegative(),
-      force: external_exports.boolean().default(false)
-    },
-    annotations: networkWrite
-  },
-  ({ periodKey, version: version2, deadline, attempt, force }) => execute(
-    () => invokeCli("project-scope-card-wait", [
-      "--period-key",
-      Buffer.from(periodKey, "utf8").toString("base64url"),
-      "--version",
-      String(version2),
-      "--deadline",
-      String(deadline),
-      "--attempt",
-      String(attempt),
-      ...force ? ["--force"] : []
-    ])
-  )
 );
 registerTool(
   "collect_next",

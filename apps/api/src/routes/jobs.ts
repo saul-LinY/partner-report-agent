@@ -1,11 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import {
-  aggregationResultSchema,
-  assertReportSemantics,
-  individualReportResultSchema,
-} from "@partner-report/contracts";
 import { sqlClient as sql } from "@partner-report/db";
 import {
   ApiError,
@@ -21,168 +15,6 @@ const failSchema = z.object({
   message: z.string().min(1).max(1000),
   retryable: z.boolean().default(true),
 });
-
-async function applyAggregation(job: any, output: unknown) {
-  if (job.input_payload.aggregationMode !== "weekly_report") {
-    throw new ApiError(
-      422,
-      "WEEKLY_AGGREGATION_REQUIRED",
-      "项目聚合只能由周周期截止任务触发。",
-    );
-  }
-  const result = aggregationResultSchema.parse(output);
-  const expectedFactIds = new Set<string>(
-    (job.input_payload.facts as Array<{ id: string }>).map((fact) => fact.id),
-  );
-  const used = new Set<string>();
-  for (const group of result.groups) {
-    for (const factId of group.factIds) {
-      if (!expectedFactIds.has(factId))
-        throw new ApiError(
-          422,
-          "UNKNOWN_FACT_REFERENCE",
-          `聚合结果引用了未知 Fact: ${factId}`,
-        );
-      if (used.has(factId))
-        throw new ApiError(
-          422,
-          "DUPLICATE_FACT_REFERENCE",
-          `Fact 被重复聚合: ${factId}`,
-        );
-      used.add(factId);
-    }
-  }
-  const unassigned = new Set<string>();
-  for (const factId of result.unassignedFactIds) {
-    if (!expectedFactIds.has(factId))
-      throw new ApiError(
-        422,
-        "UNKNOWN_FACT_REFERENCE",
-        `未分配集合引用了未知 Fact: ${factId}`,
-      );
-    if (used.has(factId) || unassigned.has(factId))
-      throw new ApiError(
-        422,
-        "DUPLICATE_FACT_REFERENCE",
-        `Fact 被重复引用: ${factId}`,
-      );
-    unassigned.add(factId);
-  }
-  for (const factId of expectedFactIds) {
-    if (!used.has(factId) && !unassigned.has(factId))
-      throw new ApiError(
-        422,
-        "FACT_COVERAGE_INCOMPLETE",
-        `聚合结果遗漏 Fact: ${factId}`,
-      );
-  }
-  const reviewId = job.input_payload.reviewId as string;
-  const existing = await sql<any[]>`
-    select review_status from work_items
-    where tenant_id = ${job.tenant_id} and review_id = ${reviewId}
-  `;
-  if (existing.some((item) => item.review_status !== "pending")) {
-    throw new ApiError(
-      409,
-      "REVIEW_ALREADY_STARTED",
-      "审核已开始，新的聚合结果不能静默覆盖 Partner 决策。",
-    );
-  }
-
-  await sql.begin(async (tx) => {
-    await tx`delete from work_item_facts where work_item_id in (select id from work_items where review_id = ${reviewId})`;
-    await tx`delete from work_items where review_id = ${reviewId}`;
-    for (const group of result.groups) {
-      const workItemId = randomUUID();
-      const payload = {
-        summary: group.summary,
-        outcomes: group.outcomes,
-        blockers: group.blockers,
-        nextSteps: group.nextSteps,
-        importance: group.importance,
-        projectConfidence: group.projectConfidence,
-        assignmentMethod: group.assignmentMethod,
-        mergeConfidence: group.mergeConfidence,
-        rationaleCodes: group.rationaleCodes,
-        emphasis: false,
-      };
-      await tx`
-        insert into work_items (
-          id, tenant_id, team_id, partner_id, period_id, review_id, project_id,
-          title, status, fact_ids, payload
-        ) values (
-          ${workItemId}, ${job.tenant_id}, ${job.team_id}, ${job.partner_id},
-          ${(job.input_payload.period as { id: string }).id}, ${reviewId}, ${group.projectId ?? null},
-          ${group.title}, ${group.status}, ${JSON.stringify(group.factIds)}::jsonb, ${JSON.stringify(payload)}::jsonb
-        )
-      `;
-      for (const factId of group.factIds) {
-        await tx`insert into work_item_facts (work_item_id, fact_id) values (${workItemId}, ${factId})`;
-      }
-    }
-    await tx`
-      update reviews set
-        state = 'IN_PROGRESS', version = version + 1, approved_count = 0, excluded_count = 0,
-        pending_count = ${result.groups.length}, updated_at = now()
-      where id = ${reviewId} and tenant_id = ${job.tenant_id}
-    `;
-    await tx`
-      insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-      values (
-        ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created', 'review', ${reviewId},
-        ${JSON.stringify({ count: result.groups.length, warnings: result.qualityWarnings })}::jsonb
-      )
-    `;
-  });
-}
-
-async function applyReport(job: any, output: unknown) {
-  const result = individualReportResultSchema.parse(output);
-  assertReportSemantics(result);
-  const reportId = job.input_payload.reportId as string;
-  const allowedIds = new Set<string>(
-    (job.input_payload.workItems as Array<{ id: string }>).map(
-      (item) => item.id,
-    ),
-  );
-  for (const section of result.sections) {
-    for (const claim of section.claims) {
-      for (const id of claim.workItemIds) {
-        if (!allowedIds.has(id))
-          throw new ApiError(
-            422,
-            "UNKNOWN_WORK_ITEM_REFERENCE",
-            `Report 引用了未知 Work Item: ${id}`,
-          );
-      }
-    }
-  }
-  await sql.begin(async (tx) => {
-    const updated = await tx<{ content_revision: number }[]>`
-      update individual_reports set
-        status = 'REPORT_REVIEW', content_revision = content_revision + 1,
-        title = ${result.title}, summary = ${result.summary},
-        markdown = ${result.markdown}, payload = ${JSON.stringify(result)}::jsonb,
-        preferences = ${JSON.stringify(job.input_payload.preferences ?? {})}::jsonb,
-        source_checksum = ${job.input_payload.sourceChecksum},
-        generator_version = ${job.input_payload.generatorVersion ?? "partner-report-sync/0.1.0"},
-        updated_at = now()
-      where id = ${reportId} and tenant_id = ${job.tenant_id}
-        and status not in ('SUBMITTED', 'LOCKED')
-        and (source_checksum = ${job.input_payload.sourceChecksum} or source_checksum is null)
-      returning content_revision
-    `;
-    if (!updated[0])
-      throw new ApiError(409, "REPORT_NOT_EDITABLE", "Report 已提交或不存在。");
-    await tx`
-      insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
-      values (
-        ${randomUUID()}, ${job.tenant_id}, 'individual_report.draft.created', 'individual_report', ${reportId},
-        ${JSON.stringify({ contentRevision: updated[0].content_revision, warnings: result.qualityWarnings })}::jsonb
-      )
-    `;
-  });
-}
 
 export async function jobRoutes(app: FastifyInstance) {
   app.get("/v1/agent-jobs/pending", async (request) => {
@@ -264,15 +96,7 @@ export async function jobRoutes(app: FastifyInstance) {
       throw new ApiError(409, "JOB_LEASE_INVALID", "任务租约无效或已过期。");
     }
 
-    if (job.type === "AGGREGATE_WORK_ITEMS")
-      await applyAggregation(job, request.body);
-    else if (
-      ["GENERATE_INDIVIDUAL_REPORT", "REGENERATE_INDIVIDUAL_REPORT"].includes(
-        job.type,
-      )
-    ) {
-      await applyReport(job, request.body);
-    } else if (["RESCAN_SESSIONS", "REANALYZE_SESSIONS"].includes(job.type)) {
+    if (["RESCAN_SESSIONS", "REANALYZE_SESSIONS"].includes(job.type)) {
       z.object({
         completed: z.literal(true),
         batchIds: z.array(z.string()).default([]),

@@ -261,35 +261,6 @@ registerTool(
 );
 
 registerTool(
-  "project_scope_card_wait",
-  {
-    description: "等待首次项目范围卡片送达，参数必须来自上一工具结果。",
-    inputSchema: {
-      periodKey: z.string().min(1),
-      version: z.number().int().nonnegative(),
-      deadline: z.number().int().positive(),
-      attempt: z.number().int().nonnegative(),
-      force: z.boolean().default(false),
-    },
-    annotations: networkWrite,
-  },
-  ({ periodKey, version, deadline, attempt, force }) =>
-    execute(() =>
-      invokeCli("project-scope-card-wait", [
-        "--period-key",
-        Buffer.from(periodKey, "utf8").toString("base64url"),
-        "--version",
-        String(version),
-        "--deadline",
-        String(deadline),
-        "--attempt",
-        String(attempt),
-        ...(force ? ["--force"] : []),
-      ]),
-    ),
-);
-
-registerTool(
   "collect_next",
   {
     description: "推进一个采集 Run，并在需要模型处理时直接返回单个 Job 输入。",

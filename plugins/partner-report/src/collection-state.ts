@@ -10,7 +10,6 @@ import {
 import { resolve } from "node:path";
 import { dataDirectory } from "./config.js";
 
-export const INITIAL_LOOKBACK_DAYS = 1;
 export const INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 export const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1_000;
 export const COLLECTION_LEASE_MS = 5 * 60 * 1_000;
@@ -27,13 +26,19 @@ type ProcessedSessionState = {
   processedAt: string;
 };
 
+type ProcessedTurnState = {
+  decision: "accepted" | "ignored";
+  processedAt: string;
+};
+
 export type CollectionState = {
-  schemaVersion: "1.0";
+  schemaVersion: "2.0";
   pluginInstanceId: string;
   collectionFloorAt: string | null;
   lastSuccessfulRunStartedAt: string | null;
   acceptedSessions: Record<string, ProcessedSessionState>;
   ignoredSessions: Record<string, ProcessedSessionState>;
+  processedTurns: Record<string, Record<string, ProcessedTurnState>>;
 };
 
 type CollectionLease = {
@@ -54,12 +59,13 @@ function leasePath(directory: string) {
 
 function emptyState(pluginInstanceId: string): CollectionState {
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
     acceptedSessions: {},
     ignoredSessions: {},
+    processedTurns: {},
   };
 }
 
@@ -77,19 +83,22 @@ function validateState(
     throw Object.assign(new Error("本地采集状态格式无效。"), {
       code: "COLLECTION_STATE_INVALID",
     });
-  const state = value as Partial<CollectionState>;
+  const state = value as Partial<CollectionState> & { schemaVersion?: string };
   if (state.pluginInstanceId !== pluginInstanceId)
     return emptyState(pluginInstanceId);
   const acceptedSessions = state.acceptedSessions ?? {};
+  const processedTurns = state.processedTurns ?? {};
   if (
-    state.schemaVersion !== "1.0" ||
+    !["1.0", "2.0"].includes(state.schemaVersion ?? "") ||
     (state.collectionFloorAt !== null && !validIso(state.collectionFloorAt)) ||
     (state.lastSuccessfulRunStartedAt !== null &&
       !validIso(state.lastSuccessfulRunStartedAt)) ||
     !acceptedSessions ||
     typeof acceptedSessions !== "object" ||
     !state.ignoredSessions ||
-    typeof state.ignoredSessions !== "object"
+    typeof state.ignoredSessions !== "object" ||
+    !processedTurns ||
+    typeof processedTurns !== "object"
   ) {
     throw Object.assign(new Error("本地采集状态格式无效。"), {
       code: "COLLECTION_STATE_INVALID",
@@ -110,7 +119,34 @@ function validateState(
       }
     }
   }
-  return { ...state, acceptedSessions } as CollectionState;
+  for (const [sessionKey, turns] of Object.entries(processedTurns)) {
+    if (
+      !/^[a-f0-9]{64}$/.test(sessionKey) ||
+      !turns ||
+      typeof turns !== "object"
+    )
+      throw Object.assign(new Error("本地采集状态包含无效的回合断点。"), {
+        code: "COLLECTION_STATE_INVALID",
+      });
+    for (const [turnKey, processed] of Object.entries(turns)) {
+      if (
+        !/^[a-f0-9]{64}$/.test(turnKey) ||
+        !processed ||
+        typeof processed !== "object" ||
+        !["accepted", "ignored"].includes(processed.decision) ||
+        !validIso(processed.processedAt)
+      )
+        throw Object.assign(new Error("本地采集状态包含无效的回合断点。"), {
+          code: "COLLECTION_STATE_INVALID",
+        });
+    }
+  }
+  return {
+    ...state,
+    schemaVersion: "2.0",
+    acceptedSessions,
+    processedTurns,
+  } as CollectionState;
 }
 
 export function loadCollectionState(
@@ -151,16 +187,11 @@ export function saveCollectionState(
 
 export function initializeCollectionFloor(
   state: CollectionState,
-  periodStartsAt: string,
+  _periodStartsAt: string,
   runStartedAt: string,
 ) {
   if (state.collectionFloorAt) return state.collectionFloorAt;
-  const floor = Math.max(
-    new Date(periodStartsAt).getTime(),
-    new Date(runStartedAt).getTime() -
-      INITIAL_LOOKBACK_DAYS * 24 * 60 * 60 * 1_000,
-  );
-  state.collectionFloorAt = new Date(floor).toISOString();
+  state.collectionFloorAt = new Date(runStartedAt).toISOString();
   return state.collectionFloorAt;
 }
 
@@ -169,12 +200,11 @@ export function collectionWindow(
   period: { starts_at: string; ends_at: string },
   runStartedAt: string,
 ) {
-  const periodStart = new Date(period.starts_at).getTime();
   const runStart = new Date(runStartedAt).getTime();
-  const floor = Math.max(
-    periodStart,
-    new Date(state.collectionFloorAt ?? period.starts_at).getTime(),
-  );
+  const floor = new Date(state.collectionFloorAt ?? runStartedAt).getTime();
+  const extractionStart = state.lastSuccessfulRunStartedAt
+    ? Math.max(floor, new Date(state.lastSuccessfulRunStartedAt).getTime())
+    : floor;
   const scanStart = state.lastSuccessfulRunStartedAt
     ? Math.max(
         floor,
@@ -183,13 +213,31 @@ export function collectionWindow(
       )
     : floor;
   return {
-    extractionStartsAt: new Date(floor).toISOString(),
+    extractionStartsAt: new Date(extractionStart).toISOString(),
     extractionEndsAt: new Date(
       Math.min(new Date(period.ends_at).getTime(), runStart),
     ).toISOString(),
     scanStartsAt: new Date(scanStart).toISOString(),
     scanEndsAt: new Date(runStart).toISOString(),
   };
+}
+
+export function processedTurnKeys(state: CollectionState, sessionKey: string) {
+  return new Set(Object.keys(state.processedTurns[sessionKey] ?? {}));
+}
+
+export function recordProcessedTurns(
+  state: CollectionState,
+  sessionKey: string,
+  turnKeys: Iterable<string>,
+  decision: ProcessedTurnState["decision"],
+  processedAt = new Date().toISOString(),
+) {
+  const turns = (state.processedTurns[sessionKey] ??= {});
+  for (const turnKey of turnKeys) {
+    if (!/^[a-f0-9]{64}$/.test(turnKey)) throw new Error("回合断点指纹无效。");
+    turns[turnKey] ??= { decision, processedAt };
+  }
 }
 
 export function threadIsInScanWindow(

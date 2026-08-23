@@ -223,7 +223,7 @@ export async function factRoutes(app: FastifyInstance) {
             source_occurred_at, payload, current
           ) values (
             ${nextContributionId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${period.id},
-            ${input.sessionKey}, ${`${input.sessionKey}:contribution`}, ${revision}, ${input.contentHash},
+            ${input.sessionKey}, ${`${input.sessionKey}:${input.contentHash}:contribution`}, ${revision}, ${input.contentHash},
             ${input.activity.endedAt}, ${JSON.stringify(payload)}::jsonb, true
           )
           on conflict (tenant_id, partner_id, session_id, external_fact_id)

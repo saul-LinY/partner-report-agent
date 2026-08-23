@@ -32,7 +32,16 @@ export type PluginActor = DomainActor & {
   userId: null;
   status: string;
   version: string;
+  clientKind: "collector" | "widget";
 };
+
+export function isDevelopmentLoginEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return (
+    env.NODE_ENV === "development" && env.PARTNER_REPORT_DEV_LOGIN === "true"
+  );
+}
 
 export function sha256(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
@@ -137,7 +146,8 @@ export async function requirePluginActor(request: FastifyRequest) {
       team_id as "teamId",
       partner_id as "partnerId",
       status,
-      version
+      version,
+      client_kind as "clientKind"
     from plugin_instances
     where access_token_hash = ${sha256(token)}
       and access_expires_at > now()

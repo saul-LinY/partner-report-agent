@@ -10,8 +10,10 @@ import {
   initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
+  processedTurnKeys,
   recordAcceptedSession,
   recordIgnoredSession,
+  recordProcessedTurns,
   refreshCollectionLease,
   releaseCollectionLease,
   reviewCollectionCompletion,
@@ -45,7 +47,7 @@ describe("collection state", () => {
     expect(initialProjectDiscoveryNeedsResume(false, true)).toBe(false);
   });
 
-  it("limits the first collection to the latest day", () => {
+  it("starts the first collection at activation without historical lookback", () => {
     const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
     initializeCollectionFloor(
       state,
@@ -62,8 +64,8 @@ describe("collection state", () => {
         "2026-08-05T02:00:00.000Z",
       ),
     ).toMatchObject({
-      extractionStartsAt: "2026-08-04T02:00:00.000Z",
-      scanStartsAt: "2026-08-04T02:00:00.000Z",
+      extractionStartsAt: "2026-08-05T02:00:00.000Z",
+      scanStartsAt: "2026-08-05T02:00:00.000Z",
     });
   });
 
@@ -81,6 +83,25 @@ describe("collection state", () => {
         "2026-08-05T02:00:00.000Z",
       ).scanStartsAt,
     ).toBe("2026-08-03T02:00:00.000Z");
+  });
+
+  it("keeps the successful cursor across a report-period cutoff", () => {
+    const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
+    state.collectionFloorAt = "2026-08-01T00:00:00.000Z";
+    state.lastSuccessfulRunStartedAt = "2026-08-07T08:00:00.000Z";
+    expect(
+      collectionWindow(
+        state,
+        {
+          starts_at: "2026-08-07T09:00:00.000Z",
+          ends_at: "2026-08-14T09:00:00.000Z",
+        },
+        "2026-08-08T08:00:00.000Z",
+      ),
+    ).toMatchObject({
+      extractionStartsAt: "2026-08-07T08:00:00.000Z",
+      scanStartsAt: "2026-08-06T08:00:00.000Z",
+    });
   });
 
   it("persists ignored content hashes without raw Session data", () => {
@@ -124,6 +145,20 @@ describe("collection state", () => {
     );
     expect(state.acceptedSessions[sessionKey]).toBeUndefined();
     expect(state.ignoredSessions[sessionKey]?.contentHash).toBe("c".repeat(64));
+  });
+
+  it("persists anonymous turn checkpoints independently per Session", () => {
+    const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
+    const turnKey = "d".repeat(64);
+    recordProcessedTurns(
+      state,
+      sessionKey,
+      [turnKey],
+      "accepted",
+      "2026-08-05T02:00:00.000Z",
+    );
+    expect(processedTurnKeys(state, sessionKey)).toEqual(new Set([turnKey]));
+    expect(JSON.stringify(state)).not.toContain("raw-turn");
   });
 
   it("migrates state written before accepted hashes existed", () => {

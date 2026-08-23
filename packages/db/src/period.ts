@@ -18,7 +18,7 @@ export const DEFAULT_WEEKLY_PERIOD_RULE: Required<WeeklyPeriodRule> = {
   frequency: "weekly",
   weekStartsOn: 1,
   factCutoffWeekday: 5,
-  factCutoffTime: "14:00",
+  factCutoffTime: "17:00",
 };
 
 export function weeklyPeriodKeyCandidates(period: {
@@ -113,7 +113,7 @@ export function weeklyPeriodAt(
   configured: WeeklyPeriodRule = DEFAULT_WEEKLY_PERIOD_RULE,
 ) {
   const rule = { ...DEFAULT_WEEKLY_PERIOD_RULE, ...configured };
-  const cutoffClock = clock(rule.factCutoffTime, "14:00");
+  const cutoffClock = clock(rule.factCutoffTime, "17:00");
   const local = partsInZone(now, timezone);
   const localDate = new Date(Date.UTC(local.year, local.month - 1, local.day));
   const day = localDate.getUTCDay() || 7;

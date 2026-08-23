@@ -42,17 +42,9 @@ const jobTypeMeta: Record<string, { label: string; stage: string }> = {
     label: "工作卡聚合",
     stage: "中台模型正在把 Session Fact 聚合为项目工作卡",
   },
-  GENERATE_INDIVIDUAL_REPORT: {
-    label: "个人报告生成",
-    stage: "中台模型正在从已审核工作卡生成个人报告",
-  },
-  REGENERATE_INDIVIDUAL_REPORT: {
-    label: "个人报告重新生成",
-    stage: "中台模型正在根据审核意见修订个人报告",
-  },
   GENERATE_TEAM_REPORT: {
     label: "团队报告生成",
-    stage: "中台模型正在汇总已锁定的个人报告",
+    stage: "中台模型正在汇总已确认的项目素材",
   },
   REGENERATE_TEAM_REPORT: {
     label: "团队报告重新生成",

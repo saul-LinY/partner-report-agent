@@ -351,6 +351,19 @@ export function anonymousSessionKey(
   return sha256(`partner-report/session/v1:${pluginInstanceId}:${sessionId}`);
 }
 
+export function anonymousTurnKey(sessionKey: string, turn: ProgressTurn) {
+  return sha256(
+    JSON.stringify({
+      keyVersion: "1.0",
+      sessionKey,
+      turnId: turn.id,
+      occurredAt: turn.occurredAt,
+      userPrompt: turn.userPrompt,
+      assistantFinal: turn.assistantFinal,
+    }),
+  );
+}
+
 export function buildSessionJob(input: {
   pluginInstanceId: string;
   sessionId: string;
@@ -362,16 +375,22 @@ export function buildSessionJob(input: {
   period: CollectionPeriod;
   observedAt?: string;
   scopeKey?: string;
+  processedTurnKeys?: Iterable<string>;
 }) {
   const normalized = normalizeProgressTurns(input.turns);
   if (isPluginAdministrationSession(normalized)) return null;
   const fallbackOccurredAt =
     toIso(input.updatedAt) ?? new Date(input.period.ends_at).toISOString();
+  const sessionKey = anonymousSessionKey(
+    input.pluginInstanceId,
+    input.sessionId,
+  );
+  const alreadyProcessed = new Set(input.processedTurnKeys ?? []);
   const selected = selectPeriodTurns(
     normalized,
     input.period,
     fallbackOccurredAt,
-  );
+  ).filter((turn) => !alreadyProcessed.has(anonymousTurnKey(sessionKey, turn)));
   if (selected.length === 0) return null;
 
   const project = mappedProject(
@@ -392,10 +411,7 @@ export function buildSessionJob(input: {
     assistantFinal: turn.assistantFinal,
   }));
   const title = safeText(input.title?.trim() || "Codex 会话", 200);
-  const sessionKey = anonymousSessionKey(
-    input.pluginInstanceId,
-    input.sessionId,
-  );
+  const turnKeys = selected.map((turn) => anonymousTurnKey(sessionKey, turn));
   const legacyContentHash = (legacyProject: ProjectIdentity) =>
     sha256(
       JSON.stringify({
@@ -420,8 +436,7 @@ export function buildSessionJob(input: {
   }
   const contentHash = sha256(
     JSON.stringify({
-      hashVersion: "2.0",
-      periodKey: input.period.period_key,
+      hashVersion: "3.0",
       turns,
     }),
   );
@@ -435,6 +450,7 @@ export function buildSessionJob(input: {
 
   return {
     sessionKey,
+    turnKeys,
     contentHash,
     compatibleContentHashes: [...compatibleContentHashes].filter(
       (hash) => hash !== contentHash,

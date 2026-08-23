@@ -1,25 +1,27 @@
 # Partner Report Agent
 
-部署认证服务时参阅 [Google 登录配置](docs/GOOGLE_AUTH.md)。
+Partner Report 在本机采集获准项目中的有效 Codex Session，并把项目采集权限和每周工作卡片统一交给 macOS“工作看板”应用处理。
 
-## 用户安装与配置
+## 使用流程
 
-开始前，请向团队管理员获取数据中台地址和绑定码，然后在终端执行：
+1. 管理员创建用户并提供中台地址和个人绑定码。
+2. 用户安装插件，在 Codex 中使用 `$partner-report-sync` 完成绑定。
+3. 首次绑定会幂等创建官方每日定时采集任务，用户不需要维护运行时间。
+4. 用户在“工作看板”的“采集权限”页批量允许或拒绝项目；未允许的项目不会读取 Session 内容。
+5. 插件每天上传有效 Session，桌面中尺寸组件展示当前 Mac 的采集状态、上传数量、下次运行和周一至周日统计。
+6. 每周为有有效数据的项目生成一张新工作卡片。用户在应用中确认、忽略，或通过自然语言生成新版本并对照修改前后内容。
+
+应用不提供个人周报功能。历史周卡片在服务端保留，但应用默认只展示最新一期。
+
+## 安装插件
 
 ```bash
 codex plugin marketplace add saul-LinY/partner-report-agent
 npm run plugin:install
-```
-
-安装脚本会完成四件事：刷新 Git Marketplace、安装或升级插件、只把 `partner-report` 自带 MCP 设为自动通过、把旧版 Keychain 凭据迁移到稳定数据目录。它不会修改 Codex 全局的“帮我批准”或“完全访问权限”。普通升级重复运行同一命令即可，不需要重新绑定。
-
-使用下面的命令确认插件已安装：
-
-```bash
 codex plugin list
 ```
 
-安装完成后，重启 Codex 并新建对话，发送：
+重启 Codex 后在新对话中发送：
 
 ```text
 使用 $partner-report-sync 连接 Partner Report。
@@ -27,63 +29,28 @@ codex plugin list
 绑定码是：PR-XXXX-XXXX
 ```
 
-随后根据飞书提示完成身份确认和项目授权。
+详细步骤见 [插件安装与绑定](docs/PLUGIN_SETUP.md)。Google 登录服务配置见 [Google 登录配置](docs/GOOGLE_AUTH.md)。
 
-插件绑定成功后的交互与权限激活逻辑可参考：[插件绑定与项目权限激活流程图](https://www.figma.com/board/r7tRUcf15bGTzycjBMR1T4/%E6%8F%92%E4%BB%B6%E7%BB%91%E5%AE%9A%E4%B8%8E%E9%A1%B9%E7%9B%AE%E6%9D%83%E9%99%90%E6%BF%80%E6%B4%BB%E6%B5%81%E7%A8%8B?node-id=0-1&t=j1Iq7WI8x9RwAUos-1)。该图用于说明业务流程，不是部署教程。
+## 开发验证
 
-## 项目工作流
+```bash
+npm install
+npm run typecheck
+npm test
+npm run build
+```
 
-[![插件绑定与项目权限激活流程图](docs/assets/plugin-binding-project-permission-flow.png)](https://www.figma.com/board/r7tRUcf15bGTzycjBMR1T4/%E6%8F%92%E4%BB%B6%E7%BB%91%E5%AE%9A%E4%B8%8E%E9%A1%B9%E7%9B%AE%E6%9D%83%E9%99%90%E6%BF%80%E6%B4%BB%E6%B5%81%E7%A8%8B?node-id=0-1&t=j1Iq7WI8x9RwAUos-1)
+需要数据库集成测试时：
 
-### 1. Partner 绑定
+```bash
+npm run db:migrate
+RUN_DB_TESTS=1 npm test
+```
 
-Team Admin 先使用工作邮箱创建 Partner，并为其生成绑定码。Partner 安装 Plugin 后，通过绑定码把本地 Codex 与数据中台连接起来；同一 Partner 可以绑定多个 Plugin Instance，各实例上传的数据最终都归入同一个 Partner。
+macOS 工程位于 `apps/macos/PartnerReportWidget`，使用 XcodeGen 生成：
 
-绑定完成后，Plugin 创建或复用官方 Codex Scheduled Task。任务默认每天在新聊天中运行，后续以 Partner 在 Codex Scheduled 面板中的时间、模型、推理强度和通知配置为准。
-
-### 2. 身份确认与项目授权
-
-Plugin 先通过飞书完成 Partner 身份确认。身份确认前不发现项目、不读取 Session，也不上传数据。
-
-身份确认后，Plugin 只通过 `thread/list` 从 Codex 状态数据库读取元数据，不扫描历史 Session 文件，并在本地排除临时目录和系统任务；首次项目范围卡只在中台登记的项目根目录白名单内筛选最近 7 天有 Session 活动的项目，新建 Session 和最近继续对话的旧 Session 都会被发现。后续运行按同一活动窗口发现新增项目。中台收到的候选信息仅包含匿名项目键、显示名、首次发现周期和 Session 数量，不包含本机绝对路径、Git 信息或 Codex Session 标识。
-
-候选项目通过飞书完成采集范围审批。只有已允许的项目才能调用 `thread/read`、进入模型处理并上传贡献；被拒绝或待审批的项目不会读取内容。首次审批允许的项目立即生效，后续新发现项目的允许结果从下个报告周期生效。
-
-### 3. 定时采集与 Session 提取
-
-Scheduled Task 触发后，Plugin 先获取本地租约，避免自动采集与手动采集并发。首次运行只检查最近一天且位于当前报告周期内的 Session；后续从上次完整成功的游标继续扫描，并保留 24 小时重叠窗口以覆盖迟到更新。
-
-Plugin 对获准项目依次执行 `thread/list` 和 `thread/read(includeTurns)`，只保留完整的“用户问题 + Assistant `final_answer`”问答。中断、取消、失败或没有最终回复的 Turn 不进入提取流程。
-
-每个候选 Session 都会根据完整问答计算匿名 Session key 和稳定内容 hash：
-
-- 已接收或已忽略且内容未变化的 Session 直接跳过。
-- 内容发生变化的 Session 重新构建并提取当前修订。
-- 无项目价值的 Session 只在本地记录匿名 hash，不上传。
-- 有价值的 Session 由当前 Scheduled Task 选择的模型生成中文标题、摘要和贡献正文，经过脱敏、字段约束和 Schema 校验后立即幂等上传。
-
-Plugin 只负责单个 Session 内的事实提取，不在本地进行跨 Session 聚合或生成报告。全部任务处理完后还会执行一次独立终态审查；只有队列清空、没有失败且中台确认完成时才推进成功游标。失败或中断不会推进游标，下次运行会重新覆盖该范围。
-
-### 4. 周期冻结与工作事项聚合
-
-到达工作卡片聚合时间后，中台按 `tenant_id + partner_id + period_id` 冻结本周期 Fact Snapshot。同一 Partner 的多个 Plugin Instance 贡献会在这里合并。
-
-中台模型基于冻结快照，按项目、工作事项和时间顺序对多个 Session 的事实进行聚类、去重和状态重建，生成可追溯到原始 Fact 的 Work Item 草稿。无法可靠归属项目的事项保持独立，不会为了提高聚合率而强行合并。
-
-### 5. 工作事项审核
-
-当前由 Admin 在 Web 中代表 Partner 完成第一轮审核。Admin 可以逐项确认、排除、修改或重新生成工作事项；修改先形成预览，确认后才应用。
-
-当最后一项完成审核后，中台冻结不可变的 Work Item Snapshot。若所有事项都被排除，本周期不会继续生成个人报告。
-
-### 6. 个人报告生成与审核
-
-Work Item Snapshot 冻结后，中台自动创建生成任务，由中台模型基于已确认的工作事项生成个人 Report 草稿，Plugin 不参与该过程。
-
-Admin 在 Web 中代表 Partner 完成第二轮审核，可以调整报告结构、重点和表达。事实有误时需要回到工作事项层修正；审核通过后，个人 Report 被锁定为不可变版本，并保留其引用的 Work Item Snapshot。
-
-### 7. Team Report 生成与归档
-
-Team Report 不会因为所有人提前完成审核而提前生成。只有到达 Team Admin 单独配置的 Team Report 时间后，中台才读取届时已锁定的个人 Report，按项目聚合团队进展，并显式标记未提交人员。
-
-中台在团队维度整理成果、风险、依赖和下一步，并与上期报告进行比较，生成并锁定 Team Report。工作事项版本、个人 Report 版本、Team Report 版本及其引用关系都会保留，形成可追溯的报告归档。
+```bash
+cd apps/macos/PartnerReportWidget
+xcodegen generate
+xcodebuild -project PartnerReportDesktop.xcodeproj -scheme PartnerReport CODE_SIGNING_ALLOWED=NO build
+```

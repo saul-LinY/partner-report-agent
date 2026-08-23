@@ -47,13 +47,6 @@ export const projectScopeBootstrapSchema = z
   })
   .strict();
 
-export const projectScopeCardStatusSchema = z
-  .object({
-    periodKey: z.string().trim().min(1).max(120),
-    version: z.coerce.number().int().positive(),
-  })
-  .strict();
-
 type ScopeIdentity = {
   tenantId: string;
   teamId: string;
@@ -98,10 +91,10 @@ async function projectScopeIdentityConfirmed(
 ) {
   const rows = await database<Array<{ confirmed: boolean }>>`
     select exists (
-      select 1 from feishu_partner_bindings
+      select 1 from plugin_instances
       where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
         and partner_id = ${identity.partnerId} and status = 'active'
-        and open_id is not null
+        and client_kind = 'widget'
     ) as confirmed
   `;
   return rows[0]?.confirmed === true;
@@ -186,34 +179,6 @@ export async function loadProjectScopePolicy(
       lastSeenAt: new Date(entry.last_seen_at).toISOString(),
       sessionCount: entry.session_count,
     })),
-  };
-}
-
-export async function loadProjectScopeCardDeliveryStatus(
-  identity: ScopeIdentity,
-  rawInput: unknown,
-  database: Database = defaultDatabase,
-) {
-  const input = projectScopeCardStatusSchema.parse(rawInput);
-  const aggregateId = `${identity.pluginInstanceId}:${input.periodKey}`;
-  const rows = await database<
-    Array<{ status: string; domain_version: number | null }>
-  >`
-    select status, domain_version from feishu_deliveries
-    where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
-      and partner_id = ${identity.partnerId} and kind = 'scope'
-      and aggregate_type = 'project_scope' and aggregate_id = ${aggregateId}
-    order by updated_at desc limit 1
-  `;
-  const delivery = rows[0];
-  const sent =
-    Boolean(delivery) &&
-    ["sent", "confirmed"].includes(delivery!.status) &&
-    (delivery!.domain_version ?? 0) >= input.version;
-  return {
-    status: sent ? ("sent" as const) : ("pending" as const),
-    policyVersion: input.version,
-    retryAfterSeconds: sent ? 0 : 3,
   };
 }
 
@@ -318,25 +283,9 @@ export async function registerProjectScopeCandidates(
     }
 
     if (newCandidates.length > 0) {
-      const versions = await tx<Array<{ version: number }>>`
+      await tx`
         update project_scope_policies set version = version + 1, updated_at = now()
         where plugin_instance_id = ${identity.pluginInstanceId}
-        returning version
-      `;
-      await tx`
-        insert into outbox_events (
-          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-        ) values (
-          ${randomUUID()}, ${identity.tenantId}, 'project_scope.candidates.changed',
-          'plugin_instance', ${identity.pluginInstanceId},
-          ${JSON.stringify({
-            teamId: identity.teamId,
-            partnerId: identity.partnerId,
-            pluginInstanceId: identity.pluginInstanceId,
-            periodKey: input.periodKey,
-            version: versions[0]?.version,
-          })}::jsonb
-        )
       `;
     }
   });

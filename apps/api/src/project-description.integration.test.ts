@@ -66,7 +66,7 @@ describeIntegration("project description candidates", () => {
       rootFingerprint,
       sourceFingerprint,
       description:
-        "这是一个面向团队的工作报告平台，用于采集成员的有效项目进展，经过本人审核后生成个人报告，并汇总为便于管理者理解的团队报告。",
+        "这是一个面向团队的工作报告平台，用于采集成员的有效项目进展，经过本人确认工作卡片后，汇总为便于管理者理解的团队报告。",
     };
     const first = await registerProjectDescriptionCandidate(identity, input);
     const second = await registerProjectDescriptionCandidate(identity, input);

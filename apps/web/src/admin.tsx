@@ -11,7 +11,6 @@ import {
   Plus,
   RefreshCw,
   Save,
-  Send,
   Server,
   ShieldCheck,
   Trash2,
@@ -27,38 +26,7 @@ import {
   ErrorBanner,
   Field,
   Modal,
-  SuccessBanner,
 } from "./components.js";
-
-type FeishuConnectionState =
-  | "disabled"
-  | "not_connected"
-  | "pending"
-  | "connected"
-  | "invalid"
-  | "delivery_pending"
-  | "delivery_error";
-
-type FeishuConnectionOverview = {
-  state: FeishuConnectionState;
-  bindingState:
-    "disabled" | "not_connected" | "pending" | "connected" | "invalid";
-  deliveryState:
-    | "idle"
-    | "pending"
-    | "sending"
-    | "healthy"
-    | "retrying"
-    | "failed"
-    | "deferred"
-    | "unknown";
-  verifiedAt: string | null;
-  lastDeliveryKind: string | null;
-  lastDeliveryStatus: string | null;
-  lastDeliveryAt: string | null;
-  lastErrorCode: string | null;
-  nextRetryAt: string | null;
-};
 
 type PartnerConnection = {
   partnerId: string;
@@ -72,19 +40,13 @@ type PartnerConnection = {
   version: string | null;
   reviewProgress: {
     periodKey: string | null;
-    stage:
-      | "not_started"
-      | "reviewing_cards"
-      | "generating_report"
-      | "reviewing_report"
-      | "completed";
+    stage: "not_started" | "reviewing_cards" | "completed";
     reviewed: number;
     total: number;
     pending: number;
     approved: number;
     excluded: number;
   };
-  feishu?: FeishuConnectionOverview;
 };
 
 type ProjectScopePermission = "pending" | "allowed" | "denied";
@@ -120,14 +82,6 @@ type AdminProjectScope = {
   }>;
 };
 
-type ProjectScopeDeliveryResult = {
-  queued: true;
-  mode: "review" | "status";
-  queuedCount: number;
-  pendingCount: number;
-  totalCount: number;
-};
-
 type Overview = {
   team: any;
   partners: any[];
@@ -157,37 +111,12 @@ const statusLabel: Record<string, string> = {
   not_connected: "未连接",
 };
 
-const feishuStatusTone: Record<
-  FeishuConnectionState,
-  "success" | "warning" | "danger" | "neutral"
-> = {
-  disabled: "warning",
-  connected: "success",
-  pending: "warning",
-  delivery_pending: "warning",
-  delivery_error: "danger",
-  invalid: "danger",
-  not_connected: "neutral",
-};
-
-const feishuStatusLabel: Record<FeishuConnectionState, string> = {
-  disabled: "飞书 · 未启用",
-  connected: "飞书 · 已绑定",
-  pending: "飞书 · 待确认",
-  delivery_pending: "飞书 · 投递中",
-  delivery_error: "飞书 · 投递异常",
-  invalid: "飞书 · 绑定异常",
-  not_connected: "飞书 · 未接入",
-};
-
 const reviewStageLabel: Record<
   PartnerConnection["reviewProgress"]["stage"],
   string
 > = {
   not_started: "尚未生成",
   reviewing_cards: "卡片审核中",
-  generating_report: "个人报告生成中",
-  reviewing_report: "个人报告待审核",
   completed: "审核完成",
 };
 
@@ -247,11 +176,7 @@ function Operations({ data }: { data: Overview }) {
   ).length;
   const pendingReviews = new Set(
     data.reviewQueue
-      .filter(
-        (item) =>
-          item.review_state === "IN_PROGRESS" ||
-          item.report_status === "REPORT_REVIEW",
-      )
+      .filter((item) => item.review_state === "IN_PROGRESS")
       .map((item) => item.partner_id),
   ).size;
   const modelFailures = data.jobs
@@ -303,7 +228,7 @@ function Operations({ data }: { data: Overview }) {
         <div className="section-heading">
           <div>
             <h2>人员连接状态</h2>
-            <p>查看 Codex 插件上传与飞书机器人绑定状态</p>
+            <p>查看 Codex 插件连接与最近上传状态</p>
           </div>
           <Button
             variant="secondary"
@@ -385,17 +310,6 @@ function Operations({ data }: { data: Overview }) {
                   <div className="plugin-state-badges">
                     <Badge tone={statusTone[connection.connectionState]}>
                       {statusLabel[connection.connectionState]}
-                    </Badge>
-                    <Badge
-                      tone={
-                        feishuStatusTone[
-                          connection.feishu?.state ?? "not_connected"
-                        ] ?? "neutral"
-                      }
-                    >
-                      {feishuStatusLabel[
-                        connection.feishu?.state ?? "not_connected"
-                      ] ?? "飞书 · 状态未知"}
                     </Badge>
                     <span className="plugin-tested-at">
                       测试 {formatTime(connection.verifiedAt)}
@@ -610,14 +524,6 @@ function ProjectScopeModal({
       ),
   });
   const data = query.data;
-  const delivery = useMutation({
-    mutationFn: () =>
-      api<ProjectScopeDeliveryResult>(
-        `/v1/admin/partners/${connection.partnerId}/project-scopes/deliver`,
-        { method: "POST" },
-      ),
-  });
-  const deliveryLabel = data?.summary.pending ? "再次发送审核" : "发送权限状态";
 
   return (
     <Modal
@@ -625,28 +531,12 @@ function ProjectScopeModal({
       onClose={onClose}
       footer={
         <>
-          <Button
-            icon={<Send size={16} />}
-            loading={delivery.isPending}
-            disabled={!data || data.summary.total === 0 || query.isError}
-            onClick={() => delivery.mutate()}
-          >
-            {deliveryLabel}
-          </Button>
           <Button variant="secondary" onClick={onClose}>
             关闭
           </Button>
         </>
       }
     >
-      {delivery.isError && <ErrorBanner error={delivery.error} />}
-      {delivery.data && (
-        <SuccessBanner>
-          {delivery.data.mode === "review"
-            ? `已提交发送，${delivery.data.pendingCount} 个待审批项目将再次发给用户。`
-            : "已提交发送，用户将在飞书中看到当前项目权限状态。"}
-        </SuccessBanner>
-      )}
       {query.isLoading ? (
         <div className="scope-loading">
           <RefreshCw className="spin" size={18} />
@@ -752,7 +642,7 @@ function ScheduleSettings({
     String(defaults.factCutoffWeekday ?? 5),
   );
   const [cutoffTime, setCutoffTime] = useState(
-    defaults.factCutoffTime ?? "14:00",
+    defaults.factCutoffTime ?? "17:00",
   );
   const saveDefaults = useMutation({
     mutationFn: () =>
@@ -812,8 +702,7 @@ function ScheduleSettings({
           <div className="schedule-setting-title">
             <strong>自动生成链路</strong>
             <span>
-              用户审批完工作卡片后生成个人 Report；全部个人 Report 通过后生成
-              Team Report
+              用户确认工作卡片后形成团队汇总素材，并在配置时间生成 Team Report
             </span>
           </div>
         </div>
@@ -1090,7 +979,7 @@ function RemovePartnerModal({
         </p>
         <p>
           删除后，该人员的 Codex
-          插件令牌、未使用绑定码和飞书绑定会立即失效，待发送的飞书消息也会停止重试。历史报告与审核记录仍会保留。
+          插件令牌和未使用绑定码会立即失效。历史采集与审核记录仍会保留。
         </p>
       </div>
     </Modal>

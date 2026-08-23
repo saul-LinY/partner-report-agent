@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  defaultDataDirectory,
   migratePersistentDataDirectory,
   loadSecret,
   normalizeServerUrl,
@@ -78,6 +79,11 @@ describe("persistent plugin data", () => {
     writeFileSync(resolve(source, "collection-state.json"), "{}\n");
     writeFileSync(resolve(source, "project-scope.json"), "{}\n");
     writeFileSync(resolve(source, "collection.lock"), "temporary\n");
+    mkdirSync(resolve(source, "partner-report-run-example"));
+    writeFileSync(
+      resolve(source, "partner-report-run-example", "run.json"),
+      '{"status":"pending"}\n',
+    );
     try {
       migratePersistentDataDirectory(source, target);
       expect(readFileSync(resolve(target, "config.json"), "utf8")).toContain(
@@ -90,6 +96,32 @@ describe("persistent plugin data", () => {
         readFileSync(resolve(target, "project-scope.json"), "utf8"),
       ).toContain("{}");
       expect(() => readFileSync(resolve(target, "collection.lock"))).toThrow();
+      expect(
+        readFileSync(
+          resolve(target, "partner-report-run-example", "run.json"),
+          "utf8",
+        ),
+      ).toContain('"pending"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("moves legacy macOS data into the shared app group", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "partner-report-move-test-"));
+    const source = resolve(root, ".partner-report-data");
+    const target = defaultDataDirectory(root, "darwin");
+    mkdirSync(source);
+    writeFileSync(resolve(source, "config.json"), "{}\n");
+    try {
+      migratePersistentDataDirectory(source, target, true);
+      expect(readFileSync(resolve(target, "config.json"), "utf8")).toContain(
+        "{}",
+      );
+      expect(() => statSync(source)).toThrow();
+      expect(target).toContain(
+        "Library/Group Containers/9RN69TVL38.partnerreport.shared/PartnerReportPluginData",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

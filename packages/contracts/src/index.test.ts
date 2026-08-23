@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   assertChineseTeamReport,
-  assertReportSemantics,
   assertTeamReportSemantics,
   aggregationResultSchema,
   containsSensitiveValue,
   connectivityTestSchema,
   coverageSchema,
-  individualReportResultSchema,
   pluginDiagnosticBatchSchema,
+  pluginLogBatchSchema,
   productionMetadataSchema,
   sessionContributionIngestSchema,
   sessionContributionSchema,
@@ -84,6 +83,44 @@ describe("plugin diagnostic contract", () => {
     expect(
       pluginDiagnosticBatchSchema.safeParse({
         events: [{ ...event, safeMessage: "raw local exception" }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("plugin log contract", () => {
+  const event = {
+    eventId: "11111111-1111-4111-8111-111111111111",
+    runId: "22222222-2222-4222-8222-222222222222",
+    level: "error",
+    stage: "collection",
+    eventCode: "SESSION_READ_FAILED",
+    message: "读取会话失败。",
+    stack: "Error: read failed\n    at collect (cli.ts:120:4)",
+    occurredAt: "2026-08-21T08:00:00.000Z",
+    retryable: true,
+    durationMs: 451,
+    details: { failedRead: 1 },
+  };
+
+  it("accepts a bounded structured event and rejects spoofed ownership", () => {
+    expect(pluginLogBatchSchema.safeParse({ events: [event] }).success).toBe(
+      true,
+    );
+    expect(
+      pluginLogBatchSchema.safeParse({
+        events: [{ ...event, pluginInstanceId: event.runId }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("caps batch and stack sizes", () => {
+    expect(
+      pluginLogBatchSchema.safeParse({ events: Array(51).fill(event) }).success,
+    ).toBe(false);
+    expect(
+      pluginLogBatchSchema.safeParse({
+        events: [{ ...event, stack: "x".repeat(16_001) }],
       }).success,
     ).toBe(false);
   });
@@ -310,75 +347,7 @@ describe("project card aggregation contract", () => {
   });
 });
 
-describe("fact and report semantic guards", () => {
-  it("requires every report section exactly once", () => {
-    expect(() =>
-      assertReportSemantics({
-        sections: [
-          { key: "summary" },
-          { key: "summary" },
-          { key: "project_progress" },
-          { key: "risks" },
-          { key: "next_priorities" },
-          { key: "coordination" },
-          { key: "coverage" },
-        ],
-      }),
-    ).toThrow(/each required section/i);
-  });
-
-  it("rejects an individual report without current Work Item claims", () => {
-    expect(() =>
-      assertReportSemantics({
-        sections: [
-          "summary",
-          "achievements",
-          "project_progress",
-          "risks",
-          "next_priorities",
-          "coordination",
-          "coverage",
-        ].map((key) => ({ key, claims: [] })),
-      }),
-    ).toThrow(/cite at least one/i);
-  });
-
-  it("accepts a fully traceable seven-section report", () => {
-    const workItemId = "11111111-1111-4111-8111-111111111111";
-    const sections = [
-      "summary",
-      "achievements",
-      "project_progress",
-      "risks",
-      "next_priorities",
-      "coordination",
-      "coverage",
-    ].map((key) => ({
-      key,
-      title: key,
-      markdown: "内容",
-      claims:
-        key === "coverage"
-          ? []
-          : [{ claim: "可追溯事实", workItemIds: [workItemId] }],
-    }));
-    const report = individualReportResultSchema.parse({
-      schemaVersion: "1.0",
-      title: "周报",
-      summary: "摘要",
-      sections,
-      markdown: "# 周报",
-      production: {
-        skillVersion: "partner-report-platform/0.2.0",
-        promptVersion: "2026-08-03.central.v1",
-        schemaVersion: "1.0",
-        producer: "data-platform",
-        modelVersion: "gpt-5.6-sol",
-      },
-    });
-    expect(() => assertReportSemantics(report)).not.toThrow();
-  });
-
+describe("team report semantic guards", () => {
   it("requires every Team Report section exactly once", () => {
     expect(() =>
       assertTeamReportSemantics({
@@ -433,7 +402,7 @@ describe("sensitive payload guard", () => {
   it("does not reject ordinary report language", () => {
     expect(
       containsSensitiveValue({
-        blockers: ["补齐飞书消息接入协议"],
+        blockers: ["补齐应用消息接入协议"],
         status: "completed",
       }),
     ).toBe(false);

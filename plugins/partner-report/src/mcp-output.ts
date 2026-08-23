@@ -43,19 +43,6 @@ export function withNextTool(result: CliOutput) {
         ...(causeCode ? { causeCode } : {}),
       },
     };
-  } else if (nextCommand.startsWith("project-scope-card-wait")) {
-    const deadline = Number(nextCommand.match(/--deadline\s+(\d+)/)?.[1]);
-    const attempt = Number(nextCommand.match(/--attempt\s+(\d+)/)?.[1]);
-    nextTool = {
-      name: "project_scope_card_wait",
-      arguments: {
-        periodKey: result.periodKey,
-        version: result.policyVersion,
-        deadline,
-        attempt,
-        force: nextCommand.includes("--force"),
-      },
-    };
   }
   return nextTool ? { ...rest, nextTool } : rest;
 }

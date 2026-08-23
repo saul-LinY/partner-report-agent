@@ -7,7 +7,9 @@ import {
 
 describe("scheduled collection prompt", () => {
   it("uses Chinese instructions and documents the safe memory boundary", () => {
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("首次运行只采集最近 1 天");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "首次运行不回采任何历史 Session",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("检查同名 Codex");
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("更新 Prompt");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("必须使用中文");
@@ -46,19 +48,15 @@ describe("scheduled collection prompt", () => {
       "project_scope_approval_required",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "project_scope_card_delivery_pending",
-    );
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "project_scope_approval_waiting",
-    );
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "project_scope_end_scan_card_waiting",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "已有授权队列清空后才重新读取 thread/list 元数据扫描新项目",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("审批 30 分钟");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("补采本周期");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("不得回采授权前内容");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("稳定本地目录");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("上传成功时当前开放周期");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("约 150 字中文候选描述");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("语义指纹变化时才生成");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("project_description_job");
@@ -78,10 +76,10 @@ describe("scheduled collection prompt", () => {
       destination: "new_chat",
       project: null,
       schedule: {
-        rrule: "RRULE:FREQ=DAILY;BYHOUR=14;BYMINUTE=30",
+        rrule: "RRULE:FREQ=DAILY;BYHOUR=16;BYMINUTE=0",
         timezone: "Asia/Shanghai",
       },
-      model: "gpt-5.6",
+      model: "gpt-5.6-sol",
       reasoningEffort: "medium",
       notifications: "all_runs",
     });
@@ -91,7 +89,9 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_TASK_POLICY).toEqual({
       automaticCheck: false,
       automaticRepair: false,
+      installationOwner: "plugin_connect",
       createIfMissing: true,
+      preserveExistingTask: true,
       customPromptAllowed: true,
       promptUpdateTrigger: "explicit_user_request_only",
       promptUpdateFields: ["prompt"],

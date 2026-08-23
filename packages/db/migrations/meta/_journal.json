@@ -134,6 +134,55 @@
       "when": 1786594200000,
       "tag": "0018_repair_unsupported_approved_items",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787284292860,
+      "tag": "0019_skinny_anthem",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1787299222442,
+      "tag": "0020_eager_donald_blake",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1787300072346,
+      "tag": "0021_gorgeous_zzzax",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1787482011939,
+      "tag": "0022_odd_nitro",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1787484402249,
+      "tag": "0023_cute_sugar_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787484433195,
+      "tag": "0024_unusual_iron_monger",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787485862933,
+      "tag": "0025_great_terrax",
+      "breakpoints": true
     }
   ]
 }

@@ -154,14 +154,12 @@ suite("synthetic report generation pipeline", () => {
     delete process.env.MODEL_API_KEY;
     delete process.env.MODEL_API_BASE_URL;
     await sql.begin(async (tx) => {
-      await tx`delete from outbox_events where tenant_id = ${fixture.tenant}`;
-      await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
-      await tx`delete from individual_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_item_snapshots where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_item_facts where work_item_id in (select id from work_items where tenant_id = ${fixture.tenant})`;
+      await tx`delete from work_item_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_items where tenant_id = ${fixture.tenant}`;
       await tx`delete from reviews where tenant_id = ${fixture.tenant}`;
       await tx`delete from fact_snapshots where tenant_id = ${fixture.tenant}`;
@@ -174,7 +172,7 @@ suite("synthetic report generation pipeline", () => {
     });
   });
 
-  it("generates traceable Work Item, individual Report, and published Team Report", async () => {
+  it("generates traceable Work Cards and a published Team Report", async () => {
     nextOutput = {
       schemaVersion: "1.0",
       groups: [
@@ -205,9 +203,17 @@ suite("synthetic report generation pipeline", () => {
     });
 
     const snapshotId = randomUUID();
-    const reportId = randomUUID();
     const sourceChecksum = "synthetic-source-checksum";
     await sql.begin(async (tx) => {
+      await tx`
+        update work_items set review_status = 'approved'
+        where tenant_id = ${fixture.tenant} and review_id = ${fixture.review}
+      `;
+      await tx`
+        update reviews set state = 'ITEMS_APPROVED', approved_count = 1,
+          pending_count = 0
+        where id = ${fixture.review}
+      `;
       await tx`
         insert into work_item_snapshots (
           id, tenant_id, team_id, partner_id, period_id, review_id,
@@ -218,94 +224,7 @@ suite("synthetic report generation pipeline", () => {
           ${JSON.stringify({ workItems })}::jsonb, ${fixture.user}, now()
         )
       `;
-      await tx`
-        insert into individual_reports (
-          id, tenant_id, team_id, partner_id, period_id, snapshot_id
-        ) values (
-          ${reportId}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
-          ${fixture.period}, ${snapshotId}
-        )
-      `;
-      await tx`
-        insert into agent_jobs (
-          id, tenant_id, team_id, partner_id, type, idempotency_key, input_payload
-        ) values (
-          ${randomUUID()}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
-          'GENERATE_INDIVIDUAL_REPORT', ${`synthetic-report:${reportId}`},
-          ${JSON.stringify({
-            reportId,
-            snapshotId,
-            sourceChecksum,
-            workItems,
-            coverage: { discovered: 1, extracted: 1 },
-            preferences: {},
-            previousReport: {
-              reportId: randomUUID(),
-              payload: { summary: "上一期已启动验证" },
-            },
-          })}::jsonb
-        )
-      `;
     });
-    nextOutput = individualReport(workItems[0].id);
-    expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
-      processed: true,
-      type: "GENERATE_INDIVIDUAL_REPORT",
-    });
-    const individualReports = await sql<any[]>`
-      select id, status, content_revision, title, payload
-      from individual_reports where id = ${reportId}
-    `;
-    expect(individualReports).toMatchObject([
-      {
-        id: reportId,
-        status: "REPORT_REVIEW",
-        content_revision: 1,
-        title: "合成个人报告",
-      },
-    ]);
-    await sql`
-      insert into agent_jobs (
-        id, tenant_id, team_id, partner_id, type, idempotency_key, input_payload
-      ) values (
-        ${randomUUID()}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
-        'REGENERATE_INDIVIDUAL_REPORT', ${`synthetic-report-replace:${reportId}`},
-        ${JSON.stringify({
-          reportId,
-          snapshotId,
-          sourceChecksum,
-          workItems,
-          coverage: { discovered: 1, extracted: 1 },
-          preferences: { reviewInstruction: "更新摘要" },
-        })}::jsonb
-      )
-    `;
-    nextOutput = {
-      ...individualReport(workItems[0].id),
-      title: "替换后的个人报告",
-      summary: "当前内容已被直接替换。",
-    };
-    expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
-      processed: true,
-      type: "REGENERATE_INDIVIDUAL_REPORT",
-    });
-    const replacedReports = await sql<any[]>`
-      select id, content_revision, title, summary
-      from individual_reports where id = ${reportId}
-    `;
-    expect(replacedReports).toEqual([
-      {
-        id: reportId,
-        content_revision: 2,
-        title: "替换后的个人报告",
-        summary: "当前内容已被直接替换。",
-      },
-    ]);
-    await sql`
-      update individual_reports set status = 'LOCKED', locked_at = now()
-      where id = ${reportId}
-    `;
-
     expect(await scheduleDueTeamReports(fixture.period)).toBe(1);
     const teamJobs = await sql<any[]>`
       select * from agent_jobs where tenant_id = ${fixture.tenant}
@@ -313,11 +232,11 @@ suite("synthetic report generation pipeline", () => {
     `;
     expect(teamJobs[0].input_payload).toMatchObject({
       missingPartnerIds: [],
-      individualReports: [
+      workCards: [
         {
           partnerId: fixture.partner,
           partnerName: "Synthetic Partner",
-          reportId,
+          snapshotId,
           projectNames: ["未识别项目"],
         },
       ],
@@ -329,7 +248,7 @@ suite("synthetic report generation pipeline", () => {
     expect(teamJobs[0].input_payload).not.toHaveProperty("projects");
     expect(teamJobs[0].input_payload.sourceChecksum).toBe(
       stableJsonHash({
-        individualReports: teamJobs[0].input_payload.individualReports,
+        workCards: teamJobs[0].input_payload.workCards,
         missingPartnerIds: teamJobs[0].input_payload.missingPartnerIds,
         previousTeamReport: teamJobs[0].input_payload.previousTeamReport,
       }),
@@ -351,7 +270,7 @@ suite("synthetic report generation pipeline", () => {
         'CENTRAL_GENERATION_FAILED', 'Synthetic duplicate failure'
       )
     `;
-    nextOutput = teamReport(reportId);
+    nextOutput = teamReport(snapshotId);
     expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
       processed: true,
       type: "GENERATE_TEAM_REPORT",
@@ -418,10 +337,10 @@ suite("synthetic report generation pipeline", () => {
       "Do not expose raw status enum identifiers",
     );
     expect(lastTeamReportInstructions).toContain(
-      "copy only exact values from individualReports[].reportId",
+      "copy only exact values from workCards[].snapshotId",
     );
     expect(lastTeamReportInstructions).toContain(
-      `the complete allowlist is ["${reportId}"]`,
+      `the complete allowlist is ["${snapshotId}"]`,
     );
     expect(lastTeamReportInstructions).toContain("2026-08-12.team.v14");
     expect(teamReports[0].payload.markdown).toContain("### Synthetic Partner");
@@ -537,39 +456,28 @@ suite("synthetic report generation pipeline", () => {
       type: "AGGREGATE_WORK_ITEMS",
     });
 
-    const [reviews, workItems, snapshots, reportJobs, outbox] =
-      await Promise.all([
-        sql<any[]>`
+    const [reviews, workItems, versions, snapshots] = await Promise.all([
+      sql<any[]>`
         select state, approved_count, pending_count from reviews
         where id = ${reviewId}
       `,
-        sql<any[]>`
+      sql<any[]>`
         select * from work_items where review_id = ${reviewId}
       `,
-        sql<any[]>`
+      sql<any[]>`
+        select version, source from work_item_versions where review_id = ${reviewId}
+      `,
+      sql<any[]>`
         select payload, approved_by_actor_type, approved_by_actor_id
         from work_item_snapshots where review_id = ${reviewId}
       `,
-        sql<any[]>`
-        select input_payload from agent_jobs
-        where tenant_id = ${fixture.tenant}
-          and type = 'GENERATE_INDIVIDUAL_REPORT'
-          and input_payload->>'snapshotId' in (
-            select id::text from work_item_snapshots where review_id = ${reviewId}
-          )
-      `,
-        sql<any[]>`
-        select event_type from outbox_events
-        where tenant_id = ${fixture.tenant} and aggregate_id = ${reviewId}
-      `,
-      ]);
+    ]);
     expect(reviews).toEqual([
       { state: "IN_PROGRESS", approved_count: 0, pending_count: 1 },
     ]);
     expect(workItems).toMatchObject([{ review_status: "pending" }]);
+    expect(versions).toEqual([{ version: 1, source: "generated" }]);
     expect(snapshots).toEqual([]);
-    expect(reportJobs).toEqual([]);
-    expect(outbox).toEqual([{ event_type: "work_items.draft.created" }]);
     expect(await scheduleDueTeamReports(periodId)).toBe(0);
   });
 });
@@ -584,36 +492,7 @@ function production(promptVersion: string) {
   };
 }
 
-function individualReport(workItemId: string) {
-  const keys = [
-    "summary",
-    "achievements",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coordination",
-    "coverage",
-  ];
-  return {
-    schemaVersion: "1.0",
-    title: "合成个人报告",
-    summary: "本期完成本地链路验证。",
-    sections: keys.map((key) => ({
-      key,
-      title: key,
-      markdown: `${key} 内容`,
-      claims:
-        key === "summary"
-          ? [{ claim: "链路验证进行中", workItemIds: [workItemId] }]
-          : [],
-    })),
-    markdown: "# 合成个人报告\n\n本期完成本地链路验证。",
-    qualityWarnings: [],
-    production: production("2026-08-04.individual.v2"),
-  };
-}
-
-function teamReport(reportId: string) {
+function teamReport(snapshotId: string) {
   const keys = ["summary", "project_progress", "risks"];
   return {
     schemaVersion: "1.0",
@@ -634,7 +513,7 @@ function teamReport(reportId: string) {
           ? [
               {
                 claim: "团队已完成链路验证",
-                individualReportIds: [reportId],
+                workCardSnapshotIds: [snapshotId],
               },
             ]
           : [],

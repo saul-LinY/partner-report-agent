@@ -51,7 +51,6 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("collect_review");
     expect(skill).toContain("collect_defer");
     expect(skill).toContain("project_description_submit");
-    expect(skill).toContain("project_scope_card_wait");
     expect(skill).toContain("project_scope_sync");
     expect(skill).toContain("exclusion_set");
     expect(skill).toContain("jobInput");
@@ -62,14 +61,17 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("`notProcessed`");
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
-    expect(skill).toContain("第一次运行只采集运行开始前最近 1 天");
-    expect(skill).toContain("模型不会再次读取、判断或上传");
-    expect(skill).toContain("不维护 Turn 游标");
+    expect(skill).toContain("第一次运行不回采历史 Session");
+    expect(skill).toContain("匿名回合断点");
+    expect(skill).toContain("同一旧 Session 后续新增的完整问答");
     expect(skill).toContain("CREDENTIAL_MIGRATION_REQUIRED");
     expect(skill).toContain(
       "正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain",
     );
-    expect(skill).toContain("官方 Codex Scheduled Task");
+    expect(skill).toContain("Codex Scheduled Task");
+    expect(skill).toContain("由插件自身幂等创建");
+    expect(skill).toContain("不得要求用户进入 Scheduled 面板手动配置");
+    expect(skill).toContain("`scheduledTaskInstallation`");
     expect(skill).toContain("必须使用简体中文");
     expect(skill).toContain("通俗、精简、直接");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");
@@ -79,7 +81,10 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("每个项目至少 1 个 Session 即登记");
     expect(skill).toContain("pending 项目保持待审批");
     expect(skill).toContain("审批 30 分钟");
-    expect(skill).toContain("下一次运行补采本周期");
+    expect(skill).toContain("不得回采授权前内容");
+    expect(skill).toContain("每天北京时间 16:00");
+    expect(skill).toContain("`gpt-5.6-sol`");
+    expect(skill).toContain("作为下一周期普通工作");
     expect(skill).toContain("项目工作卡片整体接受后");
     expect(skill).toContain("终态审查");
     expect(skill).not.toContain("continuation-task-config");

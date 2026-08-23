@@ -4,11 +4,10 @@ export type TeamReportSourceProject = {
   description: string;
 };
 
-export type TeamReportSourceIndividualReport = {
+export type TeamReportSourceWorkCards = {
   partnerId: string;
   partnerName: string;
-  reportId: string;
-  payload: unknown;
+  snapshotId: string;
   workItemSnapshot: {
     workItems?: unknown;
     noReportableActivity?: boolean;
@@ -21,25 +20,25 @@ function workItemRecord(item: unknown): Record<string, unknown> {
     : {};
 }
 
-export function buildTeamReportIndividualReports(
-  reports: TeamReportSourceIndividualReport[],
+export function buildTeamReportWorkCards(
+  snapshots: TeamReportSourceWorkCards[],
   projects: TeamReportSourceProject[],
 ) {
   const approvedProjects = new Map(
     projects.map((project) => [project.id, project]),
   );
 
-  return reports.map((report) => {
-    const workItems = Array.isArray(report.workItemSnapshot?.workItems)
-      ? report.workItemSnapshot.workItems
+  return snapshots.map((snapshot) => {
+    const workItems = Array.isArray(snapshot.workItemSnapshot?.workItems)
+      ? snapshot.workItemSnapshot.workItems
       : [];
     return {
-      partnerId: report.partnerId,
-      partnerName: report.partnerName,
-      reportId: report.reportId,
-      payload: report.payload,
+      partnerId: snapshot.partnerId,
+      partnerName: snapshot.partnerName,
+      snapshotId: snapshot.snapshotId,
+      workItems,
       noReportableActivity:
-        report.workItemSnapshot?.noReportableActivity === true,
+        snapshot.workItemSnapshot?.noReportableActivity === true,
       projectNames: [
         ...new Set(
           workItems

@@ -6,16 +6,19 @@ var __export = (target, all) => {
 };
 
 // src/cli.ts
-import { createHash as createHash3, randomBytes as randomBytes2, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
 import {
-  chmodSync as chmodSync4,
-  mkdtempSync,
-  readFileSync as readFileSync5,
-  rmSync,
-  writeFileSync as writeFileSync4
+  chmodSync as chmodSync6,
+  existsSync as existsSync7,
+  mkdirSync as mkdirSync3,
+  readFileSync as readFileSync7,
+  readdirSync as readdirSync4,
+  renameSync as renameSync5,
+  rmSync as rmSync3,
+  writeFileSync as writeFileSync6
 } from "node:fs";
 import { hostname, tmpdir as tmpdir2 } from "node:os";
-import { basename as basename3, dirname as dirname3, relative as relative3, resolve as resolve6 } from "node:path";
+import { basename as basename3, dirname as dirname4, relative as relative3, resolve as resolve8 } from "node:path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 
 // ../../packages/contracts/node_modules/zod/v3/external.js
@@ -4218,36 +4221,9 @@ var projectDescriptionCandidateSchema = external_exports.object({
   sourceFingerprint: external_exports.string().regex(/^[a-f0-9]{64}$/),
   description: external_exports.string().min(50).max(300)
 }).strict();
-var reportClaimSchema = external_exports.object({
-  claim: external_exports.string().min(1).max(800),
-  workItemIds: external_exports.array(idSchema).min(1)
-});
-var reportSectionSchema = external_exports.object({
-  key: external_exports.enum([
-    "summary",
-    "achievements",
-    "project_progress",
-    "risks",
-    "next_priorities",
-    "coordination",
-    "coverage"
-  ]),
-  title: external_exports.string().min(1).max(100),
-  markdown: external_exports.string().max(12e3),
-  claims: external_exports.array(reportClaimSchema).default([])
-});
-var individualReportResultSchema = external_exports.object({
-  schemaVersion: external_exports.literal("1.0"),
-  title: external_exports.string().min(1).max(200),
-  summary: external_exports.string().min(1).max(1200),
-  sections: external_exports.array(reportSectionSchema).length(7),
-  markdown: external_exports.string().min(1).max(6e4),
-  qualityWarnings: external_exports.array(external_exports.string()).default([]),
-  production: productionMetadataSchema
-});
 var teamReportClaimSchema = external_exports.object({
   claim: external_exports.string().min(1).max(1e3),
-  individualReportIds: external_exports.array(idSchema).min(1)
+  workCardSnapshotIds: external_exports.array(idSchema).min(1)
 });
 var teamReportSectionSchema = external_exports.object({
   key: external_exports.enum(["summary", "project_progress", "risks"]),
@@ -4280,8 +4256,6 @@ var teamReportResultSchema = external_exports.object({
 });
 var agentJobTypeSchema = external_exports.enum([
   "AGGREGATE_WORK_ITEMS",
-  "GENERATE_INDIVIDUAL_REPORT",
-  "REGENERATE_INDIVIDUAL_REPORT",
   "GENERATE_TEAM_REPORT",
   "REGENERATE_TEAM_REPORT",
   "REANALYZE_SESSIONS",
@@ -4305,7 +4279,7 @@ var reviewChangeRequestSchema = external_exports.object({
   baseVersion: external_exports.number().int().positive(),
   operation: reviewOperationSchema,
   value: external_exports.unknown().optional(),
-  source: external_exports.enum(["web", "feishu"]).default("web")
+  source: external_exports.literal("web").default("web")
 });
 var heartbeatSchema = external_exports.object({
   pluginVersion: external_exports.string().min(1),
@@ -4385,6 +4359,30 @@ var pluginDiagnosticEventSchema = external_exports.object({
 var pluginDiagnosticBatchSchema = external_exports.object({
   events: external_exports.array(pluginDiagnosticEventSchema).min(1).max(20)
 }).strict();
+var pluginLogLevelSchema = external_exports.enum([
+  "debug",
+  "info",
+  "warning",
+  "error"
+]);
+var pluginLogEventSchema = external_exports.object({
+  eventId: external_exports.string().uuid(),
+  runId: external_exports.string().uuid().optional(),
+  level: pluginLogLevelSchema,
+  stage: external_exports.string().trim().min(1).max(80),
+  eventCode: external_exports.string().trim().min(1).max(120),
+  message: external_exports.string().trim().min(1).max(4e3),
+  stack: external_exports.string().max(16e3).optional(),
+  occurredAt: isoDateTimeSchema,
+  retryable: external_exports.boolean().default(false),
+  attempt: external_exports.number().int().positive().max(100).optional(),
+  durationMs: external_exports.number().int().nonnegative().max(864e5).optional(),
+  requestId: external_exports.string().min(1).max(120).optional(),
+  details: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+}).strict();
+var pluginLogBatchSchema = external_exports.object({
+  events: external_exports.array(pluginLogEventSchema).min(1).max(50)
+}).strict();
 
 // src/config.ts
 import { execFileSync } from "node:child_process";
@@ -4392,25 +4390,25 @@ import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
-  copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync
 } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 var PLUGIN_VERSION = "1.0.0";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
-var PERSISTENT_DATA_FILES = [
-  "config.json",
-  "collection-state.json",
-  "project-scope.json",
-  "secrets.json"
-];
+var PARTNER_REPORT_APP_GROUP = "9RN69TVL38.partnerreport.shared";
+var PARTNER_REPORT_DATA_DIRECTORY = "PartnerReportPluginData";
+var PARTNER_REPORT_UNBOUND_MARKER = "PartnerReportPluginUnbound";
 function normalizeServerUrl(value, allowInsecureHttp = false) {
   const raw = value.trim();
   if (!raw) throw new Error("\u6570\u636E\u4E2D\u53F0\u5730\u5740\u4E0D\u80FD\u4E3A\u7A7A\u3002");
@@ -4450,19 +4448,52 @@ function readKeychainValue(service) {
     return null;
   }
 }
-function migratePersistentDataDirectory(source, target) {
+function macOSAppGroupDirectory(home = homedir()) {
+  return resolve(
+    home,
+    "Library",
+    "Group Containers",
+    PARTNER_REPORT_APP_GROUP
+  );
+}
+function defaultDataDirectory(home = homedir(), platform = process.platform) {
+  return platform === "darwin" ? resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_DATA_DIRECTORY) : resolve(home, ".partner-report-data");
+}
+function unboundMarkerPath(home = homedir()) {
+  return resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_UNBOUND_MARKER);
+}
+function clearPluginUnboundMarker() {
+  if (process.platform !== "darwin") return;
+  rmSync(unboundMarkerPath(), { force: true });
+}
+function migratePersistentDataDirectory(source, target, removeSource = false) {
   const sourceDirectory = resolve(source);
   const targetDirectory = resolve(target);
   if (sourceDirectory === targetDirectory || !existsSync(sourceDirectory))
     return;
-  mkdirSync(targetDirectory, { recursive: true, mode: 448 });
-  for (const filename of PERSISTENT_DATA_FILES) {
-    const sourcePath = resolve(sourceDirectory, filename);
-    const targetPath = resolve(targetDirectory, filename);
-    if (!existsSync(sourcePath) || existsSync(targetPath)) continue;
-    copyFileSync(sourcePath, targetPath);
-    chmodSync(targetPath, 384);
+  mkdirSync(dirname(targetDirectory), { recursive: true, mode: 448 });
+  for (const entry of readdirSync(sourceDirectory)) {
+    if (entry === "collection.lock" || entry.startsWith(".write-probe-") || entry.endsWith(".tmp"))
+      rmSync(resolve(sourceDirectory, entry), { recursive: true, force: true });
   }
+  if (removeSource && !existsSync(targetDirectory)) {
+    try {
+      renameSync(sourceDirectory, targetDirectory);
+      return;
+    } catch {
+    }
+  }
+  mkdirSync(targetDirectory, { recursive: true, mode: 448 });
+  for (const entry of readdirSync(sourceDirectory)) {
+    const sourcePath = resolve(sourceDirectory, entry);
+    const targetPath = resolve(targetDirectory, entry);
+    if (!existsSync(targetPath))
+      cpSync(sourcePath, targetPath, {
+        recursive: true,
+        preserveTimestamps: true
+      });
+  }
+  if (removeSource) rmSync(sourceDirectory, { recursive: true, force: true });
 }
 function prepareWritableDataDirectory(directory) {
   const location = resolve(directory);
@@ -4500,14 +4531,26 @@ function selectWritableDataDirectory(candidates, prepare = prepareWritableDataDi
 function dataDirectory() {
   const runtimeDirectory = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   const explicitDirectory = process.env.PARTNER_REPORT_DATA;
-  const stableDirectory = resolve(homedir(), ".partner-report-data");
+  const legacyStableDirectory = resolve(homedir(), ".partner-report-data");
+  const stableDirectory = defaultDataDirectory();
+  if (!explicitDirectory && process.platform === "darwin" && existsSync(unboundMarkerPath()))
+    throw Object.assign(
+      new Error("Partner Report \u63D2\u4EF6\u5DF2\u89E3\u9664\u7ED1\u5B9A\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u540E\u518D\u91C7\u96C6\u3002"),
+      { code: "PLUGIN_UNBOUND" }
+    );
+  if (!explicitDirectory && process.platform === "darwin")
+    migratePersistentDataDirectory(
+      legacyStableDirectory,
+      stableDirectory,
+      true
+    );
   const location = selectWritableDataDirectory(
     explicitDirectory ? [explicitDirectory] : [stableDirectory, runtimeDirectory]
   );
   if (!explicitDirectory) {
-    for (const legacyDirectory of [stableDirectory, runtimeDirectory]) {
+    for (const legacyDirectory of [runtimeDirectory]) {
       if (legacyDirectory)
-        migratePersistentDataDirectory(legacyDirectory, location);
+        migratePersistentDataDirectory(legacyDirectory, location, true);
     }
   }
   return location;
@@ -4696,17 +4739,17 @@ async function authenticatedRequest(path, init = {}) {
 }
 
 // src/collection-config.ts
-var DEFAULT_COLLECTION_MODEL = "gpt-5.6";
+var DEFAULT_COLLECTION_MODEL = "gpt-5.6-sol";
 var DEFAULT_COLLECTION_REASONING_EFFORT = "medium";
 var SCHEDULED_COLLECTION_PROMPT = [
   "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528 partner-report MCP \u5DE5\u5177\uFF0C\u4E0D\u5F97\u8FD0\u884C CLI \u6216 shell\uFF1B\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u63A5\u8FD1\u8FD0\u884C\u65F6\u95F4\u4E0A\u9650\u65F6\u505C\u6B62\u9886\u53D6\u65B0 Job\uFF1B\u5F53\u524D Job \u65E0\u6CD5\u5B8C\u6210\u65F6\u4F7F\u7528 collect_defer\uFF0C\u4FDD\u7559\u961F\u5217\u5230\u4E0B\u4E00\u6B21\u8FD0\u884C\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
-  "\u9996\u6B21\u8FD0\u884C\u53EA\u91C7\u96C6\u6700\u8FD1 1 \u5929\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u91CD\u53E0\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002",
-  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u901A\u8FC7 thread/list \u53EA\u8BFB\u53D6 Codex \u72B6\u6001\u6570\u636E\u5E93\u4E2D\u7684\u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u6709\u5B9E\u9645\u6D3B\u52A8\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u8303\u56F4\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u5728\u5361\u7247\u6295\u9012\u5B8C\u6210\u6216\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
+  "\u9996\u6B21\u8FD0\u884C\u4E0D\u56DE\u91C7\u4EFB\u4F55\u5386\u53F2 Session\uFF0C\u53EA\u5904\u7406\u63D2\u4EF6\u6FC0\u6D3B\u4E14\u9879\u76EE\u6388\u6743\u751F\u6548\u4E4B\u540E\u5B8C\u6210\u7684\u95EE\u7B54\uFF1B\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u533F\u540D\u56DE\u5408\u65AD\u70B9\u3001\u91CD\u53E0\u626B\u63CF\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\uFF0C\u540C\u4E00\u65E7 Session \u53EA\u5904\u7406\u65B0\u589E\u7684\u5B8C\u6574\u95EE\u7B54\u3002",
+  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u901A\u8FC7 thread/list \u53EA\u8BFB\u53D6 Codex \u72B6\u6001\u6570\u636E\u5E93\u4E2D\u7684\u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u6709\u5B9E\u9645\u6D3B\u52A8\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u767B\u8BB0\u5230\u5DE5\u4F5C\u770B\u677F\u5E94\u7528\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
   "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
-  "\u9996\u6B21\u6388\u6743\u5B8C\u6210\u540E\u7684\u65E5\u5E38\u8FD0\u884C\u5FC5\u987B\u5148\u6309\u73B0\u6709\u6743\u9650\u5B8C\u6210\u5168\u90E8 Session \u63D0\u53D6\u548C\u4E0A\u4F20\uFF1B\u5DF2\u6709\u6388\u6743\u961F\u5217\u6E05\u7A7A\u540E\u624D\u91CD\u65B0\u8BFB\u53D6 thread/list \u5143\u6570\u636E\u626B\u63CF\u65B0\u9879\u76EE\u3002\u53D1\u73B0\u65B0\u9879\u76EE\u65F6\u767B\u8BB0\u5E76\u53D1\u9001\u98DE\u4E66\u8303\u56F4\u5361\uFF0C\u5361\u7247\u786E\u8BA4\u9001\u8FBE\u540E\u7B49\u5F85\u7528\u6237\u5BA1\u6279 30 \u5206\u949F\uFF1B\u53CA\u65F6\u5141\u8BB8\u5219\u628A\u65B0\u9879\u76EE\u672C\u5468\u671F Session \u8FFD\u52A0\u5230\u5F53\u524D\u961F\u5217\uFF0C\u62D2\u7EDD\u6216\u8D85\u65F6\u5219\u6B63\u5E38\u7ED3\u675F\u4E14\u4FDD\u6301\u4E2D\u53F0\u72B6\u6001\uFF0C\u7A0D\u540E\u5141\u8BB8\u65F6\u7531\u4E0B\u4E00\u6B21\u8FD0\u884C\u8865\u91C7\u672C\u5468\u671F\u3002",
+  "\u9996\u6B21\u6388\u6743\u5B8C\u6210\u540E\u7684\u65E5\u5E38\u8FD0\u884C\u5FC5\u987B\u5148\u6309\u73B0\u6709\u6743\u9650\u5B8C\u6210\u5168\u90E8 Session \u63D0\u53D6\u548C\u4E0A\u4F20\uFF1B\u5DF2\u6709\u6388\u6743\u961F\u5217\u6E05\u7A7A\u540E\u624D\u91CD\u65B0\u8BFB\u53D6 thread/list \u5143\u6570\u636E\u626B\u63CF\u65B0\u9879\u76EE\u3002\u53D1\u73B0\u65B0\u9879\u76EE\u65F6\u767B\u8BB0\u5230\u5DE5\u4F5C\u770B\u677F\u5E94\u7528\u5E76\u7B49\u5F85\u7528\u6237\u5BA1\u6279 30 \u5206\u949F\uFF1B\u53CA\u65F6\u5141\u8BB8\u5219\u53EA\u628A\u6388\u6743\u751F\u6548\u540E\u65B0\u589E\u7684\u5B8C\u6574\u95EE\u7B54\u8FFD\u52A0\u5230\u5F53\u524D\u961F\u5217\uFF0C\u62D2\u7EDD\u6216\u8D85\u65F6\u5219\u6B63\u5E38\u7ED3\u675F\u4E14\u4FDD\u6301\u4E2D\u53F0\u72B6\u6001\uFF0C\u540E\u7EED\u8FD0\u884C\u4E5F\u4E0D\u5F97\u56DE\u91C7\u6388\u6743\u524D\u5185\u5BB9\u3002",
   "\u5DF2\u6709\u6388\u6743\u9879\u76EE\u7684 Session \u961F\u5217\u6E05\u7A7A\u540E\u3001\u626B\u63CF\u65B0\u9879\u76EE\u4E4B\u524D\uFF0C\u68C0\u67E5\u6BCF\u4E2A\u5DF2\u6388\u6743\u9879\u76EE\u7684\u6574\u4F53\u63CF\u8FF0\u3002\u53EA\u8BFB\u53D6\u672C\u673A\u9879\u76EE\u8BF4\u660E\u6587\u4EF6\u3001\u9879\u76EE\u6E05\u5355\u548C\u9876\u5C42\u76EE\u5F55\u751F\u6210\u8BED\u4E49\u6307\u7EB9\uFF1B\u4E2D\u53F0\u6CA1\u6709\u63CF\u8FF0\u6216\u8BED\u4E49\u6307\u7EB9\u53D8\u5316\u65F6\u624D\u751F\u6210\u7EA6 150 \u5B57\u4E2D\u6587\u5019\u9009\u63CF\u8FF0\uFF0C\u672A\u53D8\u5316\u5219\u590D\u7528\u3002\u63CF\u8FF0 Job \u5931\u8D25\u4E0D\u5F97\u963B\u65AD\u5176\u4ED6\u9879\u76EE\u6216\u65B0\u9879\u76EE\u626B\u63CF\u3002",
   "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u3001\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\u548C\u5DF2\u5F52\u6863 Session\uFF1B\u6309\u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\uFF0C\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u540C\u540D\u4F46\u4E0D\u540C\u4ED3\u5E93\u5206\u522B\u5904\u7406\u3002\u672A\u9009\u5B9A\u3001\u5F85\u5BA1\u6279\u6216\u62D2\u7EDD\u7684\u9879\u76EE\u4E00\u5F8B\u89C6\u4E3A\u4E34\u65F6\u4F1A\u8BDD\uFF0C\u7981\u6B62\u8BFB\u53D6\u548C\u4E0A\u4F20\u3002project-scope.json \u7684\u672C\u5730 allowed/denied \u4FEE\u6539\u4F1A\u5728\u91C7\u96C6\u524D\u63D0\u4EA4\u4E2D\u53F0\uFF0C\u6309\u7248\u672C\u6821\u9A8C\u6210\u529F\u540E\u624D\u751F\u6548\uFF1B\u51B2\u7A81\u65F6\u505C\u6B62\u91C7\u96C6\u5E76\u8981\u6C42\u5148\u540C\u6B65\u3002",
   "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
@@ -4716,10 +4759,10 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "Schema\u3001\u4E2D\u6587\u6216\u5B89\u5168\u6821\u9A8C\u5931\u8D25\u5FC5\u987B\u4FEE\u6B63\u540C\u4E00 Job \u7684\u7ED3\u6784\u5316\u7ED3\u679C\u4E14\u6700\u591A\u4E09\u6B21\uFF1B\u53EA\u6709\u540C\u4E00 Job \u8FDE\u7EED\u4E09\u6B21\u771F\u5B9E\u5931\u8D25\u540E\u624D\u80FD\u6309 MCP \u8FD4\u56DE\u7684\u5B89\u5168\u539F\u56E0\u7801\u4F7F\u7528 EXTRACT_FAILED\uFF0C\u7981\u6B62\u6279\u91CF collect_skip\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "MCP \u8FD4\u56DE started\u3001job\u3001validation_failed\u3001uploaded\u3001ignored\u3001skipped\u3001deferred\u3001project_description_job\u3001project_description_validation_failed\u3001project_description_uploaded\u3001project_description_skipped\u3001review_required\u3001project_scope_card_delivery_pending\u3001project_scope_end_scan_card_waiting\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextTool \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u8C03\u7528\u5BF9\u5E94\u5DE5\u5177\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
-  "project_scope_card_delivery_pending \u5FC5\u987B\u6301\u7EED\u8C03\u7528 project_scope_card_wait\uFF1B\u53EA\u6709 MCP \u89C2\u5BDF\u5230\u98DE\u4E66\u5361\u7247\u7248\u672C\u5DF2\u6210\u529F\u6295\u9012\u540E\u624D\u4F1A\u8FD4\u56DE project_scope_approval_required\u3002",
-  "project_scope_end_scan_card_waiting\u3001project_scope_approval_waiting \u548C project_scope_approved \u5C5E\u4E8E\u540C\u4E00\u4E2A\u65E5\u5E38 Run\uFF0C\u5FC5\u987B\u6309 nextTool \u8C03\u7528 collect_next\uFF0C\u4E0D\u5F97\u6539\u7528 project_scope_card_wait\u3002",
-  "MCP \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextTool \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u786E\u8BA4\u53D1\u9001\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
+  "\u8FD0\u884C\u6E05\u5355\u7531\u63D2\u4EF6\u4EE5\u4EC5\u5F53\u524D\u7528\u6237\u53EF\u8BFB\u5199\u7684\u6743\u9650\u4FDD\u5B58\u5728\u7A33\u5B9A\u672C\u5730\u76EE\u5F55\uFF1B\u4EFB\u52A1\u4E2D\u65AD\u65F6\u4E0B\u4E00\u6B21\u8FD0\u884C\u5148\u6062\u590D\u540C\u5468\u671F\u672A\u5B8C\u6210\u961F\u5217\u3002\u5468\u671F\u5DF2\u7ECF\u5207\u6362\u65F6\u653E\u5F03\u65E7\u8FD0\u884C\u6E05\u5355\u5E76\u91CD\u65B0\u626B\u63CF\u5C1A\u672A\u5904\u7406\u7684\u533F\u540D\u56DE\u5408\uFF0C\u7531\u4E2D\u53F0\u6309\u4E0A\u4F20\u6210\u529F\u65F6\u5F53\u524D\u5F00\u653E\u5468\u671F\u5F52\u6863\uFF0C\u4E0D\u6807\u8BB0\u8FDF\u5230\u6216\u8865\u91C7\u3002",
+  "MCP \u8FD4\u56DE started\u3001job\u3001validation_failed\u3001uploaded\u3001ignored\u3001skipped\u3001deferred\u3001project_description_job\u3001project_description_validation_failed\u3001project_description_uploaded\u3001project_description_skipped\u3001review_required\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextTool \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u8C03\u7528\u5BF9\u5E94\u5DE5\u5177\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "project_scope_approval_waiting \u548C project_scope_approved \u5C5E\u4E8E\u540C\u4E00\u4E2A\u65E5\u5E38 Run\uFF0C\u5FC5\u987B\u6309 nextTool \u8C03\u7528 collect_next\u3002",
+  "MCP \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextTool \u65F6\uFF0C\u8868\u793A\u9879\u76EE\u5DF2\u767B\u8BB0\u5230\u5DE5\u4F5C\u770B\u677F\u5E94\u7528\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
   "MCP \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextTool \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
   "\u961F\u5217\u5B8C\u6574\u5904\u7406\u6216\u56E0\u65F6\u95F4\u9884\u7B97\u5B89\u5168\u5EF6\u540E\u540E\u5FC5\u987B\u8C03\u7528 collect_review\uFF1B\u5BA1\u67E5\u5FC5\u987B\u533A\u5206 deferred\u3001failedExtract \u548C notProcessed\uFF0C\u53EA\u6709\u8BE5\u5DE5\u5177\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextTool \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
   "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 MCP \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
@@ -4730,7 +4773,7 @@ var SCHEDULED_COLLECTION_TASK = {
   destination: "new_chat",
   project: null,
   schedule: {
-    rrule: "RRULE:FREQ=DAILY;BYHOUR=14;BYMINUTE=30",
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=16;BYMINUTE=0",
     timezone: "Asia/Shanghai"
   },
   model: DEFAULT_COLLECTION_MODEL,
@@ -4741,7 +4784,9 @@ var SCHEDULED_COLLECTION_TASK = {
 var SCHEDULED_COLLECTION_TASK_POLICY = {
   automaticCheck: false,
   automaticRepair: false,
+  installationOwner: "plugin_connect",
   createIfMissing: true,
+  preserveExistingTask: true,
   customPromptAllowed: true,
   promptUpdateTrigger: "explicit_user_request_only",
   promptUpdateFields: ["prompt"],
@@ -4808,13 +4853,12 @@ import {
   chmodSync as chmodSync2,
   existsSync as existsSync2,
   readFileSync as readFileSync2,
-  renameSync,
+  renameSync as renameSync2,
   statSync,
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
-var INITIAL_LOOKBACK_DAYS = 1;
 var INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 var INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1e3;
 var COLLECTION_LEASE_MS = 5 * 60 * 1e3;
@@ -4829,12 +4873,13 @@ function leasePath(directory) {
 }
 function emptyState(pluginInstanceId) {
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
     acceptedSessions: {},
-    ignoredSessions: {}
+    ignoredSessions: {},
+    processedTurns: {}
   };
 }
 function validIso(value) {
@@ -4849,7 +4894,8 @@ function validateState(value, pluginInstanceId) {
   if (state.pluginInstanceId !== pluginInstanceId)
     return emptyState(pluginInstanceId);
   const acceptedSessions = state.acceptedSessions ?? {};
-  if (state.schemaVersion !== "1.0" || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || !acceptedSessions || typeof acceptedSessions !== "object" || !state.ignoredSessions || typeof state.ignoredSessions !== "object") {
+  const processedTurns = state.processedTurns ?? {};
+  if (!["1.0", "2.0"].includes(state.schemaVersion ?? "") || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || !acceptedSessions || typeof acceptedSessions !== "object" || !state.ignoredSessions || typeof state.ignoredSessions !== "object" || !processedTurns || typeof processedTurns !== "object") {
     throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u683C\u5F0F\u65E0\u6548\u3002"), {
       code: "COLLECTION_STATE_INVALID"
     });
@@ -4863,7 +4909,24 @@ function validateState(value, pluginInstanceId) {
       }
     }
   }
-  return { ...state, acceptedSessions };
+  for (const [sessionKey, turns] of Object.entries(processedTurns)) {
+    if (!/^[a-f0-9]{64}$/.test(sessionKey) || !turns || typeof turns !== "object")
+      throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u5305\u542B\u65E0\u6548\u7684\u56DE\u5408\u65AD\u70B9\u3002"), {
+        code: "COLLECTION_STATE_INVALID"
+      });
+    for (const [turnKey, processed] of Object.entries(turns)) {
+      if (!/^[a-f0-9]{64}$/.test(turnKey) || !processed || typeof processed !== "object" || !["accepted", "ignored"].includes(processed.decision) || !validIso(processed.processedAt))
+        throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u5305\u542B\u65E0\u6548\u7684\u56DE\u5408\u65AD\u70B9\u3002"), {
+          code: "COLLECTION_STATE_INVALID"
+        });
+    }
+  }
+  return {
+    ...state,
+    schemaVersion: "2.0",
+    acceptedSessions,
+    processedTurns
+  };
 }
 function loadCollectionState(pluginInstanceId, directory = dataDirectory()) {
   const path = statePath(directory);
@@ -4891,37 +4954,40 @@ function saveCollectionState(state, directory = dataDirectory()) {
     mode: 384
   });
   chmodSync2(temporary, 384);
-  renameSync(temporary, path);
+  renameSync2(temporary, path);
   chmodSync2(path, 384);
 }
-function initializeCollectionFloor(state, periodStartsAt, runStartedAt) {
+function initializeCollectionFloor(state, _periodStartsAt, runStartedAt) {
   if (state.collectionFloorAt) return state.collectionFloorAt;
-  const floor = Math.max(
-    new Date(periodStartsAt).getTime(),
-    new Date(runStartedAt).getTime() - INITIAL_LOOKBACK_DAYS * 24 * 60 * 60 * 1e3
-  );
-  state.collectionFloorAt = new Date(floor).toISOString();
+  state.collectionFloorAt = new Date(runStartedAt).toISOString();
   return state.collectionFloorAt;
 }
 function collectionWindow(state, period, runStartedAt) {
-  const periodStart = new Date(period.starts_at).getTime();
   const runStart = new Date(runStartedAt).getTime();
-  const floor = Math.max(
-    periodStart,
-    new Date(state.collectionFloorAt ?? period.starts_at).getTime()
-  );
+  const floor = new Date(state.collectionFloorAt ?? runStartedAt).getTime();
+  const extractionStart = state.lastSuccessfulRunStartedAt ? Math.max(floor, new Date(state.lastSuccessfulRunStartedAt).getTime()) : floor;
   const scanStart = state.lastSuccessfulRunStartedAt ? Math.max(
     floor,
     new Date(state.lastSuccessfulRunStartedAt).getTime() - INCREMENTAL_OVERLAP_MS
   ) : floor;
   return {
-    extractionStartsAt: new Date(floor).toISOString(),
+    extractionStartsAt: new Date(extractionStart).toISOString(),
     extractionEndsAt: new Date(
       Math.min(new Date(period.ends_at).getTime(), runStart)
     ).toISOString(),
     scanStartsAt: new Date(scanStart).toISOString(),
     scanEndsAt: new Date(runStart).toISOString()
   };
+}
+function processedTurnKeys(state, sessionKey) {
+  return new Set(Object.keys(state.processedTurns[sessionKey] ?? {}));
+}
+function recordProcessedTurns(state, sessionKey, turnKeys, decision, processedAt = (/* @__PURE__ */ new Date()).toISOString()) {
+  const turns = state.processedTurns[sessionKey] ??= {};
+  for (const turnKey of turnKeys) {
+    if (!/^[a-f0-9]{64}$/.test(turnKey)) throw new Error("\u56DE\u5408\u65AD\u70B9\u6307\u7EB9\u65E0\u6548\u3002");
+    turns[turnKey] ??= { decision, processedAt };
+  }
 }
 function threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
   if (updatedAt == null) return true;
@@ -5285,12 +5351,12 @@ var CodexAppServer = class {
   request(method, params, timeoutMs = 3e4) {
     if (!this.process) throw new Error("Codex app-server \u5C1A\u672A\u8FDE\u63A5\u3002");
     const id = this.nextId++;
-    return new Promise((resolve7, reject) => {
+    return new Promise((resolve9, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(createTimeoutError(method, timeoutMs));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve7, reject, timer });
+      this.pending.set(id, { resolve: resolve9, reject, timer });
       this.process.stdin.write(`${JSON.stringify({ method, id, params })}
 `);
     });
@@ -5368,7 +5434,7 @@ var CodexAppServer = class {
 // src/scan.ts
 import { createHash } from "node:crypto";
 import { existsSync as existsSync3 } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve as resolve3 } from "node:path";
+import { basename, dirname as dirname2, isAbsolute, relative, resolve as resolve3 } from "node:path";
 var secretPatterns = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/g,
   /\bBearer\s+[A-Za-z0-9._~-]{16,}\b/gi,
@@ -5507,7 +5573,7 @@ function nearestGitRoot(cwd) {
   let current = resolve3(cwd);
   for (; ; ) {
     if (existsSync3(resolve3(current, ".git"))) return current;
-    const parent = dirname(current);
+    const parent = dirname2(current);
     if (parent === current) return null;
     current = parent;
   }
@@ -5586,15 +5652,32 @@ function pathIsExcluded(cwd, excludedPaths) {
 function anonymousSessionKey(pluginInstanceId, sessionId) {
   return sha256(`partner-report/session/v1:${pluginInstanceId}:${sessionId}`);
 }
+function anonymousTurnKey(sessionKey, turn) {
+  return sha256(
+    JSON.stringify({
+      keyVersion: "1.0",
+      sessionKey,
+      turnId: turn.id,
+      occurredAt: turn.occurredAt,
+      userPrompt: turn.userPrompt,
+      assistantFinal: turn.assistantFinal
+    })
+  );
+}
 function buildSessionJob(input) {
   const normalized = normalizeProgressTurns(input.turns);
   if (isPluginAdministrationSession(normalized)) return null;
   const fallbackOccurredAt = toIso(input.updatedAt) ?? new Date(input.period.ends_at).toISOString();
+  const sessionKey = anonymousSessionKey(
+    input.pluginInstanceId,
+    input.sessionId
+  );
+  const alreadyProcessed = new Set(input.processedTurnKeys ?? []);
   const selected = selectPeriodTurns(
     normalized,
     input.period,
     fallbackOccurredAt
-  );
+  ).filter((turn) => !alreadyProcessed.has(anonymousTurnKey(sessionKey, turn)));
   if (selected.length === 0) return null;
   const project = mappedProject(
     input.cwd,
@@ -5612,10 +5695,7 @@ function buildSessionJob(input) {
     assistantFinal: turn.assistantFinal
   }));
   const title = safeText(input.title?.trim() || "Codex \u4F1A\u8BDD", 200);
-  const sessionKey = anonymousSessionKey(
-    input.pluginInstanceId,
-    input.sessionId
-  );
+  const turnKeys = selected.map((turn) => anonymousTurnKey(sessionKey, turn));
   const legacyContentHash = (legacyProject) => sha256(
     JSON.stringify({
       periodKey: input.period.period_key,
@@ -5639,8 +5719,7 @@ function buildSessionJob(input) {
   }
   const contentHash = sha256(
     JSON.stringify({
-      hashVersion: "2.0",
-      periodKey: input.period.period_key,
+      hashVersion: "3.0",
       turns
     })
   );
@@ -5653,6 +5732,7 @@ function buildSessionJob(input) {
   };
   return {
     sessionKey,
+    turnKeys,
     contentHash,
     compatibleContentHashes: [...compatibleContentHashes].filter(
       (hash) => hash !== contentHash
@@ -5758,12 +5838,12 @@ import {
   lstatSync,
   statSync as statSync2,
   realpathSync,
-  renameSync as renameSync2,
+  renameSync as renameSync3,
   writeFileSync as writeFileSync3,
   readFileSync as readFileSync3
 } from "node:fs";
 import { homedir as homedir2, tmpdir } from "node:os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
 function scopePath(directory = dataDirectory()) {
   return resolve4(directory, "project-scope.json");
 }
@@ -5775,7 +5855,7 @@ function canonicalPath(path) {
     let existingParent = absolute;
     const missingSegments = [];
     while (!existsSync4(existingParent)) {
-      const parent = dirname2(existingParent);
+      const parent = dirname3(existingParent);
       if (parent === existingParent) return absolute;
       missingSegments.unshift(basename2(existingParent));
       existingParent = parent;
@@ -5798,10 +5878,10 @@ function linkedWorktreeCommonRoot(markerPath) {
       readFileSync3(markerPath, "utf8")
     );
     if (!match?.[1]) return null;
-    const gitDirectory = canonicalPath(resolve4(dirname2(markerPath), match[1]));
-    const worktreesDirectory = dirname2(dirname2(gitDirectory));
+    const gitDirectory = canonicalPath(resolve4(dirname3(markerPath), match[1]));
+    const worktreesDirectory = dirname3(dirname3(gitDirectory));
     if (basename2(worktreesDirectory) !== ".git") return null;
-    return dirname2(worktreesDirectory);
+    return dirname3(worktreesDirectory);
   } catch {
     return null;
   }
@@ -5816,7 +5896,7 @@ function outermostGitRoot(cwd) {
       const validDirectory = lstatSync(marker).isDirectory() && (existsSync4(resolve4(marker, "HEAD")) || existsSync4(resolve4(marker, "config")));
       if (linkedRoot || validDirectory) outermost = linkedRoot ?? current;
     }
-    const parent = dirname2(current);
+    const parent = dirname3(current);
     if (parent === current) return outermost;
     current = parent;
   }
@@ -5960,7 +6040,7 @@ function saveLocalProjectScope(scope, directory = dataDirectory()) {
     mode: 384
   });
   chmodSync3(temporary, 384);
-  renameSync2(temporary, path);
+  renameSync3(temporary, path);
   chmodSync3(path, 384);
 }
 function mergeRemoteProjectScope(local, remote) {
@@ -6138,38 +6218,31 @@ function scopeIsActive(entry, now = /* @__PURE__ */ new Date()) {
     entry?.status === "allowed" && entry.effectiveFrom && new Date(entry.effectiveFrom).getTime() <= now.getTime()
   );
 }
-function scopeNeedsCurrentPeriodBackfill(entry, initializedAt, periodKey) {
-  if (entry.status !== "allowed" || entry.firstSeenPeriodKey !== periodKey || entry.backfilledPeriodKey === periodKey || !initializedAt)
-    return false;
-  return new Date(entry.firstSeenAt).getTime() > new Date(initializedAt).getTime();
-}
 function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__PURE__ */ new Date()) {
   const policies = new Map(entries.map((entry) => [entry.scopeKey, entry]));
-  return summaries.flatMap((summary) => {
-    const scopeKey = threadScopes.get(summary.id);
-    if (!scopeKey || !scopeIsActive(policies.get(scopeKey), now)) return [];
-    return [{ ...summary, scopeKey }];
-  });
+  return summaries.flatMap(
+    (summary) => {
+      const scopeKey = threadScopes.get(summary.id);
+      const policy = scopeKey ? policies.get(scopeKey) : void 0;
+      if (!scopeKey || !scopeIsActive(policy, now) || !policy?.effectiveFrom)
+        return [];
+      return [
+        { ...summary, scopeKey, collectionStartsAt: policy.effectiveFrom }
+      ];
+    }
+  );
 }
 
 // src/poll-wait.ts
-function decodeWaitPeriod(value) {
-  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return "unknown";
-  try {
-    return Buffer.from(value, "base64url").toString("utf8") || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 var MAX_BACKOFF_MS = 8e3;
 function defaultSleep(milliseconds, signal) {
-  return new Promise((resolve7) => {
-    if (signal?.aborted) return resolve7();
+  return new Promise((resolve9) => {
+    if (signal?.aborted) return resolve9();
     const timer = setTimeout(done, milliseconds);
     function done() {
       clearTimeout(timer);
       signal?.removeEventListener("abort", done);
-      resolve7();
+      resolve9();
     }
     signal?.addEventListener("abort", done, { once: true });
   });
@@ -6207,15 +6280,10 @@ async function waitForCondition(options) {
     return { status: "timed_out", attempt, lastErrorCode };
   return { status: "pending", attempt, lastErrorCode };
 }
-async function waitForConditionAndContinue(options, continueTask) {
-  const wait = await waitForCondition(options);
-  if (wait.status !== "confirmed") return { continued: false, wait };
-  return { continued: true, wait, value: await continueTask() };
-}
 
 // src/project-description.ts
 import { createHash as createHash2 } from "node:crypto";
-import { lstatSync as lstatSync2, readFileSync as readFileSync4, readdirSync } from "node:fs";
+import { lstatSync as lstatSync2, readFileSync as readFileSync4, readdirSync as readdirSync2 } from "node:fs";
 import { resolve as resolve5 } from "node:path";
 var MAX_FILE_BYTES = 24e3;
 var MAX_SOURCE_CHARACTERS = 48e3;
@@ -6251,7 +6319,7 @@ function sha2562(value) {
 }
 function safeDirectoryEntries(root) {
   try {
-    return readdirSync(root, { withFileTypes: true });
+    return readdirSync2(root, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -6341,9 +6409,233 @@ function projectDescriptionIsChinese(description) {
   return typeof description === "string" && /[\u3400-\u4dbf\u4e00-\u9fff]/u.test(description);
 }
 
+// src/scheduled-task.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import {
+  chmodSync as chmodSync4,
+  existsSync as existsSync5,
+  linkSync,
+  mkdirSync as mkdirSync2,
+  readFileSync as readFileSync5,
+  readdirSync as readdirSync3,
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync4
+} from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { resolve as resolve6 } from "node:path";
+var SCHEDULED_COLLECTION_TASK_ID = "partner-report-daily-collection";
+function topLevelString(source, key) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = source.match(
+    new RegExp(`^${escapedKey}\\s*=\\s*("(?:[^"\\\\]|\\\\.)*")\\s*$`, "m")
+  );
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+function existingTaskId(automationsRoot) {
+  if (!existsSync5(automationsRoot)) return null;
+  for (const entry of readdirSync3(automationsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const taskPath = resolve6(automationsRoot, entry.name, "automation.toml");
+    if (!existsSync5(taskPath)) continue;
+    let source;
+    try {
+      source = readFileSync5(taskPath, "utf8");
+    } catch {
+      continue;
+    }
+    if (topLevelString(source, "name") !== SCHEDULED_COLLECTION_TASK.name)
+      continue;
+    return topLevelString(source, "id") ?? entry.name;
+  }
+  return null;
+}
+function tomlString(value) {
+  return JSON.stringify(value);
+}
+function renderTask(taskId, timestamp3) {
+  return [
+    "version = 1",
+    `id = ${tomlString(taskId)}`,
+    'kind = "cron"',
+    `name = ${tomlString(SCHEDULED_COLLECTION_TASK.name)}`,
+    `prompt = ${tomlString(SCHEDULED_COLLECTION_TASK.prompt)}`,
+    'status = "ACTIVE"',
+    `rrule = ${tomlString(SCHEDULED_COLLECTION_TASK.schedule.rrule)}`,
+    `model = ${tomlString(SCHEDULED_COLLECTION_TASK.model)}`,
+    `reasoning_effort = ${tomlString(SCHEDULED_COLLECTION_TASK.reasoningEffort)}`,
+    'execution_environment = "local"',
+    'target = { type = "projectless" }',
+    'cwds = ["~"]',
+    `created_at = ${timestamp3}`,
+    `updated_at = ${timestamp3}`,
+    ""
+  ].join("\n");
+}
+function taskIdForCreate(automationsRoot, uniqueId) {
+  const preferred = resolve6(automationsRoot, SCHEDULED_COLLECTION_TASK_ID);
+  if (!existsSync5(preferred)) return SCHEDULED_COLLECTION_TASK_ID;
+  return `${SCHEDULED_COLLECTION_TASK_ID}-${uniqueId().slice(0, 8)}`;
+}
+function installScheduledCollectionTask(options = {}) {
+  try {
+    const codexHome = resolve6(
+      options.codexHome ?? process.env.CODEX_HOME ?? resolve6(homedir3(), ".codex")
+    );
+    const automationsRoot = resolve6(codexHome, "automations");
+    const existing = existingTaskId(automationsRoot);
+    if (existing) return { status: "existing", taskId: existing };
+    mkdirSync2(automationsRoot, { recursive: true, mode: 448 });
+    const uniqueId = options.uniqueId ?? randomUUID2;
+    const taskId = taskIdForCreate(automationsRoot, uniqueId);
+    const taskDirectory = resolve6(automationsRoot, taskId);
+    mkdirSync2(taskDirectory, { mode: 448 });
+    const target = resolve6(taskDirectory, "automation.toml");
+    const temporary = resolve6(taskDirectory, `.automation-${uniqueId()}.tmp`);
+    try {
+      writeFileSync4(temporary, renderTask(taskId, (options.now ?? Date.now)()), {
+        encoding: "utf8",
+        mode: 384,
+        flag: "wx"
+      });
+      linkSync(temporary, target);
+      chmodSync4(target, 384);
+    } finally {
+      rmSync2(temporary, { force: true });
+    }
+    return { status: "created", taskId };
+  } catch (error) {
+    return {
+      status: "failed",
+      errorCode: "SCHEDULED_TASK_CREATE_FAILED",
+      message: error instanceof Error ? error.message : "Codex Scheduled Task \u521B\u5EFA\u5931\u8D25\u3002"
+    };
+  }
+}
+
+// src/telemetry.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+import {
+  chmodSync as chmodSync5,
+  existsSync as existsSync6,
+  readFileSync as readFileSync6,
+  renameSync as renameSync4,
+  writeFileSync as writeFileSync5
+} from "node:fs";
+import { resolve as resolve7 } from "node:path";
+var OUTBOX_FILE = "plugin-log-outbox.json";
+var MAX_PENDING_EVENTS = 2e3;
+var BATCH_SIZE = 50;
+function outboxPath() {
+  return resolve7(dataDirectory(), OUTBOX_FILE);
+}
+function readOutbox() {
+  const path = outboxPath();
+  if (!existsSync6(path)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync6(path, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function writeOutbox(events) {
+  const path = outboxPath();
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync5(temporary, `${JSON.stringify(events, null, 2)}
+`, {
+    mode: 384
+  });
+  chmodSync5(temporary, 384);
+  renameSync4(temporary, path);
+  chmodSync5(path, 384);
+}
+function safeDetails(details) {
+  if (!details) return void 0;
+  return Object.fromEntries(
+    Object.entries(details).filter(
+      ([key]) => !/path|session|transcript|prompt|token|secret|authorization|credential/i.test(
+        key
+      )
+    )
+  );
+}
+function tryWriteOutbox(events) {
+  try {
+    writeOutbox(events);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function enqueuePluginLog(input) {
+  try {
+    if (!loadConfig(false)) return null;
+    const details = safeDetails(input.details);
+    const event = {
+      eventId: input.eventId ?? randomUUID3(),
+      level: input.level,
+      stage: input.stage.slice(0, 80),
+      eventCode: input.eventCode.slice(0, 120),
+      message: input.message.slice(0, 4e3),
+      occurredAt: input.occurredAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+      retryable: input.retryable ?? false,
+      ...input.runId ? { runId: input.runId } : {},
+      ...input.stack ? { stack: input.stack.slice(0, 16e3) } : {},
+      ...input.attempt ? { attempt: input.attempt } : {},
+      ...input.durationMs !== void 0 ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {},
+      ...input.requestId ? { requestId: input.requestId } : {},
+      ...details ? { details } : {}
+    };
+    const events = [...readOutbox(), event].slice(-MAX_PENDING_EVENTS);
+    return tryWriteOutbox(events) ? event : null;
+  } catch {
+    return null;
+  }
+}
+async function flushPluginLogs() {
+  if (!loadConfig(false)) return { sent: 0, pending: 0 };
+  let events;
+  try {
+    events = readOutbox();
+  } catch {
+    return { sent: 0, pending: 0 };
+  }
+  let sent = 0;
+  while (events.length > 0) {
+    const batch = events.slice(0, BATCH_SIZE);
+    try {
+      await authenticatedRequest("/v1/plugin-instances/me/log-events", {
+        method: "POST",
+        body: JSON.stringify({ events: batch })
+      });
+    } catch {
+      return { sent, pending: events.length };
+    }
+    const delivered = new Set(batch.map((event) => event.eventId));
+    events = readOutbox().filter((event) => !delivered.has(event.eventId));
+    if (!tryWriteOutbox(events)) return { sent, pending: events.length };
+    sent += batch.length;
+  }
+  return { sent, pending: 0 };
+}
+function pluginErrorDetails(error) {
+  const value = error;
+  return {
+    code: value && value.code !== void 0 ? String(value.code) : "PLUGIN_COMMAND_FAILED",
+    status: value && typeof value.status === "number" ? value.status : void 0,
+    requestId: value && typeof value.requestId === "string" ? value.requestId : void 0,
+    details: value && value.details && typeof value.details === "object" ? value.details : void 0
+  };
+}
+
 // src/cli.ts
 var RUN_PREFIX = "partner-report-run-";
-var POLL_TOTAL_MS = 10 * 6e4;
+var RUNS_DIRECTORY = "collection-runs";
 var POLL_SEGMENT_MS = 45e3;
 function option(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -6354,6 +6646,34 @@ function flag(name) {
   return process.argv.includes(`--${name}`);
 }
 function output(value) {
+  if (value && typeof value === "object" && "status" in value && typeof value.status === "string") {
+    const event = value;
+    let runId;
+    if (typeof event.runPath === "string") {
+      try {
+        runId = readRun(event.runPath).manifest.runId;
+      } catch {
+        runId = void 0;
+      }
+    }
+    enqueuePluginLog({
+      runId,
+      level: value.status.includes("failed") || value.status === "error" ? "error" : value.status.includes("waiting") || value.status.includes("deferred") ? "warning" : "info",
+      stage: (process.argv[2] ?? "plugin").replaceAll("-", "_"),
+      eventCode: value.status,
+      message: `\u63D2\u4EF6\u547D\u4EE4\u8FD4\u56DE\u72B6\u6001\uFF1A${value.status}`,
+      details: {
+        periodKey: event.periodKey,
+        queued: event.queued,
+        processed: event.processed,
+        uploaded: event.uploaded,
+        ignored: event.ignored,
+        skipped: event.skipped,
+        failedExtract: event.failedExtract,
+        checkpointAdvanced: event.checkpointAdvanced
+      }
+    });
+  }
   process.stdout.write(`${JSON.stringify(value, null, 2)}
 `);
 }
@@ -6505,7 +6825,7 @@ async function setServerUrl() {
 function authRecoveryOutput(expiresAt) {
   output({
     status: "auth_recovery_required",
-    message: "\u8FDE\u63A5\u6062\u590D\u786E\u8BA4\u5361\u5DF2\u53D1\u9001\u5230\u98DE\u4E66\u3002\u786E\u8BA4\u540E\uFF0C\u4E0B\u6B21\u8FD0\u884C\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002",
+    message: "\u8FDE\u63A5\u6062\u590D\u7533\u8BF7\u5DF2\u53D1\u9001\u5230\u5DE5\u4F5C\u770B\u677F\u5E94\u7528\u3002\u786E\u8BA4\u540E\uFF0C\u4E0B\u6B21\u8FD0\u884C\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002",
     expiresAt,
     checkpointAdvanced: false,
     counts: {
@@ -6605,7 +6925,7 @@ async function resumeAuthRecovery() {
   await performConnectivityTest(tokens);
   return "continue";
 }
-function connectedOutput(partnerId, deviceName, connectivity, projectScope) {
+function connectedOutput(partnerId, deviceName, connectivity, projectScope, scheduledTaskInstallation) {
   const config = loadConfig();
   output({
     status: projectScope?.status ?? "connected",
@@ -6615,8 +6935,9 @@ function connectedOutput(partnerId, deviceName, connectivity, projectScope) {
     connectivity,
     ...projectScope ?? {},
     scheduledTask: SCHEDULED_COLLECTION_TASK,
+    scheduledTaskInstallation,
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
-    nextStep: "\u9996\u6B21\u8FDE\u63A5\u65F6\u521B\u5EFA\u7F3A\u5931\u7684\u540C\u540D Codex Scheduled Task\uFF1B\u5DF2\u6709\u4EFB\u52A1\u4FDD\u6301\u4E0D\u53D8\u3002"
+    nextStep: scheduledTaskInstallation?.status === "failed" ? "\u7ED1\u5B9A\u5DF2\u4FDD\u7559\uFF0C\u4F46 Codex Scheduled Task \u81EA\u52A8\u521B\u5EFA\u5931\u8D25\uFF1B\u4FEE\u590D\u672C\u5730\u5199\u5165\u6743\u9650\u540E\u8FD0\u884C\u8FDE\u63A5\u68C0\u67E5\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002" : "Codex Scheduled Task \u5DF2\u7531\u63D2\u4EF6\u81EA\u52A8\u786E\u4FDD\u5B58\u5728\uFF1B\u5DF2\u6709\u540C\u540D\u4EFB\u52A1\u4FDD\u6301\u4E0D\u53D8\u3002"
   });
 }
 async function discoverProjectScopeAfterBinding() {
@@ -6716,6 +7037,7 @@ async function connect() {
       })
     }
   );
+  clearPluginUnboundMarker();
   const existing = loadConfig(false);
   if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
     removeSecrets(existing.pluginInstanceId);
@@ -6735,8 +7057,15 @@ async function connect() {
     excludedPaths: existing?.excludedPaths ?? []
   });
   const connectivity = await performConnectivityTest(tokens);
+  const scheduledTaskInstallation = installScheduledCollectionTask();
   const projectScope = await discoverProjectScopeAfterBinding();
-  connectedOutput(tokens.partnerId, deviceName, connectivity, projectScope);
+  connectedOutput(
+    tokens.partnerId,
+    deviceName,
+    connectivity,
+    projectScope,
+    scheduledTaskInstallation
+  );
 }
 async function connectivityTest() {
   const config = loadConfig();
@@ -6748,6 +7077,7 @@ async function connectivityTest() {
       capabilityVersion: "1.0"
     } : void 0
   );
+  const scheduledTaskInstallation = installScheduledCollectionTask();
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope()
@@ -6760,7 +7090,8 @@ async function connectivityTest() {
     policy.partnerId,
     config.deviceName,
     connectivity,
-    projectScope
+    projectScope,
+    scheduledTaskInstallation
   );
 }
 function summaryFromThread(value) {
@@ -6811,37 +7142,7 @@ function projectScopeApprovalRequired(periodKey, localScope) {
     ).length,
     read: 0,
     uploaded: 0,
-    message: "\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u53D1\u9001\uFF0C\u9879\u76EE\u91C7\u96C6\u8303\u56F4\u5C1A\u672A\u5BA1\u6279\uFF0C\u672A\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u3002\u8BF7\u5728\u98DE\u4E66\u5361\u7247\u4E2D\u5B8C\u6210\u5BA1\u6279\u3002"
-  };
-}
-function projectScopeCardWaitCommand(input) {
-  return [
-    "project-scope-card-wait",
-    `--period-key ${Buffer.from(input.periodKey, "utf8").toString("base64url")}`,
-    `--version ${input.version}`,
-    `--deadline ${Math.trunc(input.deadlineAt)}`,
-    `--attempt ${Math.max(0, Math.trunc(input.attempt))}`,
-    ...flag("force") ? ["--force"] : []
-  ].join(" ");
-}
-function projectScopeCardDeliveryPending(input) {
-  const deadlineAt = input.deadlineAt ?? Date.now() + POLL_TOTAL_MS;
-  const attempt = input.attempt ?? 0;
-  return {
-    status: "project_scope_card_delivery_pending",
-    waiting: true,
-    periodKey: input.periodKey,
-    policyVersion: input.version,
-    read: 0,
-    uploaded: 0,
-    ...input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {},
-    nextCommand: projectScopeCardWaitCommand({
-      periodKey: input.periodKey,
-      version: input.version,
-      deadlineAt,
-      attempt
-    }),
-    message: "\u9879\u76EE\u8303\u56F4\u5361\u5DF2\u5E42\u7B49\u767B\u8BB0\uFF0C\u5F53\u524D\u4EFB\u52A1\u6B63\u5728\u7B49\u5F85\u98DE\u4E66\u786E\u8BA4\u6295\u9012\u6210\u529F\u3002"
+    message: "\u53D1\u73B0\u4E86\u5C1A\u672A\u5BA1\u6279\u7684\u9879\u76EE\uFF0C\u672A\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u3002\u8BF7\u5728\u5DE5\u4F5C\u770B\u677F\u5E94\u7528\u4E2D\u5B8C\u6210\u91C7\u96C6\u6743\u9650\u5BA1\u6279\u3002"
   };
 }
 async function projectScopePendingStatus(periodKey, localScope, remind = false) {
@@ -6865,131 +7166,67 @@ async function projectScopePendingStatus(periodKey, localScope, remind = false) 
       body: JSON.stringify({ periodKey })
     });
   }
-  const cardStatus = await fetchProjectScopeCardStatus(
-    periodKey,
-    localScope.version
-  ).catch((error) => ({
-    status: "pending",
-    policyVersion: localScope.version,
-    retryAfterSeconds: 3,
-    lastErrorCode: error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
-  }));
-  if (cardStatus.status !== "sent")
-    return projectScopeCardDeliveryPending({
-      periodKey,
-      version: localScope.version,
-      lastErrorCode: "lastErrorCode" in cardStatus ? cardStatus.lastErrorCode : null
-    });
   return projectScopeApprovalRequired(periodKey, localScope);
 }
-async function fetchProjectScopeCardStatus(periodKey, version, init = {}) {
-  const query = new URLSearchParams({
-    periodKey,
-    version: String(version)
-  });
-  return authenticatedRequest(
-    `/v1/project-scope/card-status?${query.toString()}`,
-    init
-  );
-}
-async function projectScopeCardWait() {
-  const periodKey = decodeWaitPeriod(option("period-key"));
-  const version = Number(option("version"));
-  if (periodKey === "unknown" || !Number.isInteger(version) || version < 1)
-    throw new Error("\u9879\u76EE\u8303\u56F4\u5361\u7B49\u5F85\u53C2\u6570\u65E0\u6548\u3002");
-  const rawDeadline = Number(option("deadline"));
-  const deadlineAt = Number.isFinite(rawDeadline) ? Math.min(rawDeadline, Date.now() + POLL_TOTAL_MS) : Date.now() + POLL_TOTAL_MS;
-  const rawAttempt = Number(option("attempt", "0"));
-  const attempt = Number.isInteger(rawAttempt) && rawAttempt >= 0 ? rawAttempt : 0;
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  process.once("SIGINT", cancel);
-  process.once("SIGTERM", cancel);
-  try {
-    const flow = await waitForConditionAndContinue(
-      {
-        check: async () => {
-          const requestTimeoutMs = Math.max(
-            1,
-            Math.min(15e3, deadlineAt - Date.now())
-          );
-          const signal = AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(requestTimeoutMs)
-          ]);
-          return (await fetchProjectScopeCardStatus(periodKey, version, { signal })).status === "sent";
-        },
-        deadlineAt,
-        segmentDurationMs: POLL_SEGMENT_MS,
-        attempt,
-        signal: controller.signal,
-        errorCode: (error) => error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
-      },
-      async () => {
-        const remote = await fetchProjectScope();
-        if (remote.initialized) return collectStart();
-        const local = cacheRemoteProjectScope(remote);
-        return output(projectScopeApprovalRequired(periodKey, local.scope));
-      }
-    );
-    if (flow.continued) return flow.value;
-    const result = flow.wait;
-    if (result.status === "pending")
-      return output(
-        projectScopeCardDeliveryPending({
-          periodKey,
-          version,
-          deadlineAt,
-          attempt: result.attempt,
-          lastErrorCode: result.lastErrorCode
-        })
-      );
-    if (result.status === "cancelled")
-      return output({
-        status: "project_scope_card_wait_cancelled",
-        waiting: false,
-        read: 0,
-        uploaded: 0,
-        message: "\u5DF2\u53D6\u6D88\u9879\u76EE\u8303\u56F4\u5361\u6295\u9012\u7B49\u5F85\uFF0C\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002"
-      });
-    return output({
-      status: "project_scope_card_wait_timed_out",
-      waiting: false,
-      read: 0,
-      uploaded: 0,
-      ...result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {},
-      message: "\u5F53\u524D\u6267\u884C\u73AF\u5883\u7684\u5361\u7247\u6295\u9012\u7B49\u5F85\u65F6\u95F4\u5DF2\u5230\uFF0C\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\uFF1B\u4E0B\u6B21\u91C7\u96C6\u4F1A\u7EE7\u7EED\u68C0\u67E5\u3002"
-    });
-  } finally {
-    process.removeListener("SIGINT", cancel);
-    process.removeListener("SIGTERM", cancel);
-  }
-}
 function createRun(manifest) {
-  const runDirectory = mkdtempSync(resolve6(tmpdir2(), RUN_PREFIX));
-  chmodSync4(runDirectory, 448);
-  const runPath = resolve6(runDirectory, "run.json");
-  writeFileSync4(runPath, `${JSON.stringify(manifest, null, 2)}
+  const root = resolve8(dataDirectory(), RUNS_DIRECTORY);
+  mkdirSync3(root, { recursive: true, mode: 448 });
+  chmodSync6(root, 448);
+  const runDirectory = resolve8(root, `${RUN_PREFIX}${manifest.runId}`);
+  mkdirSync3(runDirectory, { mode: 448 });
+  chmodSync6(runDirectory, 448);
+  const runPath = resolve8(runDirectory, "run.json");
+  writeFileSync6(runPath, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync4(runPath, 384);
+  chmodSync6(runPath, 384);
   return runPath;
 }
 function assertRunPath(runPath) {
-  const absolute = resolve6(runPath);
-  const runDirectory = dirname3(absolute);
-  const outsideTemp = relative3(resolve6(tmpdir2()), runDirectory).startsWith(
-    ".."
-  );
-  if (outsideTemp || !basename3(runDirectory).startsWith(RUN_PREFIX) || basename3(absolute) !== "run.json") {
+  const absolute = resolve8(runPath);
+  const runDirectory = dirname4(absolute);
+  const stableRoot = resolve8(dataDirectory(), RUNS_DIRECTORY);
+  const withinStableRoot = !relative3(stableRoot, runDirectory).startsWith("..");
+  const withinLegacyTemp = !relative3(
+    resolve8(tmpdir2()),
+    runDirectory
+  ).startsWith("..");
+  if (!withinStableRoot && !withinLegacyTemp || !basename3(runDirectory).startsWith(RUN_PREFIX) || basename3(absolute) !== "run.json") {
     throw new Error("Run \u8DEF\u5F84\u4E0D\u5C5E\u4E8E Partner Report \u4E34\u65F6\u76EE\u5F55\u3002");
   }
   return absolute;
 }
+function storedRuns(pluginInstanceId) {
+  const root = resolve8(dataDirectory(), RUNS_DIRECTORY);
+  if (!existsSync7(root))
+    return [];
+  return readdirSync4(root, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory() || !entry.name.startsWith(RUN_PREFIX)) return [];
+    const path = resolve8(root, entry.name, "run.json");
+    try {
+      const manifest = JSON.parse(readFileSync7(path, "utf8"));
+      return manifest.pluginInstanceId === pluginInstanceId ? [{ path, manifest }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+function takeResumableRun(pluginInstanceId, periodKey) {
+  let resumable = null;
+  for (const run of storedRuns(pluginInstanceId)) {
+    if (run.manifest.period?.period_key === periodKey && !run.manifest.stopReason) {
+      if (!resumable || run.manifest.createdAt > resumable.manifest.createdAt)
+        resumable = run;
+      continue;
+    }
+    rmSync3(dirname4(run.path), { recursive: true, force: true });
+  }
+  return resumable;
+}
 function readRun(runPath) {
   const absolute = assertRunPath(runPath);
-  const manifest = JSON.parse(readFileSync5(absolute, "utf8"));
+  const manifest = JSON.parse(readFileSync7(absolute, "utf8"));
   const config = loadConfig();
   if (!["1.0", "1.1", "1.2", "1.3"].includes(manifest.schemaVersion) || manifest.pluginInstanceId !== config.pluginInstanceId) {
     throw new Error("Run \u6E05\u5355\u65E0\u6548\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002");
@@ -7014,21 +7251,27 @@ function readRun(runPath) {
   return { absolute, manifest };
 }
 function saveRun(runPath, manifest) {
-  writeFileSync4(runPath, `${JSON.stringify(manifest, null, 2)}
+  const temporary = resolve8(
+    dirname4(runPath),
+    `.run.${process.pid}.${Date.now()}.tmp`
+  );
+  writeFileSync6(temporary, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync4(runPath, 384);
+  chmodSync6(temporary, 384);
+  renameSync5(temporary, runPath);
+  chmodSync6(runPath, 384);
 }
 function writeJob(runPath, jobId, modelInput) {
-  const runDirectory = dirname3(runPath);
-  const inputPath = resolve6(runDirectory, `${jobId}-input.json`);
-  const resultPath = resolve6(runDirectory, `${jobId}-result.json`);
-  writeFileSync4(inputPath, `${JSON.stringify(modelInput, null, 2)}
+  const runDirectory = dirname4(runPath);
+  const inputPath = resolve8(runDirectory, `${jobId}-input.json`);
+  const resultPath = resolve8(runDirectory, `${jobId}-result.json`);
+  writeFileSync6(inputPath, `${JSON.stringify(modelInput, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync4(inputPath, 384);
+  chmodSync6(inputPath, 384);
   return { inputPath, resultPath };
 }
 async function postCollectionStatus(config, manifest, phase) {
@@ -7071,6 +7314,27 @@ async function postCollectionStatus(config, manifest, phase) {
       coverage
     })
   });
+  enqueuePluginLog({
+    runId: manifest.runId,
+    level: checkpointEligible ? "info" : "warning",
+    stage: "collection",
+    eventCode: `collection.${phase}`,
+    message: phase === "completed" ? "\u672C\u6B21\u91C7\u96C6\u5DF2\u5B8C\u6210\u5E76\u4E0A\u62A5\u7ED3\u679C\u3002" : "\u672C\u6B21\u91C7\u96C6\u5DF2\u5F00\u59CB\u3002",
+    details: {
+      periodKey: manifest.period.period_key,
+      discovered: counts.discovered,
+      eligible: counts.eligible,
+      read: counts.read,
+      uploaded: counts.uploaded,
+      unchanged: counts.unchanged,
+      deferred: counts.deferred,
+      skipped: counts.skipped,
+      failedRead: counts.failedRead,
+      failedExtract: counts.failedExtract,
+      checkpointEligible
+    }
+  });
+  await flushPluginLogs();
 }
 async function collectStart() {
   const config = loadConfig();
@@ -7089,6 +7353,30 @@ async function collectStart() {
   );
   const remoteScope = synchronizedScope.remote;
   let localScope = synchronizedScope.scope;
+  const resumable = takeResumableRun(
+    config.pluginInstanceId,
+    policy.currentPeriod.period_key
+  );
+  if (resumable) {
+    acquireCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
+    try {
+      const { absolute, manifest: manifest2 } = readRun(resumable.path);
+      manifest2.deadlineAt = collectionDeadline((/* @__PURE__ */ new Date()).toISOString());
+      saveRun(absolute, manifest2);
+      await postCollectionStatus(config, manifest2, "started");
+      return output({
+        status: "resumed",
+        runPath: absolute,
+        periodKey: manifest2.period.period_key,
+        queued: manifest2.queue.length,
+        processed: manifest2.cursor,
+        nextCommand: `collect-next --run ${absolute}`
+      });
+    } catch (error) {
+      releaseCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
+      throw error;
+    }
+  }
   if (!remoteScope.initialized && localScope.entries.some((entry) => entry.status === "pending")) {
     return output(
       await projectScopePendingStatus(
@@ -7098,7 +7386,7 @@ async function collectStart() {
       )
     );
   }
-  const runId = randomUUID2();
+  const runId = randomUUID4();
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
   acquireCollectionLease(config.pluginInstanceId, runId);
   let localState;
@@ -7124,9 +7412,10 @@ async function collectStart() {
   let summaries;
   let metadataEligible;
   try {
+    const metadataStartsAt = localScope.initialized ? window.scanStartsAt : initialProjectScopeStartAt(runStartedAt);
     ({ summaries, metadataEligible } = await listCollectionThreadMetadata(
       config,
-      policy.currentPeriod.starts_at
+      metadataStartsAt
     ));
   } catch (error) {
     releaseCollectionLease(config.pluginInstanceId, runId);
@@ -7241,37 +7530,7 @@ async function collectStart() {
     localAccepted: localState.acceptedSessions,
     localIgnored: localState.ignoredSessions
   });
-  const fullPeriodSummaries = metadataEligible.filter(
-    (summary) => threadIsInKnownScanWindow(
-      summary.updatedAt,
-      policy.currentPeriod.starts_at,
-      runStartedAt
-    )
-  );
-  const scopeBackfillKeys = new Set(
-    localScope.entries.filter(
-      (entry) => scopeNeedsCurrentPeriodBackfill(
-        entry,
-        localScope.initializedAt,
-        policy.currentPeriod.period_key
-      )
-    ).map((entry) => entry.scopeKey)
-  );
-  const fullPeriodQueue = authorizedProjectThreads(
-    fullPeriodSummaries,
-    allThreadDiscovery.threadScopes,
-    localScope.entries
-  ).filter((summary) => scopeBackfillKeys.has(summary.scopeKey)).map((summary) => ({
-    ...summary,
-    collectionStartsAt: policy.currentPeriod.starts_at
-  }));
   const queue = [...regularQueue];
-  const queuedIds = new Set(queue.map((summary) => summary.id));
-  for (const summary of fullPeriodQueue) {
-    if (queuedIds.has(summary.id)) continue;
-    queue.push(summary);
-    queuedIds.add(summary.id);
-  }
   const inWindowIds = new Set(inWindow.map((summary) => summary.id));
   const queuedOutsideWindow = queue.filter(
     (summary) => !inWindowIds.has(summary.id)
@@ -7317,10 +7576,7 @@ async function collectStart() {
     outcomes: [],
     approvalWait: null,
     endOfRunScopeScan: {
-      completed: false,
-      cardPolicyVersion: null,
-      cardDeliveryDeadlineAt: null,
-      cardDeliveryAttempt: 0
+      completed: false
     },
     projectDescriptionScan: {
       initialized: false,
@@ -7330,15 +7586,14 @@ async function collectStart() {
       generated: 0,
       unchanged: 0,
       failed: 0
-    },
-    scopeBackfillKeys: [...scopeBackfillKeys]
+    }
   };
   let runPath = null;
   try {
     runPath = createRun(manifest);
     await postCollectionStatus(config, manifest, "started");
   } catch (error) {
-    if (runPath) rmSync(dirname3(runPath), { recursive: true, force: true });
+    if (runPath) rmSync3(dirname4(runPath), { recursive: true, force: true });
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
   }
@@ -7364,7 +7619,7 @@ function currentJobOutput(runPath, current) {
     jobId: current.jobId,
     inputPath: current.inputPath,
     resultPath: current.resultPath,
-    resultSchema: resolve6(
+    resultSchema: resolve8(
       import.meta.dirname,
       "../schemas/session-extraction-result-v1.json"
     ),
@@ -7417,19 +7672,6 @@ async function finishRun(runPath, manifest, config) {
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
     saveCollectionState(state);
-    const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
-    if (backfillKeys.size > 0) {
-      const local = inspectLocalProjectScope(manifest.pluginInstanceId);
-      if (local.state === "valid") {
-        local.scope.entries = local.scope.entries.map(
-          (entry) => backfillKeys.has(entry.scopeKey) ? {
-            ...entry,
-            backfilledPeriodKey: manifest.period.period_key
-          } : entry
-        );
-        saveLocalProjectScope(local.scope);
-      }
-    }
   }
   const summary = {
     status: "completed",
@@ -7450,7 +7692,7 @@ async function finishRun(runPath, manifest, config) {
     ...manifest.counts
   };
   releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
-  rmSync(dirname3(runPath), { recursive: true, force: true });
+  rmSync3(dirname4(runPath), { recursive: true, force: true });
   output(summary);
 }
 function completionReview(manifest) {
@@ -7481,7 +7723,7 @@ function projectDescriptionJobOutput(runPath, current) {
     projectName: current.projectName,
     inputPath: current.inputPath,
     resultPath: current.resultPath,
-    resultSchema: resolve6(
+    resultSchema: resolve8(
       import.meta.dirname,
       "../schemas/project-description-result-v1.json"
     ),
@@ -7545,7 +7787,7 @@ async function continueProjectDescriptionScan(runPath, manifest) {
   }
   const next = scan.queue[scan.cursor++];
   if (!next) return false;
-  const jobId = `project-description-${randomUUID2()}`;
+  const jobId = `project-description-${randomUUID4()}`;
   const paths = writeJob(runPath, jobId, next.modelInput);
   scan.current = { ...next, jobId, ...paths, failures: 0 };
   saveRun(runPath, manifest);
@@ -7561,10 +7803,10 @@ async function submitProjectDescription() {
   const scan = manifest.projectDescriptionScan;
   const current = scan.current;
   if (!current) throw new Error("\u5F53\u524D\u6CA1\u6709\u5F85\u63D0\u4EA4\u7684\u9879\u76EE\u63CF\u8FF0 Job\u3002");
-  if (resolve6(resultPath) !== resolve6(current.resultPath))
+  if (resolve8(resultPath) !== resolve8(current.resultPath))
     throw new Error("\u9879\u76EE\u63CF\u8FF0\u7ED3\u679C\u8DEF\u5F84\u4E0E\u5F53\u524D Job \u4E0D\u5339\u914D\u3002");
   try {
-    const raw = JSON.parse(readFileSync5(current.resultPath, "utf8"));
+    const raw = JSON.parse(readFileSync7(current.resultPath, "utf8"));
     const result = projectDescriptionResultSchema.parse(raw);
     if (!projectDescriptionIsChinese(result.description))
       throw new Error("PROJECT_DESCRIPTION_CHINESE_REQUIRED");
@@ -7636,7 +7878,19 @@ async function continueScopeApprovalWait(runPath, manifest) {
     for (const summary of wait.deferredQueue) {
       if (!approvedKeys.has(summary.scopeKey) || queuedIds.has(summary.id))
         continue;
-      manifest.queue.push(summary);
+      const effectiveFrom = local.entries.find(
+        (entry) => entry.scopeKey === summary.scopeKey
+      )?.effectiveFrom;
+      if (!effectiveFrom) continue;
+      manifest.queue.push({
+        ...summary,
+        collectionStartsAt: new Date(
+          Math.max(
+            new Date(manifest.period.starts_at).getTime(),
+            new Date(effectiveFrom).getTime()
+          )
+        ).toISOString()
+      });
       queuedIds.add(summary.id);
       appended += 1;
       if (summary.initialCountBucket === "excluded" || summary.countedAsExcluded === true)
@@ -7648,9 +7902,6 @@ async function continueScopeApprovalWait(runPath, manifest) {
         );
     }
     if (approvedKeys.size > 0) {
-      const backfillKeys = new Set(manifest.scopeBackfillKeys ?? []);
-      for (const scopeKey of approvedKeys) backfillKeys.add(scopeKey);
-      manifest.scopeBackfillKeys = [...backfillKeys];
       manifest.deadlineAt = collectionDeadline((/* @__PURE__ */ new Date()).toISOString());
       manifest.projectDescriptionScan = {
         initialized: false,
@@ -7803,7 +8054,7 @@ async function startEndOfRunScopeScan(runPath, manifest) {
     ).map((summary) => summary.id)
   );
   const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
-  const reportPeriodStartsAt = manifest.reportPeriodStartsAt ?? manifest.period.starts_at;
+  const reportPeriodStartsAt = manifest.period.starts_at;
   const collectionEndsAt = new Date(
     Math.min(
       new Date(manifest.reportPeriodEndsAt ?? scanCompletedAt).getTime(),
@@ -7825,7 +8076,7 @@ async function startEndOfRunScopeScan(runPath, manifest) {
         {
           ...summary,
           scopeKey,
-          collectionStartsAt: reportPeriodStartsAt,
+          collectionStartsAt: manifest.period.starts_at,
           collectionEndsAt,
           ...initialThreadIds.has(summary.id) ? {
             initialCountBucket: inOriginalWindow.has(summary.id) ? "excluded" : "outsideWindow"
@@ -7841,51 +8092,9 @@ async function startEndOfRunScopeScan(runPath, manifest) {
     deferredQueue
   };
   scan.completed = true;
-  scan.cardPolicyVersion = registeredScope.version;
-  scan.cardDeliveryDeadlineAt = Date.now() + POLL_TOTAL_MS;
+  manifest.approvalWait.deadlineAt = projectScopeApprovalDeadline();
   saveRun(runPath, manifest);
-  return continueEndOfRunCardDeliveryWait(runPath, manifest);
-}
-async function continueEndOfRunCardDeliveryWait(runPath, manifest) {
-  const scan = manifest.endOfRunScopeScan;
-  const wait = manifest.approvalWait;
-  if (!scan?.cardPolicyVersion || !scan.cardDeliveryDeadlineAt || !wait)
-    return false;
-  const result = await waitForCondition({
-    check: async () => (await fetchProjectScopeCardStatus(
-      manifest.period.period_key,
-      scan.cardPolicyVersion
-    )).status === "sent",
-    deadlineAt: scan.cardDeliveryDeadlineAt,
-    segmentDurationMs: POLL_SEGMENT_MS,
-    attempt: scan.cardDeliveryAttempt,
-    errorCode: (error) => error instanceof HttpError ? error.code : "PROJECT_SCOPE_CARD_STATUS_UNAVAILABLE"
-  });
-  scan.cardDeliveryAttempt = result.attempt;
-  if (result.status === "confirmed") {
-    scan.cardPolicyVersion = null;
-    scan.cardDeliveryDeadlineAt = null;
-    wait.deadlineAt = projectScopeApprovalDeadline();
-    saveRun(runPath, manifest);
-    return continueScopeApprovalWait(runPath, manifest);
-  }
-  if (result.status === "timed_out") {
-    manifest.approvalWait = null;
-    scan.cardPolicyVersion = null;
-    scan.cardDeliveryDeadlineAt = null;
-    saveRun(runPath, manifest);
-    return false;
-  }
-  saveRun(runPath, manifest);
-  const lastErrorCode = "lastErrorCode" in result ? result.lastErrorCode : null;
-  output({
-    status: "project_scope_end_scan_card_waiting",
-    runPath,
-    pendingProjects: wait.scopeKeys.length,
-    ...lastErrorCode ? { lastErrorCode } : {},
-    nextCommand: `collect-next --run ${runPath}`
-  });
-  return true;
+  return continueScopeApprovalWait(runPath, manifest);
 }
 async function collectNext() {
   const runPath = option("run");
@@ -7923,6 +8132,11 @@ async function collectNext() {
         saveRun(absolute, manifest);
         continue;
       }
+      const sessionKey = anonymousSessionKey(
+        manifest.pluginInstanceId,
+        summary.id
+      );
+      const collectionState = loadCollectionState(manifest.pluginInstanceId);
       const job = buildSessionJob({
         pluginInstanceId: manifest.pluginInstanceId,
         sessionId: summary.id,
@@ -7932,9 +8146,17 @@ async function collectNext() {
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
         scopeKey: summary.scopeKey,
+        processedTurnKeys: manifest.force ? [] : processedTurnKeys(collectionState, sessionKey),
         period: summary.collectionStartsAt || summary.collectionEndsAt ? {
           ...manifest.period,
-          starts_at: summary.collectionStartsAt ?? manifest.period.starts_at,
+          starts_at: new Date(
+            Math.max(
+              new Date(manifest.period.starts_at).getTime(),
+              new Date(
+                summary.collectionStartsAt ?? manifest.period.starts_at
+              ).getTime()
+            )
+          ).toISOString(),
           ends_at: summary.collectionEndsAt ?? manifest.period.ends_at
         } : manifest.period
       });
@@ -7955,13 +8177,19 @@ async function collectNext() {
         if (knownDecision === "accepted")
           recordAcceptedSession(state, job.sessionKey, job.contentHash);
         else recordIgnoredSession(state, job.sessionKey, job.contentHash);
+        recordProcessedTurns(
+          state,
+          job.sessionKey,
+          job.turnKeys,
+          knownDecision
+        );
         saveCollectionState(state);
         if (knownDecision === "accepted") manifest.counts.unchanged += 1;
         else manifest.counts.cachedIgnored += 1;
         saveRun(absolute, manifest);
         continue;
       }
-      const jobId = randomUUID2();
+      const jobId = randomUUID4();
       const paths = writeJob(absolute, jobId, job.modelInput);
       manifest.current = {
         jobId,
@@ -7969,6 +8197,7 @@ async function collectNext() {
         expected: immutableContributionFromRequirements(
           job.modelInput.outputRequirements.include.contribution
         ),
+        turnKeys: job.turnKeys,
         failures: []
       };
       manifest.claimedJobs += 1;
@@ -7980,7 +8209,6 @@ async function collectNext() {
   }
   if (await continueProjectDescriptionScan(absolute, manifest)) return;
   if (await startEndOfRunScopeScan(absolute, manifest)) return;
-  if (await continueEndOfRunCardDeliveryWait(absolute, manifest)) return;
   if (await continueScopeApprovalWait(absolute, manifest)) return;
   output({
     status: "review_required",
@@ -8063,7 +8291,7 @@ async function collectSubmit() {
   const { absolute, manifest } = readRun(runPath);
   const current = manifest.current;
   if (!current) throw new Error("\u5F53\u524D Run \u6CA1\u6709\u5F85\u63D0\u4EA4 Job\u3002");
-  if (resolve6(resultPath) !== resolve6(current.resultPath))
+  if (resolve8(resultPath) !== resolve8(current.resultPath))
     throw new Error("Result \u8DEF\u5F84\u4E0E\u5F53\u524D Job \u4E0D\u5339\u914D\u3002");
   if (current.failures.length >= MAX_EXTRACTION_FAILURES)
     return output({
@@ -8076,7 +8304,7 @@ async function collectSubmit() {
     });
   let rawResult;
   try {
-    rawResult = JSON.parse(readFileSync5(current.resultPath, "utf8"));
+    rawResult = JSON.parse(readFileSync7(current.resultPath, "utf8"));
   } catch {
     return extractionFailureOutput(
       absolute,
@@ -8087,7 +8315,7 @@ async function collectSubmit() {
   }
   const repaired = repairImmutableResult(rawResult, current.expected);
   if (repaired.repaired)
-    writeFileSync4(
+    writeFileSync6(
       current.resultPath,
       `${JSON.stringify(repaired.result, null, 2)}
 `,
@@ -8108,6 +8336,12 @@ async function collectSubmit() {
       state2,
       current.expected.sessionKey,
       current.expected.contentHash
+    );
+    recordProcessedTurns(
+      state2,
+      current.expected.sessionKey,
+      current.turnKeys ?? [],
+      "ignored"
     );
     saveCollectionState(state2);
     manifest.knownSessions[current.expected.sessionKey] = {
@@ -8143,7 +8377,7 @@ async function collectSubmit() {
     );
   }
   if (containsSensitive(result.contribution)) {
-    writeFileSync4(
+    writeFileSync6(
       current.resultPath,
       `${JSON.stringify({
         schemaVersion: "1.0",
@@ -8176,6 +8410,12 @@ async function collectSubmit() {
     state,
     result.contribution.sessionKey,
     result.contribution.contentHash
+  );
+  recordProcessedTurns(
+    state,
+    result.contribution.sessionKey,
+    current.turnKeys ?? [],
+    "accepted"
   );
   saveCollectionState(state);
   manifest.knownSessions[result.contribution.sessionKey] = {
@@ -8306,7 +8546,9 @@ async function changeProjectScope(decision) {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error("\u672C\u5730\u91C7\u96C6\u6743\u9650\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u91C7\u96C6\u5E76\u5728\u98DE\u4E66\u5B8C\u6210\u9996\u6B21\u5BA1\u6279\u3002"),
+      new Error(
+        "\u672C\u5730\u91C7\u96C6\u6743\u9650\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u91C7\u96C6\u5E76\u5728\u5DE5\u4F5C\u770B\u677F\u5E94\u7528\u5B8C\u6210\u9996\u6B21\u5BA1\u6279\u3002"
+      ),
       { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" }
     );
   const remote = await fetchProjectScope();
@@ -8362,7 +8604,7 @@ function configureExclusion(kind, remove = false) {
     throw new Error(
       kind === "session" ? "\u9700\u8981 --session-id <id>\u3002" : "\u9700\u8981 --path <absolute-path>\u3002"
     );
-  const value = kind === "path" ? resolve6(raw) : raw.trim();
+  const value = kind === "path" ? resolve8(raw) : raw.trim();
   const key = kind === "session" ? "excludedSessionIds" : "excludedPaths";
   const current = new Set(config[key] ?? []);
   if (remove) current.delete(value);
@@ -8433,7 +8675,6 @@ async function runCommand() {
     output(migrateLegacyInstallation());
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
-  else if (command === "project-scope-card-wait") await projectScopeCardWait();
   else if (command === "collect-next") await collectNext();
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
@@ -8453,9 +8694,57 @@ async function runCommand() {
   else if (command === "include-path") configureExclusion("path", true);
   else help();
 }
+var commandStartedAt = Date.now();
+var commandRunId;
+var commandRunPath = option("run");
+if (commandRunPath) {
+  try {
+    commandRunId = readRun(commandRunPath).manifest.runId;
+  } catch {
+    commandRunId = void 0;
+  }
+}
+await flushPluginLogs();
+enqueuePluginLog({
+  runId: commandRunId,
+  level: "info",
+  stage: command.replaceAll("-", "_"),
+  eventCode: "command.started",
+  message: `\u63D2\u4EF6\u547D\u4EE4\u5F00\u59CB\uFF1A${command}`,
+  details: { command }
+});
+await flushPluginLogs();
 try {
   await runCommand();
+  enqueuePluginLog({
+    runId: commandRunId,
+    level: "info",
+    stage: command.replaceAll("-", "_"),
+    eventCode: "command.completed",
+    message: `\u63D2\u4EF6\u547D\u4EE4\u5B8C\u6210\uFF1A${command}`,
+    durationMs: Date.now() - commandStartedAt,
+    details: { command }
+  });
+  await flushPluginLogs();
 } catch (error) {
+  const diagnostic = pluginErrorDetails(error);
+  enqueuePluginLog({
+    runId: commandRunId,
+    level: "error",
+    stage: command.replaceAll("-", "_"),
+    eventCode: diagnostic.code,
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : void 0,
+    durationMs: Date.now() - commandStartedAt,
+    requestId: diagnostic.requestId,
+    retryable: diagnostic.status === 408 || diagnostic.status === 429 || diagnostic.status !== void 0 && diagnostic.status >= 500,
+    details: {
+      command,
+      httpStatus: diagnostic.status,
+      ...diagnostic.details ?? {}
+    }
+  });
+  await flushPluginLogs();
   if (recoveryAwareCommands.has(command) && error instanceof HttpError && error.code === "REFRESH_TOKEN_INVALID") {
     try {
       await startAuthRecovery();

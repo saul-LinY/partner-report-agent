@@ -4,6 +4,7 @@ import {
   FileStack,
   LayoutDashboard,
   LogOut,
+  ScrollText,
   TableProperties,
 } from "lucide-react";
 import { Link, Redirect, Route, Switch, useLocation } from "wouter";
@@ -12,12 +13,12 @@ import { ErrorBanner } from "./components.js";
 import { Login } from "./auth-pages.js";
 import { AdminConsole } from "./admin.js";
 import { ReviewPage } from "./review.js";
-import { ReportPage } from "./report.js";
 import { FactPreviewPage } from "./facts.js";
 import { TeamReportPage } from "./team-reports.js";
 import { ReviewQueuePage } from "./review-queue.js";
 import { ReportArchivePage } from "./report-archive.js";
 import { AgentJobsPage } from "./agent-jobs.js";
+import { PluginLogsPage } from "./plugin-logs.js";
 
 export type Me = {
   userId: string;
@@ -71,9 +72,7 @@ function AuthenticatedApp({ me }: { me: Me }) {
     },
   });
   const reviewing =
-    location === "/admin/reviews" ||
-    location.startsWith("/partner/review") ||
-    location.startsWith("/partner/report");
+    location === "/admin/reviews" || location.startsWith("/partner/review");
 
   return (
     <div className="app-shell">
@@ -120,6 +119,13 @@ function AuthenticatedApp({ me }: { me: Me }) {
             <FileStack size={18} />
             报告归档
           </Link>
+          <Link
+            className={location === "/admin/plugin-logs" ? "active" : ""}
+            href="/admin/plugin-logs"
+          >
+            <ScrollText size={18} />
+            插件日志
+          </Link>
         </nav>
         <div className="sidebar-user">
           <div>
@@ -141,9 +147,6 @@ function AuthenticatedApp({ me }: { me: Me }) {
           <Route path="/partner/review/:reviewId">
             <ReviewPage />
           </Route>
-          <Route path="/partner/report/:reportId">
-            <ReportPage />
-          </Route>
           <Route path="/admin/reviews">
             <ReviewQueuePage />
           </Route>
@@ -153,11 +156,11 @@ function AuthenticatedApp({ me }: { me: Me }) {
           <Route path="/admin/jobs">
             <AgentJobsPage />
           </Route>
+          <Route path="/admin/plugin-logs">
+            <PluginLogsPage />
+          </Route>
           <Route path="/admin/team-reports/:id">
             <TeamReportPage />
-          </Route>
-          <Route path="/admin/reports/individual/:id">
-            <ReportArchivePage />
           </Route>
           <Route path="/admin/reports">
             <ReportArchivePage />

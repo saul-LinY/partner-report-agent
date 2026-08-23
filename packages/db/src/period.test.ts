@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { weeklyPeriodAt, weeklyPeriodKeyCandidates } from "./period.js";
 
 describe("weeklyPeriodAt", () => {
-  it("uses Friday 14:00 through the next Friday 14:00 in Asia/Shanghai", () => {
+  it("uses Friday 17:00 through the next Friday 17:00 in Asia/Shanghai", () => {
     const period = weeklyPeriodAt(
       new Date("2026-08-02T08:00:00.000Z"),
       "Asia/Shanghai",
     );
     expect(period.periodKey).toBe("2026-W31");
-    expect(period.startsAt.toISOString()).toBe("2026-07-31T06:00:00.000Z");
-    expect(period.endsAt.toISOString()).toBe("2026-08-07T06:00:00.000Z");
+    expect(period.startsAt.toISOString()).toBe("2026-07-31T09:00:00.000Z");
+    expect(period.endsAt.toISOString()).toBe("2026-08-07T09:00:00.000Z");
     expect(period.submissionDeadlineAt).toEqual(period.endsAt);
   });
 
@@ -18,22 +18,22 @@ describe("weeklyPeriodAt", () => {
       new Date("2026-03-29T12:00:00.000Z"),
       "Europe/Berlin",
     );
-    expect(period.startsAt.toISOString()).toBe("2026-03-27T13:00:00.000Z");
-    expect(period.endsAt.toISOString()).toBe("2026-04-03T12:00:00.000Z");
+    expect(period.startsAt.toISOString()).toBe("2026-03-27T16:00:00.000Z");
+    expect(period.endsAt.toISOString()).toBe("2026-04-03T15:00:00.000Z");
     expect(period.submissionDeadlineAt).toEqual(period.endsAt);
   });
 
-  it("does not start a new period before Friday 14:00", () => {
+  it("does not start a new period before Friday 17:00", () => {
     const before = weeklyPeriodAt(
-      new Date("2026-08-07T05:59:59.000Z"),
+      new Date("2026-08-07T08:59:59.000Z"),
       "Asia/Shanghai",
     );
     const atCutoff = weeklyPeriodAt(
-      new Date("2026-08-07T06:00:00.000Z"),
+      new Date("2026-08-07T09:00:00.000Z"),
       "Asia/Shanghai",
     );
-    expect(before.startsAt.toISOString()).toBe("2026-07-31T06:00:00.000Z");
-    expect(atCutoff.startsAt.toISOString()).toBe("2026-08-07T06:00:00.000Z");
+    expect(before.startsAt.toISOString()).toBe("2026-07-31T09:00:00.000Z");
+    expect(atCutoff.startsAt.toISOString()).toBe("2026-08-07T09:00:00.000Z");
   });
 
   it("supports a team-specific aggregation cutoff", () => {

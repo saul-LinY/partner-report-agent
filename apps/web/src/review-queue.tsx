@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, FileText, RefreshCw, UserRound } from "lucide-react";
+import { ClipboardCheck, RefreshCw, UserRound } from "lucide-react";
 import { useLocation } from "wouter";
 import { api } from "./api.js";
 import { Badge, Button, EmptyState, ErrorBanner, Field } from "./components.js";
@@ -37,16 +37,12 @@ export function ReviewQueuePage() {
   const visible = data.reviewQueue.filter(
     (item) => partnerId === "all" || item.partner_id === partnerId,
   );
-  const open = (item: any, destination: "review" | "report") => {
+  const open = (item: any) => {
     window.localStorage.setItem(
       "partner-report-simulated-partner",
       item.partner_id,
     );
-    navigate(
-      destination === "review"
-        ? `/partner/review/${item.review_id}`
-        : `/partner/report/${item.report_id}`,
-    );
+    navigate(`/partner/review/${item.review_id}`);
   };
 
   return (
@@ -55,7 +51,7 @@ export function ReviewQueuePage() {
         <div>
           <span className="eyebrow">REVIEW QUEUE</span>
           <h1>审核队列</h1>
-          <p>按人员审核项目工作卡片与随后生成的个人 Report</p>
+          <p>按人员审核本周项目工作卡片</p>
         </div>
         <div className="queue-filter">
           <Field label="人员">
@@ -108,34 +104,14 @@ export function ReviewQueuePage() {
                     {item.excluded_count} 忽略
                   </span>
                 </div>
-                <div>
-                  <span className="cell-label">下一步</span>
-                  <Badge
-                    tone={
-                      item.report_status === "REPORT_REVIEW"
-                        ? "warning"
-                        : "neutral"
-                    }
-                  >
-                    {reportLabel(item.report_status)}
-                  </Badge>
-                </div>
                 <div className="queue-actions">
                   {item.review_state === "IN_PROGRESS" && (
                     <Button
                       variant="secondary"
                       icon={<ClipboardCheck size={16} />}
-                      onClick={() => open(item, "review")}
+                      onClick={() => open(item)}
                     >
                       审核项目卡
-                    </Button>
-                  )}
-                  {item.report_status === "REPORT_REVIEW" && (
-                    <Button
-                      icon={<FileText size={16} />}
-                      onClick={() => open(item, "report")}
-                    >
-                      审核报告
                     </Button>
                   )}
                   {item.review_state !== "IN_PROGRESS" && !item.report_id && (
@@ -162,19 +138,6 @@ function reviewLabel(value: string) {
         ITEMS_APPROVED: "已完成",
         ITEMS_DISMISSED: "已忽略",
         PENDING: "生成中",
-      } as Record<string, string>
-    )[value] ?? value
-  );
-}
-
-function reportLabel(value: string | null) {
-  if (!value) return "尚未生成";
-  return (
-    (
-      {
-        REPORT_DRAFT: "生成中",
-        REPORT_REVIEW: "待审核",
-        LOCKED: "已归档",
       } as Record<string, string>
     )[value] ?? value
   );
