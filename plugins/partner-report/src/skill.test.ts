@@ -61,7 +61,7 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("`notProcessed`");
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
-    expect(skill).toContain("第一次运行不回采历史 Session");
+    expect(skill).toContain("第一次运行以插件绑定成功时间前 24 小时为采集下界");
     expect(skill).toContain("匿名回合断点");
     expect(skill).toContain("同一旧 Session 后续新增的完整问答");
     expect(skill).toContain("CREDENTIAL_MIGRATION_REQUIRED");

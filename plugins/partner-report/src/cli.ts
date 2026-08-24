@@ -777,12 +777,18 @@ async function connect() {
   const existing = loadConfig(false);
   if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
     removeSecrets(existing.pluginInstanceId);
+  const connectedAt =
+    existing?.pluginInstanceId === tokens.pluginInstanceId &&
+    existing.connectedAt
+      ? existing.connectedAt
+      : new Date().toISOString();
   saveSecret(tokens.pluginInstanceId, "access", tokens.accessToken);
   saveSecret(tokens.pluginInstanceId, "refresh", tokens.refreshToken);
   saveConfig({
     serverUrl,
     pluginInstanceId: tokens.pluginInstanceId,
     deviceName,
+    connectedAt,
     accessExpiresAt: tokens.expiresAt,
     connectivityStatus: "pending",
     pendingConnectivityChallenge: {
@@ -792,6 +798,9 @@ async function connect() {
     excludedSessionIds: existing?.excludedSessionIds ?? [],
     excludedPaths: existing?.excludedPaths ?? [],
   });
+  const collectionState = loadCollectionState(tokens.pluginInstanceId);
+  initializeCollectionFloor(collectionState, connectedAt);
+  saveCollectionState(collectionState);
   const connectivity = await performConnectivityTest(tokens);
   const scheduledTaskInstallation = installScheduledCollectionTask();
   const projectScope = await discoverProjectScopeAfterBinding();
@@ -1248,11 +1257,7 @@ async function collectStart() {
   let window: ReturnType<typeof collectionWindow>;
   try {
     localState = loadCollectionState(config.pluginInstanceId);
-    initializeCollectionFloor(
-      localState,
-      policy.currentPeriod.starts_at,
-      runStartedAt,
-    );
+    initializeCollectionFloor(localState, config.connectedAt ?? runStartedAt);
     saveCollectionState(localState);
     window = collectionWindow(localState, policy.currentPeriod, runStartedAt);
   } catch (error) {

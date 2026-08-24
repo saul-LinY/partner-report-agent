@@ -8,7 +8,7 @@ import {
 describe("scheduled collection prompt", () => {
   it("uses Chinese instructions and documents the safe memory boundary", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "首次运行不回采任何历史 Session",
+      "首次运行以插件绑定成功时间前 24 小时为采集下界",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("检查同名 Codex");
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("更新 Prompt");

@@ -23,6 +23,7 @@ export type PluginConfig = {
   serverUrl: string;
   pluginInstanceId: string;
   deviceName: string;
+  connectedAt?: string;
   accessExpiresAt: string;
   connectivityStatus?: "pending" | "verified" | "failed" | "expired";
   connectivityVerifiedAt?: string;
@@ -40,8 +41,7 @@ export type PluginConfig = {
 
 const DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 const BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
-const LEGACY_PARTNER_REPORT_APP_GROUP =
-  "9RN69TVL38.partnerreport.shared";
+const LEGACY_PARTNER_REPORT_APP_GROUP = "9RN69TVL38.partnerreport.shared";
 const LEGACY_PARTNER_REPORT_DATA_DIRECTORY = "PartnerReportPluginData";
 
 export function normalizeServerUrl(value: string, allowInsecureHttp = false) {

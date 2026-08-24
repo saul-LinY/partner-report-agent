@@ -47,13 +47,9 @@ describe("collection state", () => {
     expect(initialProjectDiscoveryNeedsResume(false, true)).toBe(false);
   });
 
-  it("starts the first collection at activation without historical lookback", () => {
+  it("starts the first collection 24 hours before binding", () => {
     const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
-    initializeCollectionFloor(
-      state,
-      "2026-07-29T02:00:00.000Z",
-      "2026-08-05T02:00:00.000Z",
-    );
+    initializeCollectionFloor(state, "2026-08-05T02:00:00.000Z");
     expect(
       collectionWindow(
         state,
@@ -64,9 +60,18 @@ describe("collection state", () => {
         "2026-08-05T02:00:00.000Z",
       ),
     ).toMatchObject({
-      extractionStartsAt: "2026-08-05T02:00:00.000Z",
-      scanStartsAt: "2026-08-05T02:00:00.000Z",
+      extractionStartsAt: "2026-08-04T02:00:00.000Z",
+      scanStartsAt: "2026-08-04T02:00:00.000Z",
     });
+  });
+
+  it("does not reset an existing collection floor during reconnect", () => {
+    const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
+    state.collectionFloorAt = "2026-08-01T02:00:00.000Z";
+
+    expect(initializeCollectionFloor(state, "2026-08-05T02:00:00.000Z")).toBe(
+      "2026-08-01T02:00:00.000Z",
+    );
   });
 
   it("uses a one-day overlap after a successful run", () => {
