@@ -156,6 +156,115 @@ export const externalIdentities = pgTable(
   ],
 );
 
+export const feishuPartnerBindings = pgTable(
+  "feishu_partner_bindings",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    appId: text("app_id").notNull(),
+    openId: text("open_id"),
+    unionId: text("union_id"),
+    tenantKey: text("tenant_key"),
+    status: text("status").notNull().default("pending"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("feishu_partner_bindings_partner_app_unique").on(
+      table.tenantId,
+      table.partnerId,
+      table.appId,
+    ),
+    uniqueIndex("feishu_partner_bindings_app_open_unique").on(
+      table.appId,
+      table.openId,
+    ),
+    index("feishu_partner_bindings_team_status_idx").on(
+      table.tenantId,
+      table.teamId,
+      table.status,
+    ),
+  ],
+);
+
+export const feishuInboxEvents = pgTable(
+  "feishu_inbox_events",
+  {
+    id: uuid("id").primaryKey(),
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    status: text("status").notNull().default("received"),
+    sanitizedPayload: jsonb("sanitized_payload").notNull().default({}),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("feishu_inbox_events_event_unique").on(table.eventId),
+    index("feishu_inbox_events_status_received_idx").on(
+      table.status,
+      table.receivedAt,
+    ),
+  ],
+);
+
+export const feishuDeliveries = pgTable(
+  "feishu_deliveries",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    kind: text("kind").notNull(),
+    aggregateType: text("aggregate_type").notNull(),
+    aggregateId: text("aggregate_id").notNull(),
+    receiveId: text("receive_id").notNull(),
+    receiveIdType: text("receive_id_type").notNull(),
+    messageId: text("message_id"),
+    domainVersion: integer("domain_version"),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("feishu_deliveries_idempotency_unique").on(
+      table.tenantId,
+      table.idempotencyKey,
+    ),
+    uniqueIndex("feishu_deliveries_message_unique").on(table.messageId),
+    index("feishu_deliveries_retry_idx").on(table.status, table.nextRetryAt),
+    index("feishu_deliveries_aggregate_idx").on(
+      table.tenantId,
+      table.aggregateType,
+      table.aggregateId,
+    ),
+  ],
+);
+
 export const webSessions = pgTable(
   "web_sessions",
   {
@@ -1160,5 +1269,26 @@ export const auditEvents = pgTable(
   },
   (table) => [
     index("audit_tenant_created_idx").on(table.tenantId, table.createdAt),
+  ],
+);
+
+export const outboxEvents = pgTable(
+  "outbox_events",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    eventType: text("event_type").notNull(),
+    aggregateType: text("aggregate_type").notNull(),
+    aggregateId: text("aggregate_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("outbox_unpublished_idx").on(table.publishedAt, table.createdAt),
   ],
 );

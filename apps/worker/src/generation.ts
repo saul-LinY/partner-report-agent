@@ -418,6 +418,20 @@ async function applyAggregation(job: Job, output: unknown) {
           pending_count = ${counts[0].pending}, updated_at = now()
         where id = ${reviewId} and tenant_id = ${job.tenant_id}
       `;
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created',
+          'review', ${reviewId},
+          ${JSON.stringify({
+            count: 1,
+            targetWorkItemId,
+            regenerated: true,
+            warnings: result.qualityWarnings,
+          })}::jsonb
+        )
+      `;
     });
     return result;
   }
@@ -468,6 +482,18 @@ async function applyAggregation(job: Job, output: unknown) {
         approved_count = 0, excluded_count = 0,
         pending_count = ${result.groups.length}, updated_at = now()
       where id = ${reviewId} and tenant_id = ${job.tenant_id}
+    `;
+    await tx`
+      insert into outbox_events (
+        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+      ) values (
+        ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created',
+        'review', ${reviewId},
+        ${JSON.stringify({
+          count: result.groups.length,
+          warnings: result.qualityWarnings,
+        })}::jsonb
+      )
     `;
   });
   return result;

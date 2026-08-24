@@ -425,6 +425,24 @@ export async function completeReview(
         ${actor.actorId}, now()
       )
     `;
+    await tx`
+      insert into outbox_events (
+        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+      ) values (
+        ${randomUUID()}, ${actor.tenantId},
+        ${approvedItems.length === 0
+          ? "work_items.all_dismissed"
+          : "work_items.snapshot.approved"},
+        ${approvedItems.length === 0 ? "review" : "work_item_snapshot"},
+        ${approvedItems.length === 0 ? reviewId : snapshotId},
+        ${JSON.stringify({
+          reviewId,
+          snapshotId,
+          checksum,
+          excludedWorkItemIds: payload.excludedWorkItemIds,
+        })}::jsonb
+      )
+    `;
     return {
       snapshotId,
       checksum,
@@ -653,6 +671,19 @@ export async function decideReviewWorkItem(
       reviewId,
       review.version,
     );
+    await tx`
+      insert into outbox_events (
+        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, 'work_item.review.changed',
+        'review', ${reviewId},
+        ${JSON.stringify({
+          itemId: workItemId,
+          decision,
+          version: completion.version,
+        })}::jsonb
+      )
+    `;
     return {
       ...completion,
       state: review.state,

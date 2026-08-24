@@ -17,6 +17,11 @@ import { widgetRoutes } from "./routes/widget.js";
 import { pluginRoutes } from "./routes/plugin.js";
 import { teamReportRoutes } from "./routes/team-reports.js";
 import { reviewRoutes } from "./routes/reviews.js";
+import { loadFeishuConfig } from "./feishu/config.js";
+import {
+  getFeishuRuntimeStatus,
+  startFeishuIntegration,
+} from "./feishu/integration.js";
 
 export async function buildApp(
   options: { logger?: boolean; auth?: AuthRouteOptions } = {},
@@ -129,6 +134,7 @@ export async function buildApp(
   app.get("/health", async () => ({
     status: "ok",
     time: new Date().toISOString(),
+    feishu: getFeishuRuntimeStatus(),
   }));
   await app.register(authRoutes, options.auth ?? {});
   await app.register(adminRoutes);
@@ -143,11 +149,20 @@ export async function buildApp(
 }
 
 async function start() {
+  const feishuConfig = loadFeishuConfig();
   const app = await buildApp();
   const host = process.env.API_HOST ?? "0.0.0.0";
   const port = Number(process.env.API_PORT ?? 4310);
   await app.listen({ host, port });
+  const feishu = feishuConfig
+    ? await startFeishuIntegration(feishuConfig, {
+        info: (context, message) => app.log.info(context, message),
+        warn: (context, message) => app.log.warn(context, message),
+        error: (context, message) => app.log.error(context, message),
+      })
+    : null;
   const shutdown = async () => {
+    await feishu?.stop();
     await app.close();
     await closeDatabase();
     process.exit(0);

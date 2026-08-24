@@ -262,13 +262,28 @@ export async function pluginRoutes(app: FastifyInstance) {
             ${plugin.partner_id}, ${input.pluginInstanceId}, ${expiresAt.toISOString()}
           )
         `;
+      await tx`
+          insert into outbox_events (
+            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+          ) values (
+            ${randomUUID()}, ${plugin.tenant_id},
+            'plugin.binding.recovery.requested', 'device_authorization', ${id},
+            ${JSON.stringify({
+              teamId: plugin.team_id,
+              partnerId: plugin.partner_id,
+              pluginInstanceId: input.pluginInstanceId,
+              deviceName: input.deviceName,
+              expiresAt: expiresAt.toISOString(),
+            })}::jsonb
+          )
+        `;
       return "created" as const;
     });
     if (created === "already_pending")
       throw new ApiError(
         409,
         "PLUGIN_RECOVERY_ALREADY_PENDING",
-        "连接恢复申请已经存在，请在工作看板应用中确认。",
+        "连接恢复申请已经存在，请在飞书中确认。",
       );
     if (created !== "created")
       throw new ApiError(
@@ -559,10 +574,28 @@ export async function pluginRoutes(app: FastifyInstance) {
       limit 1
     `;
     const policy = policies[0];
+    const reminded = Boolean(
+      policy && !policy.initialized && policy.pending_count > 0,
+    );
+    if (reminded) {
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${actor.tenantId}, 'project_scope.delivery.requested',
+          'plugin_instance', ${actor.pluginInstanceId},
+          ${JSON.stringify({
+            teamId: actor.teamId,
+            partnerId: actor.partnerId,
+            pluginInstanceId: actor.pluginInstanceId,
+            periodKey: input.periodKey,
+            version: policy?.version,
+          })}::jsonb
+        )
+      `;
+    }
     return {
-      reminded: Boolean(
-        policy && !policy.initialized && policy.pending_count > 0,
-      ),
+      reminded,
       periodKey: input.periodKey,
       policy: await loadProjectScopePolicy(actor),
     };

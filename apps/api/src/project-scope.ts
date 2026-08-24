@@ -287,9 +287,25 @@ export async function registerProjectScopeCandidates(
     }
 
     if (newCandidates.length > 0) {
-      await tx`
+      const versions = await tx<Array<{ version: number }>>`
         update project_scope_policies set version = version + 1, updated_at = now()
         where plugin_instance_id = ${identity.pluginInstanceId}
+        returning version
+      `;
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${identity.tenantId}, 'project_scope.candidates.changed',
+          'plugin_instance', ${identity.pluginInstanceId},
+          ${JSON.stringify({
+            teamId: identity.teamId,
+            partnerId: identity.partnerId,
+            pluginInstanceId: identity.pluginInstanceId,
+            periodKey: input.periodKey,
+            version: versions[0]?.version,
+          })}::jsonb
+        )
       `;
     }
   });

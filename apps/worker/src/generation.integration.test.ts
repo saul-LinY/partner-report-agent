@@ -154,6 +154,7 @@ suite("synthetic report generation pipeline", () => {
     delete process.env.MODEL_API_KEY;
     delete process.env.MODEL_API_BASE_URL;
     await sql.begin(async (tx) => {
+      await tx`delete from outbox_events where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
@@ -201,6 +202,21 @@ suite("synthetic report generation pipeline", () => {
       projectKey: "unassigned",
       overview: "完成本地非敏感链路验证。",
     });
+    const reviewEvents = await sql<
+      Array<{ event_type: string; aggregate_id: string; payload: unknown }>
+    >`
+      select event_type, aggregate_id, payload
+      from outbox_events
+      where tenant_id = ${fixture.tenant}
+        and event_type = 'work_items.draft.created'
+    `;
+    expect(reviewEvents).toEqual([
+      {
+        event_type: "work_items.draft.created",
+        aggregate_id: fixture.review,
+        payload: expect.objectContaining({ count: 1 }),
+      },
+    ]);
 
     const snapshotId = randomUUID();
     const sourceChecksum = "synthetic-source-checksum";

@@ -65,6 +65,7 @@ suite("project scope persistence", () => {
 
   afterAll(async () => {
     await sql.begin(async (tx) => {
+      await tx`delete from outbox_events where tenant_id = ${fixture.tenantId}`;
       await tx`delete from audit_events where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_entries where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_policies where tenant_id = ${fixture.tenantId}`;
@@ -95,6 +96,25 @@ suite("project scope persistence", () => {
       initialized: false,
       entries: [{ scopeKey: firstKey }, { scopeKey: "d".repeat(64) }],
     });
+    const scopeEvents = await sql<
+      Array<{ event_type: string; aggregate_id: string; payload: unknown }>
+    >`
+      select event_type, aggregate_id, payload
+      from outbox_events
+      where tenant_id = ${fixture.tenantId}
+        and event_type = 'project_scope.candidates.changed'
+    `;
+    expect(scopeEvents).toEqual([
+      {
+        event_type: "project_scope.candidates.changed",
+        aggregate_id: fixture.pluginInstanceId,
+        payload: expect.objectContaining({
+          partnerId: fixture.partnerId,
+          periodKey: "scope-period",
+          version: 2,
+        }),
+      },
+    ]);
     const initialized = await decideProjectScopes(
       actor,
       fixture.pluginInstanceId,
