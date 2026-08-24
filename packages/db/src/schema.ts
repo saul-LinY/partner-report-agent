@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -493,6 +494,9 @@ export const pluginInstances = pgTable(
   },
   (table) => [
     index("plugin_instances_partner_idx").on(table.tenantId, table.partnerId),
+    uniqueIndex("plugin_instances_one_active_partner_unique")
+      .on(table.tenantId, table.partnerId)
+      .where(sql`${table.status} = 'active'`),
   ],
 );
 

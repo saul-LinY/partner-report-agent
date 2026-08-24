@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ClipboardCheck,
   FileStack,
+  HeartPulse,
   LayoutDashboard,
   LogOut,
-  ScrollText,
+  PlugZap,
   TableProperties,
 } from "lucide-react";
 import { Link, Redirect, Route, Switch, useLocation } from "wouter";
@@ -18,7 +19,8 @@ import { TeamReportPage } from "./team-reports.js";
 import { ReviewQueuePage } from "./review-queue.js";
 import { ReportArchivePage } from "./report-archive.js";
 import { AgentJobsPage } from "./agent-jobs.js";
-import { PluginLogsPage } from "./plugin-logs.js";
+import { PluginMonitoringPage } from "./plugin-logs.js";
+import { SystemMonitoringPage } from "./system-monitoring.js";
 
 export type Me = {
   userId: string;
@@ -123,8 +125,15 @@ function AuthenticatedApp({ me }: { me: Me }) {
             className={location === "/admin/plugin-logs" ? "active" : ""}
             href="/admin/plugin-logs"
           >
-            <ScrollText size={18} />
-            插件日志
+            <PlugZap size={18} />
+            插件监控
+          </Link>
+          <Link
+            className={location === "/admin/system-monitoring" ? "active" : ""}
+            href="/admin/system-monitoring"
+          >
+            <HeartPulse size={18} />
+            系统监控
           </Link>
         </nav>
         <div className="sidebar-user">
@@ -157,7 +166,10 @@ function AuthenticatedApp({ me }: { me: Me }) {
             <AgentJobsPage />
           </Route>
           <Route path="/admin/plugin-logs">
-            <PluginLogsPage />
+            <PluginMonitoringPage />
+          </Route>
+          <Route path="/admin/system-monitoring">
+            <SystemMonitoringPage />
           </Route>
           <Route path="/admin/team-reports/:id">
             <TeamReportPage />

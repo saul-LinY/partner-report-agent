@@ -13,20 +13,50 @@ import {
 import { api } from "./api.js";
 import { Badge, EmptyState, ErrorBanner } from "./components.js";
 
+type Severity = "normal" | "warning" | "critical" | "unknown";
+
 type Plugin = {
   id: string;
-  partner_id: string;
-  partner_name: string;
-  device_name: string;
+  partnerId: string;
+  partnerName: string;
+  deviceName: string;
   version: string;
-  status: string;
-  runStatus?: string;
-  last_sync_at: string | null;
-  last_error_code: string | null;
-  last_diagnostic_message: string | null;
+  lastHeartbeatAt: string | null;
+  lastSyncAt: string | null;
+  lastCollectionStartedAt: string | null;
+  lastCollectionCompletedAt: string | null;
+  latestEventAt: string | null;
+  latestStage: string | null;
+  latestEventCode: string | null;
+  latestMessage: string | null;
+  pendingLocalJobs: number;
+  runnerState: string;
+  status: {
+    severity: Severity;
+    code: string;
+    label: string;
+    reason: string;
+    action: string;
+  };
 };
 
-type Overview = { plugins: Plugin[] };
+type PluginMonitoring = {
+  checkedAt: string;
+  schedule: {
+    timezone: string;
+    time: string;
+    graceMinutes: number;
+    staleRunMinutes: number;
+  };
+  summary: {
+    total: number;
+    normal: number;
+    warning: number;
+    critical: number;
+    unknown: number;
+  };
+  plugins: Plugin[];
+};
 
 type LogEvent = {
   id: string;
@@ -86,6 +116,13 @@ const levelLabel = {
   error: "错误",
 };
 
+const severityTone = {
+  normal: "success",
+  warning: "warning",
+  critical: "danger",
+  unknown: "neutral",
+} as const;
+
 function formatTime(value: string | null) {
   if (!value) return "暂无";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -102,16 +139,16 @@ function shortId(value: string) {
   return value.slice(0, 8);
 }
 
-export function PluginLogsPage() {
+export function PluginMonitoringPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runId, setRunId] = useState("all");
   const [level, setLevel] = useState("all");
-  const overview = useQuery({
-    queryKey: ["admin-overview", "plugin-logs"],
-    queryFn: () => api<Overview>("/v1/admin/overview"),
-    refetchInterval: 15_000,
+  const monitoring = useQuery({
+    queryKey: ["admin-plugin-monitoring"],
+    queryFn: () => api<PluginMonitoring>("/v1/admin/plugin-monitoring"),
+    refetchInterval: 10_000,
   });
-  const plugins = overview.data?.plugins ?? [];
+  const plugins = monitoring.data?.plugins ?? [];
 
   useEffect(() => {
     if (!selectedId && plugins[0]) setSelectedId(plugins[0].id);
@@ -134,33 +171,60 @@ export function PluginLogsPage() {
     refetchInterval: 10_000,
   });
 
-  if (overview.isLoading)
+  if (monitoring.isLoading)
     return (
       <div className="page-loading">
         <RefreshCw className="spin" />
-        加载插件日志
+        加载插件状态
       </div>
     );
 
+  const summary = monitoring.data?.summary;
   return (
     <div className="page admin-page plugin-logs-page">
       <header className="page-header">
         <div>
-          <h1>插件日志</h1>
-          <p>按用户和插件实例查看采集、同步与内容生成状态。</p>
+          <span className="eyebrow">PLUGIN HEALTH</span>
+          <h1>插件监控</h1>
+          <p>
+            每日 {monitoring.data?.schedule.time ?? "16:00"}{" "}
+            运行，超过宽限期未启动或运行中长时间无进度会自动标记异常。
+          </p>
         </div>
         <button
           className="icon-button"
-          title="刷新日志"
+          title="刷新插件状态"
           onClick={() => {
-            void overview.refetch();
+            void monitoring.refetch();
             void logs.refetch();
           }}
         >
-          <RefreshCw size={17} className={logs.isFetching ? "spin" : ""} />
+          <RefreshCw
+            size={17}
+            className={monitoring.isFetching || logs.isFetching ? "spin" : ""}
+          />
         </button>
       </header>
-      <ErrorBanner error={overview.error ?? logs.error} />
+      <ErrorBanner error={monitoring.error ?? logs.error} />
+
+      <div className="monitor-summary" aria-label="插件状态汇总">
+        <div>
+          <span>插件总数</span>
+          <strong>{summary?.total ?? 0}</strong>
+        </div>
+        <div className="monitor-summary-normal">
+          <span>正常运行</span>
+          <strong>{summary?.normal ?? 0}</strong>
+        </div>
+        <div className="monitor-summary-warning">
+          <span>需要关注</span>
+          <strong>{summary?.warning ?? 0}</strong>
+        </div>
+        <div className="monitor-summary-critical">
+          <span>当前异常</span>
+          <strong>{summary?.critical ?? 0}</strong>
+        </div>
+      </div>
 
       {plugins.length === 0 ? (
         <EmptyState title="还没有已连接的插件" />
@@ -169,7 +233,7 @@ export function PluginLogsPage() {
           <aside className="plugin-log-instances" aria-label="插件实例">
             <div className="plugin-log-panel-title">
               <Server size={16} />
-              <strong>用户与插件</strong>
+              <strong>使用人员</strong>
               <span>{plugins.length}</span>
             </div>
             {plugins.map((plugin) => (
@@ -182,19 +246,16 @@ export function PluginLogsPage() {
                   setLevel("all");
                 }}
               >
-                <span className="plugin-instance-state">
-                  <CircleDot
-                    size={15}
-                    className={
-                      plugin.status === "active" ? "online" : "offline"
-                    }
-                  />
+                <span
+                  className={`plugin-instance-state ${plugin.status.severity}`}
+                >
+                  <CircleDot size={15} />
                 </span>
                 <span className="plugin-instance-copy">
-                  <strong>{plugin.partner_name}</strong>
-                  <span>{plugin.device_name}</span>
+                  <strong>{plugin.partnerName}</strong>
+                  <span>{plugin.deviceName}</span>
                   <small>
-                    v{plugin.version} · {shortId(plugin.id)}
+                    {plugin.status.label} · v{plugin.version}
                   </small>
                 </span>
                 <ChevronRight size={16} />
@@ -204,26 +265,58 @@ export function PluginLogsPage() {
 
           <section className="plugin-log-detail">
             {selectedPlugin && (
-              <div className="plugin-log-summary">
-                <div>
-                  <span>当前插件</span>
-                  <strong>
-                    {selectedPlugin.partner_name} · {selectedPlugin.device_name}
-                  </strong>
+              <>
+                <div className="plugin-log-summary">
+                  <div>
+                    <span>当前插件</span>
+                    <strong>
+                      {selectedPlugin.partnerName} · {selectedPlugin.deviceName}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>最近一次活动</span>
+                    <strong>
+                      {formatTime(
+                        selectedPlugin.latestEventAt ??
+                          selectedPlugin.lastHeartbeatAt,
+                      )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>当前状态</span>
+                    <Badge tone={severityTone[selectedPlugin.status.severity]}>
+                      {selectedPlugin.status.label}
+                    </Badge>
+                  </div>
                 </div>
-                <div>
-                  <span>最近同步</span>
-                  <strong>{formatTime(selectedPlugin.last_sync_at)}</strong>
+                <div
+                  className={`monitor-diagnosis monitor-diagnosis-${selectedPlugin.status.severity}`}
+                >
+                  <span className="monitor-diagnosis-icon">
+                    {selectedPlugin.status.severity === "critical" ? (
+                      <AlertTriangle size={18} />
+                    ) : (
+                      <CheckCircle2 size={18} />
+                    )}
+                  </span>
+                  <div>
+                    <strong>{selectedPlugin.status.reason}</strong>
+                    <p>{selectedPlugin.status.action}</p>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>最近完成</dt>
+                      <dd>
+                        {formatTime(selectedPlugin.lastCollectionCompletedAt)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>最后位置</dt>
+                      <dd>{selectedPlugin.latestStage ?? "暂无运行记录"}</dd>
+                    </div>
+                  </dl>
                 </div>
-                <div>
-                  <span>运行状态</span>
-                  <Badge
-                    tone={selectedPlugin.last_error_code ? "danger" : "success"}
-                  >
-                    {selectedPlugin.last_error_code ?? "正常"}
-                  </Badge>
-                </div>
-              </div>
+              </>
             )}
 
             <div className="plugin-log-controls">
@@ -243,7 +336,7 @@ export function PluginLogsPage() {
                 </select>
               </label>
               <label>
-                <span>级别</span>
+                <span>日志级别</span>
                 <select
                   value={level}
                   onChange={(event) => setLevel(event.target.value)}
@@ -259,7 +352,7 @@ export function PluginLogsPage() {
 
             <div className="plugin-log-section-title">
               <TerminalSquare size={17} />
-              <strong>插件事件</strong>
+              <strong>关联日志</strong>
               <span>{logs.data?.events.length ?? 0}</span>
             </div>
             <div className="plugin-event-list">
@@ -327,7 +420,7 @@ export function PluginLogsPage() {
                   </details>
                 ))
               ) : (
-                <EmptyState title="这个插件在当前筛选条件下没有日志" />
+                <EmptyState title="当前筛选条件下没有关联日志" />
               )}
             </div>
 

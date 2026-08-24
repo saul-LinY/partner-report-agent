@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { Check, Copy, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Link, useRoute } from "wouter";
 import { api } from "./api.js";
-import { EmptyState, ErrorBanner } from "./components.js";
+import { Button, EmptyState, ErrorBanner } from "./components.js";
 
 type TeamReportSummary = {
   id: string;
@@ -44,6 +44,7 @@ function TeamReportDetail({ id }: { id: string }) {
     refetchInterval: 15_000,
   });
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
   const current = detail.data?.current;
   const report = detail.data?.report;
   const viewed = selectedVersion
@@ -102,6 +103,36 @@ function TeamReportDetail({ id }: { id: string }) {
             ))}
           </aside>
           <section className="team-report-editor">
+            <div className="team-report-document-toolbar">
+              <Button
+                type="button"
+                variant="secondary"
+                icon={
+                  copiedVersion === viewed?.version ? (
+                    <Check size={16} />
+                  ) : (
+                    <Copy size={16} />
+                  )
+                }
+                disabled={!viewed}
+                onClick={async () => {
+                  if (!viewed) return;
+                  await copyText(reportClipboardText(viewed));
+                  setCopiedVersion(viewed.version);
+                  window.setTimeout(
+                    () =>
+                      setCopiedVersion((currentVersion) =>
+                        currentVersion === viewed.version
+                          ? null
+                          : currentVersion,
+                      ),
+                    1_600,
+                  );
+                }}
+              >
+                {copiedVersion === viewed?.version ? "已复制" : "复制周报"}
+              </Button>
+            </div>
             <article className="report-document">
               <h1>{viewed?.title}</h1>
               <p className="report-lede">{viewed?.summary}</p>
@@ -120,6 +151,30 @@ function TeamReportDetail({ id }: { id: string }) {
       )}
     </div>
   );
+}
+
+export function reportClipboardText(version: Version) {
+  return [`# ${version.title}`, version.summary, version.markdown]
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    if (!copied) throw new Error("复制失败，请稍后重试。");
+  }
 }
 
 function statusLabel(value: string) {

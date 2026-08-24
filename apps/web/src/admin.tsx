@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity,
   CalendarClock,
   Check,
   ClipboardCheck,
   Copy,
   KeyRound,
+  MessageSquareText,
   Pencil,
   Plus,
   RefreshCw,
@@ -34,6 +34,10 @@ type PartnerConnection = {
   partnerEmail: string;
   pluginInstanceId: string | null;
   connectionState: string;
+  feishuConnectionState: string;
+  feishuConnectedAt: string | null;
+  feishuLastAttemptAt: string | null;
+  feishuLastErrorCode: string | null;
   verifiedAt: string | null;
   lastUploadAt: string | null;
   deviceName: string | null;
@@ -111,6 +115,38 @@ const statusLabel: Record<string, string> = {
   not_connected: "未连接",
 };
 
+const feishuStatusTone: Record<
+  string,
+  "success" | "warning" | "danger" | "neutral"
+> = {
+  connected: "success",
+  connecting: "warning",
+  failed: "danger",
+  not_connected: "neutral",
+  not_started: "neutral",
+  unavailable: "neutral",
+};
+
+const feishuStatusLabel: Record<string, string> = {
+  connected: "已连接",
+  connecting: "检测中",
+  failed: "连接异常",
+  not_connected: "待首次投递",
+  not_started: "尚未发起",
+  unavailable: "飞书未配置",
+};
+
+function feishuStatusDetail(connection: PartnerConnection) {
+  if (connection.feishuConnectionState === "connected")
+    return `送达 ${formatTime(connection.feishuConnectedAt)}`;
+  if (connection.feishuLastErrorCode) return connection.feishuLastErrorCode;
+  if (connection.feishuConnectionState === "connecting")
+    return `尝试 ${formatTime(connection.feishuLastAttemptAt)}`;
+  if (connection.feishuConnectionState === "not_connected") return "等待权限卡";
+  if (connection.feishuConnectionState === "not_started") return "等待插件连接";
+  return "检查飞书配置";
+}
+
 const reviewStageLabel: Record<
   PartnerConnection["reviewProgress"]["stage"],
   string
@@ -171,8 +207,8 @@ function Operations({ data }: { data: Overview }) {
   const connected = data.connections.filter((item) =>
     ["active", "connected"].includes(item.connectionState),
   ).length;
-  const uploading = data.connections.filter(
-    (item) => item.connectionState === "active",
+  const feishuConnected = data.connections.filter(
+    (item) => item.feishuConnectionState === "connected",
   ).length;
   const pendingReviews = new Set(
     data.reviewQueue
@@ -200,13 +236,13 @@ function Operations({ data }: { data: Overview }) {
       <div className="ops-metrics">
         <Metric
           icon={<Server size={18} />}
-          label="连接正常"
+          label="插件已连接"
           value={`${connected}/${data.connections.length}`}
         />
         <Metric
-          icon={<Activity size={18} />}
-          label="已收到上传"
-          value={`${uploading}/${data.connections.length}`}
+          icon={<MessageSquareText size={18} />}
+          label="飞书已连接"
+          value={`${feishuConnected}/${data.connections.length}`}
         />
         <Metric
           icon={<ClipboardCheck size={18} />}
@@ -228,7 +264,7 @@ function Operations({ data }: { data: Overview }) {
         <div className="section-heading">
           <div>
             <h2>人员连接状态</h2>
-            <p>查看 Codex 插件连接与最近上传状态</p>
+            <p>分别查看插件连接中台与中台连接飞书的状态</p>
           </div>
           <Button
             variant="secondary"
@@ -308,11 +344,23 @@ function Operations({ data }: { data: Overview }) {
                     )}
                   </div>
                   <div className="plugin-state-badges">
+                    <span className="cell-label">插件 → 中台</span>
                     <Badge tone={statusTone[connection.connectionState]}>
                       {statusLabel[connection.connectionState]}
                     </Badge>
                     <span className="plugin-tested-at">
                       测试 {formatTime(connection.verifiedAt)}
+                    </span>
+                  </div>
+                  <div className="feishu-state-badges">
+                    <span className="cell-label">中台 → 飞书</span>
+                    <Badge
+                      tone={feishuStatusTone[connection.feishuConnectionState]}
+                    >
+                      {feishuStatusLabel[connection.feishuConnectionState]}
+                    </Badge>
+                    <span className="plugin-tested-at">
+                      {feishuStatusDetail(connection)}
                     </span>
                   </div>
                   <div

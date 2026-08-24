@@ -112,9 +112,47 @@ export async function pluginRoutes(app: FastifyInstance) {
       `;
       const row = rows[0];
       if (!row) return null;
-      const recoveryInstanceId = row.plugin_instance_id as string | null;
+      await tx`
+        select id from partners
+        where id = ${row.partner_id} and tenant_id = ${row.tenant_id}
+          and team_id = ${row.team_id}
+        for update
+      `;
+      const explicitRecoveryInstanceId = row.plugin_instance_id as
+        string | null;
+      const activeInstances = await tx<{ id: string }[]>`
+        select id from plugin_instances
+        where tenant_id = ${row.tenant_id} and team_id = ${row.team_id}
+          and partner_id = ${row.partner_id} and status = 'active'
+        order by
+          (last_sync_at is not null) desc,
+          last_sync_at desc nulls last,
+          connectivity_verified_at desc nulls last,
+          created_at desc
+      `;
+      if (
+        explicitRecoveryInstanceId &&
+        !activeInstances.some(
+          (instance) => instance.id === explicitRecoveryInstanceId,
+        )
+      ) {
+        return null;
+      }
+      const reusableInstanceId =
+        explicitRecoveryInstanceId ?? activeInstances[0]?.id ?? null;
       let pluginInstanceId: string = newPluginInstanceId;
-      if (recoveryInstanceId) {
+      if (reusableInstanceId) {
+        await tx`
+          update plugin_instances set
+            status = 'revoked', access_expires_at = now(),
+            connectivity_status = 'expired',
+            connectivity_challenge_hash = null,
+            connectivity_challenge_expires_at = null,
+            updated_at = now()
+          where tenant_id = ${row.tenant_id} and team_id = ${row.team_id}
+            and partner_id = ${row.partner_id} and status = 'active'
+            and id <> ${reusableInstanceId}
+        `;
         const recovered = await tx<{ id: string }[]>`
           update plugin_instances set
             device_name = ${input.deviceName}, version = ${input.pluginVersion},
@@ -127,7 +165,7 @@ export async function pluginRoutes(app: FastifyInstance) {
             connectivity_challenge_consumed_at = null,
             last_connectivity_error_code = null, last_connectivity_error_at = null,
             last_error_code = null, retry_count = 0, updated_at = now()
-          where id = ${recoveryInstanceId} and tenant_id = ${row.tenant_id}
+          where id = ${reusableInstanceId} and tenant_id = ${row.tenant_id}
             and team_id = ${row.team_id} and partner_id = ${row.partner_id}
             and status = 'active'
           returning id
@@ -154,10 +192,10 @@ export async function pluginRoutes(app: FastifyInstance) {
           claimed_at = now(), last_used_at = now(), updated_at = now()
         where id = ${row.id}
       `;
-      if (recoveryInstanceId) {
+      if (reusableInstanceId) {
         await tx`
           update plugin_binding_codes set status = 'revoked', updated_at = now()
-          where plugin_instance_id = ${recoveryInstanceId} and status = 'active'
+          where plugin_instance_id = ${reusableInstanceId} and status = 'active'
             and id <> ${row.id}
         `;
       }
@@ -167,7 +205,7 @@ export async function pluginRoutes(app: FastifyInstance) {
           target_type, target_id, request_id, metadata
         ) values (
           ${randomUUID()}, ${row.tenant_id}, ${row.team_id}, 'plugin', ${pluginInstanceId},
-          ${recoveryInstanceId ? "plugin.binding.recovered" : "plugin.binding.claimed"},
+          ${reusableInstanceId ? "plugin.binding.recovered" : "plugin.binding.claimed"},
           'plugin_binding_code', ${row.id}, ${request.id},
           ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
         )

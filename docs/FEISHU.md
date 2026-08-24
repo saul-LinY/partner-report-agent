@@ -39,7 +39,7 @@ npm run start -w @partner-report/api
 
 ## 首次绑定
 
-插件使用绑定码连接成功本身不会发送飞书消息。首次项目发现会创建项目范围 Outbox 事件，并按 `partners.email` 私发项目权限卡。邮箱必须唯一匹配一个 `active` Partner。
+插件首次使用绑定码连接后会立即执行项目发现；发现候选项目时创建项目范围 Outbox 事件，并按 `partners.email` 直接私发项目权限卡，不增加单独的飞书连接确认步骤。邮箱必须唯一匹配一个 `active` Partner。用户提交项目权限时，系统同时保存回调中的 `open_id`，后续内容只向该身份投递。
 
 用户可以逐项选择或批量允许/拒绝，并在同一张卡片提交。系统以 `deliveryId + messageId + appId` 校验回调，在事务中保存权限决定，并将该 Partner 与操作人的 `open_id` 绑定。首次允许立即生效；用户无需返回原定时会话，下一次定时运行会自动拉取权限并采集，也可以在普通 Session 中发起一次手动采集。
 
@@ -49,7 +49,7 @@ npm run start -w @partner-report/api
 
 ## 投递与幂等
 
-- 首张项目权限卡可按工作邮箱发送；其他审核内容在身份确认前只会延迟投递。
+- 首张项目权限卡按工作邮箱发送；其他审核内容在取得回调身份前只会延迟投递。
 - 每个回调先写入 `feishu_inbox_events`，用飞书 `event_id` 去重。
 - 每条消息写入 `feishu_deliveries`；发送时用 delivery ID 作为飞书幂等 UUID。
 - 同一审核对象只维护一条投递记录；项目范围卡按 Plugin Instance + 周期幂等。`domain_version` 只在飞书发送或更新成功后单调推进；在途的新事件不会被提前确认。

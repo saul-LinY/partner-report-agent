@@ -36,7 +36,7 @@ suite("tenant and role authorization", () => {
     jobB: randomUUID(),
   };
   const token = `tenant-isolation-${fixture.userA}`;
-  const pluginToken = `plugin-idempotency-${fixture.pluginA}`;
+  let pluginToken = `plugin-idempotency-${fixture.pluginA}`;
   const bindingCode = `PR-TEST-${fixture.bindingA}`.toUpperCase();
   let app: Awaited<ReturnType<typeof buildApp>>;
 
@@ -118,14 +118,39 @@ suite("tenant and role authorization", () => {
     expect(claim.statusCode).toBe(200);
     expect(claim.json()).toMatchObject({
       partnerId: fixture.partnerA,
-      pluginInstanceId: expect.any(String),
+      pluginInstanceId: fixture.pluginA,
       challenge: expect.any(String),
       challengeExpiresAt: expect.any(String),
       connectivityStatus: "pending",
       capabilityVersion: "1.0",
     });
+    const activeInstances = await sql<Array<{ id: string }>>`
+      select id from plugin_instances
+      where tenant_id = ${fixture.tenantA} and partner_id = ${fixture.partnerA}
+        and status = 'active'
+    `;
+    expect(activeInstances).toEqual([{ id: fixture.pluginA }]);
+    await expect(
+      sql`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at
+        ) values (
+          ${randomUUID()}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          'Duplicate Device', '0.2.0', ${"e".repeat(64)}, ${"f".repeat(64)},
+          ${new Date(Date.now() + 3_600_000).toISOString()}
+        )
+      `,
+    ).rejects.toThrow();
+    const oldCredentials = await app.inject({
+      method: "GET",
+      url: "/v1/plugin-bindings/me",
+      headers: { authorization: `Bearer ${pluginToken}` },
+    });
+    expect(oldCredentials.statusCode).toBe(401);
+    pluginToken = claim.json().accessToken;
     const pluginHeaders = {
-      authorization: `Bearer ${claim.json().accessToken}`,
+      authorization: `Bearer ${pluginToken}`,
     };
     const invalidConnectivity = await app.inject({
       method: "POST",
@@ -243,6 +268,16 @@ suite("tenant and role authorization", () => {
         code_value: bindingCode,
       }),
     );
+    expect(
+      overview
+        .json()
+        .plugins.filter(
+          (plugin: { partner_id: string }) =>
+            plugin.partner_id === fixture.partnerA,
+        ),
+    ).toEqual([
+      expect.objectContaining({ id: fixture.pluginA, status: "active" }),
+    ]);
     expect(overview.json().projects).toContainEqual({
       id: fixture.projectA,
       name: "Fixture Project A",
@@ -261,16 +296,24 @@ suite("tenant and role authorization", () => {
   });
 
   it("recovers credentials on the same plugin instance and preserves project scope", async () => {
+    const partnerId = randomUUID();
     const pluginInstanceId = randomUUID();
     const projectScopeId = randomUUID();
     let bindingId: string | null = null;
     await sql.begin(async (tx) => {
       await tx`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (
+          ${partnerId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${`recovery-${partnerId}@local.test`}, 'Recovery Partner'
+        )
+      `;
+      await tx`
         insert into plugin_instances (
           id, tenant_id, team_id, partner_id, device_name, version,
           access_token_hash, refresh_token_hash, access_expires_at
         ) values (
-          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
           'Recovery Device', '0.4.1', ${createHash("sha256").update(`old-access-${pluginInstanceId}`).digest("hex")},
           ${createHash("sha256").update(`old-refresh-${pluginInstanceId}`).digest("hex")},
           ${new Date(Date.now() - 60_000).toISOString()}
@@ -281,7 +324,7 @@ suite("tenant and role authorization", () => {
           plugin_instance_id, tenant_id, team_id, partner_id,
           version, initialized, initialized_at
         ) values (
-          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
           4, true, now()
         )
       `;
@@ -290,7 +333,7 @@ suite("tenant and role authorization", () => {
           id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
           display_name, status, effective_from, first_seen_period_key, session_count
         ) values (
-          ${projectScopeId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${projectScopeId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
           ${pluginInstanceId}, ${"c".repeat(64)}, 'Preserved Recovery Project',
           'allowed', now(), 'fixture-current-a', 3
         )
@@ -300,7 +343,7 @@ suite("tenant and role authorization", () => {
     try {
       const generated = await app.inject({
         method: "POST",
-        url: `/v1/admin/partners/${fixture.partnerA}/binding-codes`,
+        url: `/v1/admin/partners/${partnerId}/binding-codes`,
         headers,
         payload: {
           label: "Recovery Code",
@@ -374,16 +417,25 @@ suite("tenant and role authorization", () => {
         await tx`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
         await tx`delete from audit_events where actor_id = ${pluginInstanceId} or target_id = ${bindingId}`;
         await tx`delete from plugin_instances where id = ${pluginInstanceId}`;
+        await tx`delete from partners where id = ${partnerId}`;
       });
     }
   });
 
   it("recovers an existing plugin through an approved device authorization", async () => {
+    const partnerId = randomUUID();
     const pluginInstanceId = randomUUID();
     const policyEntryId = randomUUID();
     const deviceCode = `recovery-device-${randomUUID()}`;
     let authorizationId: string | null = null;
     await sql.begin(async (tx) => {
+      await tx`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (
+          ${partnerId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${`self-recovery-${partnerId}@local.test`}, 'Self Recovery Partner'
+        )
+      `;
       await tx`
         insert into plugin_instances (
           id, tenant_id, team_id, partner_id, device_name, version,
@@ -391,7 +443,7 @@ suite("tenant and role authorization", () => {
           connectivity_status, connectivity_challenge_hash,
           connectivity_challenge_expires_at, connectivity_challenge_consumed_at
         ) values (
-          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
           'Recovery Self Service Device', '0.4.2', ${createHash("sha256").update("old-access").digest("hex")},
           ${createHash("sha256").update("old-refresh").digest("hex")}, now() - interval '1 hour',
           'verified', ${createHash("sha256").update("old-challenge").digest("hex")},
@@ -402,7 +454,7 @@ suite("tenant and role authorization", () => {
         insert into project_scope_policies (
           plugin_instance_id, tenant_id, team_id, partner_id, version, initialized, initialized_at
         ) values (
-          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
           8, true, now()
         )
       `;
@@ -411,7 +463,7 @@ suite("tenant and role authorization", () => {
           id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
           display_name, status, effective_from, first_seen_period_key, session_count
         ) values (
-          ${policyEntryId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${policyEntryId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
           ${pluginInstanceId}, ${"d".repeat(64)}, 'Self Service Preserved Project',
           'allowed', now(), 'fixture-current-a', 5
         )
@@ -473,12 +525,21 @@ suite("tenant and role authorization", () => {
       await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
       await sql`delete from audit_events where actor_id = ${pluginInstanceId}`;
       await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+      await sql`delete from partners where id = ${partnerId}`;
     }
   });
 
   it("exchanges an approved device authorization for a plugin token", async () => {
+    const partnerId = randomUUID();
     const authorizationId = randomUUID();
     const deviceCode = `device-authorization-${randomUUID()}`;
+    await sql`
+      insert into partners (id, tenant_id, team_id, email, display_name)
+      values (
+        ${partnerId}, ${fixture.tenantA}, ${fixture.teamA},
+        ${`device-auth-${partnerId}@local.test`}, 'Device Authorization Partner'
+      )
+    `;
     await sql`
       insert into plugin_device_authorizations (
         id, device_code_hash, user_code, device_name, plugin_version,
@@ -486,7 +547,7 @@ suite("tenant and role authorization", () => {
       ) values (
         ${authorizationId}, ${createHash("sha256").update(deviceCode).digest("hex")},
         ${`DEVICE-${randomUUID()}`}, 'integration-device', '0.4.0',
-        ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'approved',
+        ${fixture.tenantA}, ${fixture.teamA}, ${partnerId}, 'approved',
         now(), now() + interval '15 minutes'
       )
     `;
@@ -504,11 +565,12 @@ suite("tenant and role authorization", () => {
       await sql`
         delete from plugin_instances
         where device_name = 'integration-device'
-          and tenant_id = ${fixture.tenantA}
+          and partner_id = ${partnerId}
       `;
       await sql`
         delete from plugin_device_authorizations where id = ${authorizationId}
       `;
+      await sql`delete from partners where id = ${partnerId}`;
     }
   });
 
@@ -685,7 +747,7 @@ suite("tenant and role authorization", () => {
       instances: expect.arrayContaining([
         expect.objectContaining({
           id: fixture.pluginA,
-          deviceName: "fixture-device",
+          deviceName: "Fixture Laptop",
           policyVersion: 3,
           initialized: true,
           projects: [
@@ -746,7 +808,7 @@ suite("tenant and role authorization", () => {
       expect.objectContaining({
         id: fixture.retryJobA,
         partner_name: "Fixture A",
-        plugin_device_name: "fixture-device",
+        plugin_device_name: "Fixture Laptop",
         error_code: "SCAN_FAILED",
         error_message: "Fixture scan failed",
       }),

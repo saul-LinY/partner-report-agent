@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  feishuConnectionStatus,
   nextManualRetryMaxAttempts,
   partnerReviewProgress,
   pluginConnectivityStatus,
@@ -88,6 +89,63 @@ describe("Plugin Fleet status projection", () => {
         connectivityChallengeExpiresAt: new Date(now.getTime() + 60_000),
       }),
     ).toBe("failed");
+  });
+});
+
+describe("Feishu connection status projection", () => {
+  const base = {
+    configured: true,
+    hasPlugin: true,
+    bindingStatus: null,
+    openId: null,
+    deliveryStatus: null,
+    lastSuccessfulAt: null,
+    lastAttemptAt: null,
+  };
+
+  it("keeps Feishu identity separate from plugin connectivity", () => {
+    expect(feishuConnectionStatus({ ...base, configured: false })).toBe(
+      "unavailable",
+    );
+    expect(feishuConnectionStatus({ ...base, hasPlugin: false })).toBe(
+      "not_started",
+    );
+    expect(feishuConnectionStatus(base)).toBe("not_connected");
+    expect(
+      feishuConnectionStatus({
+        ...base,
+        bindingStatus: "pending",
+        deliveryStatus: "sending",
+        lastAttemptAt: now,
+      }),
+    ).toBe("connecting");
+    expect(
+      feishuConnectionStatus({
+        ...base,
+        bindingStatus: "pending",
+        deliveryStatus: "sent",
+        lastSuccessfulAt: now,
+        lastAttemptAt: now,
+      }),
+    ).toBe("connected");
+    expect(
+      feishuConnectionStatus({
+        ...base,
+        bindingStatus: "pending",
+        deliveryStatus: "retry_wait",
+        lastAttemptAt: now,
+      }),
+    ).toBe("failed");
+    expect(
+      feishuConnectionStatus({
+        ...base,
+        bindingStatus: "active",
+        openId: "ou_partner",
+        deliveryStatus: "confirmed",
+        lastSuccessfulAt: now,
+        lastAttemptAt: now,
+      }),
+    ).toBe("connected");
   });
 });
 

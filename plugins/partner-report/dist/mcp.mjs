@@ -25954,7 +25954,7 @@ var coerce = {
 var NEVER = INVALID2;
 
 // src/config.ts
-var PLUGIN_VERSION = "1.0.0";
+var PLUGIN_VERSION = "1.1.0";
 
 // src/mcp-output.ts
 import { readFileSync } from "node:fs";

@@ -114,6 +114,36 @@ export function pluginConnectivityStatus(row: {
   return "pending";
 }
 
+export function feishuConnectionStatus(row: {
+  configured: boolean;
+  hasPlugin: boolean;
+  bindingStatus: string | null;
+  openId: string | null;
+  deliveryStatus: string | null;
+  lastSuccessfulAt: Date | string | null;
+  lastAttemptAt: Date | string | null;
+}) {
+  if (!row.configured) return "unavailable";
+  const lastSuccessfulAt = row.lastSuccessfulAt
+    ? new Date(row.lastSuccessfulAt).getTime()
+    : 0;
+  const lastAttemptAt = row.lastAttemptAt
+    ? new Date(row.lastAttemptAt).getTime()
+    : 0;
+  if (
+    ["failed", "retry_wait"].includes(row.deliveryStatus ?? "") &&
+    lastAttemptAt > lastSuccessfulAt
+  )
+    return "failed";
+  if ((row.bindingStatus === "active" && row.openId) || lastSuccessfulAt > 0)
+    return "connected";
+  if (row.bindingStatus === "pending")
+    return ["pending", "sending"].includes(row.deliveryStatus ?? "")
+      ? "connecting"
+      : "not_connected";
+  return row.hasPlugin ? "not_connected" : "not_started";
+}
+
 export function nextManualRetryMaxAttempts(
   attemptCount: number,
   maxAttempts: number,
@@ -196,6 +226,7 @@ export function partnerReviewProgress(row: {
 export async function adminRoutes(app: FastifyInstance) {
   app.get("/v1/admin/overview", async (request) => {
     const actor = await requireWebActor(request, "admin");
+    const feishuAppId = process.env.FEISHU_APP_ID?.trim() ?? "";
     const [
       teamRows,
       partnerRows,
@@ -204,6 +235,7 @@ export async function adminRoutes(app: FastifyInstance) {
       pluginRows,
       jobRows,
       bindingRows,
+      feishuBindingRows,
       queueRows,
     ] = await Promise.all([
       sql<
@@ -315,6 +347,34 @@ export async function adminRoutes(app: FastifyInstance) {
         order by created_at desc
       `,
       sql<any[]>`
+        select b.partner_id, b.status as binding_status, b.open_id, b.verified_at,
+          delivery.status as delivery_status,
+          delivery.last_attempt_at, delivery.last_error_code,
+          delivery.last_successful_at
+        from feishu_partner_bindings b
+        left join lateral (
+          select latest.status, latest.last_attempt_at, latest.last_error_code,
+            successful.last_successful_at
+          from lateral (
+            select d.status, d.last_attempt_at, d.last_error_code
+            from feishu_deliveries d
+            where d.tenant_id = b.tenant_id and d.team_id = b.team_id
+              and d.partner_id = b.partner_id and d.last_attempt_at is not null
+            order by d.last_attempt_at desc
+            limit 1
+          ) latest
+          cross join lateral (
+            select max(d.sent_at) as last_successful_at
+            from feishu_deliveries d
+            where d.tenant_id = b.tenant_id and d.team_id = b.team_id
+              and d.partner_id = b.partner_id and d.sent_at is not null
+          ) successful
+        ) delivery on true
+        where b.tenant_id = ${actor.tenantId} and b.team_id = ${actor.teamId}
+          and b.app_id = ${feishuAppId}
+        order by b.created_at desc
+      `,
+      sql<any[]>`
         select r.id as review_id, r.state as review_state, r.version as review_version,
           r.pending_count, r.approved_count, r.excluded_count, r.updated_at,
           p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
@@ -346,16 +406,16 @@ export async function adminRoutes(app: FastifyInstance) {
         pendingLocalJobs: row.pending_local_jobs,
       }),
     }));
+    const activePlugins = plugins.filter(
+      (plugin) => plugin.status === "active",
+    );
     const connections = partnerRows.map((partner) => {
       const plugin =
         plugins.find(
           (candidate) =>
             candidate.partner_id === partner.id &&
             candidate.status === "active",
-        ) ??
-        plugins.find(
-          (candidate) => candidate.partner_id === partner.id,
-        );
+        ) ?? plugins.find((candidate) => candidate.partner_id === partner.id);
       const connectionState = !plugin
         ? "not_connected"
         : plugin.status !== "active"
@@ -365,11 +425,29 @@ export async function adminRoutes(app: FastifyInstance) {
             : plugin.last_sync_at
               ? "active"
               : "connected";
+      const feishuBinding = feishuBindingRows.find(
+        (candidate) => candidate.partner_id === partner.id,
+      );
       return {
         partnerId: partner.id,
         partnerName: partner.display_name,
         partnerEmail: partner.email,
         connectionState,
+        feishuConnectionState: feishuConnectionStatus({
+          configured: Boolean(feishuAppId),
+          hasPlugin: Boolean(plugin),
+          bindingStatus: feishuBinding?.binding_status ?? null,
+          openId: feishuBinding?.open_id ?? null,
+          deliveryStatus: feishuBinding?.delivery_status ?? null,
+          lastSuccessfulAt: feishuBinding?.last_successful_at ?? null,
+          lastAttemptAt: feishuBinding?.last_attempt_at ?? null,
+        }),
+        feishuConnectedAt:
+          feishuBinding?.verified_at ??
+          feishuBinding?.last_successful_at ??
+          null,
+        feishuLastAttemptAt: feishuBinding?.last_attempt_at ?? null,
+        feishuLastErrorCode: feishuBinding?.last_error_code ?? null,
         verifiedAt: plugin?.connectivity_verified_at ?? null,
         lastUploadAt: plugin?.last_sync_at ?? null,
         deviceName: plugin?.device_name ?? null,
@@ -400,7 +478,7 @@ export async function adminRoutes(app: FastifyInstance) {
       partners,
       periods: periodRows,
       projects: projectRows,
-      plugins,
+      plugins: activePlugins,
       connections,
       jobs: jobRows,
       bindingCodes: bindingRows,
