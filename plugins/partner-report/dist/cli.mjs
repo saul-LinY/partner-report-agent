@@ -7836,6 +7836,7 @@ function deferRun(runPath, manifest, reason) {
   saveRun(runPath, manifest);
   output({
     status: "deferred",
+    runPath,
     reason,
     deferred: manifest.counts.deferred,
     notProcessed: manifest.counts.notProcessed,
@@ -8471,6 +8472,7 @@ function extractionFailureOutput(runPath, manifest, current, code) {
   const retriesExhausted = attempts >= MAX_EXTRACTION_FAILURES;
   output({
     status: "validation_failed",
+    runPath,
     jobId: current.jobId,
     errorCode: code,
     attempts,
@@ -8491,6 +8493,7 @@ async function collectSubmit() {
   if (current.failures.length >= MAX_EXTRACTION_FAILURES)
     return output({
       status: "validation_failed",
+      runPath: absolute,
       jobId: current.jobId,
       errorCode: current.failures.at(-1).code,
       attempts: current.failures.length,
@@ -8547,6 +8550,7 @@ async function collectSubmit() {
     saveRun(absolute, manifest);
     return output({
       status: "ignored",
+      runPath: absolute,
       reason: result.reason,
       nextCommand: `collect-next --run ${absolute}`
     });
@@ -8621,6 +8625,7 @@ async function collectSubmit() {
   saveRun(absolute, manifest);
   output({
     status: "uploaded",
+    runPath: absolute,
     response,
     nextCommand: `collect-next --run ${absolute}`
   });
@@ -8647,6 +8652,7 @@ function collectSkip() {
   saveRun(absolute, manifest);
   output({
     status: "skipped",
+    runPath: absolute,
     jobStatus: manifest.outcomes.at(-1).status,
     errorCode,
     ...causeCode ? { causeCode } : {},

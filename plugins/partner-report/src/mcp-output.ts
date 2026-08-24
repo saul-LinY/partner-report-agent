@@ -16,6 +16,7 @@ export function withNextTool(result: CliOutput) {
   const { nextCommand, ...rest } = result;
   if (typeof nextCommand !== "string") return rest;
   const runPath = typeof result.runPath === "string" ? result.runPath : null;
+  if (!runPath) throw new Error("MCP 续跑结果缺少 runPath。");
   let nextTool: { name: string; arguments: Record<string, unknown> } | null =
     null;
   if (nextCommand.startsWith("collect-next") && runPath) {
@@ -44,7 +45,8 @@ export function withNextTool(result: CliOutput) {
       },
     };
   }
-  return nextTool ? { ...rest, nextTool } : rest;
+  if (!nextTool) throw new Error(`MCP 不支持续跑指令：${nextCommand}`);
+  return { ...rest, nextTool };
 }
 
 export function exposeJobInput(result: CliOutput) {

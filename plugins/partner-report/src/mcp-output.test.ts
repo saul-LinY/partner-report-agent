@@ -42,6 +42,40 @@ describe("MCP output adapter", () => {
     });
   });
 
+  it("keeps uploaded results on the collection chain", () => {
+    expect(
+      withNextTool({
+        status: "uploaded",
+        runPath: "/tmp/run.json",
+        nextCommand: "collect-next --run /tmp/run.json",
+      }),
+    ).toEqual({
+      status: "uploaded",
+      runPath: "/tmp/run.json",
+      nextTool: {
+        name: "collect_next",
+        arguments: { runPath: "/tmp/run.json" },
+      },
+    });
+  });
+
+  it("rejects a continuation that cannot be converted to an MCP call", () => {
+    expect(() =>
+      withNextTool({
+        status: "uploaded",
+        nextCommand: "collect-next --run /tmp/run.json",
+      }),
+    ).toThrow("MCP 续跑结果缺少 runPath");
+
+    expect(() =>
+      withNextTool({
+        status: "uploaded",
+        runPath: "/tmp/run.json",
+        nextCommand: "unknown-next-step",
+      }),
+    ).toThrow("MCP 不支持续跑指令");
+  });
+
   it("returns Job input while hiding internal input and result paths", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-mcp-output-"));
     const inputPath = resolve(root, "input.json");

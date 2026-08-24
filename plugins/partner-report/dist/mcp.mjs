@@ -25971,6 +25971,7 @@ function withNextTool(result) {
   const { nextCommand, ...rest } = result;
   if (typeof nextCommand !== "string") return rest;
   const runPath = typeof result.runPath === "string" ? result.runPath : null;
+  if (!runPath) throw new Error("MCP \u7EED\u8DD1\u7ED3\u679C\u7F3A\u5C11 runPath\u3002");
   let nextTool = null;
   if (nextCommand.startsWith("collect-next") && runPath) {
     nextTool = { name: "collect_next", arguments: { runPath } };
@@ -25998,7 +25999,8 @@ function withNextTool(result) {
       }
     };
   }
-  return nextTool ? { ...rest, nextTool } : rest;
+  if (!nextTool) throw new Error(`MCP \u4E0D\u652F\u6301\u7EED\u8DD1\u6307\u4EE4\uFF1A${nextCommand}`);
+  return { ...rest, nextTool };
 }
 function exposeJobInput(result) {
   if (!["job", "project_description_job"].includes(String(result.status)) || typeof result.inputPath !== "string") {
