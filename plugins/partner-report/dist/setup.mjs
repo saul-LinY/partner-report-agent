@@ -220,6 +220,27 @@ function migrateLegacyInstallation() {
 
 // src/app-server.ts
 var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
+var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
+var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
+function threadReadError(code, message, cause) {
+  const error = new Error(message, { cause });
+  error.code = code;
+  return error;
+}
+function paginatedThreadReadError(cause) {
+  if (cause instanceof Error && cause.message.includes("invalid paginated history lineage")) {
+    return threadReadError(
+      "CODEX_THREAD_HISTORY_INVALID",
+      "Codex Session \u5206\u9875\u5386\u53F2\u65E0\u6548\u3002",
+      cause
+    );
+  }
+  return threadReadError(
+    "CODEX_THREAD_TURNS_LIST_FAILED",
+    "Codex Session \u5206\u9875\u5185\u5BB9\u8BFB\u53D6\u5931\u8D25\u3002",
+    cause
+  );
+}
 function createTimeoutError(method, timeoutMs) {
   const error = new Error(
     `${method} timed out after ${timeoutMs}ms`
@@ -299,6 +320,10 @@ var CodexAppServer = class {
         name: "partner_report",
         title: "Partner Report",
         version: PLUGIN_VERSION
+      },
+      capabilities: {
+        experimentalApi: true,
+        requestAttestation: false
       }
     });
     this.notify("initialized", {});
@@ -371,12 +396,75 @@ var CodexAppServer = class {
     return threads;
   }
   async readThread(threadId) {
-    const result = await this.request(
-      "thread/read",
-      { threadId, includeTurns: true },
-      6e4
-    );
-    return result.thread;
+    let thread;
+    try {
+      const result = await this.request(
+        "thread/read",
+        { threadId, includeTurns: false },
+        CODEX_THREAD_READ_TIMEOUT_MS
+      );
+      thread = result.thread;
+    } catch (error) {
+      throw threadReadError(
+        "CODEX_THREAD_READ_FAILED",
+        "Codex Session \u6458\u8981\u8BFB\u53D6\u5931\u8D25\u3002",
+        error
+      );
+    }
+    if (thread?.historyMode !== "paginated") {
+      try {
+        const result = await this.request(
+          "thread/read",
+          { threadId, includeTurns: true },
+          CODEX_THREAD_READ_TIMEOUT_MS
+        );
+        return result.thread;
+      } catch (error) {
+        throw threadReadError(
+          "CODEX_THREAD_READ_FAILED",
+          "Codex Session \u5185\u5BB9\u8BFB\u53D6\u5931\u8D25\u3002",
+          error
+        );
+      }
+    }
+    const turns = [];
+    const seenCursors = /* @__PURE__ */ new Set();
+    let cursor = null;
+    do {
+      let result;
+      try {
+        result = await this.request(
+          "thread/turns/list",
+          {
+            threadId,
+            ...cursor ? { cursor } : {},
+            limit: CODEX_THREAD_TURNS_PAGE_LIMIT,
+            sortDirection: "asc",
+            itemsView: "full"
+          },
+          CODEX_THREAD_READ_TIMEOUT_MS
+        );
+      } catch (error) {
+        throw paginatedThreadReadError(error);
+      }
+      if (!Array.isArray(result.data)) {
+        throw threadReadError(
+          "CODEX_THREAD_TURNS_LIST_FAILED",
+          "Codex Session \u5206\u9875\u5185\u5BB9\u54CD\u5E94\u65E0\u6548\u3002"
+        );
+      }
+      turns.push(...result.data);
+      const nextCursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
+      if (nextCursor && seenCursors.has(nextCursor)) {
+        throw threadReadError(
+          "CODEX_THREAD_TURNS_LIST_FAILED",
+          "Codex Session \u5206\u9875\u6E38\u6807\u91CD\u590D\u3002"
+        );
+      }
+      if (nextCursor) seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    } while (cursor);
+    return { ...thread, turns };
   }
   close() {
     if (!this.process) return;

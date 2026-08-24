@@ -166,6 +166,7 @@ export const coverageSchema: z.ZodTypeAny = z.object({
   failedRead: z.number().int().nonnegative(),
   failedPermissionCheck: z.number().int().nonnegative().default(0),
   failedThreadRead: z.number().int().nonnegative().default(0),
+  invalidThreadHistory: z.number().int().nonnegative().default(0),
   failedExtract: z.number().int().nonnegative(),
   excluded: z.number().int().nonnegative(),
   pendingSync: z.number().int().nonnegative(),

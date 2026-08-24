@@ -4187,6 +4187,7 @@ var coverageSchema = external_exports.object({
   failedRead: external_exports.number().int().nonnegative(),
   failedPermissionCheck: external_exports.number().int().nonnegative().default(0),
   failedThreadRead: external_exports.number().int().nonnegative().default(0),
+  invalidThreadHistory: external_exports.number().int().nonnegative().default(0),
   failedExtract: external_exports.number().int().nonnegative(),
   excluded: external_exports.number().int().nonnegative(),
   pendingSync: external_exports.number().int().nonnegative(),
@@ -5011,7 +5012,9 @@ function recordAcceptedSession(state, sessionKey, contentHash, processedAt = (/*
   delete state.ignoredSessions[sessionKey];
 }
 function canAdvanceCollectionCheckpoint(counts) {
-  return counts.failedRead === 0 && counts.failedExtract === 0 && (counts.deferred ?? 0) === 0 && (counts.skipped ?? 0) === 0 && (counts.notProcessed ?? 0) === 0;
+  const invalidThreadHistory = counts.invalidThreadHistory ?? 0;
+  const retryableFailedRead = counts.failedRead - invalidThreadHistory;
+  return invalidThreadHistory <= counts.failedRead && retryableFailedRead === 0 && counts.failedExtract === 0 && (counts.deferred ?? 0) === 0 && (counts.skipped ?? 0) === 0 && (counts.notProcessed ?? 0) === 0;
 }
 function reviewCollectionCompletion(input) {
   const queueExhausted = input.cursor === input.queueLength;
@@ -5254,6 +5257,27 @@ function countJobOutcomes(outcomes) {
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
+var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
+var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
+function threadReadError(code, message, cause) {
+  const error = new Error(message, { cause });
+  error.code = code;
+  return error;
+}
+function paginatedThreadReadError(cause) {
+  if (cause instanceof Error && cause.message.includes("invalid paginated history lineage")) {
+    return threadReadError(
+      "CODEX_THREAD_HISTORY_INVALID",
+      "Codex Session \u5206\u9875\u5386\u53F2\u65E0\u6548\u3002",
+      cause
+    );
+  }
+  return threadReadError(
+    "CODEX_THREAD_TURNS_LIST_FAILED",
+    "Codex Session \u5206\u9875\u5185\u5BB9\u8BFB\u53D6\u5931\u8D25\u3002",
+    cause
+  );
+}
 function createTimeoutError(method, timeoutMs) {
   const error = new Error(
     `${method} timed out after ${timeoutMs}ms`
@@ -5333,6 +5357,10 @@ var CodexAppServer = class {
         name: "partner_report",
         title: "Partner Report",
         version: PLUGIN_VERSION
+      },
+      capabilities: {
+        experimentalApi: true,
+        requestAttestation: false
       }
     });
     this.notify("initialized", {});
@@ -5405,12 +5433,75 @@ var CodexAppServer = class {
     return threads;
   }
   async readThread(threadId) {
-    const result = await this.request(
-      "thread/read",
-      { threadId, includeTurns: true },
-      6e4
-    );
-    return result.thread;
+    let thread;
+    try {
+      const result = await this.request(
+        "thread/read",
+        { threadId, includeTurns: false },
+        CODEX_THREAD_READ_TIMEOUT_MS
+      );
+      thread = result.thread;
+    } catch (error) {
+      throw threadReadError(
+        "CODEX_THREAD_READ_FAILED",
+        "Codex Session \u6458\u8981\u8BFB\u53D6\u5931\u8D25\u3002",
+        error
+      );
+    }
+    if (thread?.historyMode !== "paginated") {
+      try {
+        const result = await this.request(
+          "thread/read",
+          { threadId, includeTurns: true },
+          CODEX_THREAD_READ_TIMEOUT_MS
+        );
+        return result.thread;
+      } catch (error) {
+        throw threadReadError(
+          "CODEX_THREAD_READ_FAILED",
+          "Codex Session \u5185\u5BB9\u8BFB\u53D6\u5931\u8D25\u3002",
+          error
+        );
+      }
+    }
+    const turns = [];
+    const seenCursors = /* @__PURE__ */ new Set();
+    let cursor = null;
+    do {
+      let result;
+      try {
+        result = await this.request(
+          "thread/turns/list",
+          {
+            threadId,
+            ...cursor ? { cursor } : {},
+            limit: CODEX_THREAD_TURNS_PAGE_LIMIT,
+            sortDirection: "asc",
+            itemsView: "full"
+          },
+          CODEX_THREAD_READ_TIMEOUT_MS
+        );
+      } catch (error) {
+        throw paginatedThreadReadError(error);
+      }
+      if (!Array.isArray(result.data)) {
+        throw threadReadError(
+          "CODEX_THREAD_TURNS_LIST_FAILED",
+          "Codex Session \u5206\u9875\u5185\u5BB9\u54CD\u5E94\u65E0\u6548\u3002"
+        );
+      }
+      turns.push(...result.data);
+      const nextCursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
+      if (nextCursor && seenCursors.has(nextCursor)) {
+        throw threadReadError(
+          "CODEX_THREAD_TURNS_LIST_FAILED",
+          "Codex Session \u5206\u9875\u6E38\u6807\u91CD\u590D\u3002"
+        );
+      }
+      if (nextCursor) seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    } while (cursor);
+    return { ...thread, turns };
   }
   close() {
     if (!this.process) return;
@@ -7297,6 +7388,8 @@ function readRun(runPath) {
   manifest.counts.notProcessed ??= 0;
   manifest.counts.failedPermissionCheck ??= 0;
   manifest.counts.failedThreadRead ??= 0;
+  manifest.counts.invalidThreadHistory ??= 0;
+  manifest.threadReadFailureCodes ??= {};
   manifest.outcomes ??= [];
   manifest.claimedJobs ??= manifest.counts.uploaded + manifest.counts.ignored + manifest.counts.failedExtract + (manifest.current ? 1 : 0);
   if (manifest.current) manifest.current.failures ??= [];
@@ -7341,6 +7434,10 @@ async function postCollectionStatus(config, manifest, phase) {
   const { counts } = manifest;
   const checkpointEligible = phase === "completed" ? completionReview(manifest).checkpointEligible : canAdvanceCollectionCheckpoint(counts);
   const lastSyncAt = counts.uploaded > 0 ? (/* @__PURE__ */ new Date()).toISOString() : void 0;
+  const warnings = [
+    ...checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    ...(counts.invalidThreadHistory ?? 0) > 0 ? ["INVALID_THREAD_HISTORY_EXCLUDED"] : []
+  ];
   const coverage = {
     discovered: counts.discovered,
     eligible: counts.eligible,
@@ -7352,12 +7449,13 @@ async function postCollectionStatus(config, manifest, phase) {
     failedRead: counts.failedRead,
     failedPermissionCheck: counts.failedPermissionCheck,
     failedThreadRead: counts.failedThreadRead,
+    invalidThreadHistory: counts.invalidThreadHistory ?? 0,
     failedExtract: counts.failedExtract,
     excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
     activeAtCutoff: 0,
     hookMissed: 0,
-    warnings: checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    warnings,
     ...lastSyncAt ? { lastSyncAt } : {}
   };
   await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
@@ -7397,6 +7495,8 @@ async function postCollectionStatus(config, manifest, phase) {
       failedRead: counts.failedRead,
       failedPermissionCheck: counts.failedPermissionCheck,
       failedThreadRead: counts.failedThreadRead,
+      invalidThreadHistory: counts.invalidThreadHistory ?? 0,
+      threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
       failedExtract: counts.failedExtract,
       checkpointEligible
     }
@@ -7637,6 +7737,7 @@ async function collectStart() {
       failedRead: 0,
       failedPermissionCheck: 0,
       failedThreadRead: 0,
+      invalidThreadHistory: 0,
       failedExtract: 0,
       skipped: 0,
       deferred: 0,
@@ -7754,8 +7855,10 @@ async function finishRun(runPath, manifest, config) {
     checkpointAdvanced,
     warnings: [
       ...checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+      ...(manifest.counts.invalidThreadHistory ?? 0) > 0 ? ["INVALID_THREAD_HISTORY_EXCLUDED"] : [],
       ...(manifest.projectDescriptionScan?.failed ?? 0) > 0 ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"] : []
     ],
+    threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
     projectDescriptions: {
       generated: manifest.projectDescriptionScan?.generated ?? 0,
       unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
@@ -8199,9 +8302,21 @@ async function collectNext() {
       try {
         thread = await server.readThread(summary.id);
         manifest.counts.read += 1;
-      } catch {
+      } catch (error) {
         manifest.counts.failedRead += 1;
         manifest.counts.failedThreadRead += 1;
+        const code = error && typeof error === "object" && "code" in error && [
+          "CODEX_THREAD_READ_FAILED",
+          "CODEX_THREAD_TURNS_LIST_FAILED",
+          "CODEX_THREAD_HISTORY_INVALID"
+        ].includes(String(error.code)) ? String(error.code) : "CODEX_THREAD_READ_FAILED";
+        manifest.threadReadFailureCodes ??= {};
+        manifest.threadReadFailureCodes[code] = (manifest.threadReadFailureCodes[code] ?? 0) + 1;
+        if (code === "CODEX_THREAD_HISTORY_INVALID") {
+          manifest.counts.invalidThreadHistory ??= 0;
+          manifest.counts.invalidThreadHistory += 1;
+          manifest.counts.excluded += 1;
+        }
         saveRun(absolute, manifest);
         continue;
       }
@@ -8619,9 +8734,7 @@ async function changeProjectScope(decision) {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error(
-        "\u672C\u5730\u91C7\u96C6\u6743\u9650\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u91C7\u96C6\u5E76\u5728\u98DE\u4E66\u5B8C\u6210\u9996\u6B21\u5BA1\u6279\u3002"
-      ),
+      new Error("\u672C\u5730\u91C7\u96C6\u6743\u9650\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u91C7\u96C6\u5E76\u5728\u98DE\u4E66\u5B8C\u6210\u9996\u6B21\u5BA1\u6279\u3002"),
       { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" }
     );
   const remote = await fetchProjectScope();

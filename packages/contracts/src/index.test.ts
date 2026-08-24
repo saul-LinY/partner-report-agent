@@ -28,6 +28,7 @@ describe("collection coverage contract", () => {
         failedRead: 2,
         failedPermissionCheck: 1,
         failedThreadRead: 1,
+        invalidThreadHistory: 1,
         failedExtract: 1,
         excluded: 2,
         pendingSync: 0,
@@ -42,6 +43,7 @@ describe("collection coverage contract", () => {
       failedRead: 2,
       failedPermissionCheck: 1,
       failedThreadRead: 1,
+      invalidThreadHistory: 1,
       failedExtract: 1,
     });
   });

@@ -315,12 +315,16 @@ export function recordAcceptedSession(
 export function canAdvanceCollectionCheckpoint(counts: {
   failedRead: number;
   failedExtract: number;
+  invalidThreadHistory?: number;
   deferred?: number;
   skipped?: number;
   notProcessed?: number;
 }) {
+  const invalidThreadHistory = counts.invalidThreadHistory ?? 0;
+  const retryableFailedRead = counts.failedRead - invalidThreadHistory;
   return (
-    counts.failedRead === 0 &&
+    invalidThreadHistory <= counts.failedRead &&
+    retryableFailedRead === 0 &&
     counts.failedExtract === 0 &&
     (counts.deferred ?? 0) === 0 &&
     (counts.skipped ?? 0) === 0 &&
@@ -342,6 +346,7 @@ export function reviewCollectionCompletion(input: {
   counts: {
     failedRead: number;
     failedExtract: number;
+    invalidThreadHistory?: number;
     deferred?: number;
     skipped?: number;
     notProcessed?: number;

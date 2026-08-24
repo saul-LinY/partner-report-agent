@@ -76,7 +76,10 @@ import {
   type ExtractionFailureCode,
   type JobOutcome,
 } from "./collection-run.js";
-import { CodexAppServer } from "./app-server.js";
+import {
+  CodexAppServer,
+  type CodexThreadReadFailureCode,
+} from "./app-server.js";
 import {
   anonymousSessionKey,
   buildSessionJob,
@@ -219,6 +222,7 @@ type RunCounts = {
   failedRead: number;
   failedPermissionCheck: number;
   failedThreadRead: number;
+  invalidThreadHistory?: number;
   failedExtract: number;
   skipped: number;
   deferred: number;
@@ -252,6 +256,7 @@ type RunManifest = {
   cursor: number;
   knownSessions: Record<string, KnownSession>;
   counts: RunCounts;
+  threadReadFailureCodes?: Partial<Record<CodexThreadReadFailureCode, number>>;
   current: CurrentJob | null;
   claimedJobs: number;
   outcomes: JobOutcome[];
@@ -1045,6 +1050,8 @@ function readRun(runPath: string) {
   manifest.counts.notProcessed ??= 0;
   manifest.counts.failedPermissionCheck ??= 0;
   manifest.counts.failedThreadRead ??= 0;
+  manifest.counts.invalidThreadHistory ??= 0;
+  manifest.threadReadFailureCodes ??= {};
   manifest.outcomes ??= [];
   manifest.claimedJobs ??=
     manifest.counts.uploaded +
@@ -1101,6 +1108,12 @@ async function postCollectionStatus(
       ? completionReview(manifest).checkpointEligible
       : canAdvanceCollectionCheckpoint(counts);
   const lastSyncAt = counts.uploaded > 0 ? new Date().toISOString() : undefined;
+  const warnings = [
+    ...(checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"]),
+    ...((counts.invalidThreadHistory ?? 0) > 0
+      ? ["INVALID_THREAD_HISTORY_EXCLUDED"]
+      : []),
+  ];
   const coverage = {
     discovered: counts.discovered,
     eligible: counts.eligible,
@@ -1112,12 +1125,13 @@ async function postCollectionStatus(
     failedRead: counts.failedRead,
     failedPermissionCheck: counts.failedPermissionCheck,
     failedThreadRead: counts.failedThreadRead,
+    invalidThreadHistory: counts.invalidThreadHistory ?? 0,
     failedExtract: counts.failedExtract,
     excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
     activeAtCutoff: 0,
     hookMissed: 0,
-    warnings: checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    warnings,
     ...(lastSyncAt ? { lastSyncAt } : {}),
   };
   await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
@@ -1158,6 +1172,8 @@ async function postCollectionStatus(
       failedRead: counts.failedRead,
       failedPermissionCheck: counts.failedPermissionCheck,
       failedThreadRead: counts.failedThreadRead,
+      invalidThreadHistory: counts.invalidThreadHistory ?? 0,
+      threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
       failedExtract: counts.failedExtract,
       checkpointEligible,
     },
@@ -1421,6 +1437,7 @@ async function collectStart() {
       failedRead: 0,
       failedPermissionCheck: 0,
       failedThreadRead: 0,
+      invalidThreadHistory: 0,
       failedExtract: 0,
       skipped: 0,
       deferred: 0,
@@ -1554,10 +1571,14 @@ async function finishRun(
     checkpointAdvanced,
     warnings: [
       ...(checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"]),
+      ...((manifest.counts.invalidThreadHistory ?? 0) > 0
+        ? ["INVALID_THREAD_HISTORY_EXCLUDED"]
+        : []),
       ...((manifest.projectDescriptionScan?.failed ?? 0) > 0
         ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"]
         : []),
     ],
+    threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
     projectDescriptions: {
       generated: manifest.projectDescriptionScan?.generated ?? 0,
       unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
@@ -2069,9 +2090,28 @@ async function collectNext() {
       try {
         thread = await server.readThread(summary.id);
         manifest.counts.read += 1;
-      } catch {
+      } catch (error) {
         manifest.counts.failedRead += 1;
         manifest.counts.failedThreadRead += 1;
+        const code =
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          [
+            "CODEX_THREAD_READ_FAILED",
+            "CODEX_THREAD_TURNS_LIST_FAILED",
+            "CODEX_THREAD_HISTORY_INVALID",
+          ].includes(String(error.code))
+            ? (String(error.code) as CodexThreadReadFailureCode)
+            : "CODEX_THREAD_READ_FAILED";
+        manifest.threadReadFailureCodes ??= {};
+        manifest.threadReadFailureCodes[code] =
+          (manifest.threadReadFailureCodes[code] ?? 0) + 1;
+        if (code === "CODEX_THREAD_HISTORY_INVALID") {
+          manifest.counts.invalidThreadHistory ??= 0;
+          manifest.counts.invalidThreadHistory += 1;
+          manifest.counts.excluded += 1;
+        }
         saveRun(absolute, manifest);
         continue;
       }
@@ -2531,9 +2571,7 @@ async function changeProjectScope(decision: "allow" | "deny") {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error(
-        "本地采集权限尚未建立，请先运行采集并在飞书完成首次审批。",
-      ),
+      new Error("本地采集权限尚未建立，请先运行采集并在飞书完成首次审批。"),
       { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" },
     );
   const remote = await fetchProjectScope();

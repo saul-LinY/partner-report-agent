@@ -241,6 +241,27 @@ describe("collection state", () => {
       canAdvanceCollectionCheckpoint({ failedRead: 1, failedExtract: 0 }),
     ).toBe(false);
     expect(
+      canAdvanceCollectionCheckpoint({
+        failedRead: 1,
+        invalidThreadHistory: 1,
+        failedExtract: 0,
+      }),
+    ).toBe(true);
+    expect(
+      canAdvanceCollectionCheckpoint({
+        failedRead: 2,
+        invalidThreadHistory: 1,
+        failedExtract: 0,
+      }),
+    ).toBe(false);
+    expect(
+      canAdvanceCollectionCheckpoint({
+        failedRead: 0,
+        invalidThreadHistory: 1,
+        failedExtract: 0,
+      }),
+    ).toBe(false);
+    expect(
       canAdvanceCollectionCheckpoint({ failedRead: 0, failedExtract: 1 }),
     ).toBe(false);
     expect(
@@ -316,6 +337,24 @@ describe("collection state", () => {
       remainingQueueExplained: true,
       readyToFinalize: true,
       checkpointEligible: false,
+    });
+  });
+
+  it("advances after only irrecoverable thread history failures", () => {
+    expect(
+      reviewCollectionCompletion({
+        cursor: 3,
+        queueLength: 3,
+        hasCurrentJob: false,
+        counts: {
+          failedRead: 2,
+          invalidThreadHistory: 2,
+          failedExtract: 0,
+        },
+      }),
+    ).toMatchObject({
+      readyToFinalize: true,
+      checkpointEligible: true,
     });
   });
 });

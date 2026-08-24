@@ -13,6 +13,43 @@ type ThreadListOptions = {
 };
 
 export const CODEX_THREAD_LIST_TIMEOUT_MS = 120_000;
+export const CODEX_THREAD_READ_TIMEOUT_MS = 60_000;
+export const CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
+
+export type CodexThreadReadFailureCode =
+  | "CODEX_THREAD_READ_FAILED"
+  | "CODEX_THREAD_TURNS_LIST_FAILED"
+  | "CODEX_THREAD_HISTORY_INVALID";
+
+function threadReadError(
+  code: CodexThreadReadFailureCode,
+  message: string,
+  cause?: unknown,
+) {
+  const error = new Error(message, { cause }) as Error & {
+    code: CodexThreadReadFailureCode;
+  };
+  error.code = code;
+  return error;
+}
+
+function paginatedThreadReadError(cause: unknown) {
+  if (
+    cause instanceof Error &&
+    cause.message.includes("invalid paginated history lineage")
+  ) {
+    return threadReadError(
+      "CODEX_THREAD_HISTORY_INVALID",
+      "Codex Session 分页历史无效。",
+      cause,
+    );
+  }
+  return threadReadError(
+    "CODEX_THREAD_TURNS_LIST_FAILED",
+    "Codex Session 分页内容读取失败。",
+    cause,
+  );
+}
 
 function createTimeoutError(method: string, timeoutMs: number) {
   const error = new Error(
@@ -106,6 +143,10 @@ export class CodexAppServer {
         title: "Partner Report",
         version: PLUGIN_VERSION,
       },
+      capabilities: {
+        experimentalApi: true,
+        requestAttestation: false,
+      },
     });
     this.notify("initialized", {});
   }
@@ -195,12 +236,81 @@ export class CodexAppServer {
   }
 
   async readThread(threadId: string) {
-    const result = await this.request(
-      "thread/read",
-      { threadId, includeTurns: true },
-      60_000,
-    );
-    return result.thread;
+    let thread: any;
+    try {
+      const result = await this.request(
+        "thread/read",
+        { threadId, includeTurns: false },
+        CODEX_THREAD_READ_TIMEOUT_MS,
+      );
+      thread = result.thread;
+    } catch (error) {
+      throw threadReadError(
+        "CODEX_THREAD_READ_FAILED",
+        "Codex Session 摘要读取失败。",
+        error,
+      );
+    }
+
+    if (thread?.historyMode !== "paginated") {
+      try {
+        const result = await this.request(
+          "thread/read",
+          { threadId, includeTurns: true },
+          CODEX_THREAD_READ_TIMEOUT_MS,
+        );
+        return result.thread;
+      } catch (error) {
+        throw threadReadError(
+          "CODEX_THREAD_READ_FAILED",
+          "Codex Session 内容读取失败。",
+          error,
+        );
+      }
+    }
+
+    const turns: any[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      let result: any;
+      try {
+        result = await this.request(
+          "thread/turns/list",
+          {
+            threadId,
+            ...(cursor ? { cursor } : {}),
+            limit: CODEX_THREAD_TURNS_PAGE_LIMIT,
+            sortDirection: "asc",
+            itemsView: "full",
+          },
+          CODEX_THREAD_READ_TIMEOUT_MS,
+        );
+      } catch (error) {
+        throw paginatedThreadReadError(error);
+      }
+      if (!Array.isArray(result.data)) {
+        throw threadReadError(
+          "CODEX_THREAD_TURNS_LIST_FAILED",
+          "Codex Session 分页内容响应无效。",
+        );
+      }
+      turns.push(...result.data);
+      const nextCursor =
+        typeof result.nextCursor === "string" && result.nextCursor
+          ? result.nextCursor
+          : null;
+      if (nextCursor && seenCursors.has(nextCursor)) {
+        throw threadReadError(
+          "CODEX_THREAD_TURNS_LIST_FAILED",
+          "Codex Session 分页游标重复。",
+        );
+      }
+      if (nextCursor) seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    } while (cursor);
+
+    return { ...thread, turns };
   }
 
   close() {
