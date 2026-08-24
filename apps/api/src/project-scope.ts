@@ -95,10 +95,10 @@ async function projectScopeIdentityConfirmed(
 ) {
   const rows = await database<Array<{ confirmed: boolean }>>`
     select exists (
-      select 1 from plugin_instances
+      select 1 from feishu_partner_bindings
       where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
         and partner_id = ${identity.partnerId} and status = 'active'
-        and client_kind = 'widget'
+        and open_id is not null
     ) as confirmed
   `;
   return rows[0]?.confirmed === true;

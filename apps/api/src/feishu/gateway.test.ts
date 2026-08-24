@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
-import { isReportContentComplete } from "./cards.js";
 import { FeishuDeliveryService } from "./delivery.js";
 import { FeishuGateway, projectScopeFormDecisions } from "./gateway.js";
 
@@ -71,183 +70,167 @@ describe("disabled legacy card actions", () => {
       ).resolves.toEqual({
         toast: {
           type: "error",
-          content: "当前卡片操作已停用，请使用最新卡片。",
+          content: "审核操作无效，请刷新卡片。",
         },
       });
     },
   );
 });
 
-type ReportCallbackFixture = {
-  tenantId: string;
-  reportId: string;
-  eventId: string;
-  openId: string;
-  updateInteractiveCard: ReturnType<typeof vi.fn>;
-  sendInteractiveCard: ReturnType<typeof vi.fn>;
-  gateway: FeishuGateway;
-  callback: (baseVersion: number) => Record<string, unknown>;
-  cleanup: () => Promise<void>;
-};
+describe("FeishuGateway review decisions", () => {
+  it("accepts one work card and updates the same message to the next item", async () => {
+    const tenantId = randomUUID();
+    const teamId = randomUUID();
+    const partnerId = randomUUID();
+    const periodId = randomUUID();
+    const reviewId = randomUUID();
+    const firstItemId = randomUUID();
+    const secondItemId = randomUUID();
+    const bindingId = randomUUID();
+    const deliveryId = randomUUID();
+    const eventId = randomUUID();
+    const appId = `cli_review_decision_test_${randomUUID()}`;
+    const openId = `ou_${randomUUID()}`;
+    const messageId = `om_${randomUUID()}`;
+    const email = `review-decision-${partnerId}@example.com`;
+    const sendInteractiveCard = vi.fn(async () => ({
+      messageId: `om_unexpected_${randomUUID()}`,
+    }));
+    const updateInteractiveCard = vi.fn(async (_input: unknown) => undefined);
 
-async function createReportCallbackFixture(input: {
-  markdown: string;
-  contentRevision?: number;
-  deliveryVersion?: number;
-}): Promise<ReportCallbackFixture> {
-  const tenantId = randomUUID();
-  const teamId = randomUUID();
-  const partnerId = randomUUID();
-  const periodId = randomUUID();
-  const reviewId = randomUUID();
-  const snapshotId = randomUUID();
-  const reportId = randomUUID();
-  const bindingId = randomUUID();
-  const deliveryId = randomUUID();
-  const eventId = randomUUID();
-  const appId = `cli_report_gateway_test_${randomUUID()}`;
-  const openId = `ou_${randomUUID()}`;
-  const messageId = `om_${randomUUID()}`;
-  const email = `report-gateway-${partnerId}@example.com`;
-  const contentRevision = input.contentRevision ?? 1;
-  const deliveryVersion = input.deliveryVersion ?? contentRevision;
-  const sendInteractiveCard = vi.fn(async () => ({
-    messageId: `om_unexpected_${randomUUID()}`,
-  }));
-  const updateInteractiveCard = vi.fn(async () => undefined);
+    try {
+      await sql`insert into tenants (id, name) values (${tenantId}, 'Feishu review decision test')`;
+      await sql`
+        insert into teams (id, tenant_id, name)
+        values (${teamId}, ${tenantId}, 'Feishu review decision test')
+      `;
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${partnerId}, ${tenantId}, ${teamId}, ${email}, 'Review Partner')
+      `;
+      await sql`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at,
+          cutoff_at, submission_deadline_at, timezone
+        ) values (
+          ${periodId}, ${tenantId}, ${teamId}, ${`review-${periodId}`},
+          '2099-03-01T00:00:00Z', '2099-03-07T23:59:59Z',
+          '2099-03-07T12:00:00Z', '2099-03-08T12:00:00Z', 'Asia/Shanghai'
+        )
+      `;
+      await sql`
+        insert into reviews (
+          id, tenant_id, team_id, partner_id, period_id, state, version,
+          approved_count, excluded_count, pending_count
+        ) values (
+          ${reviewId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
+          'IN_PROGRESS', 1, 0, 0, 2
+        )
+      `;
+      await sql`
+        insert into work_items (
+          id, tenant_id, team_id, partner_id, period_id, review_id,
+          title, status, review_status, fact_ids, payload, created_at
+        ) values (
+          ${firstItemId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
+          ${reviewId}, '第一张工作卡片', 'in_progress', 'pending', '[]'::jsonb,
+          '{"overview":"第一项进展","dailyProgress":[]}'::jsonb,
+          '2099-03-01T01:00:00Z'
+        ), (
+          ${secondItemId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
+          ${reviewId}, '第二张工作卡片', 'in_progress', 'pending', '[]'::jsonb,
+          '{"overview":"第二项进展","dailyProgress":[]}'::jsonb,
+          '2099-03-01T02:00:00Z'
+        )
+      `;
+      await sql`
+        insert into feishu_partner_bindings (
+          id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
+        ) values (
+          ${bindingId}, ${tenantId}, ${teamId}, ${partnerId}, ${appId},
+          ${openId}, 'active', now()
+        )
+      `;
+      await sql`
+        insert into feishu_deliveries (
+          id, tenant_id, team_id, partner_id, kind, aggregate_type,
+          aggregate_id, receive_id, receive_id_type, message_id,
+          domain_version, status, idempotency_key, sent_at
+        ) values (
+          ${deliveryId}, ${tenantId}, ${teamId}, ${partnerId}, 'review', 'review',
+          ${reviewId}, ${openId}, 'open_id', ${messageId}, 1, 'sent',
+          ${`review:${appId}:${partnerId}:${reviewId}`}, now()
+        )
+      `;
 
-  await sql`insert into tenants (id, name) values (${tenantId}, 'Feishu report callback test')`;
-  await sql`
-    insert into teams (id, tenant_id, name)
-    values (${teamId}, ${tenantId}, 'Feishu report callback test')
-  `;
-  await sql`
-    insert into partners (id, tenant_id, team_id, email, display_name)
-    values (
-      ${partnerId}, ${tenantId}, ${teamId}, ${email},
-      'Feishu Report Callback Test'
-    )
-  `;
-  await sql`
-    insert into report_periods (
-      id, tenant_id, team_id, period_key, starts_at, ends_at,
-      cutoff_at, submission_deadline_at, timezone
-    ) values (
-      ${periodId}, ${tenantId}, ${teamId}, ${`2099-${periodId}`},
-      '2099-01-01T00:00:00Z', '2099-01-07T23:59:59Z',
-      '2099-01-07T12:00:00Z', '2099-01-08T12:00:00Z',
-      'Asia/Shanghai'
-    )
-  `;
-  await sql`
-    insert into reviews (
-      id, tenant_id, team_id, partner_id, period_id, state, version,
-      approved_count, excluded_count, pending_count
-    ) values (
-      ${reviewId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
-      'ITEMS_APPROVED', 1, 1, 0, 0
-    )
-  `;
-  await sql`
-    insert into work_item_snapshots (
-      id, tenant_id, team_id, partner_id, period_id, review_id,
-      review_version, checksum, payload, approved_by_actor_type,
-      approved_by_actor_id, approved_at
-    ) values (
-      ${snapshotId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
-      ${reviewId}, 1, ${`report-callback-${snapshotId}`},
-      '{"workItems":[],"coverage":{}}'::jsonb, 'feishu', ${openId}, now()
-    )
-  `;
-  await sql`
-    insert into individual_reports (
-      id, tenant_id, team_id, partner_id, period_id, snapshot_id,
-      status, content_revision, title, summary, markdown, payload,
-      preferences, source_checksum, generator_version
-    ) values (
-      ${reportId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
-      ${snapshotId}, 'REPORT_REVIEW', ${contentRevision}, '飞书个人报告',
-      '待确认的个人报告摘要', ${input.markdown},
-      '{"sections":[]}'::jsonb, '{}'::jsonb,
-      ${`report-callback-${snapshotId}`}, 'synthetic-test/1.0'
-    )
-  `;
-  await sql`
-    insert into feishu_partner_bindings (
-      id, tenant_id, team_id, partner_id, app_id, open_id, status,
-      verified_at
-    ) values (
-      ${bindingId}, ${tenantId}, ${teamId}, ${partnerId}, ${appId},
-      ${openId}, 'active', now()
-    )
-  `;
-  await sql`
-    insert into feishu_deliveries (
-      id, tenant_id, team_id, partner_id, kind, aggregate_type,
-      aggregate_id, receive_id, receive_id_type, message_id,
-      domain_version, status, idempotency_key, sent_at
-    ) values (
-      ${deliveryId}, ${tenantId}, ${teamId}, ${partnerId}, 'report',
-      'individual_report', ${reportId}, ${openId}, 'open_id', ${messageId},
-      ${deliveryVersion}, 'sent',
-      ${`report:${appId}:${partnerId}:${reportId}`}, now()
-    )
-  `;
-
-  const service = new FeishuDeliveryService({
-    appId,
-    messageClient: { sendInteractiveCard, updateInteractiveCard },
-  });
-  const gateway = new FeishuGateway(
-    { appId, appSecret: "report-gateway-test-secret" },
-    { updateInteractiveCard },
-    service,
-    { tenantIdFilter: tenantId },
-  );
-
-  return {
-    tenantId,
-    reportId,
-    eventId,
-    openId,
-    updateInteractiveCard,
-    sendInteractiveCard,
-    gateway,
-    callback: (baseVersion) => ({
-      event_id: eventId,
-      event_type: "card.action.trigger",
-      app_id: appId,
-      tenant_key: "tenant-key-report-test",
-      operator: { open_id: openId },
-      action: {
-        value: {
-          deliveryId,
-          action: "report_submit",
-          aggregateId: reportId,
-          baseVersion,
+      const service = new FeishuDeliveryService({
+        appId,
+        messageClient: { sendInteractiveCard, updateInteractiveCard },
+      });
+      const gateway = new FeishuGateway(
+        { appId, appSecret: "review-decision-test-secret" },
+        { updateInteractiveCard },
+        service,
+        { tenantIdFilter: tenantId },
+      );
+      const callback = {
+        event_id: eventId,
+        event_type: "card.action.trigger",
+        app_id: appId,
+        operator: { open_id: openId },
+        action: {
+          value: {
+            deliveryId,
+            aggregateId: reviewId,
+            itemId: firstItemId,
+            baseVersion: 1,
+            action: "review_approve",
+          },
         },
-      },
-      context: { open_message_id: messageId },
-    }),
-    cleanup: async () => {
+        context: { open_message_id: messageId },
+      };
+
+      await expect(gateway.acceptCardAction(callback)).resolves.toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+
+      const items = await sql<Array<{ id: string; review_status: string }>>`
+        select id, review_status from work_items
+        where review_id = ${reviewId} order by created_at
+      `;
+      expect(items).toEqual([
+        { id: firstItemId, review_status: "approved" },
+        { id: secondItemId, review_status: "pending" },
+      ]);
+      const reviews = await sql<
+        Array<{ version: number; approved_count: number; pending_count: number }>
+      >`
+        select version, approved_count, pending_count from reviews where id = ${reviewId}
+      `;
+      expect(reviews).toEqual([
+        { version: 2, approved_count: 1, pending_count: 1 },
+      ]);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(updateInteractiveCard.mock.calls[0]?.[0])).toContain(
+        "第二张工作卡片",
+      );
+      expect(sendInteractiveCard).not.toHaveBeenCalled();
+    } finally {
       await sql`delete from feishu_inbox_events where event_id = ${eventId}`;
       await sql`delete from audit_events where tenant_id = ${tenantId}`;
       await sql`delete from outbox_events where tenant_id = ${tenantId}`;
-      await sql`delete from agent_jobs where tenant_id = ${tenantId}`;
-      await sql`delete from team_report_versions where tenant_id = ${tenantId}`;
-      await sql`delete from team_reports where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
       await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
-      await sql`delete from individual_reports where tenant_id = ${tenantId}`;
-      await sql`delete from work_item_snapshots where tenant_id = ${tenantId}`;
+      await sql`delete from work_items where tenant_id = ${tenantId}`;
       await sql`delete from reviews where tenant_id = ${tenantId}`;
       await sql`delete from report_periods where tenant_id = ${tenantId}`;
       await sql`delete from partners where tenant_id = ${tenantId}`;
       await sql`delete from teams where tenant_id = ${tenantId}`;
       await sql`delete from tenants where id = ${tenantId}`;
-    },
-  };
-}
+    }
+  });
+});
 
 describe("FeishuGateway binding callback", () => {
   it("binds the callback operator once and records a sanitized inbox event", async () => {
@@ -754,209 +737,6 @@ describe("FeishuGateway project scope delivery", () => {
       await sql`delete from partners where id = ${partnerId}`;
       await sql`delete from teams where id = ${teamId}`;
       await sql`delete from tenants where id = ${tenantId}`;
-    }
-  });
-});
-
-describe.skip("legacy Feishu individual report callback", () => {
-  it("submits a fully displayed report for the bound Feishu identity", async () => {
-    const markdown = "# 个人报告\n\n本周完成了数据链路审核，并核对了全部事实。";
-    expect(isReportContentComplete(markdown)).toBe(true);
-    const fixture = await createReportCallbackFixture({ markdown });
-
-    try {
-      await expect(
-        fixture.gateway.acceptCardAction(fixture.callback(1)),
-      ).resolves.toEqual({
-        toast: { type: "success", content: "已收到，正在处理。" },
-      });
-      await expect(fixture.gateway.drainInbox()).resolves.toBe(1);
-
-      const reports = await sql<
-        Array<{
-          status: string;
-          content_revision: number;
-          submitted_at: string | null;
-          locked_at: string | null;
-        }>
-      >`
-        select status, content_revision, submitted_at, locked_at
-        from individual_reports
-        where id = ${fixture.reportId} and tenant_id = ${fixture.tenantId}
-      `;
-      expect(reports).toEqual([
-        expect.objectContaining({
-          status: "LOCKED",
-          content_revision: 1,
-          submitted_at: expect.any(String),
-          locked_at: expect.any(String),
-        }),
-      ]);
-
-      const inbox = await sql<
-        Array<{ status: string; error_code: string | null }>
-      >`
-        select status, error_code from feishu_inbox_events
-        where event_id = ${fixture.eventId}
-      `;
-      expect(inbox).toEqual([{ status: "processed", error_code: null }]);
-      const audits = await sql<
-        Array<{ actor_type: string; actor_id: string; action: string }>
-      >`
-        select actor_type, actor_id, action from audit_events
-        where tenant_id = ${fixture.tenantId}
-          and request_id = ${fixture.eventId}
-      `;
-      expect(audits).toEqual([
-        {
-          actor_type: "feishu",
-          actor_id: fixture.openId,
-          action: "individual_report.submitted",
-        },
-      ]);
-      expect(fixture.updateInteractiveCard).toHaveBeenCalledTimes(1);
-      expect(fixture.sendInteractiveCard).not.toHaveBeenCalled();
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("rejects a stale report baseVersion without locking the report", async () => {
-    const fixture = await createReportCallbackFixture({
-      markdown: "# 最新个人报告\n\n这是版本二的完整正文。",
-      contentRevision: 2,
-      deliveryVersion: 1,
-    });
-
-    try {
-      await expect(
-        fixture.gateway.acceptCardAction(fixture.callback(1)),
-      ).resolves.toEqual({
-        toast: { type: "success", content: "已收到，正在处理。" },
-      });
-      await expect(fixture.gateway.drainInbox()).resolves.toBe(1);
-
-      const reports = await sql<
-        Array<{
-          status: string;
-          content_revision: number;
-          submitted_at: Date | null;
-          locked_at: Date | null;
-        }>
-      >`
-        select status, content_revision, submitted_at, locked_at
-        from individual_reports
-        where id = ${fixture.reportId} and tenant_id = ${fixture.tenantId}
-      `;
-      expect(reports).toEqual([
-        {
-          status: "REPORT_REVIEW",
-          content_revision: 2,
-          submitted_at: null,
-          locked_at: null,
-        },
-      ]);
-      const inbox = await sql<
-        Array<{ status: string; error_code: string | null }>
-      >`
-        select status, error_code from feishu_inbox_events
-        where event_id = ${fixture.eventId}
-      `;
-      expect(inbox).toEqual([
-        { status: "processed", error_code: "REPORT_CONTENT_CHANGED" },
-      ]);
-      const submissions = await sql<Array<{ count: number }>>`
-        select count(*)::int as count from outbox_events
-        where tenant_id = ${fixture.tenantId}
-          and event_type = 'individual_report.submitted'
-      `;
-      expect(submissions).toEqual([{ count: 0 }]);
-      expect(fixture.updateInteractiveCard).toHaveBeenCalledTimes(1);
-      expect(fixture.sendInteractiveCard).not.toHaveBeenCalled();
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("does not overwrite an already-current card after a stale callback", async () => {
-    const fixture = await createReportCallbackFixture({
-      markdown: "# 最新个人报告\n\n这是版本二的完整正文。",
-      contentRevision: 2,
-      deliveryVersion: 2,
-    });
-
-    try {
-      await expect(
-        fixture.gateway.acceptCardAction(fixture.callback(1)),
-      ).resolves.toEqual({
-        toast: { type: "success", content: "已收到，正在处理。" },
-      });
-      await expect(fixture.gateway.drainInbox()).resolves.toBe(1);
-
-      const inbox = await sql<
-        Array<{ status: string; error_code: string | null }>
-      >`
-        select status, error_code from feishu_inbox_events
-        where event_id = ${fixture.eventId}
-      `;
-      expect(inbox).toEqual([
-        { status: "processed", error_code: "REPORT_CONTENT_CHANGED" },
-      ]);
-      expect(fixture.updateInteractiveCard).not.toHaveBeenCalled();
-      expect(fixture.sendInteractiveCard).not.toHaveBeenCalled();
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("rejects a forged submit action when the report body is not fully displayable", async () => {
-    const markdown = `# 超长个人报告\n\n${"正文内容".repeat(5_000)}`;
-    expect(isReportContentComplete(markdown)).toBe(false);
-    const fixture = await createReportCallbackFixture({ markdown });
-
-    try {
-      await expect(
-        fixture.gateway.acceptCardAction(fixture.callback(1)),
-      ).resolves.toEqual({
-        toast: { type: "success", content: "已收到，正在处理。" },
-      });
-      await expect(fixture.gateway.drainInbox()).resolves.toBe(1);
-
-      const reports = await sql<
-        Array<{
-          status: string;
-          submitted_at: Date | null;
-          locked_at: Date | null;
-        }>
-      >`
-        select status, submitted_at, locked_at from individual_reports
-        where id = ${fixture.reportId} and tenant_id = ${fixture.tenantId}
-      `;
-      expect(reports).toEqual([
-        { status: "REPORT_REVIEW", submitted_at: null, locked_at: null },
-      ]);
-      const inbox = await sql<
-        Array<{ status: string; error_code: string | null }>
-      >`
-        select status, error_code from feishu_inbox_events
-        where event_id = ${fixture.eventId}
-      `;
-      expect(inbox).toEqual([
-        {
-          status: "processed",
-          error_code: "FEISHU_REPORT_CONTENT_INCOMPLETE",
-        },
-      ]);
-      const submissions = await sql<Array<{ count: number }>>`
-        select count(*)::int as count from outbox_events
-        where tenant_id = ${fixture.tenantId}
-          and event_type = 'individual_report.submitted'
-      `;
-      expect(submissions).toEqual([{ count: 0 }]);
-      expect(fixture.updateInteractiveCard).toHaveBeenCalledTimes(1);
-      expect(fixture.sendInteractiveCard).not.toHaveBeenCalled();
-    } finally {
-      await fixture.cleanup();
     }
   });
 });

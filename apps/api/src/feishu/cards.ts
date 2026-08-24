@@ -8,11 +8,6 @@ export const FEISHU_CARD_BODY_TEXT_LIMIT = 3_200;
 export const FEISHU_CARD_SUMMARY_LIMIT = 1_600;
 export const FEISHU_CARD_MAX_JSON_BYTES = 30_000;
 
-// Leave room for headers, summaries, action payloads, and JSON escaping inside
-// Feishu's 30 KB card limit. This limit is measured on the serialized string.
-const FEISHU_REPORT_MARKDOWN_SAFE_JSON_BYTES = 15_000;
-const FEISHU_REPORT_MARKDOWN_CHUNK_JSON_BYTES = 4_000;
-
 const actionBase = {
   deliveryId: opaqueIdSchema,
   aggregateId: opaqueIdSchema,
@@ -36,15 +31,8 @@ const recoveryActionValueSchema = z
 const reviewActionValueSchema = z
   .object({
     ...actionBase,
-    action: z.enum(["review_approve", "review_exclude", "review_regenerate"]),
+    action: z.enum(["review_approve", "review_exclude"]),
     itemId: opaqueIdSchema,
-  })
-  .strict();
-
-const reportActionValueSchema = z
-  .object({
-    ...actionBase,
-    action: z.enum(["report_submit", "report_regenerate"]),
   })
   .strict();
 
@@ -74,19 +62,10 @@ export const feishuActionValueSchema = z.discriminatedUnion("action", [
   bindingActionValueSchema,
   recoveryActionValueSchema,
   reviewActionValueSchema,
-  reportActionValueSchema,
   scopeItemActionValueSchema,
   scopeAllActionValueSchema,
   scopeSubmitActionValueSchema,
 ]);
-
-const regenerationSchema = z
-  .object({
-    enabled: z.boolean().default(true),
-    pending: z.boolean().default(false),
-    errorMessage: displayTextSchema.optional(),
-  })
-  .strict();
 
 export const bindingCardInputSchema = z
   .object({
@@ -157,29 +136,6 @@ export const reviewCardInputSchema = z
         dailyProgress: z.array(dailyProgressSchema).max(366).default([]),
       })
       .strict(),
-    regeneration: regenerationSchema.optional(),
-  })
-  .strict();
-
-export const reportCardInputSchema = z
-  .object({
-    deliveryId: opaqueIdSchema,
-    aggregateId: opaqueIdSchema,
-    baseVersion: baseVersionSchema,
-    title: z.string().trim().min(1).max(2_000),
-    summary: displayTextSchema,
-    markdown: z.string().trim().min(1).max(60_000),
-    detailsUrl: z
-      .string()
-      .trim()
-      .url()
-      .max(2_048)
-      .refine((value) => /^https?:\/\//i.test(value), {
-        message: "detailsUrl must use http or https",
-      })
-      .optional(),
-    periodLabel: z.string().trim().min(1).max(120).optional(),
-    regeneration: regenerationSchema.optional(),
   })
   .strict();
 
@@ -243,7 +199,6 @@ export type FeishuActionValue = z.infer<typeof feishuActionValueSchema>;
 export type BindingCardInput = z.input<typeof bindingCardInputSchema>;
 export type RecoveryCardInput = z.input<typeof recoveryCardInputSchema>;
 export type ReviewCardInput = z.input<typeof reviewCardInputSchema>;
-export type ReportCardInput = z.input<typeof reportCardInputSchema>;
 export type StatusCardInput = z.input<typeof statusCardInputSchema>;
 export type ScopeCardInput = z.input<typeof scopeCardInputSchema>;
 export type ScopeStatusCardInput = z.input<typeof scopeStatusCardInputSchema>;
@@ -287,93 +242,6 @@ export function truncateCardText(value: string, maxLength: number): string {
     .slice(0, maxLength - 3)
     .join("")
     .trimEnd()}...`;
-}
-
-function normalizeMarkdown(value: string): string {
-  return value.replace(/\r\n?/g, "\n").trim();
-}
-
-function jsonStringContentByteLength(value: string): number {
-  const serialized = JSON.stringify(value);
-  return Buffer.byteLength(serialized.slice(1, -1), "utf8");
-}
-
-export function isReportContentComplete(markdown: string): boolean {
-  const normalized = normalizeMarkdown(markdown);
-  return (
-    normalized.length > 0 &&
-    jsonStringContentByteLength(normalized) <=
-      FEISHU_REPORT_MARKDOWN_SAFE_JSON_BYTES
-  );
-}
-
-function splitRawTextByJsonBytes(value: string, maxBytes: number): string[] {
-  const chunks: string[] = [];
-  let current = "";
-  let currentBytes = 0;
-
-  for (const character of value) {
-    const characterBytes = jsonStringContentByteLength(character);
-    if (current && currentBytes + characterBytes > maxBytes) {
-      chunks.push(current);
-      current = "";
-      currentBytes = 0;
-    }
-    current += character;
-    currentBytes += characterBytes;
-  }
-
-  if (current) chunks.push(current);
-  return chunks;
-}
-
-function splitReportMarkdown(value: string): string[] {
-  const chunks: string[] = [];
-  let current = "";
-  let currentBytes = 0;
-
-  // Keeping newlines with each segment avoids breaking Markdown blocks unless a
-  // single source line is itself larger than the per-element budget.
-  for (const line of value.split(/(?<=\n)/)) {
-    const lineBytes = jsonStringContentByteLength(line);
-    if (lineBytes > FEISHU_REPORT_MARKDOWN_CHUNK_JSON_BYTES) {
-      if (current) chunks.push(current);
-      chunks.push(
-        ...splitRawTextByJsonBytes(
-          line,
-          FEISHU_REPORT_MARKDOWN_CHUNK_JSON_BYTES,
-        ),
-      );
-      current = "";
-      currentBytes = 0;
-      continue;
-    }
-    if (
-      current &&
-      currentBytes + lineBytes > FEISHU_REPORT_MARKDOWN_CHUNK_JSON_BYTES
-    ) {
-      chunks.push(current);
-      current = "";
-      currentBytes = 0;
-    }
-    current += line;
-    currentBytes += lineBytes;
-  }
-
-  if (current) chunks.push(current);
-  return chunks;
-}
-
-function truncateMarkdownByJsonBytes(value: string, maxBytes: number): string {
-  let result = "";
-  let resultBytes = 0;
-  for (const character of value) {
-    const characterBytes = jsonStringContentByteLength(character);
-    if (resultBytes + characterBytes > maxBytes) break;
-    result += character;
-    resultBytes += characterBytes;
-  }
-  return result.trimEnd();
 }
 
 function escapeLarkMarkdown(value: string): string {
@@ -462,51 +330,6 @@ function buttonRow(buttons: FeishuCardElement[]): FeishuCardElement {
       vertical_align: "top",
       elements: [button],
     })),
-  };
-}
-
-function regenerationForm(input: {
-  prefix: "review" | "report";
-  value: FeishuActionValue;
-}): FeishuCardElement {
-  const prefix = input.prefix === "review" ? "review" : "report";
-  const submit: FeishuCardElement = {
-    tag: "button",
-    element_id: `${prefix}_regen_btn`,
-    text: plainText("按意见重新生成"),
-    type: "default",
-    width: "fill",
-    action_type: "form_submit",
-    name: `${prefix}_regen_submit`,
-    value: feishuActionValueSchema.parse(input.value),
-    confirm: {
-      title: plainText("确认重新生成"),
-      text: plainText(
-        "将根据填写的意见生成新版本，当前内容会保留在历史版本中。",
-      ),
-    },
-  };
-  return {
-    tag: "form",
-    name: `${prefix}_regen_form`,
-    elements: [
-      {
-        tag: "input",
-        element_id: `${prefix}_regen_input`,
-        name: "instruction",
-        required: true,
-        input_type: "multiline_text",
-        rows: 3,
-        auto_resize: true,
-        max_rows: 6,
-        max_length: 1_000,
-        width: "fill",
-        label: plainText("修改意见"),
-        label_position: "top",
-        placeholder: plainText("请说明需要补充、更正或调整的内容"),
-      },
-      buttonRow([submit]),
-    ],
   };
 }
 
@@ -603,7 +426,7 @@ export function renderBindingCard(rawInput: BindingCardInput): FeishuCard {
     template: "blue",
     elements: [
       markdown(
-        `Partner Report 将把项目卡片和个人报告私发给：\n\n**${recipient}**\n\n确认后，此飞书账号将用于接收和处理对应审核。插件会先上传项目显示名、匿名项目标识、首次发现时间和 Session 数量，用于生成采集范围授权卡；在你允许前不会读取或上传 Session 内容。`,
+        `Partner Report 将把项目权限和工作卡片私发给：\n\n**${recipient}**\n\n确认后，此飞书账号将用于接收和处理对应审核。插件会先上传项目显示名、匿名项目标识、首次发现时间和 Session 数量，用于生成采集范围授权卡；在你允许前不会读取或上传 Session 内容。`,
         "binding_details",
       ),
       callbackButton({
@@ -835,7 +658,6 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
     itemId: input.item.id,
     baseVersion: input.baseVersion,
   };
-  const regenerationPending = input.regeneration?.pending === true;
   const elements: FeishuCardElement[] = [
     notation(progressText, "review_progress"),
     markdown(
@@ -843,21 +665,6 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
       "review_item",
     ),
   ];
-
-  if (input.regeneration?.errorMessage) {
-    elements.push(
-      markdown(
-        `**上次重新生成失败**\n${safeMarkdownText(
-          input.regeneration.errorMessage,
-          600,
-        )}`,
-        "review_regen_error",
-      ),
-    );
-  }
-  if (regenerationPending) {
-    elements.push(notation("正在根据修改意见重新生成，请稍候。"));
-  }
 
   elements.push(
     buttonRow([
@@ -869,13 +676,9 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
           ...baseValue,
           action: "review_exclude",
         },
-        disabled: regenerationPending,
-        ...(regenerationPending
-          ? { disabledTips: "重新生成完成后可继续审核" }
-          : {}),
         confirm: {
           title: "确认忽略",
-          text: "该项目不会进入本期个人报告。",
+          text: "该项目不会进入本期团队报告汇总。",
         },
       }),
       callbackButton({
@@ -886,25 +689,9 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
           ...baseValue,
           action: "review_approve",
         },
-        disabled: regenerationPending,
-        ...(regenerationPending
-          ? { disabledTips: "重新生成完成后可继续审核" }
-          : {}),
       }),
     ]),
   );
-
-  if (input.regeneration?.enabled === true && !regenerationPending) {
-    elements.push(
-      regenerationForm({
-        prefix: "review",
-        value: {
-          ...baseValue,
-          action: "review_regenerate",
-        },
-      }),
-    );
-  }
 
   return createCard({
     title: "项目工作卡片审核",
@@ -913,131 +700,6 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
     template: "blue",
     elements,
   });
-}
-
-export function renderReportCard(rawInput: ReportCardInput): FeishuCard {
-  const input = reportCardInputSchema.parse(rawInput);
-  const regenerationPending = input.regeneration?.pending === true;
-  const normalizedMarkdown = normalizeMarkdown(input.markdown);
-  const contentComplete = isReportContentComplete(normalizedMarkdown);
-  const truncationMarker =
-    "\n\n> **内容已截断**：报告超过飞书卡片 30KB 安全预算，请查看完整报告后再决定是否提交。";
-  const displayedMarkdown = contentComplete
-    ? normalizedMarkdown
-    : `${truncateMarkdownByJsonBytes(
-        normalizedMarkdown,
-        FEISHU_REPORT_MARKDOWN_SAFE_JSON_BYTES -
-          jsonStringContentByteLength(truncationMarker),
-      )}${truncationMarker}`;
-  const baseValue = {
-    deliveryId: input.deliveryId,
-    aggregateId: input.aggregateId,
-    baseVersion: input.baseVersion,
-  };
-  const elements: FeishuCardElement[] = [
-    notation(
-      [input.periodLabel, `版本 v${input.baseVersion}`]
-        .filter((part): part is string => Boolean(part))
-        .join(" · "),
-      "report_meta",
-    ),
-    markdown(
-      `**报告摘要**\n${safeMarkdownText(input.summary, 600)}`,
-      "report_summary",
-    ),
-    markdown("**报告全文**", "report_content_heading"),
-    ...splitReportMarkdown(displayedMarkdown).map((content, index) =>
-      markdown(content, `report_content_${index + 1}`),
-    ),
-  ];
-
-  if (!contentComplete) {
-    elements.push(
-      notation(
-        "当前卡片仅包含报告节选，不能在此确认锁定。请先查看完整内容。",
-        "report_truncated_notice",
-      ),
-    );
-    if (input.detailsUrl) {
-      elements.push({
-        tag: "button",
-        element_id: "report_details",
-        text: plainText("查看完整报告"),
-        type: "default",
-        width: "fill",
-        behaviors: [
-          {
-            type: "open_url",
-            default_url: input.detailsUrl,
-          },
-        ],
-      });
-    }
-  }
-
-  if (input.regeneration?.errorMessage) {
-    elements.push(
-      markdown(
-        `**上次重新生成失败**\n${safeMarkdownText(
-          input.regeneration.errorMessage,
-          600,
-        )}`,
-        "report_regen_error",
-      ),
-    );
-  }
-  if (regenerationPending) {
-    elements.push(notation("正在根据修改意见重新生成报告，请稍候。"));
-  }
-
-  if (contentComplete) {
-    elements.push(
-      callbackButton({
-        elementId: "report_submit",
-        label: "确认并锁定报告",
-        type: "primary",
-        value: {
-          ...baseValue,
-          action: "report_submit",
-        },
-        disabled: regenerationPending,
-        ...(regenerationPending
-          ? { disabledTips: "重新生成完成后可提交" }
-          : {}),
-        confirm: {
-          title: "确认提交报告",
-          text: "提交后报告将锁定，不能再重新生成。",
-        },
-      }),
-    );
-  }
-
-  if (input.regeneration?.enabled === true && !regenerationPending) {
-    elements.push(
-      regenerationForm({
-        prefix: "report",
-        value: {
-          ...baseValue,
-          action: "report_regenerate",
-        },
-      }),
-    );
-  }
-
-  const card = createCard({
-    title: truncateCardText(input.title, 100),
-    subtitle: "个人报告审核",
-    summary: `个人报告待审核：${input.title}`,
-    template: "blue",
-    elements,
-  });
-  if (
-    Buffer.byteLength(JSON.stringify(card), "utf8") >=
-    FEISHU_CARD_MAX_JSON_BYTES
-  ) {
-    throw new RangeError("Rendered Feishu report card exceeds the 30 KB limit");
-  }
-  return card;
 }
 
 const statusDefaults = {
@@ -1052,8 +714,8 @@ const statusDefaults = {
     template: "red" as const,
   },
   locked: {
-    title: "报告已确认并锁定",
-    message: "本期个人报告已经提交，当前卡片不再接受修改。",
+    title: "审核已完成",
+    message: "本期审核结果已经锁定，当前卡片不再接受修改。",
     template: "green" as const,
   },
 };

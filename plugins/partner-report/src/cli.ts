@@ -23,7 +23,6 @@ import {
   loadSecret,
   migrateLegacyInstallation,
   normalizeServerUrl,
-  clearPluginUnboundMarker,
   removeSecret,
   removeSecrets,
   saveConfig,
@@ -527,7 +526,7 @@ async function setServerUrl() {
 function authRecoveryOutput(expiresAt: string) {
   output({
     status: "auth_recovery_required",
-    message: "连接恢复申请已发送到工作看板应用。确认后，下次运行会自动继续。",
+    message: "连接恢复申请已发送到飞书。确认后，下次运行会自动继续。",
     expiresAt,
     checkpointAdvanced: false,
     counts: {
@@ -770,7 +769,6 @@ async function connect() {
       }),
     },
   );
-  clearPluginUnboundMarker();
   const existing = loadConfig(false);
   if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
     removeSecrets(existing.pluginInstanceId);
@@ -923,7 +921,7 @@ function projectScopeApprovalRequired(
     read: 0,
     uploaded: 0,
     message:
-      "发现了尚未审批的项目，未读取任何 Session 内容。请在工作看板应用中完成采集权限审批。",
+      "发现了尚未审批的项目，未读取任何 Session 内容。请在飞书中完成采集权限审批。",
   };
 }
 
@@ -2534,7 +2532,7 @@ async function changeProjectScope(decision: "allow" | "deny") {
   if (localInspection.state !== "valid")
     throw Object.assign(
       new Error(
-        "本地采集权限尚未建立，请先运行采集并在工作看板应用完成首次审批。",
+        "本地采集权限尚未建立，请先运行采集并在飞书完成首次审批。",
       ),
       { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" },
     );

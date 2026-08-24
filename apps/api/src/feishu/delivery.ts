@@ -3,7 +3,6 @@ import { z } from "zod";
 import { sqlClient as defaultDatabase } from "@partner-report/db";
 import {
   renderRecoveryCard,
-  renderReportCard,
   renderReviewCard,
   renderScopeCard,
   renderScopeStatusCard,
@@ -19,8 +18,7 @@ export type FeishuDeliveryScope = {
   partnerId: string;
 };
 
-export type FeishuDeliveryKind =
-  "binding" | "recovery" | "scope" | "review" | "report";
+export type FeishuDeliveryKind = "binding" | "recovery" | "scope" | "review";
 
 export type FeishuDeliveryOutcome = "sent" | "updated" | "deferred" | "skipped";
 
@@ -60,24 +58,6 @@ export type ReviewDeliveryView = FeishuDeliveryScope & {
     status: string;
     overview: string;
     dailyProgress: Array<{ date: string; summary: string }>;
-  };
-  regeneration: {
-    enabled: true;
-    pending: boolean;
-  };
-};
-
-export type ReportDeliveryView = FeishuDeliveryScope & {
-  reportId: string;
-  version: number;
-  status: string;
-  title: string;
-  summary: string;
-  markdown: string;
-  periodLabel: string;
-  regeneration: {
-    enabled: true;
-    pending: boolean;
   };
 };
 
@@ -119,8 +99,7 @@ export type FeishuActionDelivery = FeishuDeliveryScope & {
     | "partner"
     | "device_authorization"
     | "project_scope"
-    | "review"
-    | "individual_report";
+    | "review";
   aggregateId: string;
   messageId: string;
   receiveId: string;
@@ -186,13 +165,7 @@ const deliveryKindSchema = z.enum([
   "recovery",
   "scope",
   "review",
-  "report",
 ]);
-const webOriginSchema = z
-  .string()
-  .trim()
-  .url()
-  .refine((value) => /^https?:\/\//i.test(value));
 
 function safePayload(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -217,7 +190,7 @@ function safeDailyProgress(
 function aggregateType(kind: Exclude<FeishuDeliveryKind, "binding">) {
   if (kind === "recovery") return "device_authorization";
   if (kind === "scope") return "project_scope";
-  return kind === "review" ? "review" : "individual_report";
+  return "review";
 }
 
 function idempotencyKey(
@@ -259,21 +232,16 @@ function messageIdempotencyKey(delivery: DeliveryRow) {
 export class FeishuDeliveryService {
   private readonly database: Database;
   private readonly messageClient: MessageClient;
-  private readonly webOrigin: string | null;
   readonly appId: string;
 
   constructor(input: {
     appId: string;
     messageClient: MessageClient;
     database?: Database;
-    webOrigin?: string;
   }) {
     this.appId = identifierSchema.parse(input.appId);
     this.messageClient = input.messageClient;
     this.database = input.database ?? defaultDatabase;
-    this.webOrigin = input.webOrigin
-      ? webOriginSchema.parse(input.webOrigin).replace(/\/+$/, "")
-      : null;
   }
 
   async loadReviewDeliveryView(
@@ -336,16 +304,6 @@ export class FeishuDeliveryService {
     const item = items[0];
     if (!item || item.total < 1 || item.pending < 1) return null;
 
-    const pendingJobs = await this.database<Array<{ id: string }>>`
-      select id from agent_jobs
-      where tenant_id = ${scope.tenantId} and team_id = ${scope.teamId}
-        and partner_id = ${scope.partnerId} and type = 'AGGREGATE_WORK_ITEMS'
-        and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
-        and input_payload->>'reviewId' = ${reviewId}
-        and input_payload->>'targetWorkItemId' = ${item.id}
-      order by created_at desc
-      limit 1
-    `;
     const payload = safePayload(item.payload);
     return {
       ...scope,
@@ -372,78 +330,6 @@ export class FeishuDeliveryService {
             ? payload.overview
             : "暂无项目概览。",
         dailyProgress: safeDailyProgress(payload.dailyProgress),
-      },
-      regeneration: {
-        enabled: true,
-        pending: pendingJobs.length > 0,
-      },
-    };
-  }
-
-  async loadReportDeliveryView(
-    scope: FeishuDeliveryScope,
-    reportId: string,
-  ): Promise<ReportDeliveryView | null> {
-    const reports = await this.database<
-      Array<{
-        id: string;
-        status: string;
-        content_revision: number;
-        period_key: string;
-        title: string | null;
-        summary: string | null;
-        markdown: string | null;
-      }>
-    >`
-      select r.id, r.status, r.content_revision, rp.period_key,
-        r.title, r.summary, r.markdown
-      from individual_reports r
-      join report_periods rp
-        on rp.id = r.period_id and rp.tenant_id = r.tenant_id
-        and rp.team_id = r.team_id
-      where r.id = ${reportId} and r.tenant_id = ${scope.tenantId}
-        and r.team_id = ${scope.teamId} and r.partner_id = ${scope.partnerId}
-      limit 1
-    `;
-    const report = reports[0];
-    if (
-      !report ||
-      report.content_revision < 1 ||
-      !report.title ||
-      !report.summary ||
-      !report.markdown
-    )
-      return null;
-
-    const pendingJobs = await this.database<Array<{ id: string }>>`
-      select id from agent_jobs
-      where tenant_id = ${scope.tenantId} and team_id = ${scope.teamId}
-        and partner_id = ${scope.partnerId}
-        and type = 'REGENERATE_INDIVIDUAL_REPORT'
-        and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
-        and input_payload->>'reportId' = ${reportId}
-      order by created_at desc
-      limit 1
-    `;
-    const regenerationPending = pendingJobs.length > 0;
-    if (
-      report.status !== "REPORT_REVIEW" &&
-      !(report.status === "REPORT_DRAFT" && regenerationPending)
-    )
-      return null;
-
-    return {
-      ...scope,
-      reportId: report.id,
-      version: report.content_revision,
-      status: report.status,
-      title: report.title,
-      summary: report.summary,
-      markdown: report.markdown,
-      periodLabel: report.period_key,
-      regeneration: {
-        enabled: true,
-        pending: regenerationPending,
       },
     };
   }
@@ -598,30 +484,6 @@ export class FeishuDeliveryService {
       periodLabel: view.periodLabel,
       progress: view.progress,
       item: view.item,
-      regeneration: view.regeneration,
-    });
-  }
-
-  renderReportDeliveryCard(
-    view: ReportDeliveryView,
-    deliveryId: string,
-  ): FeishuCard {
-    return renderReportCard({
-      deliveryId,
-      aggregateId: view.reportId,
-      baseVersion: view.version,
-      title: view.title,
-      summary: view.summary,
-      markdown: view.markdown,
-      ...(this.webOrigin
-        ? {
-            detailsUrl: `${this.webOrigin}/partner/report/${encodeURIComponent(
-              view.reportId,
-            )}`,
-          }
-        : {}),
-      periodLabel: view.periodLabel,
-      regeneration: view.regeneration,
     });
   }
 
@@ -789,29 +651,8 @@ export class FeishuDeliveryService {
     );
   }
 
-  async deliverReport(input: FeishuDeliveryScope & { reportId: string }) {
-    const view = await this.loadReportDeliveryView(input, input.reportId);
-    if (!view)
-      return {
-        outcome: "skipped",
-        deliveryId: null,
-        reason: "not_reviewable",
-      } satisfies FeishuDeliveryResult;
-    return this.deliverAggregate(
-      "report",
-      input,
-      input.reportId,
-      view.version,
-      (deliveryId) => this.renderReportDeliveryCard(view, deliveryId),
-    );
-  }
-
   async patchReviewDelivery(input: FeishuDeliveryScope & { reviewId: string }) {
     return this.deliverReview(input);
-  }
-
-  async patchReportDelivery(input: FeishuDeliveryScope & { reportId: string }) {
-    return this.deliverReport(input);
   }
 
   async patchReviewStatus(
@@ -821,17 +662,6 @@ export class FeishuDeliveryService {
       "review",
       input,
       input.reviewId,
-      input.card,
-    );
-  }
-
-  async patchReportStatus(
-    input: FeishuDeliveryScope & { reportId: string; card: FeishuCard },
-  ) {
-    return this.patchAggregateStatus(
-      "report",
-      input,
-      input.reportId,
       input.card,
     );
   }
@@ -956,8 +786,7 @@ export class FeishuDeliveryService {
           | "partner"
           | "device_authorization"
           | "project_scope"
-          | "review"
-          | "individual_report";
+          | "review";
         aggregate_id: string;
         message_id: string;
         receive_id: string;
@@ -1103,7 +932,7 @@ export class FeishuDeliveryService {
   }
 
   private async deliverAggregate(
-    kind: "recovery" | "scope" | "review" | "report",
+    kind: "recovery" | "scope" | "review",
     scope: FeishuDeliveryScope,
     aggregateId: string,
     domainVersion: number,
@@ -1191,7 +1020,7 @@ export class FeishuDeliveryService {
   }
 
   private async patchAggregateStatus(
-    kind: "recovery" | "scope" | "review" | "report",
+    kind: "recovery" | "scope" | "review",
     scope: FeishuDeliveryScope,
     aggregateId: string,
     card: FeishuCard,
@@ -1242,7 +1071,7 @@ export class FeishuDeliveryService {
   }
 
   private async upsertAggregateDelivery(input: {
-    kind: "recovery" | "scope" | "review" | "report";
+    kind: "recovery" | "scope" | "review";
     scope: FeishuDeliveryScope;
     aggregateId: string;
     domainVersion: number;

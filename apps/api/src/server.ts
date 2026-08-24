@@ -13,7 +13,6 @@ import { authRoutes, type AuthRouteOptions } from "./routes/auth.js";
 import { factRoutes } from "./routes/facts.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { observabilityRoutes } from "./routes/observability.js";
-import { widgetRoutes } from "./routes/widget.js";
 import { pluginRoutes } from "./routes/plugin.js";
 import { teamReportRoutes } from "./routes/team-reports.js";
 import { reviewRoutes } from "./routes/reviews.js";
@@ -140,7 +139,6 @@ export async function buildApp(
   await app.register(adminRoutes);
   await app.register(pluginRoutes);
   await app.register(observabilityRoutes);
-  await app.register(widgetRoutes);
   await app.register(factRoutes);
   await app.register(jobRoutes);
   await app.register(reviewRoutes);

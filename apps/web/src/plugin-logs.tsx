@@ -19,7 +19,6 @@ type Plugin = {
   partner_name: string;
   device_name: string;
   version: string;
-  client_kind: "collector" | "widget";
   status: string;
   runStatus?: string;
   last_sync_at: string | null;
@@ -195,10 +194,7 @@ export function PluginLogsPage() {
                   <strong>{plugin.partner_name}</strong>
                   <span>{plugin.device_name}</span>
                   <small>
-                    {plugin.client_kind === "widget"
-                      ? "Widget"
-                      : `v${plugin.version}`}{" "}
-                    · {shortId(plugin.id)}
+                    v{plugin.version} · {shortId(plugin.id)}
                   </small>
                 </span>
                 <ChevronRight size={16} />

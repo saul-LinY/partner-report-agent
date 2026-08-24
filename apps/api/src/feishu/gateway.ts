@@ -116,11 +116,11 @@ function callbackResponse(
 
 function expectedDeliveryKind(
   action: FeishuActionValue["action"],
-): "binding" | "recovery" | "scope" | "review" | "report" {
+): "binding" | "recovery" | "scope" | "review" {
   if (action === "binding_confirm") return "binding";
   if (action === "recovery_confirm") return "recovery";
   if (action.startsWith("scope_")) return "scope";
-  return action.startsWith("review_") ? "review" : "report";
+  return "review";
 }
 
 function parseScopeAggregateId(aggregateId: string) {
@@ -244,15 +244,6 @@ export class FeishuGateway {
         "Rejected malformed Feishu card action",
       );
       return callbackResponse("error", "审核操作无效，请刷新卡片。");
-    }
-    if (
-      [
-        "review_regenerate",
-        "report_submit",
-        "report_regenerate",
-      ].includes(actionValue.data.action)
-    ) {
-      return callbackResponse("error", "当前卡片操作已停用，请使用最新卡片。");
     }
     if (
       !this.reviewDeliveryEnabled &&
@@ -826,7 +817,7 @@ export class FeishuGateway {
       card: renderStatusCard({
         kind: "locked",
         title: "飞书审核身份已连接",
-        message: `已完成 ${delivery.partnerEmail} 的审核身份绑定。后续项目卡片和个人报告会私发到当前飞书账号。`,
+        message: `已完成 ${delivery.partnerEmail} 的审核身份绑定。后续项目权限和工作卡片会私发到当前飞书账号。`,
       }),
     });
     if (this.reviewDeliveryEnabled) {
@@ -1010,10 +1001,7 @@ export class FeishuGateway {
       return;
     }
 
-    const contentChanged = [
-      "VERSION_CONFLICT",
-      "REPORT_CONTENT_CHANGED",
-    ].includes(error.code);
+    const contentChanged = error.code === "VERSION_CONFLICT";
     if (contentChanged) {
       const result =
         kind === "review"
@@ -1021,22 +1009,16 @@ export class FeishuGateway {
               ...delivery,
               reviewId: event.value.aggregateId,
             })
-          : kind === "scope"
-            ? await this.deliveries.deliverScope({
-                ...delivery,
-                ...parseScopeAggregateId(event.value.aggregateId),
-              })
-            : await this.deliveries.deliverReport({
-                ...delivery,
-                reportId: event.value.aggregateId,
-              });
+          : await this.deliveries.deliverScope({
+              ...delivery,
+              ...parseScopeAggregateId(event.value.aggregateId),
+            });
       if (result.outcome !== "skipped" || result.reason === "already_current")
         return;
     }
 
     const card: FeishuCard =
       error.code.includes("LOCKED") ||
-      error.code === "REPORT_NOT_SUBMITTABLE" ||
       error.code === "REVIEW_NOT_EDITABLE"
         ? renderLockedCard({ message: error.message })
         : contentChanged
@@ -1049,17 +1031,11 @@ export class FeishuGateway {
             reviewId: event.value.aggregateId,
             card,
           })
-        : kind === "scope"
-          ? await this.deliveries.patchScopeStatus({
-              ...delivery,
-              aggregateId: event.value.aggregateId,
-              card,
-            })
-          : await this.deliveries.patchReportStatus({
-              ...delivery,
-              reportId: event.value.aggregateId,
-              card,
-            });
+        : await this.deliveries.patchScopeStatus({
+            ...delivery,
+            aggregateId: event.value.aggregateId,
+            card,
+          });
     if (deliveryNeedsStatusRetry(result)) {
       throw new Error("FEISHU_STATUS_PATCH_DEFERRED");
     }
@@ -1149,7 +1125,6 @@ export class FeishuGateway {
       [
         "work_items.draft.created",
         "work_item.review.changed",
-        "work_item.regeneration.requested",
         "review.change.applied",
         "review.reopened",
       ].includes(event.event_type)
@@ -1197,65 +1172,6 @@ export class FeishuGateway {
           completed.periodKey,
         );
       return true;
-    }
-
-    if (
-      event.event_type === "individual_report.draft.created" ||
-      event.event_type === "individual_report.regeneration.requested"
-    ) {
-      const scope = await this.loadReportScope(
-        event.tenant_id,
-        event.aggregate_id,
-      );
-      if (!scope) return true;
-      const result = await this.deliveries.deliverReport({
-        ...scope,
-        reportId: event.aggregate_id,
-      });
-      return !deliveryNeedsStatusRetry(result);
-    }
-
-    if (event.event_type === "individual_report.submitted") {
-      const scope = await this.loadReportScope(
-        event.tenant_id,
-        event.aggregate_id,
-      );
-      if (!scope) return true;
-      const result = await this.deliveries.patchReportStatus({
-        ...scope,
-        reportId: event.aggregate_id,
-        card: renderLockedCard(),
-      });
-      if (deliveryNeedsStatusRetry(result)) return false;
-      await this.deliveries.syncPartnerPendingApprovals(scope, scope.periodKey);
-      return true;
-    }
-
-    if (event.event_type === "individual_report.returned_to_items") {
-      const reviewScope = await this.loadReviewScope(
-        event.tenant_id,
-        event.aggregate_id,
-      );
-      if (reviewScope) {
-        const reviewResult = await this.deliveries.deliverReview({
-          ...reviewScope,
-          reviewId: event.aggregate_id,
-        });
-        if (deliveryNeedsStatusRetry(reviewResult)) return false;
-      }
-      const reportId = safeRecord(event.payload).reportId;
-      if (typeof reportId !== "string") return true;
-      const reportScope = await this.loadReportScope(event.tenant_id, reportId);
-      if (!reportScope) return true;
-      const result = await this.deliveries.patchReportStatus({
-        ...reportScope,
-        reportId,
-        card: renderStaleCard({
-          title: "个人报告已退回项目审核",
-          message: "请先完成更新后的项目卡片审核，再处理个人报告。",
-        }),
-      });
-      return !deliveryNeedsStatusRetry(result);
     }
 
     return true;
@@ -1345,38 +1261,6 @@ export class FeishuGateway {
           teamId: row.team_id,
           partnerId: row.partner_id,
           reviewId: row.review_id,
-          periodKey: row.period_key,
-        }
-      : null;
-  }
-
-  private async loadReportScope(
-    tenantId: string,
-    reportId: string,
-  ): Promise<
-    (FeishuDeliveryScope & { reportId: string; periodKey: string }) | null
-  > {
-    const rows = await this.database<
-      Array<{
-        tenant_id: string;
-        team_id: string;
-        partner_id: string;
-        period_key: string;
-      }>
-    >`
-      select ir.tenant_id, ir.team_id, ir.partner_id, rp.period_key
-      from individual_reports ir
-      join report_periods rp on rp.id = ir.period_id and rp.tenant_id = ir.tenant_id
-      where ir.id = ${reportId} and ir.tenant_id = ${tenantId}
-      limit 1
-    `;
-    const row = rows[0];
-    return row
-      ? {
-          tenantId: row.tenant_id,
-          teamId: row.team_id,
-          partnerId: row.partner_id,
-          reportId,
           periodKey: row.period_key,
         }
       : null;

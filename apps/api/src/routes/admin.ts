@@ -246,7 +246,7 @@ export async function adminRoutes(app: FastifyInstance) {
       sql<any[]>`
         select
           pi.id, pi.tenant_id, pi.team_id, pi.partner_id, pi.device_name, pi.version,
-          pi.client_kind, pi.status,
+          pi.status,
           pi.access_expires_at, pi.last_heartbeat_at, pi.last_hook_at, pi.last_runner_at,
           pi.last_scan_at, pi.last_sync_at, pi.next_due_at, pi.runner_state, pi.dirty_sessions,
           pi.extracting_sessions, pi.pending_local_jobs, pi.retry_count, pi.last_error_code,
@@ -351,13 +351,10 @@ export async function adminRoutes(app: FastifyInstance) {
         plugins.find(
           (candidate) =>
             candidate.partner_id === partner.id &&
-            candidate.client_kind === "collector" &&
             candidate.status === "active",
         ) ??
         plugins.find(
-          (candidate) =>
-            candidate.partner_id === partner.id &&
-            candidate.client_kind === "collector",
+          (candidate) => candidate.partner_id === partner.id,
         );
       const connectionState = !plugin
         ? "not_connected"

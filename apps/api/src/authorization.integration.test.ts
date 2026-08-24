@@ -72,6 +72,9 @@ suite("tenant and role authorization", () => {
     await app?.close();
     await sql.begin(async (tx) => {
       await tx`delete from web_sessions where id = ${fixture.sessionA}`;
+      await tx`delete from outbox_events where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from feishu_deliveries where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from feishu_partner_bindings where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from audit_events where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from agent_jobs where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from team_report_versions where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
@@ -371,89 +374,6 @@ suite("tenant and role authorization", () => {
         await tx`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
         await tx`delete from audit_events where actor_id = ${pluginInstanceId} or target_id = ${bindingId}`;
         await tx`delete from plugin_instances where id = ${pluginInstanceId}`;
-      });
-    }
-  });
-
-  it("unbinds the collector only after the desktop app verifies its original binding code", async () => {
-    const collectorId = randomUUID();
-    const widgetId = randomUUID();
-    const bindingId = randomUUID();
-    const collectorCode = `PR-UNBIND-${randomUUID()}`.toUpperCase();
-    const widgetToken = `widget-unbind-${widgetId}`;
-    await sql.begin(async (tx) => {
-      await tx`
-        insert into plugin_instances (
-          id, tenant_id, team_id, partner_id, device_name, version,
-          client_kind, access_token_hash, refresh_token_hash, access_expires_at
-        ) values (
-          ${collectorId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
-          'Unbind Collector', '1.0.0', 'collector',
-          ${createHash("sha256").update(`collector-${collectorId}`).digest("hex")},
-          ${createHash("sha256").update(`collector-refresh-${collectorId}`).digest("hex")},
-          ${new Date(Date.now() + 3_600_000).toISOString()}
-        ), (
-          ${widgetId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
-          'Unbind Widget', '1.0.0', 'widget',
-          ${createHash("sha256").update(widgetToken).digest("hex")},
-          ${createHash("sha256").update(`widget-refresh-${widgetId}`).digest("hex")},
-          ${new Date(Date.now() + 3_600_000).toISOString()}
-        )
-      `;
-      await tx`
-        insert into plugin_binding_codes (
-          id, tenant_id, team_id, partner_id, code_hash, code_value,
-          code_prefix, label, status, plugin_instance_id, claimed_at, created_by
-        ) values (
-          ${bindingId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
-          ${createHash("sha256").update(collectorCode).digest("hex")},
-          ${collectorCode}, 'PR-UNBIND', 'Unbind fixture', 'claimed',
-          ${collectorId}, now(), ${fixture.userA}
-        )
-      `;
-    });
-
-    try {
-      const authorization = { authorization: `Bearer ${widgetToken}` };
-      const rejected = await app.inject({
-        method: "POST",
-        url: "/v1/widget/unbind",
-        headers: authorization,
-        payload: { bindingCode: "PR-WRONG-CODE" },
-      });
-      expect(rejected.statusCode).toBe(400);
-      expect(rejected.json().code).toBe("BINDING_CODE_INVALID");
-      expect(
-        await sql<{ status: string }[]>`
-          select status from plugin_instances where id in (${collectorId}, ${widgetId})
-          order by id
-        `,
-      ).toEqual([{ status: "active" }, { status: "active" }]);
-
-      const accepted = await app.inject({
-        method: "POST",
-        url: "/v1/widget/unbind",
-        headers: authorization,
-        payload: { bindingCode: collectorCode.toLowerCase() },
-      });
-      expect(accepted.statusCode).toBe(200);
-      expect(accepted.json()).toEqual({ ok: true });
-      expect(
-        await sql<{ status: string }[]>`
-          select status from plugin_instances where id in (${collectorId}, ${widgetId})
-          order by id
-        `,
-      ).toEqual([{ status: "revoked" }, { status: "revoked" }]);
-      expect(
-        await sql<{ status: string }[]>`
-          select status from plugin_binding_codes where id = ${bindingId}
-        `,
-      ).toEqual([{ status: "revoked" }]);
-    } finally {
-      await sql.begin(async (tx) => {
-        await tx`delete from audit_events where actor_id = ${widgetId} or target_id = ${collectorId}`;
-        await tx`delete from plugin_binding_codes where id = ${bindingId}`;
-        await tx`delete from plugin_instances where id in (${collectorId}, ${widgetId})`;
       });
     }
   });

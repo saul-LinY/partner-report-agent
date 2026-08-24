@@ -40,15 +40,15 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 向用户索取数据中台 API URL 和 Admin 生成的绑定码，然后调用 `connect`。远程地址必须使用 HTTPS；本机回环地址允许 HTTP。只有用户明确确认同一可信测试局域网时，才可把 `allowInsecureHttp` 设为 `true`。
 
-新绑定的 Token 在 macOS 上直接保存在工作看板 App Group 的插件数据目录中，权限为 `0600`；其他系统继续使用用户稳定数据目录。正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain。
+新绑定的 Token 保存在插件稳定数据目录中，权限为 `0600`。正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain。
 
 旧版安装升级后应在普通交互会话中调用一次 `migrate_credentials`。该工具只把旧 Keychain 凭据复制到稳定文件，不改变 Plugin Instance、项目权限或采集游标。迁移完成后定时任务不再访问 Keychain。`CREDENTIAL_MIGRATION_REQUIRED` 表示一次性迁移尚未完成，不代表 Token 失效；不得因此重新绑定。
 
-持久状态优先使用 `PARTNER_REPORT_DATA`；否则 macOS 使用工作看板 App Group 的插件数据目录，其他系统使用用户稳定数据目录。旧版目录和运行时插件目录只作为一次性迁移来源，迁移不修改 Codex 定时任务。`LOCAL_DATA_WRITE_PERMISSION_REQUIRED` 表示 MCP 进程也无法写入任何稳定目录，本次不得读取或上传 Session；`PLUGIN_UNBOUND` 表示用户已在工作看板解除绑定，本次不得读取或上传 Session。
+持久状态优先使用 `PARTNER_REPORT_DATA`，否则使用用户目录下的 `.partner-report-data`。旧版 macOS App Group、旧 Keychain 和运行时插件目录只作为一次性迁移来源，迁移不修改 Codex 定时任务。`LOCAL_DATA_WRITE_PERMISSION_REQUIRED` 表示 MCP 进程无法写入稳定目录，本次不得读取或上传 Session。
 
 绑定后的连通性检查或首次项目发现失败时，保留绑定并调用 `connectivity_test`，不得重新领取绑定码。只有候选项目已登记、进入审核卡等待，或明确返回没有候选项目时，才可报告首次激活完成。
 
-`REFRESH_TOKEN_INVALID` 会在工作看板应用中创建连接恢复申请并返回 `auth_recovery_required`。不得反复重试、删除本地状态或读取 Session。用户确认后，下一次定时运行会自动领取新凭据并继续。
+`REFRESH_TOKEN_INVALID` 会创建飞书连接恢复卡并返回 `auth_recovery_required`。不得反复重试、删除本地状态或读取 Session。用户在飞书确认后，下一次定时运行会自动领取新凭据并继续。
 
 中台地址迁移时调用 `server_url_set`，保留 Plugin Instance、Token、项目权限和采集状态。可信局域网 HTTP 仍须显式设置 `allowInsecureHttp: true`。
 
@@ -135,4 +135,4 @@ Job 输入、结果和安全失败审计在终态审查完成前由 MCP 以私�
 
 根据用户要求调用 `exclusion_set`，选择 `kind: "session"` 或 `kind: "path"`，用 `excluded` 决定添加或移除。路径排除包含所有后代路径，并且始终保留在本地。
 
-用户只询问健康状态时调用 `status`。报告插件版本、连通性、当前周期、中台和本地处理计数、采集下界、上次成功时间、排除数量，以及允许、拒绝和待审批项目数量。`projectScopeLocalState` 不是 `valid` 或 `projectScopeRequiresApproval` 为 true 时，明确说明采集会先等待工作看板应用审批。当前周期缺失不代表连接失败。
+用户只询问健康状态时调用 `status`。报告插件版本、连通性、当前周期、中台和本地处理计数、采集下界、上次成功时间、排除数量，以及允许、拒绝和待审批项目数量。`projectScopeLocalState` 不是 `valid` 或 `projectScopeRequiresApproval` 为 true 时，明确说明采集会先等待飞书项目权限审批。当前周期缺失不代表连接失败。

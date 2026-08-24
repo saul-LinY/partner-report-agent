@@ -51,7 +51,6 @@ const claimSchema = z.object({
   bindingCode: z.string().min(8).max(80),
   deviceName: z.string().min(1).max(120),
   pluginVersion: z.string().min(1).max(40),
-  clientKind: z.enum(["collector", "widget"]).default("collector"),
 });
 
 function accessExpiry() {
@@ -119,7 +118,6 @@ export async function pluginRoutes(app: FastifyInstance) {
         const recovered = await tx<{ id: string }[]>`
           update plugin_instances set
             device_name = ${input.deviceName}, version = ${input.pluginVersion},
-            client_kind = ${input.clientKind},
             access_token_hash = ${sha256(accessToken)},
             refresh_token_hash = ${sha256(refreshToken)},
             access_expires_at = ${expiresAt.toISOString()},
@@ -140,13 +138,12 @@ export async function pluginRoutes(app: FastifyInstance) {
         await tx`
           insert into plugin_instances (
             id, tenant_id, team_id, partner_id, device_name, version,
-            client_kind,
             access_token_hash, refresh_token_hash, access_expires_at,
             connectivity_status, connectivity_challenge_hash,
             connectivity_challenge_expires_at
           ) values (
             ${pluginInstanceId}, ${row.tenant_id}, ${row.team_id}, ${row.partner_id},
-            ${input.deviceName}, ${input.pluginVersion}, ${input.clientKind}, ${sha256(accessToken)},
+            ${input.deviceName}, ${input.pluginVersion}, ${sha256(accessToken)},
             ${sha256(refreshToken)}, ${expiresAt.toISOString()}, 'pending',
             ${connectivity.challengeHash}, ${connectivity.challengeExpiresAt.toISOString()}
           )
@@ -172,7 +169,7 @@ export async function pluginRoutes(app: FastifyInstance) {
           ${randomUUID()}, ${row.tenant_id}, ${row.team_id}, 'plugin', ${pluginInstanceId},
           ${recoveryInstanceId ? "plugin.binding.recovered" : "plugin.binding.claimed"},
           'plugin_binding_code', ${row.id}, ${request.id},
-          ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion, clientKind: input.clientKind })}::jsonb
+          ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
         )
       `;
       return { row, pluginInstanceId };
@@ -237,7 +234,6 @@ export async function pluginRoutes(app: FastifyInstance) {
           select pi.id, pi.tenant_id, pi.team_id, pi.partner_id
           from plugin_instances pi
           where pi.id = ${input.pluginInstanceId} and pi.status = 'active'
-            and pi.client_kind = 'collector'
             and pi.device_name = ${input.deviceName}
           limit 1
           for update of pi

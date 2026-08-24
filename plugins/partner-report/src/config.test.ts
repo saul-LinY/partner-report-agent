@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   defaultDataDirectory,
+  legacyMacOSAppGroupDirectory,
   migratePersistentDataDirectory,
   loadSecret,
   normalizeServerUrl,
@@ -107,11 +108,11 @@ describe("persistent plugin data", () => {
     }
   });
 
-  it("moves legacy macOS data into the shared app group", () => {
+  it("moves legacy macOS App Group data into the plugin directory", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-move-test-"));
-    const source = resolve(root, ".partner-report-data");
+    const source = legacyMacOSAppGroupDirectory(root);
     const target = defaultDataDirectory(root, "darwin");
-    mkdirSync(source);
+    mkdirSync(source, { recursive: true });
     writeFileSync(resolve(source, "config.json"), "{}\n");
     try {
       migratePersistentDataDirectory(source, target, true);
@@ -119,9 +120,7 @@ describe("persistent plugin data", () => {
         "{}",
       );
       expect(() => statSync(source)).toThrow();
-      expect(target).toContain(
-        "Library/Group Containers/9RN69TVL38.partnerreport.shared/PartnerReportPluginData",
-      );
+      expect(target).toBe(resolve(root, ".partner-report-data"));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

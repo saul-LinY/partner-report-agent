@@ -32,7 +32,6 @@ export type PluginActor = DomainActor & {
   userId: null;
   status: string;
   version: string;
-  clientKind: "collector" | "widget";
 };
 
 export function isDevelopmentLoginEnabled(
@@ -146,8 +145,7 @@ export async function requirePluginActor(request: FastifyRequest) {
       team_id as "teamId",
       partner_id as "partnerId",
       status,
-      version,
-      client_kind as "clientKind"
+      version
     from plugin_instances
     where access_token_hash = ${sha256(token)}
       and access_expires_at > now()

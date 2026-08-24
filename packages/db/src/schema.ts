@@ -435,7 +435,6 @@ export const pluginInstances = pgTable(
       .references(() => partners.id),
     deviceName: text("device_name").notNull(),
     version: text("version").notNull(),
-    clientKind: text("client_kind").notNull().default("collector"),
     status: text("status").notNull().default("active"),
     accessTokenHash: text("access_token_hash").notNull(),
     refreshTokenHash: text("refresh_token_hash").notNull(),

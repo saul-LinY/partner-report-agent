@@ -29,9 +29,8 @@ import { dirname, resolve } from "node:path";
 var PLUGIN_VERSION = "1.0.0";
 var DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 var BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
-var PARTNER_REPORT_APP_GROUP = "9RN69TVL38.partnerreport.shared";
-var PARTNER_REPORT_DATA_DIRECTORY = "PartnerReportPluginData";
-var PARTNER_REPORT_UNBOUND_MARKER = "PartnerReportPluginUnbound";
+var LEGACY_PARTNER_REPORT_APP_GROUP = "9RN69TVL38.partnerreport.shared";
+var LEGACY_PARTNER_REPORT_DATA_DIRECTORY = "PartnerReportPluginData";
 function readKeychainValue(service) {
   if (process.platform !== "darwin") return null;
   try {
@@ -44,19 +43,17 @@ function readKeychainValue(service) {
     return null;
   }
 }
-function macOSAppGroupDirectory(home = homedir()) {
+function legacyMacOSAppGroupDirectory(home = homedir()) {
   return resolve(
     home,
     "Library",
     "Group Containers",
-    PARTNER_REPORT_APP_GROUP
+    LEGACY_PARTNER_REPORT_APP_GROUP,
+    LEGACY_PARTNER_REPORT_DATA_DIRECTORY
   );
 }
-function defaultDataDirectory(home = homedir(), platform = process.platform) {
-  return platform === "darwin" ? resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_DATA_DIRECTORY) : resolve(home, ".partner-report-data");
-}
-function unboundMarkerPath(home = homedir()) {
-  return resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_UNBOUND_MARKER);
+function defaultDataDirectory(home = homedir(), _platform = process.platform) {
+  return resolve(home, ".partner-report-data");
 }
 function migratePersistentDataDirectory(source, target, removeSource = false) {
   const sourceDirectory = resolve(source);
@@ -123,16 +120,10 @@ function selectWritableDataDirectory(candidates, prepare = prepareWritableDataDi
 function dataDirectory() {
   const runtimeDirectory = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   const explicitDirectory = process.env.PARTNER_REPORT_DATA;
-  const legacyStableDirectory = resolve(homedir(), ".partner-report-data");
   const stableDirectory = defaultDataDirectory();
-  if (!explicitDirectory && process.platform === "darwin" && existsSync(unboundMarkerPath()))
-    throw Object.assign(
-      new Error("Partner Report \u63D2\u4EF6\u5DF2\u89E3\u9664\u7ED1\u5B9A\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u540E\u518D\u91C7\u96C6\u3002"),
-      { code: "PLUGIN_UNBOUND" }
-    );
   if (!explicitDirectory && process.platform === "darwin")
     migratePersistentDataDirectory(
-      legacyStableDirectory,
+      legacyMacOSAppGroupDirectory(),
       stableDirectory,
       true
     );

@@ -3,12 +3,10 @@ import {
   FEISHU_CARD_BODY_TEXT_LIMIT,
   FEISHU_CARD_MAX_JSON_BYTES,
   feishuActionValueSchema,
-  isReportContentComplete,
   renderBindingCard,
   renderErrorCard,
   renderLockedCard,
   renderRecoveryCard,
-  renderReportCard,
   renderReviewCard,
   renderScopeCard,
   renderScopeStatusCard,
@@ -61,28 +59,6 @@ function findByElementId(
   };
   visit(card);
   return match;
-}
-
-function reportContent(card: FeishuCard): string {
-  const contents: string[] = [];
-  const visit = (value: unknown) => {
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    if (
-      typeof record.element_id === "string" &&
-      /^report_content_\d+$/.test(record.element_id)
-    ) {
-      const text = record.text as { content?: unknown } | undefined;
-      if (typeof text?.content === "string") contents.push(text.content);
-    }
-    Object.values(record).forEach(visit);
-  };
-  visit(card);
-  return contents.join("");
 }
 
 const ids = {
@@ -232,7 +208,7 @@ describe("Feishu JSON 2.0 cards", () => {
     );
   });
 
-  it("renders one current review item with decision and regeneration actions", () => {
+  it("renders one current review item with only accept and ignore actions", () => {
     const card = renderReviewCard({
       deliveryId: ids.deliveryId,
       aggregateId: ids.aggregateId,
@@ -249,7 +225,6 @@ describe("Feishu JSON 2.0 cards", () => {
           { date: "2026-08-05", summary: "实现交互卡片渲染器。" },
         ],
       },
-      regeneration: { enabled: true },
     });
 
     expect(callbackValues(card)).toEqual([
@@ -267,128 +242,32 @@ describe("Feishu JSON 2.0 cards", () => {
         baseVersion: 7,
         action: "review_approve",
       },
-      {
-        deliveryId: ids.deliveryId,
-        aggregateId: ids.aggregateId,
-        itemId: ids.itemId,
-        baseVersion: 7,
-        action: "review_regenerate",
-      },
     ]);
     expect(JSON.stringify(card)).toContain("项目描述");
     expect(JSON.stringify(card)).toContain("用于采集、审核并汇总");
     expect(JSON.stringify(card)).not.toContain("状态：进行中");
-    expect(findByElementId(card, "review_regen_input")).toMatchObject({
-      tag: "input",
-      name: "instruction",
-      required: true,
-      max_length: 1_000,
-    });
-    expect(findByElementId(card, "review_regen_btn")).toMatchObject({
-      tag: "button",
-      action_type: "form_submit",
-      name: "review_regen_submit",
-      value: {
-        action: "review_regenerate",
-      },
-    });
-    expect(findByElementId(card, "review_regen_btn")).not.toHaveProperty(
-      "behaviors",
-    );
+    expect(findByElementId(card, "review_regen_input")).toBeUndefined();
   });
 
-  it("keeps report actions scoped to delivery and report aggregate", () => {
-    const fullMarkdown = [
-      "# 本期工作",
-      "",
-      "- 完成飞书审核链路",
-      "- 补齐幂等与审计能力",
-      "",
-      "## 风险",
-      "",
-      "当前无阻塞项。",
-    ].join("\n");
-    const card = renderReportCard({
-      deliveryId: ids.deliveryId,
-      aggregateId: ids.aggregateId,
-      baseVersion: 3,
-      title: "Saul 个人工作报告",
-      summary: "本期推进了审核链路与审计能力。",
-      markdown: fullMarkdown,
-      regeneration: { enabled: true },
-    });
-
-    expect(isReportContentComplete(fullMarkdown)).toBe(true);
-    expect(reportContent(card)).toBe(fullMarkdown);
-    expect(callbackValues(card)).toEqual([
-      {
-        deliveryId: ids.deliveryId,
-        aggregateId: ids.aggregateId,
-        baseVersion: 3,
-        action: "report_submit",
-      },
-      {
-        deliveryId: ids.deliveryId,
-        aggregateId: ids.aggregateId,
-        baseVersion: 3,
-        action: "report_regenerate",
-      },
-    ]);
-    expect(findByElementId(card, "report_regen_input")).toMatchObject({
-      name: "instruction",
-      input_type: "multiline_text",
-    });
-    expect(findByElementId(card, "report_regen_btn")).toMatchObject({
-      action_type: "form_submit",
-      name: "report_regen_submit",
-      value: {
-        action: "report_regenerate",
-      },
-    });
+  it("rejects removed review and report actions", () => {
+    for (const action of [
+      "review_regenerate",
+      "report_submit",
+      "report_regenerate",
+    ]) {
+      expect(
+        feishuActionValueSchema.safeParse({
+          deliveryId: ids.deliveryId,
+          aggregateId: ids.aggregateId,
+          itemId: ids.itemId,
+          baseVersion: 1,
+          action,
+        }).success,
+      ).toBe(false);
+    }
   });
 
-  it("does not allow locking a report when the full Markdown cannot fit", () => {
-    const fullMarkdown = [
-      "# 超长报告",
-      "",
-      ...Array.from(
-        { length: 1_500 },
-        (_, index) => `- 第 ${index + 1} 项：成果🚀、\"引用\"与 \\ 路径`,
-      ),
-    ].join("\n");
-    const card = renderReportCard({
-      deliveryId: ids.deliveryId,
-      aggregateId: ids.aggregateId,
-      baseVersion: 4,
-      title: "超长个人工作报告",
-      summary: "此报告包含完整的项目明细。",
-      markdown: fullMarkdown,
-      detailsUrl: "https://partner-report.example.test/reports/long-report",
-      regeneration: { enabled: true },
-    });
-    const actions = callbackValues(card).map((value) => value.action);
-
-    expect(isReportContentComplete(fullMarkdown)).toBe(false);
-    expect(actions).not.toContain("report_submit");
-    expect(actions).toContain("report_regenerate");
-    expect(reportContent(card)).toContain("内容已截断");
-    expect(findByElementId(card, "report_truncated_notice")).toBeDefined();
-    expect(findByElementId(card, "report_details")).toMatchObject({
-      tag: "button",
-      behaviors: [
-        {
-          type: "open_url",
-          default_url:
-            "https://partner-report.example.test/reports/long-report",
-        },
-      ],
-    });
-    expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThan(
-      FEISHU_CARD_MAX_JSON_BYTES,
-    );
-  });
-
-  it("does not render a regeneration form unless requested", () => {
+  it("always renders only the two review decisions", () => {
     const card = renderReviewCard({
       deliveryId: ids.deliveryId,
       aggregateId: ids.aggregateId,

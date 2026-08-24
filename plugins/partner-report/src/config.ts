@@ -40,10 +40,9 @@ export type PluginConfig = {
 
 const DATA_DIRECTORY_SERVICE = "partner-report:data-directory";
 const BOOTSTRAP_CONFIG_SERVICE = "partner-report:bootstrap-config";
-export const PARTNER_REPORT_APP_GROUP =
+const LEGACY_PARTNER_REPORT_APP_GROUP =
   "9RN69TVL38.partnerreport.shared";
-export const PARTNER_REPORT_DATA_DIRECTORY = "PartnerReportPluginData";
-export const PARTNER_REPORT_UNBOUND_MARKER = "PartnerReportPluginUnbound";
+const LEGACY_PARTNER_REPORT_DATA_DIRECTORY = "PartnerReportPluginData";
 
 export function normalizeServerUrl(value: string, allowInsecureHttp = false) {
   const raw = value.trim();
@@ -95,31 +94,21 @@ function readKeychainValue(service: string) {
   }
 }
 
-export function macOSAppGroupDirectory(home = homedir()) {
+export function legacyMacOSAppGroupDirectory(home = homedir()) {
   return resolve(
     home,
     "Library",
     "Group Containers",
-    PARTNER_REPORT_APP_GROUP,
+    LEGACY_PARTNER_REPORT_APP_GROUP,
+    LEGACY_PARTNER_REPORT_DATA_DIRECTORY,
   );
 }
 
 export function defaultDataDirectory(
   home = homedir(),
-  platform = process.platform,
+  _platform = process.platform,
 ) {
-  return platform === "darwin"
-    ? resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_DATA_DIRECTORY)
-    : resolve(home, ".partner-report-data");
-}
-
-function unboundMarkerPath(home = homedir()) {
-  return resolve(macOSAppGroupDirectory(home), PARTNER_REPORT_UNBOUND_MARKER);
-}
-
-export function clearPluginUnboundMarker() {
-  if (process.platform !== "darwin") return;
-  rmSync(unboundMarkerPath(), { force: true });
+  return resolve(home, ".partner-report-data");
 }
 
 export function migratePersistentDataDirectory(
@@ -205,20 +194,10 @@ export function dataDirectory() {
   const runtimeDirectory =
     process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   const explicitDirectory = process.env.PARTNER_REPORT_DATA;
-  const legacyStableDirectory = resolve(homedir(), ".partner-report-data");
   const stableDirectory = defaultDataDirectory();
-  if (
-    !explicitDirectory &&
-    process.platform === "darwin" &&
-    existsSync(unboundMarkerPath())
-  )
-    throw Object.assign(
-      new Error("Partner Report 插件已解除绑定，请重新连接后再采集。"),
-      { code: "PLUGIN_UNBOUND" },
-    );
   if (!explicitDirectory && process.platform === "darwin")
     migratePersistentDataDirectory(
-      legacyStableDirectory,
+      legacyMacOSAppGroupDirectory(),
       stableDirectory,
       true,
     );

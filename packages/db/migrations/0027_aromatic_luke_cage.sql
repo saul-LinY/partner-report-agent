@@ -1,0 +1,1 @@
+ALTER TABLE "plugin_instances" DROP COLUMN "client_kind";

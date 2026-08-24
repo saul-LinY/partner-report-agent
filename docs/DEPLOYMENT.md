@@ -23,7 +23,7 @@ PLUGIN_MIN_VERSION=0.1.0
 
 `VITE_API_URL` 是构建 Web 前端时写入浏览器包的公开 API 地址。`WEB_ORIGIN` 是用户实际打开的 Web 地址，同时用于 CORS、设备确认链接和邀请链接。两者不要以 `/` 结尾。防火墙只需向 Partner 设备开放 API 的 HTTPS 入口；PostgreSQL 不应暴露到公网。
 
-生产环境必须显式设置 `NODE_ENV=production` 和 `DATABASE_URL`。缺少 `DATABASE_URL` 时 API、Worker 和数据库迁移会拒绝启动，避免误连开发机的 `localhost:54329`。插件和 macOS 应用只访问公开 HTTPS API，不直接连接 PostgreSQL。
+生产环境必须显式设置 `NODE_ENV=production` 和 `DATABASE_URL`。缺少 `DATABASE_URL` 时 API、Worker 和数据库迁移会拒绝启动，避免误连开发机的 `localhost:54329`。插件只访问公开 HTTPS API，不直接连接 PostgreSQL；飞书事件与卡片投递由 API 进程的长连接处理。
 
 ## 可信局域网联调
 
