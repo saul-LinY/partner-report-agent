@@ -95,6 +95,8 @@ import {
   discoverProjectScopes,
   inspectLocalProjectScope,
   inspectLocalProjectScopeChanges,
+  localProjectScopeHasIdentityCollisions,
+  localProjectScopeRequiresBootstrap,
   mergeDiscoveredRoots,
   mergeRemoteProjectScope,
   saveLocalProjectScope,
@@ -106,6 +108,7 @@ import {
 import { waitForCondition } from "./poll-wait.js";
 import {
   buildProjectDescriptionSource,
+  planProjectDescriptionSources,
   projectDescriptionIsChinese,
 } from "./project-description.js";
 import {
@@ -200,6 +203,7 @@ type ProjectDescriptionScan = {
   current: ProjectDescriptionCurrent | null;
   generated: number;
   unchanged: number;
+  unauthorized?: number;
   failed: number;
 };
 
@@ -214,6 +218,8 @@ type RunCounts = {
   outsideWindow: number;
   excluded: number;
   failedRead: number;
+  failedPermissionCheck: number;
+  failedThreadRead: number;
   failedExtract: number;
   skipped: number;
   deferred: number;
@@ -356,7 +362,6 @@ async function fetchProjectScope(init: RequestInit = {}) {
 function cacheRemoteProjectScope(remote: RemoteProjectScopePolicy) {
   const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
   const scope = mergeRemoteProjectScope(inspection.scope, remote);
-  if (inspection.state !== "valid") saveLocalProjectScope(scope);
   return { ...inspection, scope };
 }
 
@@ -366,7 +371,31 @@ async function synchronizeLocalProjectScope(
 ) {
   let synchronizedRemote = remote;
   let changedCount = 0;
-  if (inspection.state === "valid") {
+  let bootstrapped = false;
+  const identityCollision =
+    inspection.state === "valid" &&
+    remote.entries.length > 0 &&
+    localProjectScopeHasIdentityCollisions(inspection.scope);
+  if (
+    localProjectScopeRequiresBootstrap(inspection.state, remote) ||
+    identityCollision
+  ) {
+    synchronizedRemote = await authenticatedRequest<RemoteProjectScopePolicy>(
+      "/v1/project-scope/bootstrap",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          baseVersion: remote.version,
+          reason: identityCollision
+            ? "local_scope_identity_conflict"
+            : inspection.state === "missing"
+              ? "local_scope_missing"
+              : "local_scope_invalid",
+        }),
+      },
+    );
+    bootstrapped = true;
+  } else if (inspection.state === "valid") {
     const changes = inspectLocalProjectScopeChanges(inspection.scope, remote);
     if (changes.kind === "conflict")
       throw Object.assign(new Error(changes.reason), {
@@ -386,7 +415,13 @@ async function synchronizeLocalProjectScope(
   }
   const scope = mergeRemoteProjectScope(inspection.scope, synchronizedRemote);
   saveLocalProjectScope(scope);
-  return { inspection, remote: synchronizedRemote, scope, changedCount };
+  return {
+    inspection,
+    remote: synchronizedRemote,
+    scope,
+    changedCount,
+    bootstrapped,
+  };
 }
 
 function scheduledTaskConfig() {
@@ -637,19 +672,16 @@ async function discoverProjectScopeAfterBinding() {
     throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
       code: "REPORT_PERIOD_MISSING",
     });
-  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  const synchronized = await synchronizeLocalProjectScope(remoteScope);
+  const synchronizedLocalScope = synchronized.scope;
+  const currentRemoteScope = synchronized.remote;
   if (
-    remoteScope.initialized ||
-    remoteScope.entries.some((entry) => entry.status === "pending")
+    currentRemoteScope.initialized ||
+    currentRemoteScope.entries.some((entry) => entry.status === "pending")
   ) {
-    const localScope = mergeRemoteProjectScope(
-      localInspection.scope,
-      remoteScope,
-    );
-    saveLocalProjectScope(localScope);
     return projectScopePendingStatus(
       policy.currentPeriod.period_key,
-      localScope,
+      synchronizedLocalScope,
     );
   }
 
@@ -681,7 +713,7 @@ async function discoverProjectScopeAfterBinding() {
   );
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
-    localInspection.scope,
+    synchronizedLocalScope,
     permissionDiscoverySummaries,
     {
       configuredRoots: configuredProjectRoots(policy.projects),
@@ -703,7 +735,7 @@ async function discoverProjectScopeAfterBinding() {
     },
   );
   const localScope = mergeDiscoveredRoots(
-    mergeRemoteProjectScope(localInspection.scope, registeredScope),
+    mergeRemoteProjectScope(synchronized.scope, registeredScope),
     discovery.candidates,
   );
   saveLocalProjectScope(localScope);
@@ -992,6 +1024,13 @@ function takeResumableRun(pluginInstanceId: string, periodKey: string) {
   return resumable;
 }
 
+function discardStoredRuns(pluginInstanceId: string) {
+  for (const run of storedRuns(pluginInstanceId)) {
+    releaseCollectionLease(pluginInstanceId, run.manifest.runId);
+    rmSync(dirname(run.path), { recursive: true, force: true });
+  }
+}
+
 function readRun(runPath: string) {
   const absolute = assertRunPath(runPath);
   const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RunManifest;
@@ -1006,6 +1045,8 @@ function readRun(runPath: string) {
   manifest.counts.skipped ??= 0;
   manifest.counts.deferred ??= 0;
   manifest.counts.notProcessed ??= 0;
+  manifest.counts.failedPermissionCheck ??= 0;
+  manifest.counts.failedThreadRead ??= 0;
   manifest.outcomes ??= [];
   manifest.claimedJobs ??=
     manifest.counts.uploaded +
@@ -1020,6 +1061,7 @@ function readRun(runPath: string) {
     current: null,
     generated: 0,
     unchanged: 0,
+    unauthorized: 0,
     failed: 0,
   };
   refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
@@ -1070,6 +1112,8 @@ async function postCollectionStatus(
     skipped: counts.skipped,
     notProcessed: counts.notProcessed,
     failedRead: counts.failedRead,
+    failedPermissionCheck: counts.failedPermissionCheck,
+    failedThreadRead: counts.failedThreadRead,
     failedExtract: counts.failedExtract,
     excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
@@ -1114,6 +1158,8 @@ async function postCollectionStatus(
       deferred: counts.deferred,
       skipped: counts.skipped,
       failedRead: counts.failedRead,
+      failedPermissionCheck: counts.failedPermissionCheck,
+      failedThreadRead: counts.failedThreadRead,
       failedExtract: counts.failedExtract,
       checkpointEligible,
     },
@@ -1139,10 +1185,15 @@ async function collectStart() {
   const remoteScope = synchronizedScope.remote;
   let localScope: LocalProjectScope = synchronizedScope.scope;
 
-  const resumable = takeResumableRun(
-    config.pluginInstanceId,
-    policy.currentPeriod.period_key,
-  );
+  if (synchronizedScope.bootstrapped)
+    discardStoredRuns(config.pluginInstanceId);
+
+  const resumable = synchronizedScope.bootstrapped
+    ? null
+    : takeResumableRun(
+        config.pluginInstanceId,
+        policy.currentPeriod.period_key,
+      );
   if (resumable) {
     acquireCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
     try {
@@ -1370,6 +1421,8 @@ async function collectStart() {
         metadataEligible.length +
         (inWindow.length - queuedInsideWindow),
       failedRead: 0,
+      failedPermissionCheck: 0,
+      failedThreadRead: 0,
       failedExtract: 0,
       skipped: 0,
       deferred: 0,
@@ -1389,6 +1442,7 @@ async function collectStart() {
       current: null,
       generated: 0,
       unchanged: 0,
+      unauthorized: 0,
       failed: 0,
     },
   };
@@ -1509,6 +1563,7 @@ async function finishRun(
     projectDescriptions: {
       generated: manifest.projectDescriptionScan?.generated ?? 0,
       unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+      unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
       failed: manifest.projectDescriptionScan?.failed ?? 0,
     },
     ...manifest.counts,
@@ -1608,15 +1663,10 @@ async function initializeProjectDescriptionScan(
     saveRun(runPath, manifest);
     return;
   }
-  const states = new Map(remote.projects.map((item) => [item.scopeKey, item]));
-  scan.queue = sources.filter((source) => {
-    const state = states.get(source.scopeKey);
-    const unchanged =
-      state?.sourceFingerprint === source.sourceFingerprint ||
-      state?.pendingSourceFingerprint === source.sourceFingerprint;
-    if (unchanged) scan.unchanged += 1;
-    return !unchanged;
-  });
+  const plan = planProjectDescriptionSources(sources, remote.projects);
+  scan.queue = plan.queue;
+  scan.unchanged += plan.unchanged;
+  scan.unauthorized = (scan.unauthorized ?? 0) + plan.unauthorized;
   scan.cursor = 0;
   scan.initialized = true;
   saveRun(runPath, manifest);
@@ -1774,6 +1824,7 @@ async function continueScopeApprovalWait(
         current: null,
         generated: manifest.projectDescriptionScan?.generated ?? 0,
         unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+        unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
         failed: manifest.projectDescriptionScan?.failed ?? 0,
       };
     }
@@ -2012,6 +2063,7 @@ async function collectNext() {
       ) {
         manifest.counts.excluded += 1;
         manifest.counts.failedRead += 1;
+        manifest.counts.failedPermissionCheck += 1;
         saveRun(absolute, manifest);
         continue;
       }
@@ -2021,6 +2073,7 @@ async function collectNext() {
         manifest.counts.read += 1;
       } catch {
         manifest.counts.failedRead += 1;
+        manifest.counts.failedThreadRead += 1;
         saveRun(absolute, manifest);
         continue;
       }

@@ -160,3 +160,37 @@ export function projectDescriptionIsChinese(description: unknown) {
     /[\u3400-\u4dbf\u4e00-\u9fff]/u.test(description)
   );
 }
+
+export function planProjectDescriptionSources<
+  T extends { scopeKey: string; sourceFingerprint: string },
+>(
+  sources: T[],
+  remoteProjects: Array<{
+    scopeKey: string;
+    sourceFingerprint: string | null;
+    pendingSourceFingerprint: string | null;
+  }>,
+) {
+  const states = new Map(
+    remoteProjects.map((project) => [project.scopeKey, project]),
+  );
+  const queue: T[] = [];
+  let unchanged = 0;
+  let unauthorized = 0;
+  for (const source of sources) {
+    const state = states.get(source.scopeKey);
+    if (!state) {
+      unauthorized += 1;
+      continue;
+    }
+    if (
+      state.sourceFingerprint === source.sourceFingerprint ||
+      state.pendingSourceFingerprint === source.sourceFingerprint
+    ) {
+      unchanged += 1;
+      continue;
+    }
+    queue.push(source);
+  }
+  return { queue, unchanged, unauthorized };
+}

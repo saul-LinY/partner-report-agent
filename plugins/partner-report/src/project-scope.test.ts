@@ -16,6 +16,8 @@ import {
   discoverProjectScopes,
   inspectLocalProjectScopeChanges,
   inspectLocalProjectScope,
+  localProjectScopeHasIdentityCollisions,
+  localProjectScopeRequiresBootstrap,
   mergeRemoteProjectScope,
   saveLocalProjectScope,
   scopeIsActive,
@@ -42,6 +44,102 @@ function localScope(
 }
 
 describe("project scope privacy boundary", () => {
+  it("requires central bootstrap when durable local identity is lost", () => {
+    const remote = {
+      initialized: true,
+      entries: [{ scopeKey: "a".repeat(64) }],
+    };
+    expect(localProjectScopeRequiresBootstrap("missing", remote)).toBe(true);
+    expect(localProjectScopeRequiresBootstrap("invalid", remote)).toBe(true);
+    expect(localProjectScopeRequiresBootstrap("valid", remote)).toBe(false);
+    expect(
+      localProjectScopeRequiresBootstrap("missing", {
+        initialized: false,
+        entries: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("detects two permission keys for the same local project identity", () => {
+    const entry = {
+      scopeKey: "1".repeat(64),
+      displayName: "project",
+      status: "denied" as const,
+      effectiveFrom: "2026-08-21T00:00:00.000Z",
+      firstSeenPeriodKey: "2026-W33",
+      firstSeenAt: "2026-08-21T00:00:00.000Z",
+      lastSeenAt: "2026-08-21T00:00:00.000Z",
+      sessionCount: 1,
+      localRoot: "/workspace/project",
+      localIdentity: "a".repeat(64),
+    };
+    expect(
+      localProjectScopeHasIdentityCollisions(
+        localScope([
+          entry,
+          {
+            ...entry,
+            scopeKey: "2".repeat(64),
+            firstSeenAt: "2026-08-23T00:00:00.000Z",
+          },
+        ]),
+      ),
+    ).toBe(true);
+    expect(
+      localProjectScopeHasIdentityCollisions(
+        localScope([
+          entry,
+          {
+            ...entry,
+            scopeKey: "2".repeat(64),
+            localRoot: "/other/project",
+            localIdentity: "b".repeat(64),
+          },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
+  it("detects an orphaned pre-update key beside its mapped replacement", () => {
+    const base = {
+      displayName: "project",
+      status: "denied" as const,
+      effectiveFrom: "2026-08-21T00:00:00.000Z",
+      firstSeenPeriodKey: "2026-W33",
+      firstSeenAt: "2026-08-21T00:00:00.000Z",
+      lastSeenAt: "2026-08-21T00:00:00.000Z",
+      sessionCount: 1,
+    };
+    expect(
+      localProjectScopeHasIdentityCollisions(
+        localScope([
+          { ...base, scopeKey: "1".repeat(64), localRoot: null },
+          {
+            ...base,
+            scopeKey: "2".repeat(64),
+            localRoot: "/workspace/project",
+          },
+        ]),
+      ),
+    ).toBe(true);
+    expect(
+      localProjectScopeHasIdentityCollisions(
+        localScope([
+          {
+            ...base,
+            scopeKey: "1".repeat(64),
+            localRoot: "/workspace/one/project",
+          },
+          {
+            ...base,
+            scopeKey: "2".repeat(64),
+            localRoot: "/workspace/two/project",
+          },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
   it("distinguishes valid, missing, and invalid local permission files", () => {
     const directory = mkdtempSync(
       resolve(tmpdir(), "partner-report-scope-file-test-"),

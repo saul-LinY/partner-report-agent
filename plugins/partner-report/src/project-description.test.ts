@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildProjectDescriptionSource,
+  planProjectDescriptionSources,
   projectDescriptionIsChinese,
 } from "./project-description.js";
 
@@ -65,5 +66,31 @@ describe("project description source", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("queues only projects confirmed by the central permission boundary", () => {
+    const sources = [
+      { scopeKey: "allowed-changed", sourceFingerprint: "new" },
+      { scopeKey: "allowed-unchanged", sourceFingerprint: "same" },
+      { scopeKey: "locally-stale", sourceFingerprint: "stale" },
+    ];
+    expect(
+      planProjectDescriptionSources(sources, [
+        {
+          scopeKey: "allowed-changed",
+          sourceFingerprint: "old",
+          pendingSourceFingerprint: null,
+        },
+        {
+          scopeKey: "allowed-unchanged",
+          sourceFingerprint: "same",
+          pendingSourceFingerprint: null,
+        },
+      ]),
+    ).toEqual({
+      queue: [sources[0]],
+      unchanged: 1,
+      unauthorized: 1,
+    });
   });
 });

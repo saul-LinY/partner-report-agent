@@ -273,6 +273,46 @@ export type LocalProjectScopeInspection = {
   scope: LocalProjectScope;
 };
 
+export function localProjectScopeRequiresBootstrap(
+  state: LocalProjectScopeFileState,
+  remote: { initialized: boolean; entries: readonly unknown[] },
+) {
+  return state !== "valid" && (remote.initialized || remote.entries.length > 0);
+}
+
+export function localProjectScopeHasIdentityCollisions(
+  scope: LocalProjectScope,
+) {
+  const owners = new Map<string, string>();
+  const names = new Map<
+    string,
+    { hasMappedRoot: boolean; hasOrphanedEntry: boolean }
+  >();
+  for (const entry of scope.entries) {
+    const normalizedName = entry.displayName.trim().toLocaleLowerCase("zh-CN");
+    const nameState = names.get(normalizedName) ?? {
+      hasMappedRoot: false,
+      hasOrphanedEntry: false,
+    };
+    nameState.hasMappedRoot ||= Boolean(entry.localRoot);
+    nameState.hasOrphanedEntry ||= !entry.localRoot && !entry.localIdentity;
+    names.set(normalizedName, nameState);
+
+    const identities = [
+      entry.localIdentity ? `identity:${entry.localIdentity}` : null,
+      entry.localRoot ? `root:${canonicalPath(entry.localRoot)}` : null,
+    ].filter((value): value is string => Boolean(value));
+    for (const identity of identities) {
+      const owner = owners.get(identity);
+      if (owner && owner !== entry.scopeKey) return true;
+      owners.set(identity, entry.scopeKey);
+    }
+  }
+  return [...names.values()].some(
+    (state) => state.hasMappedRoot && state.hasOrphanedEntry,
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

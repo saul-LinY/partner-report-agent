@@ -13,6 +13,8 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 项目采集权限的正式规则保存在数据中台，本地 `project-scope.json` 保存执行状态、匿名键盐值、本机目录映射和本地环境分类；本地文件是采集前的强制隐私门禁。绑定命令完成后才允许通过 `thread/list` 只读取 Codex 状态数据库中的元数据，按最近 7 天有实际活动且未归档的 Session 工作目录归并候选并发送项目范围卡；绑定阶段绝不调用 `thread/read`。未获授权的项目不得调用 `thread/read`、不得交给模型、不得上传 Session 内容。
 
+本地权限文件缺失、损坏，或检测到同一本地项目身份对应多个权限键时，插件必须先让中台重建该插件实例的权限范围、废弃旧 Run，并重新等待审批；不得用新的随机身份静默继承旧权限或继续读取。
+
 ## 工具调用规则
 
 - 调用本插件同名 MCP 工具，例如 `collect_start`、`collect_next`、`collect_submit` 和 `collect_review`。不得改用 shell 或 CLI。

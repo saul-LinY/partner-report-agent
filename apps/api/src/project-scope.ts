@@ -43,7 +43,11 @@ export const projectScopeDecisionSchema = z
 export const projectScopeBootstrapSchema = z
   .object({
     baseVersion: z.number().int().positive(),
-    reason: z.enum(["local_scope_missing", "local_scope_invalid"]),
+    reason: z.enum([
+      "local_scope_missing",
+      "local_scope_invalid",
+      "local_scope_identity_conflict",
+    ]),
   })
   .strict();
 

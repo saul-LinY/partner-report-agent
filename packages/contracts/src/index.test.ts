@@ -25,7 +25,9 @@ describe("collection coverage contract", () => {
         deferred: 1,
         skipped: 2,
         notProcessed: 5,
-        failedRead: 0,
+        failedRead: 2,
+        failedPermissionCheck: 1,
+        failedThreadRead: 1,
         failedExtract: 1,
         excluded: 2,
         pendingSync: 0,
@@ -37,6 +39,9 @@ describe("collection coverage contract", () => {
       deferred: 1,
       skipped: 2,
       notProcessed: 5,
+      failedRead: 2,
+      failedPermissionCheck: 1,
+      failedThreadRead: 1,
       failedExtract: 1,
     });
   });

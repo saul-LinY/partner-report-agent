@@ -4185,6 +4185,8 @@ var coverageSchema = external_exports.object({
   skipped: external_exports.number().int().nonnegative().default(0),
   notProcessed: external_exports.number().int().nonnegative().default(0),
   failedRead: external_exports.number().int().nonnegative(),
+  failedPermissionCheck: external_exports.number().int().nonnegative().default(0),
+  failedThreadRead: external_exports.number().int().nonnegative().default(0),
   failedExtract: external_exports.number().int().nonnegative(),
   excluded: external_exports.number().int().nonnegative(),
   pendingSync: external_exports.number().int().nonnegative(),
@@ -6004,6 +6006,35 @@ function newLocalScope(pluginInstanceId) {
     entries: []
   };
 }
+function localProjectScopeRequiresBootstrap(state, remote) {
+  return state !== "valid" && (remote.initialized || remote.entries.length > 0);
+}
+function localProjectScopeHasIdentityCollisions(scope) {
+  const owners = /* @__PURE__ */ new Map();
+  const names = /* @__PURE__ */ new Map();
+  for (const entry of scope.entries) {
+    const normalizedName = entry.displayName.trim().toLocaleLowerCase("zh-CN");
+    const nameState = names.get(normalizedName) ?? {
+      hasMappedRoot: false,
+      hasOrphanedEntry: false
+    };
+    nameState.hasMappedRoot ||= Boolean(entry.localRoot);
+    nameState.hasOrphanedEntry ||= !entry.localRoot && !entry.localIdentity;
+    names.set(normalizedName, nameState);
+    const identities = [
+      entry.localIdentity ? `identity:${entry.localIdentity}` : null,
+      entry.localRoot ? `root:${canonicalPath(entry.localRoot)}` : null
+    ].filter((value) => Boolean(value));
+    for (const identity of identities) {
+      const owner = owners.get(identity);
+      if (owner && owner !== entry.scopeKey) return true;
+      owners.set(identity, entry.scopeKey);
+    }
+  }
+  return [...names.values()].some(
+    (state) => state.hasMappedRoot && state.hasOrphanedEntry
+  );
+}
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -6408,6 +6439,27 @@ function buildProjectDescriptionSource(input) {
 function projectDescriptionIsChinese(description) {
   return typeof description === "string" && /[\u3400-\u4dbf\u4e00-\u9fff]/u.test(description);
 }
+function planProjectDescriptionSources(sources, remoteProjects) {
+  const states = new Map(
+    remoteProjects.map((project) => [project.scopeKey, project])
+  );
+  const queue = [];
+  let unchanged = 0;
+  let unauthorized = 0;
+  for (const source of sources) {
+    const state = states.get(source.scopeKey);
+    if (!state) {
+      unauthorized += 1;
+      continue;
+    }
+    if (state.sourceFingerprint === source.sourceFingerprint || state.pendingSourceFingerprint === source.sourceFingerprint) {
+      unchanged += 1;
+      continue;
+    }
+    queue.push(source);
+  }
+  return { queue, unchanged, unauthorized };
+}
 
 // src/scheduled-task.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -6711,13 +6763,26 @@ async function fetchProjectScope(init = {}) {
 function cacheRemoteProjectScope(remote) {
   const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
   const scope = mergeRemoteProjectScope(inspection.scope, remote);
-  if (inspection.state !== "valid") saveLocalProjectScope(scope);
   return { ...inspection, scope };
 }
 async function synchronizeLocalProjectScope(remote, inspection = inspectLocalProjectScope(remote.pluginInstanceId)) {
   let synchronizedRemote = remote;
   let changedCount = 0;
-  if (inspection.state === "valid") {
+  let bootstrapped = false;
+  const identityCollision = inspection.state === "valid" && remote.entries.length > 0 && localProjectScopeHasIdentityCollisions(inspection.scope);
+  if (localProjectScopeRequiresBootstrap(inspection.state, remote) || identityCollision) {
+    synchronizedRemote = await authenticatedRequest(
+      "/v1/project-scope/bootstrap",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          baseVersion: remote.version,
+          reason: identityCollision ? "local_scope_identity_conflict" : inspection.state === "missing" ? "local_scope_missing" : "local_scope_invalid"
+        })
+      }
+    );
+    bootstrapped = true;
+  } else if (inspection.state === "valid") {
     const changes = inspectLocalProjectScopeChanges(inspection.scope, remote);
     if (changes.kind === "conflict")
       throw Object.assign(new Error(changes.reason), {
@@ -6737,7 +6802,13 @@ async function synchronizeLocalProjectScope(remote, inspection = inspectLocalPro
   }
   const scope = mergeRemoteProjectScope(inspection.scope, synchronizedRemote);
   saveLocalProjectScope(scope);
-  return { inspection, remote: synchronizedRemote, scope, changedCount };
+  return {
+    inspection,
+    remote: synchronizedRemote,
+    scope,
+    changedCount,
+    bootstrapped
+  };
 }
 function scheduledTaskConfig() {
   output({
@@ -6950,16 +7021,13 @@ async function discoverProjectScopeAfterBinding() {
     throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
       code: "REPORT_PERIOD_MISSING"
     });
-  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  if (remoteScope.initialized || remoteScope.entries.some((entry) => entry.status === "pending")) {
-    const localScope2 = mergeRemoteProjectScope(
-      localInspection.scope,
-      remoteScope
-    );
-    saveLocalProjectScope(localScope2);
+  const synchronized = await synchronizeLocalProjectScope(remoteScope);
+  const synchronizedLocalScope = synchronized.scope;
+  const currentRemoteScope = synchronized.remote;
+  if (currentRemoteScope.initialized || currentRemoteScope.entries.some((entry) => entry.status === "pending")) {
     return projectScopePendingStatus(
       policy.currentPeriod.period_key,
-      localScope2
+      synchronizedLocalScope
     );
   }
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -6983,7 +7051,7 @@ async function discoverProjectScopeAfterBinding() {
   );
   const discovery = discoverProjectScopes(
     config.pluginInstanceId,
-    localInspection.scope,
+    synchronizedLocalScope,
     permissionDiscoverySummaries,
     {
       configuredRoots: configuredProjectRoots(policy.projects)
@@ -7005,7 +7073,7 @@ async function discoverProjectScopeAfterBinding() {
     }
   );
   const localScope = mergeDiscoveredRoots(
-    mergeRemoteProjectScope(localInspection.scope, registeredScope),
+    mergeRemoteProjectScope(synchronized.scope, registeredScope),
     discovery.candidates
   );
   saveLocalProjectScope(localScope);
@@ -7224,6 +7292,12 @@ function takeResumableRun(pluginInstanceId, periodKey) {
   }
   return resumable;
 }
+function discardStoredRuns(pluginInstanceId) {
+  for (const run of storedRuns(pluginInstanceId)) {
+    releaseCollectionLease(pluginInstanceId, run.manifest.runId);
+    rmSync3(dirname4(run.path), { recursive: true, force: true });
+  }
+}
 function readRun(runPath) {
   const absolute = assertRunPath(runPath);
   const manifest = JSON.parse(readFileSync7(absolute, "utf8"));
@@ -7235,6 +7309,8 @@ function readRun(runPath) {
   manifest.counts.skipped ??= 0;
   manifest.counts.deferred ??= 0;
   manifest.counts.notProcessed ??= 0;
+  manifest.counts.failedPermissionCheck ??= 0;
+  manifest.counts.failedThreadRead ??= 0;
   manifest.outcomes ??= [];
   manifest.claimedJobs ??= manifest.counts.uploaded + manifest.counts.ignored + manifest.counts.failedExtract + (manifest.current ? 1 : 0);
   if (manifest.current) manifest.current.failures ??= [];
@@ -7245,6 +7321,7 @@ function readRun(runPath) {
     current: null,
     generated: 0,
     unchanged: 0,
+    unauthorized: 0,
     failed: 0
   };
   refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
@@ -7287,6 +7364,8 @@ async function postCollectionStatus(config, manifest, phase) {
     skipped: counts.skipped,
     notProcessed: counts.notProcessed,
     failedRead: counts.failedRead,
+    failedPermissionCheck: counts.failedPermissionCheck,
+    failedThreadRead: counts.failedThreadRead,
     failedExtract: counts.failedExtract,
     excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
     pendingSync: phase === "completed" ? 0 : manifest.queue.length,
@@ -7330,6 +7409,8 @@ async function postCollectionStatus(config, manifest, phase) {
       deferred: counts.deferred,
       skipped: counts.skipped,
       failedRead: counts.failedRead,
+      failedPermissionCheck: counts.failedPermissionCheck,
+      failedThreadRead: counts.failedThreadRead,
       failedExtract: counts.failedExtract,
       checkpointEligible
     }
@@ -7353,7 +7434,9 @@ async function collectStart() {
   );
   const remoteScope = synchronizedScope.remote;
   let localScope = synchronizedScope.scope;
-  const resumable = takeResumableRun(
+  if (synchronizedScope.bootstrapped)
+    discardStoredRuns(config.pluginInstanceId);
+  const resumable = synchronizedScope.bootstrapped ? null : takeResumableRun(
     config.pluginInstanceId,
     policy.currentPeriod.period_key
   );
@@ -7566,6 +7649,8 @@ async function collectStart() {
       outsideWindow: metadataEligible.length - inWindow.length - queuedOutsideWindow,
       excluded: summaries.length - metadataEligible.length + (inWindow.length - queuedInsideWindow),
       failedRead: 0,
+      failedPermissionCheck: 0,
+      failedThreadRead: 0,
       failedExtract: 0,
       skipped: 0,
       deferred: 0,
@@ -7585,6 +7670,7 @@ async function collectStart() {
       current: null,
       generated: 0,
       unchanged: 0,
+      unauthorized: 0,
       failed: 0
     }
   };
@@ -7687,6 +7773,7 @@ async function finishRun(runPath, manifest, config) {
     projectDescriptions: {
       generated: manifest.projectDescriptionScan?.generated ?? 0,
       unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+      unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
       failed: manifest.projectDescriptionScan?.failed ?? 0
     },
     ...manifest.counts
@@ -7767,13 +7854,10 @@ async function initializeProjectDescriptionScan(runPath, manifest) {
     saveRun(runPath, manifest);
     return;
   }
-  const states = new Map(remote.projects.map((item) => [item.scopeKey, item]));
-  scan.queue = sources.filter((source) => {
-    const state = states.get(source.scopeKey);
-    const unchanged = state?.sourceFingerprint === source.sourceFingerprint || state?.pendingSourceFingerprint === source.sourceFingerprint;
-    if (unchanged) scan.unchanged += 1;
-    return !unchanged;
-  });
+  const plan = planProjectDescriptionSources(sources, remote.projects);
+  scan.queue = plan.queue;
+  scan.unchanged += plan.unchanged;
+  scan.unauthorized = (scan.unauthorized ?? 0) + plan.unauthorized;
   scan.cursor = 0;
   scan.initialized = true;
   saveRun(runPath, manifest);
@@ -7910,6 +7994,7 @@ async function continueScopeApprovalWait(runPath, manifest) {
         current: null,
         generated: manifest.projectDescriptionScan?.generated ?? 0,
         unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+        unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
         failed: manifest.projectDescriptionScan?.failed ?? 0
       };
     }
@@ -8120,6 +8205,7 @@ async function collectNext() {
       })) {
         manifest.counts.excluded += 1;
         manifest.counts.failedRead += 1;
+        manifest.counts.failedPermissionCheck += 1;
         saveRun(absolute, manifest);
         continue;
       }
@@ -8129,6 +8215,7 @@ async function collectNext() {
         manifest.counts.read += 1;
       } catch {
         manifest.counts.failedRead += 1;
+        manifest.counts.failedThreadRead += 1;
         saveRun(absolute, manifest);
         continue;
       }

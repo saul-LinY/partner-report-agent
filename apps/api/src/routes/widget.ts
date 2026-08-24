@@ -286,6 +286,17 @@ export async function widgetRoutes(app: FastifyInstance) {
           and pse.team_id = ${actor.teamId}
           and pse.partner_id = ${actor.partnerId}
           and pi.status = 'active' and pi.client_kind = 'collector'
+          and pse.plugin_instance_id = (
+            select selected.id from plugin_instances selected
+            where selected.tenant_id = ${actor.tenantId}
+              and selected.team_id = ${actor.teamId}
+              and selected.partner_id = ${actor.partnerId}
+              and selected.status = 'active'
+              and selected.client_kind = 'collector'
+            order by selected.last_collection_completed_at desc nulls last,
+              selected.updated_at desc
+            limit 1
+          )
         order by (pse.status = 'pending') desc, pse.first_seen_at asc,
           lower(pse.display_name)
         limit 500

@@ -14,6 +14,12 @@ describe("project scope policy", () => {
         reason: "local_scope_missing",
       }),
     ).toEqual({ baseVersion: 1, reason: "local_scope_missing" });
+    expect(
+      projectScopeBootstrapSchema.parse({
+        baseVersion: 2,
+        reason: "local_scope_identity_conflict",
+      }),
+    ).toEqual({ baseVersion: 2, reason: "local_scope_identity_conflict" });
     expect(() =>
       projectScopeBootstrapSchema.parse({
         baseVersion: 0,
