@@ -1,15 +1,71 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { pluginArtifactMismatches } from "./plugin-artifact-integrity.mjs";
 
 const configureOnly = process.argv.includes("--configure-only");
-const selector =
-  process.argv.find((value, index) => index > 1 && !value.startsWith("--")) ??
-  "partner-report@partner-report-marketplace";
+const explicitSelector = process.argv.find(
+  (value, index) => index > 1 && !value.startsWith("--"),
+);
+const repositoryRoot = resolve(import.meta.dirname, "..");
+const sourcePluginPath = resolve(repositoryRoot, "plugins/partner-report");
+const marketplacePath = resolve(
+  repositoryRoot,
+  ".agents/plugins/marketplace.json",
+);
+const codexRoot =
+  process.env.CODEX_HOME?.trim() || resolve(homedir(), ".codex");
+const pluginCreatorScripts = resolve(
+  codexRoot,
+  "skills/.system/plugin-creator/scripts",
+);
+
+function pluginCreatorHelper(name) {
+  const path = resolve(pluginCreatorScripts, name);
+  if (!existsSync(path)) {
+    throw new Error(`缺少 Codex plugin-creator helper：${path}`);
+  }
+  return path;
+}
+
+function readMarketplaceName() {
+  return execFileSync(
+    "python3",
+    [
+      pluginCreatorHelper("read_marketplace_name.py"),
+      "--marketplace-path",
+      marketplacePath,
+    ],
+    {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    },
+  ).trim();
+}
+
+const marketplaceName = explicitSelector
+  ? null
+  : configureOnly
+    ? "partner-report-marketplace"
+    : readMarketplaceName();
+const selector = explicitSelector ?? `partner-report@${marketplaceName}`;
 let installedPath = null;
 
 if (!configureOnly) {
+  if (!explicitSelector) {
+    execFileSync("npm", ["run", "build", "-w", "@partner-report/plugin"], {
+      cwd: repositoryRoot,
+      stdio: "inherit",
+    });
+    execFileSync(
+      "python3",
+      [pluginCreatorHelper("update_plugin_cachebuster.py"), sourcePluginPath],
+      { cwd: repositoryRoot, stdio: "inherit" },
+    );
+  }
   const separator = selector.lastIndexOf("@");
   const marketplaceName = separator > 0 ? selector.slice(separator + 1) : null;
   if (marketplaceName) {
@@ -55,6 +111,16 @@ const plugin = listing.installed?.find(
 const pluginPath = installedPath ?? plugin?.source?.path;
 if (!pluginPath) {
   throw new Error("没有找到已启用的 partner-report 插件。");
+}
+
+if (installedPath && !explicitSelector) {
+  const mismatches = pluginArtifactMismatches(sourcePluginPath, installedPath);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `安装产物与仓库不一致：${mismatches.join(", ")}。请勿继续测试。`,
+    );
+  }
+  process.stdout.write("Partner Report 安装产物校验通过。\n");
 }
 
 const setupPath = resolve(pluginPath, "dist/setup.mjs");

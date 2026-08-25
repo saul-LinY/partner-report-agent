@@ -26,6 +26,8 @@ export type PluginExecutionDiagnosis = {
   retryable: boolean;
 };
 
+export type PluginExecutionGrouping = "invocation" | "run" | "legacy";
+
 const stageLabels: Record<string, string> = {
   collection: "采集汇总",
   collect_start: "启动采集",
@@ -87,9 +89,10 @@ function failureGuidance(event: PluginExecutionEvent) {
   };
 }
 
-export function diagnosePluginExecution(
+function diagnosePluginEvents(
   events: PluginExecutionEvent[],
   now = new Date(),
+  grouping: Exclude<PluginExecutionGrouping, "legacy"> = "invocation",
 ): PluginExecutionDiagnosis {
   if (events.length === 0)
     return {
@@ -129,8 +132,11 @@ export function diagnosePluginExecution(
   }
 
   const latest = ordered.at(-1)!;
+  const subject = grouping === "run" ? "采集批次" : "命令";
+  const completionCode =
+    grouping === "run" ? "collection.completed" : "command.completed";
   const completed = ordered.some(
-    (event) => event.event_code === "command.completed",
+    (event) => event.event_code === completionCode,
   );
   const warning = [...ordered]
     .reverse()
@@ -140,8 +146,8 @@ export function diagnosePluginExecution(
       severity: "warning",
       state: "warning",
       title: completed
-        ? "命令已完成，但存在需要关注的情况"
-        : "命令等待继续处理",
+        ? `${subject}已完成，但存在需要关注的情况`
+        : `${subject}等待继续处理`,
       cause:
         typeof warning.details.reason === "string"
           ? `${warning.message}（${warning.details.reason}）`
@@ -158,8 +164,8 @@ export function diagnosePluginExecution(
     return {
       severity: "normal",
       state: "completed",
-      title: "本次命令运行正常",
-      cause: "插件已上传开始、过程结果和完成事件，没有发现错误或警告。",
+      title: `本次${subject}运行正常`,
+      cause: `插件已上传${subject}的开始、过程结果和完成事件，没有发现错误或警告。`,
       action: "无需处理。",
       failedStage: null,
       evidenceCode: latest.event_code,
@@ -192,22 +198,43 @@ export function diagnosePluginExecution(
   };
 }
 
+export function diagnosePluginExecution(
+  events: PluginExecutionEvent[],
+  now = new Date(),
+): PluginExecutionDiagnosis {
+  return diagnosePluginEvents(events, now, "invocation");
+}
+
 export function groupPluginExecutions(
   events: PluginExecutionEvent[],
   now = new Date(),
 ) {
-  const groups = new Map<string, PluginExecutionEvent[]>();
+  const groups = new Map<
+    string,
+    {
+      grouping: PluginExecutionGrouping;
+      events: PluginExecutionEvent[];
+    }
+  >();
   for (const event of events) {
-    const key = event.invocation_id
-      ? `invocation:${event.invocation_id}`
+    const grouping: PluginExecutionGrouping = event.invocation_id
+      ? "invocation"
       : event.run_id
-        ? `run:${event.run_id}`
+        ? "run"
         : "legacy";
-    groups.set(key, [...(groups.get(key) ?? []), event]);
+    const key =
+      grouping === "invocation"
+        ? `invocation:${event.invocation_id}`
+        : grouping === "run"
+          ? `run:${event.run_id}`
+          : "legacy";
+    const group = groups.get(key) ?? { grouping, events: [] };
+    group.events.push(event);
+    groups.set(key, group);
   }
   return [...groups.entries()]
-    .map(([executionId, groupedEvents]) => {
-      const ordered = [...groupedEvents].sort(
+    .map(([executionId, group]) => {
+      const ordered = [...group.events].sort(
         (left, right) =>
           new Date(left.occurred_at).getTime() -
             new Date(right.occurred_at).getTime() ||
@@ -217,31 +244,40 @@ export function groupPluginExecutions(
       const last = ordered.at(-1)!;
       const explicitDuration = [...ordered]
         .reverse()
-        .find((event) => event.event_code === "command.completed")?.duration_ms;
+        .find(
+          (event) =>
+            event.event_code ===
+            (group.grouping === "run"
+              ? "collection.completed"
+              : "command.completed"),
+        )?.duration_ms;
       const diagnosis: PluginExecutionDiagnosis =
-        executionId === "legacy"
+        group.grouping === "legacy"
           ? {
               severity: "unknown",
               state: "warning",
-              title: "旧版日志无法按单次命令区分",
+              title: "历史日志无法按运行区分",
               cause:
-                "这些事件没有上传命令执行 ID，中台只能把它们放在同一个历史分组中。",
-              action: "插件升级后，新产生的日志会自动按每次命令分开。",
+                "这些事件没有提供命令执行 ID 或采集批次 ID，中台只能将其放在同一个历史分组中。",
+              action: "仅将其用于历史参考；新的插件日志会按每次命令分开。",
               failedStage: null,
               evidenceCode: null,
               retryable: false,
             }
-          : diagnosePluginExecution(ordered, now);
+          : diagnosePluginEvents(ordered, now, group.grouping);
       return {
         executionId,
+        grouping: group.grouping,
         invocationId: first.invocation_id,
         runId: ordered.find((event) => event.run_id)?.run_id ?? null,
         command:
-          executionId === "legacy"
+          group.grouping === "legacy"
             ? "legacy"
-            : (ordered.find((event) => event.command)?.command ??
-              first.stage ??
-              "plugin"),
+            : group.grouping === "run"
+              ? "collection"
+              : (ordered.find((event) => event.command)?.command ??
+                first.stage ??
+                "plugin"),
         startedAt: new Date(first.occurred_at).toISOString(),
         lastEventAt: new Date(last.occurred_at).toISOString(),
         durationMs:

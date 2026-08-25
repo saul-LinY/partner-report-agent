@@ -38,7 +38,7 @@ export type PendingPluginLog = {
   details?: Record<string, unknown>;
 };
 
-type PluginLogInput = {
+export type PluginLogInput = {
   eventId?: string | undefined;
   invocationId?: string | undefined;
   runId?: string | undefined;
@@ -56,6 +56,13 @@ type PluginLogInput = {
   durationMs?: number | undefined;
   requestId?: string | undefined;
   details?: Record<string, unknown> | undefined;
+};
+
+type PluginLogDefaults = {
+  invocationId: string;
+  sequence: number;
+  command: string;
+  runId?: string | undefined;
 };
 
 const OUTBOX_FILE = "plugin-log-outbox.json";
@@ -109,39 +116,51 @@ function tryWriteOutbox(events: PendingPluginLog[]) {
   }
 }
 
+export function buildPendingPluginLog(
+  input: PluginLogInput,
+  defaults: PluginLogDefaults,
+): PendingPluginLog {
+  const details = safeDetails(input.details);
+  const eventRunId = input.runId ?? defaults.runId;
+  return {
+    eventId: input.eventId ?? randomUUID(),
+    invocationId: input.invocationId ?? defaults.invocationId,
+    sequence: input.sequence ?? defaults.sequence,
+    command: (input.command ?? defaults.command).slice(0, 80),
+    eventType:
+      input.eventType ??
+      (input.level === "error"
+        ? "error"
+        : input.eventCode === "command.started" ||
+            input.eventCode === "command.completed"
+          ? "lifecycle"
+          : "progress"),
+    level: input.level,
+    stage: input.stage.slice(0, 80),
+    eventCode: input.eventCode.slice(0, 120),
+    message: input.message.slice(0, 4000),
+    occurredAt: input.occurredAt ?? new Date().toISOString(),
+    retryable: input.retryable ?? false,
+    ...(eventRunId ? { runId: eventRunId } : {}),
+    ...(input.stack ? { stack: input.stack.slice(0, 16000) } : {}),
+    ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
+    ...(input.durationMs !== undefined
+      ? { durationMs: Math.max(0, Math.round(input.durationMs)) }
+      : {}),
+    ...(input.requestId ? { requestId: input.requestId } : {}),
+    ...(details ? { details } : {}),
+  };
+}
+
 export function enqueuePluginLog(input: PluginLogInput) {
   try {
     if (!loadConfig(false)) return null;
-    const details = safeDetails(input.details);
-    const eventRunId = input.runId ?? activeRunId;
-    const event: PendingPluginLog = {
-      eventId: input.eventId ?? randomUUID(),
-      invocationId: input.invocationId ?? invocationId,
+    const event = buildPendingPluginLog(input, {
+      invocationId,
       sequence: input.sequence ?? ++invocationSequence,
-      command: (input.command ?? invocationCommand).slice(0, 80),
-      eventType:
-        input.eventType ??
-        (input.level === "error"
-          ? "error"
-          : input.eventCode === "command.started" ||
-              input.eventCode === "command.completed"
-            ? "lifecycle"
-            : "progress"),
-      level: input.level,
-      stage: input.stage.slice(0, 80),
-      eventCode: input.eventCode.slice(0, 120),
-      message: input.message.slice(0, 4000),
-      occurredAt: input.occurredAt ?? new Date().toISOString(),
-      retryable: input.retryable ?? false,
-      ...(eventRunId ? { runId: eventRunId } : {}),
-      ...(input.stack ? { stack: input.stack.slice(0, 16000) } : {}),
-      ...(input.attempt ? { attempt: input.attempt } : {}),
-      ...(input.durationMs !== undefined
-        ? { durationMs: Math.max(0, Math.round(input.durationMs)) }
-        : {}),
-      ...(input.requestId ? { requestId: input.requestId } : {}),
-      ...(details ? { details } : {}),
-    };
+      command: invocationCommand,
+      runId: activeRunId,
+    });
     const events = [...readOutbox(), event].slice(-MAX_PENDING_EVENTS);
     return tryWriteOutbox(events) ? event : null;
   } catch {

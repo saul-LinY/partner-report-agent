@@ -73,7 +73,7 @@ npm run preview -w @partner-report/web -- --host 172.20.10.14
 npm run plugin:install
 ```
 
-该脚本先刷新 Git Marketplace，再幂等执行插件安装，并通过 Codex 配置接口只设置：
+该脚本先构建插件、刷新 Codex cachebuster、幂等执行插件安装并校验运行产物，然后通过 Codex 配置接口只设置：
 
 ```toml
 [plugins."partner-report".mcp_servers."partner-report"]

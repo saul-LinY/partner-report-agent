@@ -10,7 +10,7 @@ npm run plugin:install
 codex plugin list
 ```
 
-安装脚本只配置插件自带 MCP，不会修改 Codex 的全局权限模式。安装后重启 Codex。
+安装脚本会先构建插件、刷新 Codex cachebuster，再重新安装并校验运行产物。它只配置插件自带 MCP，不会修改 Codex 的全局权限模式。安装后重启 Codex，并新建对话验证。
 
 ## 2. 绑定
 

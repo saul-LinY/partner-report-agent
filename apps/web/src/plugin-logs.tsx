@@ -15,6 +15,11 @@ import {
 } from "lucide-react";
 import { api } from "./api.js";
 import { Badge, EmptyState, ErrorBanner } from "./components.js";
+import {
+  pluginExecutionKindLabel,
+  pluginExecutionLabel,
+  type PluginExecutionGrouping,
+} from "./plugin-log-labels.js";
 
 type Severity = "normal" | "warning" | "critical" | "unknown";
 
@@ -94,6 +99,7 @@ type ExecutionDiagnosis = {
 
 type PluginExecution = {
   executionId: string;
+  grouping: PluginExecutionGrouping;
   invocationId: string | null;
   runId: string | null;
   command: string;
@@ -153,21 +159,6 @@ const stateLabel = {
   interrupted: "已中断",
   warning: "需关注",
 };
-const commandLabels: Record<string, string> = {
-  legacy: "历史未分组日志",
-  collection: "采集批次（旧版）",
-  "collect-start": "启动采集",
-  "collect-next": "读取并分析会话",
-  "collect-review": "检查采集结果",
-  "collect-submit": "上传贡献",
-  "collect-defer": "暂缓采集",
-  "collect-skip": "跳过会话",
-  "project-description-submit": "生成项目说明",
-  "connectivity-test": "连接检查",
-  status: "状态检查",
-  "project-scope-sync": "同步项目权限",
-};
-
 function formatTime(value: string | null) {
   if (!value) return "暂无";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -188,10 +179,6 @@ function formatDuration(durationMs: number) {
   if (durationMs < 1000) return `${durationMs} ms`;
   if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(1)} 秒`;
   return `${Math.floor(durationMs / 60_000)} 分 ${Math.round((durationMs % 60_000) / 1000)} 秒`;
-}
-
-function commandLabel(command: string) {
-  return commandLabels[command] ?? command;
 }
 
 export function PluginMonitoringPage() {
@@ -275,7 +262,7 @@ export function PluginMonitoringPage() {
         <div>
           <span className="eyebrow">PLUGIN HEALTH</span>
           <h1>插件监控</h1>
-          <p>按每次插件命令查看运行过程、返回结果和故障位置。</p>
+          <p>按插件命令或采集批次查看运行过程、返回结果和故障位置。</p>
         </div>
         <button
           className="icon-button"
@@ -439,7 +426,7 @@ export function PluginMonitoringPage() {
                         )}
                       </span>
                       <span className="plugin-execution-copy">
-                        <strong>{commandLabel(execution.command)}</strong>
+                        <strong>{pluginExecutionLabel(execution)}</strong>
                         <small>{formatTime(execution.startedAt)}</small>
                         <small>
                           {stateLabel[execution.diagnosis.state]} ·{" "}
@@ -459,9 +446,11 @@ export function PluginMonitoringPage() {
                   <>
                     <header className="plugin-execution-header">
                       <div>
-                        <span>本次插件命令</span>
+                        <span>
+                          {pluginExecutionKindLabel(selectedExecution.grouping)}
+                        </span>
                         <strong>
-                          {commandLabel(selectedExecution.command)}
+                          {pluginExecutionLabel(selectedExecution)}
                         </strong>
                       </div>
                       <Badge
@@ -471,7 +460,7 @@ export function PluginMonitoringPage() {
                       >
                         {stateLabel[selectedExecution.diagnosis.state]}
                       </Badge>
-                      {selectedExecution.executionId !== "legacy" && (
+                      {selectedExecution.grouping === "invocation" && (
                         <button
                           className="plugin-analysis-button"
                           onClick={() =>
@@ -586,7 +575,7 @@ export function PluginMonitoringPage() {
                         <dd>
                           {selectedExecution.invocationId
                             ? shortId(selectedExecution.invocationId)
-                            : "旧版未上传"}
+                            : "未提供"}
                         </dd>
                       </div>
                       <div>
@@ -668,7 +657,7 @@ export function PluginMonitoringPage() {
                                 </div>
                                 <div>
                                   <dt>事件顺序</dt>
-                                  <dd>{event.sequence ?? "旧版未上传"}</dd>
+                                  <dd>{event.sequence ?? "未提供"}</dd>
                                 </div>
                                 <div>
                                   <dt>可重试</dt>

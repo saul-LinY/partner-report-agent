@@ -70,8 +70,73 @@ describe("plugin execution diagnosis", () => {
       }),
     ]);
     expect(executions).toHaveLength(2);
+    expect(executions.every((item) => item.grouping === "invocation")).toBe(
+      true,
+    );
     expect(executions.map((item) => item.command)).toEqual(
       expect.arrayContaining(["collect-next", "collect-review"]),
     );
+  });
+
+  it("keeps run fallback logs separate from command invocations", () => {
+    const executions = groupPluginExecutions(
+      [
+        event({
+          invocation_id: null,
+          command: null,
+          event_code: "collection.started",
+        }),
+        event({
+          invocation_id: null,
+          command: null,
+          event_code: "command.completed",
+          occurred_at: "2026-08-25T08:00:02.000Z",
+        }),
+      ],
+      new Date("2026-08-25T08:03:00.000Z"),
+    );
+
+    expect(executions).toHaveLength(1);
+    expect(executions[0]).toMatchObject({
+      grouping: "run",
+      command: "collection",
+      diagnosis: { state: "running" },
+    });
+  });
+
+  it("only completes a run fallback on the collection terminal event", () => {
+    const executions = groupPluginExecutions([
+      event({
+        invocation_id: null,
+        command: null,
+        event_code: "collection.started",
+      }),
+      event({
+        invocation_id: null,
+        command: null,
+        event_code: "collection.completed",
+        occurred_at: "2026-08-25T08:00:02.000Z",
+      }),
+    ]);
+
+    expect(executions[0]).toMatchObject({
+      grouping: "run",
+      diagnosis: {
+        state: "completed",
+        title: "本次采集批次运行正常",
+      },
+    });
+  });
+
+  it("marks events without invocation or run ids as ungrouped history", () => {
+    const executions = groupPluginExecutions([
+      event({ invocation_id: null, run_id: null, sequence: null }),
+    ]);
+
+    expect(executions[0]).toMatchObject({
+      grouping: "legacy",
+      command: "legacy",
+      diagnosis: { state: "warning" },
+    });
   });
 });

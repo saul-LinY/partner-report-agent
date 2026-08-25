@@ -6714,30 +6714,38 @@ function tryWriteOutbox(events) {
     return false;
   }
 }
+function buildPendingPluginLog(input, defaults) {
+  const details = safeDetails(input.details);
+  const eventRunId = input.runId ?? defaults.runId;
+  return {
+    eventId: input.eventId ?? randomUUID3(),
+    invocationId: input.invocationId ?? defaults.invocationId,
+    sequence: input.sequence ?? defaults.sequence,
+    command: (input.command ?? defaults.command).slice(0, 80),
+    eventType: input.eventType ?? (input.level === "error" ? "error" : input.eventCode === "command.started" || input.eventCode === "command.completed" ? "lifecycle" : "progress"),
+    level: input.level,
+    stage: input.stage.slice(0, 80),
+    eventCode: input.eventCode.slice(0, 120),
+    message: input.message.slice(0, 4e3),
+    occurredAt: input.occurredAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+    retryable: input.retryable ?? false,
+    ...eventRunId ? { runId: eventRunId } : {},
+    ...input.stack ? { stack: input.stack.slice(0, 16e3) } : {},
+    ...input.attempt !== void 0 ? { attempt: input.attempt } : {},
+    ...input.durationMs !== void 0 ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {},
+    ...input.requestId ? { requestId: input.requestId } : {},
+    ...details ? { details } : {}
+  };
+}
 function enqueuePluginLog(input) {
   try {
     if (!loadConfig(false)) return null;
-    const details = safeDetails(input.details);
-    const eventRunId = input.runId ?? activeRunId;
-    const event = {
-      eventId: input.eventId ?? randomUUID3(),
-      invocationId: input.invocationId ?? invocationId,
+    const event = buildPendingPluginLog(input, {
+      invocationId,
       sequence: input.sequence ?? ++invocationSequence,
-      command: (input.command ?? invocationCommand).slice(0, 80),
-      eventType: input.eventType ?? (input.level === "error" ? "error" : input.eventCode === "command.started" || input.eventCode === "command.completed" ? "lifecycle" : "progress"),
-      level: input.level,
-      stage: input.stage.slice(0, 80),
-      eventCode: input.eventCode.slice(0, 120),
-      message: input.message.slice(0, 4e3),
-      occurredAt: input.occurredAt ?? (/* @__PURE__ */ new Date()).toISOString(),
-      retryable: input.retryable ?? false,
-      ...eventRunId ? { runId: eventRunId } : {},
-      ...input.stack ? { stack: input.stack.slice(0, 16e3) } : {},
-      ...input.attempt ? { attempt: input.attempt } : {},
-      ...input.durationMs !== void 0 ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {},
-      ...input.requestId ? { requestId: input.requestId } : {},
-      ...details ? { details } : {}
-    };
+      command: invocationCommand,
+      runId: activeRunId
+    });
     const events = [...readOutbox(), event].slice(-MAX_PENDING_EVENTS);
     return tryWriteOutbox(events) ? event : null;
   } catch {

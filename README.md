@@ -21,6 +21,8 @@ npm run plugin:install
 codex plugin list
 ```
 
+安装命令会构建插件、刷新 Codex cachebuster，并校验缓存中的运行产物与仓库一致。
+
 重启 Codex 后在新对话中发送：
 
 ```text

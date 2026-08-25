@@ -269,11 +269,11 @@ export async function observabilityRoutes(app: FastifyInstance) {
         "PLUGIN_EXECUTION_NOT_FOUND",
         "找不到这次插件运行。",
       );
-    if (execution.executionId === "legacy")
+    if (execution.grouping !== "invocation")
       throw new ApiError(
         409,
         "PLUGIN_EXECUTION_NOT_ANALYZABLE",
-        "旧版未分组日志包含多次命令，无法可靠进行模型分析。",
+        "只有提供命令执行 ID 的单次命令日志才能进行模型分析。",
       );
     const idempotencyKey = `plugin-log-analysis:${input.pluginInstanceId}:${execution.executionId}:${execution.lastEventAt}`;
     const rows = await sql<Array<{ id: string; status: string }>>`
