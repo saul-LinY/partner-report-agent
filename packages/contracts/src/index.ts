@@ -388,10 +388,21 @@ export const pluginLogLevelSchema: z.ZodTypeAny = z.enum([
   "error",
 ]);
 
+export const pluginLogEventTypeSchema: z.ZodTypeAny = z.enum([
+  "lifecycle",
+  "progress",
+  "result",
+  "error",
+]);
+
 export const pluginLogEventSchema: z.ZodTypeAny = z
   .object({
     eventId: z.string().uuid(),
+    invocationId: z.string().uuid().optional(),
     runId: z.string().uuid().optional(),
+    sequence: z.number().int().positive().max(100_000).optional(),
+    command: z.string().trim().min(1).max(80).optional(),
+    eventType: pluginLogEventTypeSchema.optional(),
     level: pluginLogLevelSchema,
     stage: z.string().trim().min(1).max(80),
     eventCode: z.string().trim().min(1).max(120),

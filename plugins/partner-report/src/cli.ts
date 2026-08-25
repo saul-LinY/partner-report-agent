@@ -49,16 +49,15 @@ import {
   initializeCollectionFloor,
   markWeekBackfillCompleted,
   loadCollectionState,
-  processedTurnKeys,
   recordAcceptedSession,
   recordIgnoredSession,
-  recordProcessedTurns,
   refreshCollectionLease,
   releaseCollectionLease,
   reviewCollectionCompletion,
   saveCollectionState,
   threadIsInKnownScanWindow,
   threadIsInScanWindow,
+  threadCouldContainWindowAnswer,
 } from "./collection-state.js";
 import {
   MAX_EXTRACTION_FAILURES,
@@ -69,10 +68,8 @@ import {
   immutableContributionFromRequirements,
   jobOutcomeFailureAuditIsValid,
   legalCollectSkipOutcome,
-  newlyPendingProjectScopeKeys,
-  projectScopeApprovalDeadline,
+  missingSessionCoverage,
   repairImmutableResult,
-  resolveProjectScopeApprovals,
   shouldStopBeforeClaim,
   type ExtractionFailure,
   type ExtractionFailureCode,
@@ -109,7 +106,6 @@ import {
   type LocalProjectScope,
   type RemoteProjectScopePolicy,
 } from "./project-scope.js";
-import { waitForCondition } from "./poll-wait.js";
 import {
   buildProjectDescriptionSource,
   planProjectDescriptionSources,
@@ -123,6 +119,7 @@ import {
   enqueuePluginLog,
   flushPluginLogs,
   pluginErrorDetails,
+  setPluginLogRunId,
 } from "./telemetry.js";
 
 type Policy = {
@@ -174,15 +171,15 @@ type ScopedThreadSummary = ThreadSummary & {
   initialCountBucket?: "excluded" | "outsideWindow";
 };
 
-type ScopeApprovalWait = {
-  scopeKeys: string[];
-  deadlineAt: number;
-  attempt: number;
-  deferredQueue: ScopedThreadSummary[];
-};
+type CoverageReadFailureCode =
+  CodexThreadReadFailureCode | "PROJECT_SCOPE_RECHECK_FAILED";
 
 type EndOfRunScopeScan = {
   completed: boolean;
+  passes?: number;
+  processedThreadIds?: string[];
+  unresolvedReadFailures?: Record<string, CoverageReadFailureCode>;
+  readAttempts?: Record<string, number>;
 };
 
 type ProjectDescriptionQueueItem = {
@@ -233,15 +230,15 @@ type RunCounts = {
 
 type CurrentJob = {
   jobId: string;
+  threadId?: string;
   inputPath: string;
   resultPath: string;
   expected: any;
-  turnKeys?: string[];
   failures: ExtractionFailure[];
 };
 
 type RunManifest = {
-  schemaVersion: "1.0" | "1.1" | "1.2" | "1.3";
+  schemaVersion: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5";
   runId: string;
   pluginInstanceId: string;
   createdAt: string;
@@ -264,14 +261,12 @@ type RunManifest = {
   outcomes: JobOutcome[];
   stopReason?:
     "TIME_BUDGET_EXHAUSTED" | "RUN_INTERRUPTED" | "TEMPORARILY_UNAVAILABLE";
-  approvalWait?: ScopeApprovalWait | null;
   endOfRunScopeScan?: EndOfRunScopeScan;
   projectDescriptionScan?: ProjectDescriptionScan;
 };
 
 const RUN_PREFIX = "partner-report-run-";
 const RUNS_DIRECTORY = "collection-runs";
-const POLL_SEGMENT_MS = 45_000;
 
 function option(name: string, fallback?: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -291,10 +286,15 @@ function output(value: unknown) {
     typeof value.status === "string"
   ) {
     const event = value as Record<string, unknown>;
+    const review =
+      event.review && typeof event.review === "object"
+        ? (event.review as Record<string, unknown>)
+        : undefined;
     let runId: string | undefined;
     if (typeof event.runPath === "string") {
       try {
         runId = readRun(event.runPath).manifest.runId;
+        setPluginLogRunId(runId);
       } catch {
         runId = undefined;
       }
@@ -309,17 +309,42 @@ function output(value: unknown) {
             ? "warning"
             : "info",
       stage: (process.argv[2] ?? "plugin").replaceAll("-", "_"),
+      eventType:
+        value.status.includes("failed") || value.status === "error"
+          ? "error"
+          : "result",
       eventCode: value.status,
       message: `插件命令返回状态：${value.status}`,
       details: {
+        status: event.status,
+        code: event.code,
+        errorCode: event.errorCode,
+        reason: event.reason,
+        jobId: event.jobId,
         periodKey: event.periodKey,
+        discovered: event.discovered,
         queued: event.queued,
         processed: event.processed,
         uploaded: event.uploaded,
+        unchanged: event.unchanged,
         ignored: event.ignored,
         skipped: event.skipped,
+        deferred: event.deferred,
+        failedRead: event.failedRead,
+        failedPermissionCheck: event.failedPermissionCheck,
+        failedThreadRead: event.failedThreadRead,
+        invalidThreadHistory: event.invalidThreadHistory,
         failedExtract: event.failedExtract,
         checkpointAdvanced: event.checkpointAdvanced,
+        readyToFinalize: event.readyToFinalize,
+        reviewReadyToFinalize: review?.readyToFinalize,
+        attempts: event.attempts,
+        attemptsRemaining: event.attemptsRemaining,
+        validationFailures: event.validationFailures,
+        validationAttemptsRemaining: event.validationAttemptsRemaining,
+        warnings: event.warnings,
+        threadReadFailureCodes: event.threadReadFailureCodes,
+        retryable: event.retryable,
       },
     });
   }
@@ -680,16 +705,6 @@ async function discoverProjectScopeAfterBinding() {
     });
   const synchronized = await synchronizeLocalProjectScope(remoteScope);
   const synchronizedLocalScope = synchronized.scope;
-  const currentRemoteScope = synchronized.remote;
-  if (
-    currentRemoteScope.initialized ||
-    currentRemoteScope.entries.some((entry) => entry.status === "pending")
-  ) {
-    return projectScopePendingStatus(
-      policy.currentPeriod.period_key,
-      synchronizedLocalScope,
-    );
-  }
 
   const runStartedAt = new Date().toISOString();
   const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
@@ -745,7 +760,7 @@ async function discoverProjectScopeAfterBinding() {
     discovery.candidates,
   );
   saveLocalProjectScope(localScope);
-  return projectScopePendingStatus(policy.currentPeriod.period_key, localScope);
+  return projectScopeReady(policy.currentPeriod.period_key, localScope);
 }
 
 async function connect() {
@@ -923,51 +938,19 @@ async function listCollectionThreadMetadata(
   }
 }
 
-function projectScopeApprovalRequired(
-  periodKey: string,
-  localScope: LocalProjectScope,
-) {
+function projectScopeReady(periodKey: string, localScope: LocalProjectScope) {
   return {
-    status: "project_scope_approval_required",
+    status: "project_scope_ready",
     periodKey,
     policyVersion: localScope.version,
-    pendingProjects: localScope.entries.filter(
-      (entry) => entry.status === "pending",
+    allowedProjects: localScope.entries.filter(
+      (entry) => entry.status === "allowed",
     ).length,
-    read: 0,
-    uploaded: 0,
-    message:
-      "发现了尚未审批的项目，未读取任何 Session 内容。请在飞书中完成采集权限审批。",
+    deniedProjects: localScope.entries.filter(
+      (entry) => entry.status === "denied",
+    ).length,
+    message: "绑定授权已生效，真实项目会自动纳入采集；主动排除的项目除外。",
   };
-}
-
-async function projectScopePendingStatus(
-  periodKey: string,
-  localScope: LocalProjectScope,
-  remind = false,
-) {
-  const pendingProjects = localScope.entries.filter(
-    (entry) => entry.status === "pending",
-  ).length;
-  if (pendingProjects === 0)
-    return {
-      status: "project_scope_no_candidates" as const,
-      waiting: false,
-      periodKey,
-      policyVersion: localScope.version,
-      discovered: 0,
-      read: 0,
-      uploaded: 0,
-      message:
-        "过滤临时环境后没有需要审批的项目，本次未读取或上传 Session；后续周期会重新发现。",
-    };
-  if (remind) {
-    await authenticatedRequest("/v1/project-scope/remind", {
-      method: "POST",
-      body: JSON.stringify({ periodKey }),
-    });
-  }
-  return projectScopeApprovalRequired(periodKey, localScope);
 }
 
 function createRun(manifest: RunManifest) {
@@ -1050,7 +1033,9 @@ function readRun(runPath: string) {
   const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RunManifest;
   const config = loadConfig()!;
   if (
-    !["1.0", "1.1", "1.2", "1.3"].includes(manifest.schemaVersion) ||
+    !["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"].includes(
+      manifest.schemaVersion,
+    ) ||
     manifest.pluginInstanceId !== config.pluginInstanceId
   ) {
     throw new Error("Run 清单无效或不属于当前 Plugin Instance。");
@@ -1063,13 +1048,29 @@ function readRun(runPath: string) {
   manifest.counts.failedThreadRead ??= 0;
   manifest.counts.invalidThreadHistory ??= 0;
   manifest.threadReadFailureCodes ??= {};
+  const existingCoverage = manifest.endOfRunScopeScan;
+  manifest.endOfRunScopeScan = {
+    completed:
+      existingCoverage?.processedThreadIds !== undefined
+        ? existingCoverage.completed
+        : false,
+    passes: existingCoverage?.passes ?? 0,
+    processedThreadIds: existingCoverage?.processedThreadIds ?? [],
+    unresolvedReadFailures: existingCoverage?.unresolvedReadFailures ?? {},
+    readAttempts: existingCoverage?.readAttempts ?? {},
+  };
   manifest.outcomes ??= [];
   manifest.claimedJobs ??=
     manifest.counts.uploaded +
     manifest.counts.ignored +
     manifest.counts.failedExtract +
     (manifest.current ? 1 : 0);
-  if (manifest.current) manifest.current.failures ??= [];
+  if (manifest.current) {
+    manifest.current.failures ??= [];
+    const inferredThreadId = manifest.queue[manifest.cursor - 1]?.id;
+    if (!manifest.current.threadId && inferredThreadId)
+      manifest.current.threadId = inferredThreadId;
+  }
   manifest.projectDescriptionScan ??= {
     initialized: false,
     queue: [],
@@ -1097,6 +1098,81 @@ function saveRun(runPath: string, manifest: RunManifest) {
   chmodSync(runPath, 0o600);
 }
 
+function coverageState(manifest: RunManifest) {
+  manifest.endOfRunScopeScan ??= { completed: false };
+  const scan = manifest.endOfRunScopeScan;
+  scan.passes ??= 0;
+  scan.processedThreadIds ??= [];
+  scan.unresolvedReadFailures ??= {};
+  scan.readAttempts ??= {};
+  return scan;
+}
+
+function markThreadProcessed(manifest: RunManifest, threadId?: string) {
+  if (!threadId) return;
+  const scan = coverageState(manifest);
+  if (!scan.processedThreadIds!.includes(threadId))
+    scan.processedThreadIds!.push(threadId);
+}
+
+function recordCoverageReadFailure(
+  manifest: RunManifest,
+  threadId: string,
+  code: CoverageReadFailureCode,
+) {
+  const scan = coverageState(manifest);
+  scan.completed = false;
+  scan.readAttempts![threadId] = (scan.readAttempts![threadId] ?? 0) + 1;
+  if (scan.unresolvedReadFailures![threadId]) return;
+  scan.unresolvedReadFailures![threadId] = code;
+  manifest.counts.failedRead += 1;
+  if (code === "PROJECT_SCOPE_RECHECK_FAILED") {
+    manifest.counts.failedPermissionCheck += 1;
+    return;
+  }
+  manifest.counts.failedThreadRead += 1;
+  manifest.threadReadFailureCodes ??= {};
+  manifest.threadReadFailureCodes[code] =
+    (manifest.threadReadFailureCodes[code] ?? 0) + 1;
+  if (code === "CODEX_THREAD_HISTORY_INVALID") {
+    manifest.counts.invalidThreadHistory ??= 0;
+    manifest.counts.invalidThreadHistory += 1;
+    manifest.counts.excluded += 1;
+  }
+}
+
+function clearCoverageReadFailure(manifest: RunManifest, threadId: string) {
+  const scan = coverageState(manifest);
+  const code = scan.unresolvedReadFailures![threadId];
+  if (!code) return;
+  delete scan.unresolvedReadFailures![threadId];
+  manifest.counts.failedRead = Math.max(0, manifest.counts.failedRead - 1);
+  if (code === "PROJECT_SCOPE_RECHECK_FAILED") {
+    manifest.counts.failedPermissionCheck = Math.max(
+      0,
+      manifest.counts.failedPermissionCheck - 1,
+    );
+    return;
+  }
+  manifest.counts.failedThreadRead = Math.max(
+    0,
+    manifest.counts.failedThreadRead - 1,
+  );
+  const remaining = Math.max(
+    0,
+    (manifest.threadReadFailureCodes?.[code] ?? 0) - 1,
+  );
+  if (remaining === 0) delete manifest.threadReadFailureCodes?.[code];
+  else manifest.threadReadFailureCodes![code] = remaining;
+  if (code === "CODEX_THREAD_HISTORY_INVALID") {
+    manifest.counts.invalidThreadHistory = Math.max(
+      0,
+      (manifest.counts.invalidThreadHistory ?? 0) - 1,
+    );
+    manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
+  }
+}
+
 function writeJob(runPath: string, jobId: string, modelInput: unknown) {
   const runDirectory = dirname(runPath);
   const inputPath = resolve(runDirectory, `${jobId}-input.json`);
@@ -1122,7 +1198,7 @@ async function postCollectionStatus(
   const warnings = [
     ...(checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"]),
     ...((counts.invalidThreadHistory ?? 0) > 0
-      ? ["INVALID_THREAD_HISTORY_EXCLUDED"]
+      ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"]
       : []),
   ];
   const coverage = {
@@ -1207,7 +1283,6 @@ async function collectStart() {
     fetchedRemoteScope,
     localInspection,
   );
-  const remoteScope = synchronizedScope.remote;
   let localScope: LocalProjectScope = synchronizedScope.scope;
 
   if (synchronizedScope.bootstrapped)
@@ -1240,18 +1315,6 @@ async function collectStart() {
     }
   }
 
-  if (
-    !remoteScope.initialized &&
-    localScope.entries.some((entry) => entry.status === "pending")
-  ) {
-    return output(
-      await projectScopePendingStatus(
-        policy.currentPeriod.period_key,
-        localScope,
-        true,
-      ),
-    );
-  }
   const runId = randomUUID();
   const runStartedAt = new Date().toISOString();
   acquireCollectionLease(config.pluginInstanceId, runId);
@@ -1289,11 +1352,7 @@ async function collectStart() {
   const inWindow = flag("force")
     ? metadataEligible
     : metadataEligible.filter((summary) =>
-        threadIsInScanWindow(
-          summary.updatedAt,
-          window.scanStartsAt,
-          window.scanEndsAt,
-        ),
+        threadCouldContainWindowAnswer(summary.updatedAt, window.scanStartsAt),
       );
   const configuredRoots = configuredProjectRoots(policy.projects);
   if (!localScope.initialized) {
@@ -1337,13 +1396,6 @@ async function collectStart() {
       releaseCollectionLease(config.pluginInstanceId, runId);
       throw error;
     }
-    releaseCollectionLease(config.pluginInstanceId, runId);
-    return output(
-      await projectScopePendingStatus(
-        policy.currentPeriod.period_key,
-        localScope,
-      ),
-    );
   }
   const allThreadDiscovery = discoverProjectScopes(
     config.pluginInstanceId,
@@ -1384,6 +1436,8 @@ async function collectStart() {
     inWindow,
     allThreadDiscovery.threadScopes,
     localScope.entries,
+    new Date(runStartedAt),
+    effectivePeriod.starts_at,
   );
 
   let state: {
@@ -1411,7 +1465,7 @@ async function collectStart() {
     inWindowIds.has(summary.id),
   ).length;
   const manifest: RunManifest = {
-    schemaVersion: "1.3",
+    schemaVersion: "1.5",
     runId,
     pluginInstanceId: config.pluginInstanceId,
     createdAt: runStartedAt,
@@ -1453,9 +1507,12 @@ async function collectStart() {
     current: null,
     claimedJobs: 0,
     outcomes: [],
-    approvalWait: null,
     endOfRunScopeScan: {
       completed: false,
+      passes: 0,
+      processedThreadIds: [],
+      unresolvedReadFailures: {},
+      readAttempts: {},
     },
     projectDescriptionScan: {
       initialized: false,
@@ -1518,6 +1575,8 @@ function recordJobOutcome(
   current: CurrentJob,
   outcome: Omit<JobOutcome, "jobId" | "failureCount" | "failureCodes">,
 ) {
+  if (["uploaded", "ignored"].includes(outcome.status))
+    markThreadProcessed(manifest, current.threadId);
   manifest.outcomes.push({
     jobId: current.jobId,
     failureCount: current.failures.length,
@@ -1581,7 +1640,7 @@ async function finishRun(
     warnings: [
       ...(checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"]),
       ...((manifest.counts.invalidThreadHistory ?? 0) > 0
-        ? ["INVALID_THREAD_HISTORY_EXCLUDED"]
+        ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"]
         : []),
       ...((manifest.projectDescriptionScan?.failed ?? 0) > 0
         ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"]
@@ -1603,6 +1662,7 @@ async function finishRun(
 
 function completionReview(manifest: RunManifest) {
   const outcomeCounts = countJobOutcomes(manifest.outcomes);
+  const coverage = coverageState(manifest);
   return reviewCollectionCompletion({
     cursor: manifest.cursor,
     queueLength: manifest.queue.length,
@@ -1620,6 +1680,9 @@ function completionReview(manifest: RunManifest) {
       ([key, count]) =>
         manifest.counts[key as keyof typeof outcomeCounts] === count,
     ),
+    coverageComplete:
+      coverage.completed &&
+      Object.keys(coverage.unresolvedReadFailures ?? {}).length === 0,
     stopped: manifest.stopReason !== undefined,
     counts: manifest.counts,
   });
@@ -1785,157 +1848,16 @@ async function submitProjectDescription() {
   }
 }
 
-async function continueScopeApprovalWait(
-  runPath: string,
-  manifest: RunManifest,
-): Promise<boolean> {
-  const wait = manifest.approvalWait;
-  if (!wait || wait.scopeKeys.length === 0) return false;
-
-  const applyRemote = async () => {
-    const remote = await fetchProjectScope();
-    const inspection = inspectLocalProjectScope(manifest.pluginInstanceId);
-    if (inspection.state !== "valid")
-      throw Object.assign(
-        new Error("采集过程中本地项目权限文件失效，已停止读取。"),
-        { code: "PROJECT_SCOPE_LOCAL_INVALID" },
-      );
-    const local = mergeRemoteProjectScope(inspection.scope, remote);
-    saveLocalProjectScope(local);
-    const { approvedKeys, pendingKeys, deniedKeys } =
-      resolveProjectScopeApprovals(
-        wait.scopeKeys,
-        local.entries,
-        wait.deadlineAt,
-      );
-
-    let appended = 0;
-    const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
-    for (const summary of wait.deferredQueue) {
-      if (!approvedKeys.has(summary.scopeKey) || queuedIds.has(summary.id))
-        continue;
-      const effectiveFrom = local.entries.find(
-        (entry) => entry.scopeKey === summary.scopeKey,
-      )?.effectiveFrom;
-      if (!effectiveFrom) continue;
-      manifest.queue.push({
-        ...summary,
-        collectionStartsAt: new Date(
-          Math.max(
-            new Date(manifest.period.starts_at).getTime(),
-            new Date(effectiveFrom).getTime(),
-          ),
-        ).toISOString(),
-      });
-      queuedIds.add(summary.id);
-      appended += 1;
-      if (
-        summary.initialCountBucket === "excluded" ||
-        summary.countedAsExcluded === true
-      )
-        manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
-      else if (
-        summary.initialCountBucket === "outsideWindow" ||
-        summary.countedAsExcluded === false
-      )
-        manifest.counts.outsideWindow = Math.max(
-          0,
-          manifest.counts.outsideWindow - 1,
-        );
-    }
-    if (approvedKeys.size > 0) {
-      manifest.deadlineAt = collectionDeadline(new Date().toISOString());
-      manifest.projectDescriptionScan = {
-        initialized: false,
-        queue: [],
-        cursor: 0,
-        current: null,
-        generated: manifest.projectDescriptionScan?.generated ?? 0,
-        unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
-        unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
-        failed: manifest.projectDescriptionScan?.failed ?? 0,
-      };
-    }
-    const remainingKeys = deniedKeys.size > 0 ? [] : pendingKeys;
-    wait.scopeKeys = remainingKeys;
-    wait.deferredQueue = wait.deferredQueue.filter((summary) =>
-      remainingKeys.includes(summary.scopeKey),
-    );
-    return {
-      appended,
-      pending: remainingKeys.length,
-      denied: deniedKeys.size,
-    };
-  };
-
-  const first = await applyRemote();
-  if (first.appended > 0) {
-    saveRun(runPath, manifest);
-    output({
-      status: "project_scope_approved",
-      runPath,
-      appended: first.appended,
-      pendingProjects: first.pending,
-      deniedProjects: first.denied,
-      nextCommand: `collect-next --run ${runPath}`,
-    });
-    return true;
-  }
-  if (first.pending === 0 || Date.now() >= wait.deadlineAt) {
-    manifest.approvalWait = null;
-    saveRun(runPath, manifest);
-    return false;
-  }
-
-  const result = await waitForCondition({
-    check: async () => {
-      const remote = await fetchProjectScope();
-      const entries = new Map(
-        remote.entries.map((entry) => [entry.scopeKey, entry]),
-      );
-      return wait.scopeKeys.some(
-        (scopeKey) => entries.get(scopeKey)?.status !== "pending",
-      );
-    },
-    deadlineAt: wait.deadlineAt,
-    segmentDurationMs: POLL_SEGMENT_MS,
-    attempt: wait.attempt,
-    errorCode: (error) =>
-      error instanceof HttpError
-        ? error.code
-        : "PROJECT_SCOPE_APPROVAL_STATUS_UNAVAILABLE",
-  });
-  wait.attempt = result.attempt;
-  if (result.status === "confirmed")
-    return continueScopeApprovalWait(runPath, manifest);
-  if (result.status === "timed_out") {
-    manifest.approvalWait = null;
-    saveRun(runPath, manifest);
-    return false;
-  }
-  saveRun(runPath, manifest);
-  output({
-    status: "project_scope_approval_waiting",
-    runPath,
-    pendingProjects: wait.scopeKeys.length,
-    ...("lastErrorCode" in result && result.lastErrorCode
-      ? { lastErrorCode: result.lastErrorCode }
-      : {}),
-    nextCommand: `collect-next --run ${runPath}`,
-  });
-  return true;
-}
-
 async function startEndOfRunScopeScan(
   runPath: string,
   manifest: RunManifest,
 ): Promise<boolean> {
-  const scan = manifest.endOfRunScopeScan;
-  if (!scan || scan.completed) return false;
+  const scan = coverageState(manifest);
+  if (scan.completed) return false;
 
   const config = loadConfig()!;
-  const scanStartedAt = new Date().toISOString();
-  const scanStartsAt = initialProjectScopeStartAt(scanStartedAt);
+  const fixedWindowEnd = manifest.scanEndsAt ?? manifest.createdAt;
+  const scanStartsAt = initialProjectScopeStartAt(fixedWindowEnd);
   const { summaries, metadataEligible } = await listCollectionThreadMetadata(
     config,
     scanStartsAt,
@@ -1951,9 +1873,8 @@ async function startEndOfRunScopeScan(
       { code: "PROJECT_SCOPE_LOCAL_INVALID" },
     );
   const localScope = inspection.scope;
-  const scanCompletedAt = new Date().toISOString();
   const discoverySummaries = metadataEligible.filter((summary) =>
-    threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, scanCompletedAt),
+    threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, fixedWindowEnd),
   );
   const discovery = discoverProjectScopes(
     manifest.pluginInstanceId,
@@ -1984,81 +1905,78 @@ async function startEndOfRunScopeScan(
     discovery.candidates,
   );
   saveLocalProjectScope(mergedScope);
-  const pendingScopeKeys = newlyPendingProjectScopeKeys(
-    knownScopeKeys,
-    mergedScope.entries,
-  );
-  if (pendingScopeKeys.size === 0) {
-    scan.completed = true;
-    saveRun(runPath, manifest);
-    return false;
+  if (
+    mergedScope.entries.some((entry) => !knownScopeKeys.has(entry.scopeKey))
+  ) {
+    manifest.projectDescriptionScan = {
+      initialized: false,
+      queue: [],
+      cursor: 0,
+      current: null,
+      generated: manifest.projectDescriptionScan?.generated ?? 0,
+      unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+      unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
+      failed: manifest.projectDescriptionScan?.failed ?? 0,
+    };
   }
-
+  const possibleWindowSummaries = metadataEligible.filter((summary) =>
+    threadCouldContainWindowAnswer(
+      summary.updatedAt,
+      manifest.scanStartsAt ?? manifest.period.starts_at,
+    ),
+  );
   const allThreadDiscovery = discoverProjectScopes(
     manifest.pluginInstanceId,
     mergedScope,
-    metadataEligible,
+    possibleWindowSummaries,
     { configuredRoots: configuredProjectRoots(manifest.projects) },
   );
-  const inOriginalWindow = new Set(
-    metadataEligible
-      .filter(
-        (summary) =>
-          manifest.force ||
-          threadIsInScanWindow(
-            summary.updatedAt,
-            manifest.scanStartsAt ?? manifest.period.starts_at,
-            manifest.scanEndsAt ?? manifest.createdAt,
-          ),
-      )
-      .map((summary) => summary.id),
+  const fixedWindowSummaries = possibleWindowSummaries;
+
+  const authorized = authorizedProjectThreads(
+    fixedWindowSummaries,
+    allThreadDiscovery.threadScopes,
+    mergedScope.entries,
+    new Date(),
+    manifest.period.starts_at,
+  ).map((summary) => ({
+    ...summary,
+    collectionEndsAt: fixedWindowEnd,
+  }));
+  const missing = missingSessionCoverage(
+    authorized,
+    scan.processedThreadIds ?? [],
   );
-  const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
-  const reportPeriodStartsAt = manifest.period.starts_at;
-  const collectionEndsAt = new Date(
-    Math.min(
-      new Date(manifest.reportPeriodEndsAt ?? scanCompletedAt).getTime(),
-      new Date(scanCompletedAt).getTime(),
-    ),
-  ).toISOString();
-  const fullPeriodSummaries = metadataEligible.filter((summary) =>
-    threadIsInKnownScanWindow(
-      summary.updatedAt,
-      reportPeriodStartsAt,
-      scanCompletedAt,
-    ),
-  );
-  const deferredQueue = fullPeriodSummaries.flatMap(
-    (summary): ScopedThreadSummary[] => {
-      const scopeKey = allThreadDiscovery.threadScopes.get(summary.id);
-      if (!scopeKey || !pendingScopeKeys.has(scopeKey)) return [];
-      return [
-        {
-          ...summary,
-          scopeKey,
-          collectionStartsAt: manifest.period.starts_at,
-          collectionEndsAt,
-          ...(initialThreadIds.has(summary.id)
-            ? {
-                initialCountBucket: inOriginalWindow.has(summary.id)
-                  ? ("excluded" as const)
-                  : ("outsideWindow" as const),
-              }
-            : {}),
-        },
-      ];
-    },
-  );
-  manifest.approvalWait = {
-    scopeKeys: [...pendingScopeKeys],
-    deadlineAt: 0,
-    attempt: 0,
-    deferredQueue,
-  };
+  scan.passes = (scan.passes ?? 0) + 1;
+
+  if (missing.length > 0) {
+    const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
+    const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
+    for (const summary of missing) {
+      if (!queuedIds.has(summary.id) && initialThreadIds.has(summary.id))
+        manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
+      manifest.queue.push(summary);
+      queuedIds.add(summary.id);
+    }
+    manifest.deadlineAt = collectionDeadline(new Date().toISOString());
+    scan.completed = false;
+    saveRun(runPath, manifest);
+    output({
+      status: "coverage_repair_required",
+      runPath,
+      coveragePass: scan.passes,
+      missingSessions: missing.length,
+      unresolvedReadFailures: Object.keys(scan.unresolvedReadFailures ?? {})
+        .length,
+      collectionEndsAt: fixedWindowEnd,
+      nextCommand: `collect-next --run ${runPath}`,
+    });
+    return true;
+  }
+
   scan.completed = true;
-  manifest.approvalWait.deadlineAt = projectScopeApprovalDeadline();
   saveRun(runPath, manifest);
-  return continueScopeApprovalWait(runPath, manifest);
+  return false;
 }
 
 async function collectNext() {
@@ -2089,19 +2007,20 @@ async function collectNext() {
           configuredRoots: configuredProjectRoots(manifest.projects),
         })
       ) {
-        manifest.counts.excluded += 1;
-        manifest.counts.failedRead += 1;
-        manifest.counts.failedPermissionCheck += 1;
+        recordCoverageReadFailure(
+          manifest,
+          summary.id,
+          "PROJECT_SCOPE_RECHECK_FAILED",
+        );
         saveRun(absolute, manifest);
         continue;
       }
       let thread: any;
       try {
         thread = await server.readThread(summary.id);
+        clearCoverageReadFailure(manifest, summary.id);
         manifest.counts.read += 1;
       } catch (error) {
-        manifest.counts.failedRead += 1;
-        manifest.counts.failedThreadRead += 1;
         const code =
           error &&
           typeof error === "object" &&
@@ -2113,22 +2032,10 @@ async function collectNext() {
           ].includes(String(error.code))
             ? (String(error.code) as CodexThreadReadFailureCode)
             : "CODEX_THREAD_READ_FAILED";
-        manifest.threadReadFailureCodes ??= {};
-        manifest.threadReadFailureCodes[code] =
-          (manifest.threadReadFailureCodes[code] ?? 0) + 1;
-        if (code === "CODEX_THREAD_HISTORY_INVALID") {
-          manifest.counts.invalidThreadHistory ??= 0;
-          manifest.counts.invalidThreadHistory += 1;
-          manifest.counts.excluded += 1;
-        }
+        recordCoverageReadFailure(manifest, summary.id, code);
         saveRun(absolute, manifest);
         continue;
       }
-      const sessionKey = anonymousSessionKey(
-        manifest.pluginInstanceId,
-        summary.id,
-      );
-      const collectionState = loadCollectionState(manifest.pluginInstanceId);
       const job = buildSessionJob({
         pluginInstanceId: manifest.pluginInstanceId,
         sessionId: summary.id,
@@ -2138,9 +2045,6 @@ async function collectNext() {
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
         scopeKey: summary.scopeKey,
-        processedTurnKeys: manifest.force
-          ? []
-          : processedTurnKeys(collectionState, sessionKey),
         period:
           summary.collectionStartsAt || summary.collectionEndsAt
             ? {
@@ -2158,6 +2062,7 @@ async function collectNext() {
             : manifest.period,
       });
       if (!job) {
+        markThreadProcessed(manifest, summary.id);
         manifest.counts.excluded += 1;
         saveRun(absolute, manifest);
         continue;
@@ -2176,15 +2081,10 @@ async function collectNext() {
         if (knownDecision === "accepted")
           recordAcceptedSession(state, job.sessionKey, job.contentHash);
         else recordIgnoredSession(state, job.sessionKey, job.contentHash);
-        recordProcessedTurns(
-          state,
-          job.sessionKey,
-          job.turnKeys,
-          knownDecision,
-        );
         saveCollectionState(state);
         if (knownDecision === "accepted") manifest.counts.unchanged += 1;
         else manifest.counts.cachedIgnored += 1;
+        markThreadProcessed(manifest, summary.id);
         saveRun(absolute, manifest);
         continue;
       }
@@ -2192,11 +2092,11 @@ async function collectNext() {
       const paths = writeJob(absolute, jobId, job.modelInput);
       manifest.current = {
         jobId,
+        threadId: summary.id,
         ...paths,
         expected: immutableContributionFromRequirements(
           job.modelInput.outputRequirements.include.contribution,
         ),
-        turnKeys: job.turnKeys,
         failures: [],
       };
       manifest.claimedJobs += 1;
@@ -2208,7 +2108,6 @@ async function collectNext() {
   }
   if (await continueProjectDescriptionScan(absolute, manifest)) return;
   if (await startEndOfRunScopeScan(absolute, manifest)) return;
-  if (await continueScopeApprovalWait(absolute, manifest)) return;
   output({
     status: "review_required",
     runPath: absolute,
@@ -2357,12 +2256,6 @@ async function collectSubmit() {
       current.expected.sessionKey,
       current.expected.contentHash,
     );
-    recordProcessedTurns(
-      state,
-      current.expected.sessionKey,
-      current.turnKeys ?? [],
-      "ignored",
-    );
     saveCollectionState(state);
     manifest.knownSessions[current.expected.sessionKey] = {
       contentHashes: [current.expected.contentHash],
@@ -2431,12 +2324,6 @@ async function collectSubmit() {
     state,
     result.contribution.sessionKey,
     result.contribution.contentHash,
-  );
-  recordProcessedTurns(
-    state,
-    result.contribution.sessionKey,
-    current.turnKeys ?? [],
-    "accepted",
   );
   saveCollectionState(state);
   manifest.knownSessions[result.contribution.sessionKey] = {
@@ -2532,8 +2419,7 @@ async function status() {
     projectScopeVersion: projectScope.scope.version,
     projectScopeInitialized:
       projectScope.state === "valid" && projectScope.scope.initialized,
-    projectScopeRequiresApproval:
-      projectScope.state !== "valid" || !projectScope.scope.initialized,
+    projectScopeRequiresApproval: projectScope.state !== "valid",
     allowedProjectCount:
       projectScope.state === "valid"
         ? projectScope.scope.entries.filter((entry) => scopeIsActive(entry))
@@ -2556,7 +2442,7 @@ async function projectScopeList() {
     localState: local.state,
     version: local.scope.version,
     initialized: local.scope.initialized,
-    requiresApproval: local.state !== "valid" || !local.scope.initialized,
+    requiresApproval: local.state !== "valid",
     projects: local.scope.entries.map((entry) => ({
       scopeKey: entry.scopeKey,
       name: entry.displayName,
@@ -2585,8 +2471,8 @@ async function changeProjectScope(decision: "allow" | "deny") {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error("本地采集权限尚未建立，请先运行采集并在飞书完成首次审批。"),
-      { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" },
+      new Error("本地项目范围尚未建立，请先运行一次采集同步绑定授权。"),
+      { code: "PROJECT_SCOPE_SYNC_REQUIRED" },
     );
   const remote = await fetchProjectScope();
   const scopeKey = option("scope-key")?.trim();
@@ -2666,7 +2552,6 @@ function help() {
       "scheduled-task-config",
       "migrate-credentials",
       "collect-start [--force]",
-      "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
@@ -2691,7 +2576,6 @@ const recoveryAwareCommands = new Set([
   "connectivity-test",
   "server-url-set",
   "collect-start",
-  "project-scope-card-wait",
   "daily-collect",
   "collect-next",
   "collect-review",
@@ -2747,6 +2631,7 @@ const commandRunPath = option("run");
 if (commandRunPath) {
   try {
     commandRunId = readRun(commandRunPath).manifest.runId;
+    setPluginLogRunId(commandRunId);
   } catch {
     commandRunId = undefined;
   }
@@ -2758,8 +2643,17 @@ enqueuePluginLog({
   level: "info",
   stage: command.replaceAll("-", "_"),
   eventCode: "command.started",
+  eventType: "lifecycle",
   message: `插件命令开始：${command}`,
-  details: { command },
+  details: {
+    command,
+    pluginVersion: PLUGIN_VERSION,
+    nodeVersion: process.versions.node,
+    platform: process.platform,
+    architecture: process.arch,
+    forced: flag("force"),
+    hasCollectionRun: Boolean(commandRunId),
+  },
 });
 await flushPluginLogs();
 
@@ -2770,6 +2664,7 @@ try {
     level: "info",
     stage: command.replaceAll("-", "_"),
     eventCode: "command.completed",
+    eventType: "lifecycle",
     message: `插件命令完成：${command}`,
     durationMs: Date.now() - commandStartedAt,
     details: { command },
@@ -2782,6 +2677,7 @@ try {
     level: "error",
     stage: command.replaceAll("-", "_"),
     eventCode: diagnostic.code,
+    eventType: "error",
     message: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : undefined,
     durationMs: Date.now() - commandStartedAt,

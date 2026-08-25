@@ -27,20 +27,14 @@ type ProcessedSessionState = {
   processedAt: string;
 };
 
-type ProcessedTurnState = {
-  decision: "accepted" | "ignored";
-  processedAt: string;
-};
-
 export type CollectionState = {
-  schemaVersion: "3.0";
+  schemaVersion: "5.0";
   pluginInstanceId: string;
   collectionFloorAt: string | null;
   lastSuccessfulRunStartedAt: string | null;
   weekBackfillCompletedFor: string | null;
   acceptedSessions: Record<string, ProcessedSessionState>;
   ignoredSessions: Record<string, ProcessedSessionState>;
-  processedTurns: Record<string, Record<string, ProcessedTurnState>>;
 };
 
 type CollectionLease = {
@@ -61,14 +55,13 @@ function leasePath(directory: string) {
 
 function emptyState(pluginInstanceId: string): CollectionState {
   return {
-    schemaVersion: "3.0",
+    schemaVersion: "5.0",
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
     weekBackfillCompletedFor: null,
     acceptedSessions: {},
     ignoredSessions: {},
-    processedTurns: {},
   };
 }
 
@@ -90,9 +83,8 @@ function validateState(
   if (state.pluginInstanceId !== pluginInstanceId)
     return emptyState(pluginInstanceId);
   const acceptedSessions = state.acceptedSessions ?? {};
-  const processedTurns = state.processedTurns ?? {};
   if (
-    !["1.0", "2.0", "3.0"].includes(state.schemaVersion ?? "") ||
+    !["1.0", "2.0", "3.0", "4.0", "5.0"].includes(state.schemaVersion ?? "") ||
     (state.collectionFloorAt !== null && !validIso(state.collectionFloorAt)) ||
     (state.lastSuccessfulRunStartedAt !== null &&
       !validIso(state.lastSuccessfulRunStartedAt)) ||
@@ -102,9 +94,7 @@ function validateState(
     !acceptedSessions ||
     typeof acceptedSessions !== "object" ||
     !state.ignoredSessions ||
-    typeof state.ignoredSessions !== "object" ||
-    !processedTurns ||
-    typeof processedTurns !== "object"
+    typeof state.ignoredSessions !== "object"
   ) {
     throw Object.assign(new Error("本地采集状态格式无效。"), {
       code: "COLLECTION_STATE_INVALID",
@@ -125,35 +115,18 @@ function validateState(
       }
     }
   }
-  for (const [sessionKey, turns] of Object.entries(processedTurns)) {
-    if (
-      !/^[a-f0-9]{64}$/.test(sessionKey) ||
-      !turns ||
-      typeof turns !== "object"
-    )
-      throw Object.assign(new Error("本地采集状态包含无效的回合断点。"), {
-        code: "COLLECTION_STATE_INVALID",
-      });
-    for (const [turnKey, processed] of Object.entries(turns)) {
-      if (
-        !/^[a-f0-9]{64}$/.test(turnKey) ||
-        !processed ||
-        typeof processed !== "object" ||
-        !["accepted", "ignored"].includes(processed.decision) ||
-        !validIso(processed.processedAt)
-      )
-        throw Object.assign(new Error("本地采集状态包含无效的回合断点。"), {
-          code: "COLLECTION_STATE_INVALID",
-        });
-    }
-  }
   return {
-    ...state,
-    schemaVersion: "3.0",
-    weekBackfillCompletedFor: state.weekBackfillCompletedFor ?? null,
+    schemaVersion: "5.0",
+    pluginInstanceId,
+    collectionFloorAt: state.collectionFloorAt ?? null,
+    lastSuccessfulRunStartedAt: state.lastSuccessfulRunStartedAt ?? null,
+    weekBackfillCompletedFor:
+      state.schemaVersion === "5.0"
+        ? (state.weekBackfillCompletedFor ?? null)
+        : null,
     acceptedSessions,
-    processedTurns,
-  } as CollectionState;
+    ignoredSessions: state.ignoredSessions,
+  };
 }
 
 export function loadCollectionState(
@@ -262,24 +235,6 @@ export function markWeekBackfillCompleted(
   state.weekBackfillCompletedFor = weekStartsAt;
 }
 
-export function processedTurnKeys(state: CollectionState, sessionKey: string) {
-  return new Set(Object.keys(state.processedTurns[sessionKey] ?? {}));
-}
-
-export function recordProcessedTurns(
-  state: CollectionState,
-  sessionKey: string,
-  turnKeys: Iterable<string>,
-  decision: ProcessedTurnState["decision"],
-  processedAt = new Date().toISOString(),
-) {
-  const turns = (state.processedTurns[sessionKey] ??= {});
-  for (const turnKey of turnKeys) {
-    if (!/^[a-f0-9]{64}$/.test(turnKey)) throw new Error("回合断点指纹无效。");
-    turns[turnKey] ??= { decision, processedAt };
-  }
-}
-
 export function threadIsInScanWindow(
   updatedAt: string | number | null,
   scanStartsAt: string,
@@ -294,6 +249,20 @@ export function threadIsInScanWindow(
     Number.isFinite(timestamp) &&
     timestamp >= new Date(scanStartsAt).getTime() &&
     timestamp <= new Date(scanEndsAt).getTime()
+  );
+}
+
+export function threadCouldContainWindowAnswer(
+  updatedAt: string | number | null,
+  scanStartsAt: string,
+) {
+  if (updatedAt == null) return true;
+  const updated =
+    typeof updatedAt === "number" && updatedAt < 10_000_000_000
+      ? updatedAt * 1_000
+      : new Date(updatedAt).getTime();
+  return (
+    Number.isFinite(updated) && updated >= new Date(scanStartsAt).getTime()
   );
 }
 
@@ -360,11 +329,9 @@ export function canAdvanceCollectionCheckpoint(counts: {
   skipped?: number;
   notProcessed?: number;
 }) {
-  const invalidThreadHistory = counts.invalidThreadHistory ?? 0;
-  const retryableFailedRead = counts.failedRead - invalidThreadHistory;
   return (
-    invalidThreadHistory <= counts.failedRead &&
-    retryableFailedRead === 0 &&
+    counts.failedRead === 0 &&
+    (counts.invalidThreadHistory ?? 0) === 0 &&
     counts.failedExtract === 0 &&
     (counts.deferred ?? 0) === 0 &&
     (counts.skipped ?? 0) === 0 &&
@@ -382,6 +349,7 @@ export function reviewCollectionCompletion(input: {
   validFailureAudits?: boolean;
   unexplainedFailedExtract?: number;
   outcomeCountsMatch?: boolean;
+  coverageComplete?: boolean;
   stopped?: boolean;
   counts: {
     failedRead: number;
@@ -401,6 +369,8 @@ export function reviewCollectionCompletion(input: {
   const noUnexplainedFailedExtract =
     (input.unexplainedFailedExtract ?? 0) === 0;
   const outcomeCountsMatch = input.outcomeCountsMatch ?? true;
+  const coverageComplete = input.coverageComplete ?? true;
+  const checkpointSafe = canAdvanceCollectionCheckpoint(input.counts);
   const notProcessed = input.counts.notProcessed ?? 0;
   const remainingQueue = Math.max(0, input.queueLength - input.cursor);
   const remainingQueueExplained = queueExhausted
@@ -413,6 +383,8 @@ export function reviewCollectionCompletion(input: {
     validFailureAudits &&
     noUnexplainedFailedExtract &&
     outcomeCountsMatch &&
+    coverageComplete &&
+    checkpointSafe &&
     remainingQueueExplained;
   return {
     queueExhausted,
@@ -422,13 +394,15 @@ export function reviewCollectionCompletion(input: {
     validFailureAudits,
     noUnexplainedFailedExtract,
     outcomeCountsMatch,
+    coverageComplete,
     remainingQueueExplained,
     readyToFinalize,
     checkpointEligible:
       readyToFinalize &&
       queueExhausted &&
+      coverageComplete &&
       input.stopped !== true &&
-      canAdvanceCollectionCheckpoint(input.counts),
+      checkpointSafe,
   };
 }
 

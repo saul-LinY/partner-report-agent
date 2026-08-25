@@ -194,9 +194,30 @@ export async function registerProjectScopeCandidates(
   const input = projectScopeCandidateBatchSchema.parse(rawInput);
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
-    // Every real project with a recent Session is a candidate. The previous
-    // later-run "more than one Session" threshold hid legitimate one-session
-    // projects and no longer matches the permission review flow.
+    const periods = await tx<Array<{ starts_at: Date | string }>>`
+      select starts_at from report_periods
+      where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
+        and period_key = ${input.periodKey}
+      order by starts_at desc limit 1
+    `;
+    const effectiveFrom = periods[0]
+      ? new Date(periods[0].starts_at).toISOString()
+      : new Date().toISOString();
+    const policies = await tx<PolicyRow[]>`
+      select version, initialized, initialized_at
+      from project_scope_policies
+      where plugin_instance_id = ${identity.pluginInstanceId}
+      for update
+    `;
+    const pending = await tx<Array<{ scope_key: string }>>`
+      select scope_key from project_scope_entries
+      where plugin_instance_id = ${identity.pluginInstanceId}
+        and tenant_id = ${identity.tenantId} and status = 'pending'
+      for update
+    `;
+    // Claiming the binding code is the user's standing consent. Every real
+    // project discovered by that bound plugin is readable by default; an
+    // explicit denied decision remains the only project-level exclusion.
     const eligibleCandidates = input.candidates;
     const existing =
       eligibleCandidates.length > 0
@@ -272,42 +293,55 @@ export async function registerProjectScopeCandidates(
       await tx`
         insert into project_scope_entries (
           id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
-          display_name, status, first_seen_period_key, session_count
+          display_name, status, effective_from, decided_at,
+          first_seen_period_key, session_count
         ) values (
           ${randomUUID()}, ${identity.tenantId}, ${identity.teamId},
           ${identity.partnerId}, ${identity.pluginInstanceId},
-          ${candidate.scopeKey}, ${candidate.displayName}, 'pending',
+          ${candidate.scopeKey}, ${candidate.displayName}, 'allowed',
+          ${effectiveFrom}, now(),
           ${input.periodKey}, ${candidate.sessionCount}
         )
         on conflict (plugin_instance_id, scope_key) do update set
           display_name = excluded.display_name,
+          status = case
+            when project_scope_entries.status = 'pending' then 'allowed'
+            else project_scope_entries.status
+          end,
+          effective_from = case
+            when project_scope_entries.status = 'pending'
+              then coalesce(project_scope_entries.effective_from, excluded.effective_from)
+            else project_scope_entries.effective_from
+          end,
+          decided_at = case
+            when project_scope_entries.status = 'pending' then now()
+            else project_scope_entries.decided_at
+          end,
           session_count = greatest(project_scope_entries.session_count, excluded.session_count),
           last_seen_at = now(), updated_at = now()
       `;
     }
 
-    if (newCandidates.length > 0) {
-      const versions = await tx<Array<{ version: number }>>`
-        update project_scope_policies set version = version + 1, updated_at = now()
-        where plugin_instance_id = ${identity.pluginInstanceId}
-        returning version
-      `;
+    if (pending.length > 0) {
       await tx`
-        insert into outbox_events (
-          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-        ) values (
-          ${randomUUID()}, ${identity.tenantId}, 'project_scope.candidates.changed',
-          'plugin_instance', ${identity.pluginInstanceId},
-          ${JSON.stringify({
-            teamId: identity.teamId,
-            partnerId: identity.partnerId,
-            pluginInstanceId: identity.pluginInstanceId,
-            periodKey: input.periodKey,
-            version: versions[0]?.version,
-          })}::jsonb
-        )
+        update project_scope_entries set
+          status = 'allowed', effective_from = coalesce(effective_from, ${effectiveFrom}),
+          decided_at = now(), updated_at = now()
+        where plugin_instance_id = ${identity.pluginInstanceId}
+          and tenant_id = ${identity.tenantId} and status = 'pending'
       `;
     }
+    if (
+      newCandidates.length > 0 ||
+      pending.length > 0 ||
+      policies[0]?.initialized !== true
+    )
+      await tx`
+        update project_scope_policies set
+          version = version + 1, initialized = true,
+          initialized_at = coalesce(initialized_at, now()), updated_at = now()
+        where plugin_instance_id = ${identity.pluginInstanceId}
+      `;
   });
   return loadProjectScopePolicy(identity, database);
 }

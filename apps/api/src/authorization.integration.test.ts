@@ -985,12 +985,17 @@ suite("tenant and role authorization", () => {
     expect(changed.json().contributionId).not.toBe(first.json().contributionId);
 
     const storedContributions = await sql<any[]>`
-      select payload from session_facts
+      select payload, current, source_revision from session_facts
       where tenant_id = ${fixture.tenantA}
         and partner_id = ${fixture.partnerA}
         and session_id = ${sessionKey}
+      order by source_revision
     `;
     expect(storedContributions).toHaveLength(2);
+    expect(storedContributions.map((stored) => stored.current)).toEqual([
+      false,
+      true,
+    ]);
     for (const stored of storedContributions)
       expect(stored.payload).not.toHaveProperty("status");
 
@@ -1027,7 +1032,7 @@ suite("tenant and role authorization", () => {
     expect(factPreviewBody).toMatchObject({
       page: 1,
       pageSize: 10,
-      total: 2,
+      total: 1,
     });
     expect(factPreviewBody.items).toEqual(
       expect.arrayContaining([
@@ -1051,7 +1056,7 @@ suite("tenant and role authorization", () => {
       headers,
     });
     expect(matchingSessionDate.statusCode).toBe(200);
-    expect(matchingSessionDate.json().total).toBe(2);
+    expect(matchingSessionDate.json().total).toBe(1);
     const differentSessionDate = await app.inject({
       method: "GET",
       url: `/v1/admin/session-facts?sessionDate=2026-08-04`,

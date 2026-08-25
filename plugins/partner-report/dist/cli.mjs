@@ -4368,9 +4368,19 @@ var pluginLogLevelSchema = external_exports.enum([
   "warning",
   "error"
 ]);
+var pluginLogEventTypeSchema = external_exports.enum([
+  "lifecycle",
+  "progress",
+  "result",
+  "error"
+]);
 var pluginLogEventSchema = external_exports.object({
   eventId: external_exports.string().uuid(),
+  invocationId: external_exports.string().uuid().optional(),
   runId: external_exports.string().uuid().optional(),
+  sequence: external_exports.number().int().positive().max(1e5).optional(),
+  command: external_exports.string().trim().min(1).max(80).optional(),
+  eventType: pluginLogEventTypeSchema.optional(),
   level: pluginLogLevelSchema,
   stage: external_exports.string().trim().min(1).max(80),
   eventCode: external_exports.string().trim().min(1).max(120),
@@ -4735,27 +4745,24 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u4F7F\u7528 $partner-report-sync \u91C7\u96C6\u5F53\u524D Partner Report \u5468\u671F\u5185\u7B26\u5408\u6761\u4EF6\u7684 Codex Session\u3002",
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528 partner-report MCP \u5DE5\u5177\uFF0C\u4E0D\u5F97\u8FD0\u884C CLI \u6216 shell\uFF1B\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
-  "\u63A5\u8FD1\u8FD0\u884C\u65F6\u95F4\u4E0A\u9650\u65F6\u505C\u6B62\u9886\u53D6\u65B0 Job\uFF1B\u5F53\u524D Job \u65E0\u6CD5\u5B8C\u6210\u65F6\u4F7F\u7528 collect_defer\uFF0C\u4FDD\u7559\u961F\u5217\u5230\u4E0B\u4E00\u6B21\u8FD0\u884C\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
-  "\u9996\u6B21\u8FD0\u884C\u56FA\u5B9A\u4ECE\u5F53\u524D\u5468\u7684\u5468\u4E00 00:00\uFF08\u5317\u4EAC\u65F6\u95F4\uFF09\u5F00\u59CB\u91C7\u96C6\uFF1B\u9879\u76EE\u6388\u6743\u901A\u8FC7\u540E\uFF0C\u53EF\u5904\u7406\u8BE5\u7A97\u53E3\u5185\u7684\u5B8C\u6574\u95EE\u7B54\u3002\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u533F\u540D\u56DE\u5408\u65AD\u70B9\u3001\u91CD\u53E0\u626B\u63CF\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\uFF0C\u540C\u4E00\u65E7 Session \u53EA\u5904\u7406\u65B0\u589E\u7684\u5B8C\u6574\u95EE\u7B54\u3002",
-  "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u901A\u8FC7 thread/list \u53EA\u8BFB\u53D6 Codex \u72B6\u6001\u6570\u636E\u5E93\u4E2D\u7684\u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u6709\u5B9E\u9645\u6D3B\u52A8\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
-  "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
-  "\u9996\u6B21\u6388\u6743\u5B8C\u6210\u540E\u7684\u65E5\u5E38\u8FD0\u884C\u5FC5\u987B\u5148\u6309\u73B0\u6709\u6743\u9650\u5B8C\u6210\u5168\u90E8 Session \u63D0\u53D6\u548C\u4E0A\u4F20\uFF1B\u5DF2\u6709\u6388\u6743\u961F\u5217\u6E05\u7A7A\u540E\u624D\u91CD\u65B0\u8BFB\u53D6 thread/list \u5143\u6570\u636E\u626B\u63CF\u65B0\u9879\u76EE\u3002\u53D1\u73B0\u65B0\u9879\u76EE\u65F6\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u5E76\u7B49\u5F85\u7528\u6237\u5BA1\u6279 30 \u5206\u949F\uFF1B\u53CA\u65F6\u5141\u8BB8\u5219\u53EA\u628A\u6388\u6743\u751F\u6548\u540E\u65B0\u589E\u7684\u5B8C\u6574\u95EE\u7B54\u8FFD\u52A0\u5230\u5F53\u524D\u961F\u5217\uFF0C\u62D2\u7EDD\u6216\u8D85\u65F6\u5219\u6B63\u5E38\u7ED3\u675F\u4E14\u4FDD\u6301\u4E2D\u53F0\u72B6\u6001\uFF0C\u540E\u7EED\u8FD0\u884C\u4E5F\u4E0D\u5F97\u56DE\u91C7\u6388\u6743\u524D\u5185\u5BB9\u3002",
-  "\u5DF2\u6709\u6388\u6743\u9879\u76EE\u7684 Session \u961F\u5217\u6E05\u7A7A\u540E\u3001\u626B\u63CF\u65B0\u9879\u76EE\u4E4B\u524D\uFF0C\u68C0\u67E5\u6BCF\u4E2A\u5DF2\u6388\u6743\u9879\u76EE\u7684\u6574\u4F53\u63CF\u8FF0\u3002\u53EA\u8BFB\u53D6\u672C\u673A\u9879\u76EE\u8BF4\u660E\u6587\u4EF6\u3001\u9879\u76EE\u6E05\u5355\u548C\u9876\u5C42\u76EE\u5F55\u751F\u6210\u8BED\u4E49\u6307\u7EB9\uFF1B\u4E2D\u53F0\u6CA1\u6709\u63CF\u8FF0\u6216\u8BED\u4E49\u6307\u7EB9\u53D8\u5316\u65F6\u624D\u751F\u6210\u7EA6 150 \u5B57\u4E2D\u6587\u5019\u9009\u63CF\u8FF0\uFF0C\u672A\u53D8\u5316\u5219\u590D\u7528\u3002\u63CF\u8FF0 Job \u5931\u8D25\u4E0D\u5F97\u963B\u65AD\u5176\u4ED6\u9879\u76EE\u6216\u65B0\u9879\u76EE\u626B\u63CF\u3002",
-  "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u3001\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\u548C\u5DF2\u5F52\u6863 Session\uFF1B\u6309\u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\uFF0C\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u6743\u9650\u5355\u5143\uFF0C\u540C\u540D\u4F46\u4E0D\u540C\u4ED3\u5E93\u5206\u522B\u5904\u7406\u3002\u672A\u9009\u5B9A\u3001\u5F85\u5BA1\u6279\u6216\u62D2\u7EDD\u7684\u9879\u76EE\u4E00\u5F8B\u89C6\u4E3A\u4E34\u65F6\u4F1A\u8BDD\uFF0C\u7981\u6B62\u8BFB\u53D6\u548C\u4E0A\u4F20\u3002project-scope.json \u7684\u672C\u5730 allowed/denied \u4FEE\u6539\u4F1A\u5728\u91C7\u96C6\u524D\u63D0\u4EA4\u4E2D\u53F0\uFF0C\u6309\u7248\u672C\u6821\u9A8C\u6210\u529F\u540E\u624D\u751F\u6548\uFF1B\u51B2\u7A81\u65F6\u505C\u6B62\u91C7\u96C6\u5E76\u8981\u6C42\u5148\u540C\u6B65\u3002",
-  "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u9879\u76EE\u4EBA\u5DE5\u6388\u6743\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
+  "\u8BFB\u53D6\u5931\u8D25\u3001\u63D0\u53D6\u5931\u8D25\u3001\u672A\u51B3\u7B56\u6216\u8986\u76D6\u5DEE\u96C6\u4E0D\u4E3A\u7A7A\u65F6\u90FD\u4E0D\u5F97\u7ED3\u675F\u672C\u8F6E\uFF1B\u5FC5\u987B\u7EE7\u7EED collect_next \u4FEE\u590D\u3002\u53EA\u6709\u5BBF\u4E3B\u8FD0\u884C\u65F6\u95F4\u786C\u4E0A\u9650\u5230\u8FBE\u65F6\u624D\u80FD collect_defer\uFF0C\u5E76\u7531\u4E0B\u4E00\u6B21\u8FD0\u884C\u4ECE\u672A\u63A8\u8FDB\u7684\u6210\u529F\u6E38\u6807\u91CD\u626B\u540C\u4E00\u7A97\u53E3\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
+  "\u9996\u6B21\u8FD0\u884C\u56FA\u5B9A\u4ECE\u5F53\u524D\u5468\u7684\u5468\u4E00 00:00\uFF08\u5317\u4EAC\u65F6\u95F4\uFF09\u5F00\u59CB\u91C7\u96C6\uFF1B\u540E\u7EED\u4F7F\u7528\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u548C\u91CD\u53E0\u626B\u63CF\u7A97\u53E3\u786E\u5B9A\u589E\u91CF\u8303\u56F4\u3002\u4EE5 Session \u6700\u8FD1\u4E00\u7EC4\u5B8C\u6574\u95EE\u7B54\u7684\u65F6\u95F4\u662F\u5426\u843D\u5728\u7A97\u53E3\u5185\u5224\u5B9A\u5019\u9009\uFF1B\u65E7 Session \u65B0\u589E\u5B8C\u6574\u95EE\u7B54\u540E\u4E5F\u4F5C\u4E3A\u4E00\u4E2A\u65B0\u7248\u672C\u5019\u9009\uFF0C\u5E76\u5C06\u8BE5 Session \u5168\u90E8\u5B8C\u6574\u95EE\u7B54\u4F5C\u4E3A\u4E00\u4E2A\u6574\u4F53\u53EA\u4EA4\u7ED9\u6A21\u578B\u4E00\u6B21\u3002",
+  "\u7528\u6237\u8F93\u5165\u7ED1\u5B9A\u7801\u5373\u786E\u8BA4\u63D2\u4EF6\u540E\u7EED\u626B\u63CF\u3001\u8BFB\u53D6\u3001\u4EF7\u503C\u5224\u65AD\u548C\u4E0A\u4F20\u884C\u4E3A\uFF1B\u5B9A\u65F6\u4EFB\u52A1\u8FD0\u884C\u9014\u4E2D\u4E0D\u5F97\u505C\u4E0B\u6765\u7B49\u5F85\u4EFB\u4F55\u9879\u76EE\u6388\u6743\uFF0C\u4E5F\u4E0D\u5F97\u53D1\u9001\u9879\u76EE\u5BA1\u6279\u5361\u3002",
+  "\u7ED1\u5B9A\u6210\u529F\u540E\u901A\u8FC7 thread/list \u53EA\u8BFB\u53D6 Codex \u72B6\u6001\u6570\u636E\u5E93\u4E2D\u7684\u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u6709\u5B9E\u9645\u6D3B\u52A8\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\u5E76\u81EA\u52A8\u5141\u8BB8\u3002\u7ED1\u5B9A\u9636\u6BB5\u4E0D\u8C03\u7528 thread/read\uFF0C\u9996\u6B21\u5B9A\u65F6\u8FD0\u884C\u518D\u4ECE\u5F53\u5468\u5468\u4E00 00:00 \u5F00\u59CB\u8BFB\u53D6\u3002",
+  "\u672C\u5730\u9879\u76EE\u8303\u56F4\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u4ECE\u4E2D\u53F0\u91CD\u5EFA\u5E76\u7EE7\u7EED\uFF1B\u5386\u53F2 pending \u9879\u76EE\u548C\u540E\u7EED\u53D1\u73B0\u7684\u65B0\u9879\u76EE\u90FD\u6309\u7ED1\u5B9A\u6388\u6743\u81EA\u52A8\u8F6C\u4E3A allowed\uFF0C\u4E0D\u5F97\u7B49\u5F85\u7528\u6237\u3002\u7528\u6237\u4E3B\u52A8\u8BBE\u4E3A denied \u7684\u9879\u76EE\u4EE5\u53CA\u672C\u5730 Session/\u8DEF\u5F84\u6392\u9664\u9879\u7EE7\u7EED\u751F\u6548\u3002",
+  "Session \u961F\u5217\u6E05\u7A7A\u540E\u68C0\u67E5\u6BCF\u4E2A\u5141\u8BB8\u9879\u76EE\u7684\u6574\u4F53\u63CF\u8FF0\u3002\u53EA\u8BFB\u53D6\u672C\u673A\u9879\u76EE\u8BF4\u660E\u6587\u4EF6\u3001\u9879\u76EE\u6E05\u5355\u548C\u9876\u5C42\u76EE\u5F55\u751F\u6210\u8BED\u4E49\u6307\u7EB9\uFF1B\u4E2D\u53F0\u6CA1\u6709\u63CF\u8FF0\u6216\u8BED\u4E49\u6307\u7EB9\u53D8\u5316\u65F6\u624D\u751F\u6210\u7EA6 150 \u5B57\u4E2D\u6587\u5019\u9009\u63CF\u8FF0\uFF0C\u672A\u53D8\u5316\u5219\u590D\u7528\u3002\u63CF\u8FF0 Job \u5931\u8D25\u4E0D\u5F97\u963B\u65AD\u5176\u4ED6\u9879\u76EE\u6216\u65B0\u9879\u76EE\u626B\u63CF\u3002",
+  "\u5019\u9009\u9879\u76EE\u5FC5\u987B\u5148\u8FC7\u6EE4\u7CFB\u7EDF\u4EFB\u52A1\u3001\u5B98\u65B9\u81EA\u52A8\u5316\u3001Codex \u4E34\u65F6\u76EE\u5F55\u3001\u7CFB\u7EDF\u4E34\u65F6\u76EE\u5F55\u548C\u5DF2\u5F52\u6863 Session\uFF1B\u6309\u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\uFF0C\u540C\u4E00 Git \u4ED3\u5E93\u7684 worktree \u5408\u5E76\u4E3A\u4E00\u4E2A\u8303\u56F4\u5355\u5143\uFF0C\u540C\u540D\u4F46\u4E0D\u540C\u4ED3\u5E93\u5206\u522B\u5904\u7406\u3002\u4E3B\u52A8\u62D2\u7EDD\u7684\u9879\u76EE\u89C6\u4E3A\u6392\u9664\u9879\uFF0C\u7981\u6B62\u8BFB\u53D6\u548C\u4E0A\u4F20\u3002project-scope.json \u7684\u672C\u5730 allowed/denied \u4FEE\u6539\u4F1A\u5728\u91C7\u96C6\u524D\u63D0\u4EA4\u4E2D\u53F0\uFF0C\u6309\u7248\u672C\u6821\u9A8C\u6210\u529F\u540E\u624D\u751F\u6548\uFF1B\u51B2\u7A81\u65F6\u5148\u540C\u6B65\u3002",
+  "\u91C7\u96C6\u987A\u5E8F\u56FA\u5B9A\u4E3A\u4E34\u65F6\u73AF\u5883\u8FC7\u6EE4\u3001\u7ED1\u5B9A\u6388\u6743\u8303\u56F4\u786E\u8BA4\u3001Session \u5185\u5BB9\u4EF7\u503C\u5224\u65AD\uFF0C\u4EFB\u4E00\u6B65\u672A\u901A\u8FC7\u90FD\u4E0D\u5F97\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002",
   "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF1B\u820D\u5F03\u95F2\u804A\u3001\u65E0\u5173\u8BDD\u9898\u3001\u4F4E\u4EF7\u503C\u5F80\u8FD4\uFF0C\u4EE5\u53CA\u6CA1\u6709\u660E\u786E\u6210\u679C\u3001\u8FDB\u5C55\u3001\u51B3\u7B56\u3001\u963B\u585E\u6216\u4E0B\u4E00\u6B65\u7684 Session\u3002",
   "\u6240\u6709\u63D0\u53D6\u6307\u4EE4\u4EE5\u53CA\u4E0A\u4F20\u7684\u6807\u9898\u3001\u6458\u8981\u548C\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\uFF0C\u5E76\u91C7\u7528\u901A\u4FD7\u3001\u7CBE\u7B80\u3001\u76F4\u63A5\u7684\u8868\u8FBE\uFF0C\u907F\u514D\u672F\u8BED\u5806\u780C\u3001\u91CD\u590D\u80CC\u666F\u548C\u6D41\u7A0B\u5957\u8BDD\u3002",
   "\u53EA\u5199\u5165 Skill \u8981\u6C42\u4E14\u901A\u8FC7\u6821\u9A8C\u7684 SessionExtractionResult\uFF0C\u5E76\u53EA\u4E0A\u4F20 SessionContribution\u3002",
   "Schema\u3001\u4E2D\u6587\u6216\u5B89\u5168\u6821\u9A8C\u5931\u8D25\u5FC5\u987B\u4FEE\u6B63\u540C\u4E00 Job \u7684\u7ED3\u6784\u5316\u7ED3\u679C\u4E14\u6700\u591A\u4E09\u6B21\uFF1B\u53EA\u6709\u540C\u4E00 Job \u8FDE\u7EED\u4E09\u6B21\u771F\u5B9E\u5931\u8D25\u540E\u624D\u80FD\u6309 MCP \u8FD4\u56DE\u7684\u5B89\u5168\u539F\u56E0\u7801\u4F7F\u7528 EXTRACT_FAILED\uFF0C\u7981\u6B62\u6279\u91CF collect_skip\u3002",
   "\u4E0D\u5F97\u4E0A\u4F20\u539F\u59CB\u5BF9\u8BDD\u3001\u7EDD\u5BF9\u8DEF\u5F84\u3001Codex Session \u539F\u59CB\u6807\u8BC6\u3001\u63A8\u7406\u3001\u5DE5\u5177\u8C03\u7528\u3001\u547D\u4EE4\u3001\u6587\u4EF6\u6539\u52A8\u6216\u51ED\u636E\u3002",
   "automation memory \u53EA\u8BB0\u5F55\u8FD0\u884C\u65F6\u95F4\u3001\u5B8C\u6210\u6216\u5931\u8D25\u72B6\u6001\u3001\u805A\u5408\u8BA1\u6570\u548C\u5B89\u5168\u9519\u8BEF\u7801\uFF1B\u4E0D\u5F97\u8BB0\u5F55 Session \u5185\u5BB9\u3001Fact\u3001\u8BC1\u636E\u3001\u7AEF\u70B9\u6216\u6807\u8BC6\uFF0C\u9632\u91CD\u4EE5\u7A33\u5B9A\u7528\u6237\u76EE\u5F55\u4E2D\u7684\u672C\u5730 accepted/ignored \u54C8\u5E0C\u8BB0\u5F55\u548C\u4E2D\u53F0\u54C8\u5E0C\u4E3A\u51C6\u3002",
-  "\u8FD0\u884C\u6E05\u5355\u7531\u63D2\u4EF6\u4EE5\u4EC5\u5F53\u524D\u7528\u6237\u53EF\u8BFB\u5199\u7684\u6743\u9650\u4FDD\u5B58\u5728\u7A33\u5B9A\u672C\u5730\u76EE\u5F55\uFF1B\u4EFB\u52A1\u4E2D\u65AD\u65F6\u4E0B\u4E00\u6B21\u8FD0\u884C\u5148\u6062\u590D\u540C\u5468\u671F\u672A\u5B8C\u6210\u961F\u5217\u3002\u5468\u671F\u5DF2\u7ECF\u5207\u6362\u65F6\u653E\u5F03\u65E7\u8FD0\u884C\u6E05\u5355\u5E76\u91CD\u65B0\u626B\u63CF\u5C1A\u672A\u5904\u7406\u7684\u533F\u540D\u56DE\u5408\uFF0C\u7531\u4E2D\u53F0\u6309\u4E0A\u4F20\u6210\u529F\u65F6\u5F53\u524D\u5F00\u653E\u5468\u671F\u5F52\u6863\uFF0C\u4E0D\u6807\u8BB0\u8FDF\u5230\u6216\u8865\u91C7\u3002",
-  "MCP \u8FD4\u56DE started\u3001job\u3001validation_failed\u3001uploaded\u3001ignored\u3001skipped\u3001deferred\u3001project_description_job\u3001project_description_validation_failed\u3001project_description_uploaded\u3001project_description_skipped\u3001review_required\u3001project_scope_approval_waiting\u3001project_scope_approved \u6216\u4EFB\u4F55 nextTool \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u8C03\u7528\u5BF9\u5E94\u5DE5\u5177\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
-  "project_scope_approval_waiting \u548C project_scope_approved \u5C5E\u4E8E\u540C\u4E00\u4E2A\u65E5\u5E38 Run\uFF0C\u5FC5\u987B\u6309 nextTool \u8C03\u7528 collect_next\u3002",
-  "MCP \u8FD4\u56DE project_scope_approval_required \u4E14\u6CA1\u6709 nextTool \u65F6\uFF0C\u8868\u793A\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u5DF2\u8FDB\u5165\u6295\u9012\u6D41\u7A0B\uFF0C\u662F\u6B63\u5E38\u7B49\u5F85\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7ED5\u8FC7\u6743\u9650\u7EE7\u7EED\u91C7\u96C6\u3002",
-  "MCP \u8FD4\u56DE project_scope_no_candidates \u4E14\u6CA1\u6709 nextTool \u65F6\uFF0C\u8868\u793A\u8FC7\u6EE4\u540E\u6CA1\u6709\u53EF\u5BA1\u6279\u9879\u76EE\uFF0C\u662F\u96F6\u8BFB\u53D6\u3001\u96F6\u4E0A\u4F20\u7684\u6B63\u5E38\u7EC8\u6001\uFF1B\u4E0D\u5F97\u7B49\u5F85\u4E00\u5F20\u4E0D\u4F1A\u751F\u6210\u7684\u5361\u7247\u3002",
-  "\u961F\u5217\u5B8C\u6574\u5904\u7406\u6216\u56E0\u65F6\u95F4\u9884\u7B97\u5B89\u5168\u5EF6\u540E\u540E\u5FC5\u987B\u8C03\u7528 collect_review\uFF1B\u5BA1\u67E5\u5FC5\u987B\u533A\u5206 deferred\u3001failedExtract \u548C notProcessed\uFF0C\u53EA\u6709\u8BE5\u5DE5\u5177\u8FD4\u56DE completed \u4E14\u6CA1\u6709 nextTool \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\u3002",
-  "\u6536\u5C3E\u524D\u518D\u6B21\u6838\u5BF9\u6700\u540E\u4E00\u6B21 MCP \u7ED3\u679C\uFF1AcheckpointAdvanced \u4E3A true \u624D\u8BB0\u5F55\u6210\u529F\uFF1B\u4E3A false \u65F6\u8BB0\u5F55\u5931\u8D25\u6216\u90E8\u5206\u8FD0\u884C\u5E76\u4FDD\u7559\u91CD\u8BD5\u8B66\u544A\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
+  "\u8FD0\u884C\u6E05\u5355\u7531\u63D2\u4EF6\u4EE5\u4EC5\u5F53\u524D\u7528\u6237\u53EF\u8BFB\u5199\u7684\u6743\u9650\u4FDD\u5B58\u5728\u7A33\u5B9A\u672C\u5730\u76EE\u5F55\uFF1B\u4EFB\u52A1\u4E2D\u65AD\u65F6\u4E0B\u4E00\u6B21\u8FD0\u884C\u5148\u6062\u590D\u540C\u5468\u671F\u672A\u5B8C\u6210\u961F\u5217\u3002\u5468\u671F\u5DF2\u7ECF\u5207\u6362\u65F6\u653E\u5F03\u65E7\u8FD0\u884C\u6E05\u5355\u5E76\u6309\u6210\u529F\u6E38\u6807\u91CD\u65B0\u626B\u63CF\u5019\u9009 Session\uFF0C\u7531\u4E2D\u53F0\u6309\u4E0A\u4F20\u6210\u529F\u65F6\u5F53\u524D\u5F00\u653E\u5468\u671F\u5F52\u6863\uFF0C\u4E0D\u6807\u8BB0\u8FDF\u5230\u6216\u8865\u91C7\u3002",
+  "MCP \u8FD4\u56DE started\u3001job\u3001validation_failed\u3001uploaded\u3001ignored\u3001skipped\u3001deferred\u3001project_description_job\u3001project_description_validation_failed\u3001project_description_uploaded\u3001project_description_skipped\u3001coverage_repair_required\u3001review_required\u3001review_failed \u6216\u4EFB\u4F55 nextTool \u65F6\u90FD\u5C5E\u4E8E\u975E\u7EC8\u6001\uFF0C\u5FC5\u987B\u7ACB\u5373\u8C03\u7528\u5BF9\u5E94\u5DE5\u5177\uFF0C\u4E0D\u5F97\u603B\u7ED3\u3001\u6807\u8BB0\u5B8C\u6210\u6216\u7ED3\u675F\u4EFB\u52A1\u3002",
+  "\u961F\u5217\u5904\u7406\u5B8C\u540E\u5FC5\u987B\u6267\u884C\u7EC8\u6001\u8986\u76D6\u5BA1\u67E5\uFF1A\u91CD\u65B0\u5217\u4E3E\u56FA\u5B9A\u65F6\u95F4\u7A97\u53E3\u5185\u6240\u6709\u5141\u8BB8\u9879\u76EE\u7684\u975E\u4E34\u65F6 Session\uFF0C\u9010\u4E00\u6838\u5BF9\u662F\u5426\u5DF2\u7ECF\u660E\u786E\u4E0A\u4F20\u3001\u5FFD\u7565\u3001\u547D\u4E2D\u7F13\u5B58\u6216\u5224\u5B9A\u4E0D\u7B26\u5408\u7A97\u53E3\uFF1B\u53D1\u73B0\u6F0F\u9879\u5C31\u8FFD\u52A0\u5904\u7406\uFF0C\u518D\u91CD\u65B0\u5217\u4E3E\u68C0\u67E5\uFF0C\u76F4\u5230\u5DEE\u96C6\u548C unresolvedReadFailures \u90FD\u4E3A\u7A7A\u3002",
+  "collect_review \u5FC5\u987B\u628A coverageComplete\u3001failedRead\u3001failedExtract\u3001deferred\u3001skipped \u548C notProcessed \u4F5C\u4E3A\u786C\u95E8\u69DB\uFF1B\u53EA\u6709\u8FD4\u56DE completed\u3001checkpointAdvanced \u4E3A true \u4E14\u6CA1\u6709 nextTool \u65F6\u624D\u5141\u8BB8\u6536\u5C3E\uFF0C\u5176\u4ED6\u60C5\u51B5\u5FC5\u987B\u7EE7\u7EED\u4FEE\u590D\uFF0C\u7EDD\u4E0D\u80FD\u8BB0\u5F55\u6210\u529F\u3002",
   "\u6700\u7EC8\u53EA\u8FD4\u56DE\u5B89\u5168\u7684\u4E2D\u6587\u805A\u5408\u6458\u8981\u3002"
 ].join(" ");
 var SCHEDULED_COLLECTION_TASK = {
@@ -4864,14 +4871,13 @@ function leasePath(directory) {
 }
 function emptyState(pluginInstanceId) {
   return {
-    schemaVersion: "3.0",
+    schemaVersion: "5.0",
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
     weekBackfillCompletedFor: null,
     acceptedSessions: {},
-    ignoredSessions: {},
-    processedTurns: {}
+    ignoredSessions: {}
   };
 }
 function validIso(value) {
@@ -4886,8 +4892,7 @@ function validateState(value, pluginInstanceId) {
   if (state.pluginInstanceId !== pluginInstanceId)
     return emptyState(pluginInstanceId);
   const acceptedSessions = state.acceptedSessions ?? {};
-  const processedTurns = state.processedTurns ?? {};
-  if (!["1.0", "2.0", "3.0"].includes(state.schemaVersion ?? "") || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || state.weekBackfillCompletedFor !== void 0 && state.weekBackfillCompletedFor !== null && !validIso(state.weekBackfillCompletedFor) || !acceptedSessions || typeof acceptedSessions !== "object" || !state.ignoredSessions || typeof state.ignoredSessions !== "object" || !processedTurns || typeof processedTurns !== "object") {
+  if (!["1.0", "2.0", "3.0", "4.0", "5.0"].includes(state.schemaVersion ?? "") || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || state.weekBackfillCompletedFor !== void 0 && state.weekBackfillCompletedFor !== null && !validIso(state.weekBackfillCompletedFor) || !acceptedSessions || typeof acceptedSessions !== "object" || !state.ignoredSessions || typeof state.ignoredSessions !== "object") {
     throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u683C\u5F0F\u65E0\u6548\u3002"), {
       code: "COLLECTION_STATE_INVALID"
     });
@@ -4901,24 +4906,14 @@ function validateState(value, pluginInstanceId) {
       }
     }
   }
-  for (const [sessionKey, turns] of Object.entries(processedTurns)) {
-    if (!/^[a-f0-9]{64}$/.test(sessionKey) || !turns || typeof turns !== "object")
-      throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u5305\u542B\u65E0\u6548\u7684\u56DE\u5408\u65AD\u70B9\u3002"), {
-        code: "COLLECTION_STATE_INVALID"
-      });
-    for (const [turnKey, processed] of Object.entries(turns)) {
-      if (!/^[a-f0-9]{64}$/.test(turnKey) || !processed || typeof processed !== "object" || !["accepted", "ignored"].includes(processed.decision) || !validIso(processed.processedAt))
-        throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u5305\u542B\u65E0\u6548\u7684\u56DE\u5408\u65AD\u70B9\u3002"), {
-          code: "COLLECTION_STATE_INVALID"
-        });
-    }
-  }
   return {
-    ...state,
-    schemaVersion: "3.0",
-    weekBackfillCompletedFor: state.weekBackfillCompletedFor ?? null,
+    schemaVersion: "5.0",
+    pluginInstanceId,
+    collectionFloorAt: state.collectionFloorAt ?? null,
+    lastSuccessfulRunStartedAt: state.lastSuccessfulRunStartedAt ?? null,
+    weekBackfillCompletedFor: state.schemaVersion === "5.0" ? state.weekBackfillCompletedFor ?? null : null,
     acceptedSessions,
-    processedTurns
+    ignoredSessions: state.ignoredSessions
   };
 }
 function loadCollectionState(pluginInstanceId, directory = dataDirectory()) {
@@ -4999,20 +4994,15 @@ function markWeekBackfillCompleted(state, weekStartsAt) {
     throw new Error("\u5317\u4EAC\u65F6\u95F4\u5468\u8D77\u70B9\u65E0\u6548\uFF0C\u65E0\u6CD5\u8BB0\u5F55\u56DE\u91C7\u72B6\u6001\u3002");
   state.weekBackfillCompletedFor = weekStartsAt;
 }
-function processedTurnKeys(state, sessionKey) {
-  return new Set(Object.keys(state.processedTurns[sessionKey] ?? {}));
-}
-function recordProcessedTurns(state, sessionKey, turnKeys, decision, processedAt = (/* @__PURE__ */ new Date()).toISOString()) {
-  const turns = state.processedTurns[sessionKey] ??= {};
-  for (const turnKey of turnKeys) {
-    if (!/^[a-f0-9]{64}$/.test(turnKey)) throw new Error("\u56DE\u5408\u65AD\u70B9\u6307\u7EB9\u65E0\u6548\u3002");
-    turns[turnKey] ??= { decision, processedAt };
-  }
-}
 function threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
   if (updatedAt == null) return true;
   const timestamp3 = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
   return Number.isFinite(timestamp3) && timestamp3 >= new Date(scanStartsAt).getTime() && timestamp3 <= new Date(scanEndsAt).getTime();
+}
+function threadCouldContainWindowAnswer(updatedAt, scanStartsAt) {
+  if (updatedAt == null) return true;
+  const updated = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
+  return Number.isFinite(updated) && updated >= new Date(scanStartsAt).getTime();
 }
 function initialProjectScopeStartAt(runStartedAt) {
   const runStart = new Date(runStartedAt);
@@ -5042,9 +5032,7 @@ function recordAcceptedSession(state, sessionKey, contentHash, processedAt = (/*
   delete state.ignoredSessions[sessionKey];
 }
 function canAdvanceCollectionCheckpoint(counts) {
-  const invalidThreadHistory = counts.invalidThreadHistory ?? 0;
-  const retryableFailedRead = counts.failedRead - invalidThreadHistory;
-  return invalidThreadHistory <= counts.failedRead && retryableFailedRead === 0 && counts.failedExtract === 0 && (counts.deferred ?? 0) === 0 && (counts.skipped ?? 0) === 0 && (counts.notProcessed ?? 0) === 0;
+  return counts.failedRead === 0 && (counts.invalidThreadHistory ?? 0) === 0 && counts.failedExtract === 0 && (counts.deferred ?? 0) === 0 && (counts.skipped ?? 0) === 0 && (counts.notProcessed ?? 0) === 0;
 }
 function reviewCollectionCompletion(input) {
   const queueExhausted = input.cursor === input.queueLength;
@@ -5054,10 +5042,12 @@ function reviewCollectionCompletion(input) {
   const validFailureAudits = input.validFailureAudits ?? true;
   const noUnexplainedFailedExtract = (input.unexplainedFailedExtract ?? 0) === 0;
   const outcomeCountsMatch = input.outcomeCountsMatch ?? true;
+  const coverageComplete = input.coverageComplete ?? true;
+  const checkpointSafe = canAdvanceCollectionCheckpoint(input.counts);
   const notProcessed = input.counts.notProcessed ?? 0;
   const remainingQueue = Math.max(0, input.queueLength - input.cursor);
   const remainingQueueExplained = queueExhausted ? notProcessed === 0 : input.stopped === true && notProcessed === remainingQueue;
-  const readyToFinalize = noCurrentJob && allClaimedJobsTerminal && uniqueTerminalJobs && validFailureAudits && noUnexplainedFailedExtract && outcomeCountsMatch && remainingQueueExplained;
+  const readyToFinalize = noCurrentJob && allClaimedJobsTerminal && uniqueTerminalJobs && validFailureAudits && noUnexplainedFailedExtract && outcomeCountsMatch && coverageComplete && checkpointSafe && remainingQueueExplained;
   return {
     queueExhausted,
     noCurrentJob,
@@ -5066,9 +5056,10 @@ function reviewCollectionCompletion(input) {
     validFailureAudits,
     noUnexplainedFailedExtract,
     outcomeCountsMatch,
+    coverageComplete,
     remainingQueueExplained,
     readyToFinalize,
-    checkpointEligible: readyToFinalize && queueExhausted && input.stopped !== true && canAdvanceCollectionCheckpoint(input.counts)
+    checkpointEligible: readyToFinalize && queueExhausted && coverageComplete && input.stopped !== true && checkpointSafe
   };
 }
 function writeLease(path, lease, exclusive = false) {
@@ -5153,7 +5144,6 @@ import { isDeepStrictEqual } from "node:util";
 var MAX_EXTRACTION_FAILURES = 3;
 var COLLECTION_RUN_BUDGET_MS = 50 * 6e4;
 var COLLECTION_JOB_RESERVE_MS = 5 * 6e4;
-var PROJECT_SCOPE_APPROVAL_WAIT_MS = 30 * 6e4;
 var extractionFailureCodes = [
   "RESULT_JSON_INVALID",
   "SCHEMA_VALIDATION_FAILED",
@@ -5181,29 +5171,14 @@ function collectionDeadline(createdAt) {
     new Date(createdAt).getTime() + COLLECTION_RUN_BUDGET_MS
   ).toISOString();
 }
-function projectScopeApprovalDeadline(now = Date.now()) {
-  return now + PROJECT_SCOPE_APPROVAL_WAIT_MS;
-}
-function resolveProjectScopeApprovals(scopeKeys, entries, deadlineAt) {
-  const entriesByKey = new Map(entries.map((entry) => [entry.scopeKey, entry]));
-  const approvedKeys = /* @__PURE__ */ new Set();
-  const pendingKeys = [];
-  const deniedKeys = /* @__PURE__ */ new Set();
-  for (const scopeKey of scopeKeys) {
-    const entry = entriesByKey.get(scopeKey);
-    if (entry?.status === "pending") pendingKeys.push(scopeKey);
-    else if (entry?.status === "denied") deniedKeys.add(scopeKey);
-    else if (entry?.status === "allowed" && entry.effectiveFrom && new Date(entry.effectiveFrom).getTime() <= deadlineAt)
-      approvedKeys.add(scopeKey);
-  }
-  return { approvedKeys, pendingKeys, deniedKeys };
-}
-function newlyPendingProjectScopeKeys(knownScopeKeys, entries) {
-  return new Set(
-    entries.filter(
-      (entry) => entry.status === "pending" && !knownScopeKeys.has(entry.scopeKey)
-    ).map((entry) => entry.scopeKey)
-  );
+function missingSessionCoverage(authorizedSessions, processedSessionIds) {
+  const processed = new Set(processedSessionIds);
+  const seen = /* @__PURE__ */ new Set();
+  return authorizedSessions.filter((session) => {
+    if (processed.has(session.id) || seen.has(session.id)) return false;
+    seen.add(session.id);
+    return true;
+  });
 }
 function shouldStopBeforeClaim(deadlineAt, now = Date.now(), reserveMs = COLLECTION_JOB_RESERVE_MS) {
   const deadline = new Date(deadlineAt).getTime();
@@ -5284,11 +5259,15 @@ function countJobOutcomes(outcomes) {
 }
 
 // src/app-server.ts
-import { spawn } from "node:child_process";
+import {
+  spawn,
+  spawnSync
+} from "node:child_process";
 import { createInterface } from "node:readline";
 var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
+var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 function threadReadError(code, message, cause) {
   const error = new Error(message, { cause });
   error.code = code;
@@ -5308,8 +5287,48 @@ function paginatedThreadReadError(cause) {
     cause
   );
 }
-function validFullHistoryThread(value) {
-  return isRecord(value) && Array.isArray(value.turns) && value.turns.length > 0;
+function versionCore(value) {
+  const match = /codex-cli\s+(\d+)\.(\d+)\.(\d+)/i.exec(value);
+  return match ? match.slice(1, 4).map(Number) : null;
+}
+function versionIsCompatible(value) {
+  const actual = versionCore(value);
+  const minimum = versionCore(`codex-cli ${MINIMUM_CODEX_APP_SERVER_VERSION}`);
+  if (!actual) return false;
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] !== minimum[index])
+      return actual[index] > minimum[index];
+  }
+  return true;
+}
+function probeCodexBinary(candidate) {
+  const result = spawnSync(candidate, ["--version"], {
+    encoding: "utf8",
+    timeout: 5e3
+  });
+  if (result.status !== 0) return null;
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
+}
+function selectCodexBinary(options = {}) {
+  const explicit = options.explicit ?? process.env.CODEX_BIN;
+  const candidates = explicit ? [explicit] : options.candidates ?? [
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "codex"
+  ];
+  const probe = options.probe ?? probeCodexBinary;
+  const inspected = [];
+  for (const candidate of [...new Set(candidates)]) {
+    const version = probe(candidate);
+    if (!version) continue;
+    inspected.push(`${candidate} (${version})`);
+    if (versionIsCompatible(version)) return candidate;
+  }
+  const error = new Error(
+    `\u672A\u627E\u5230\u517C\u5BB9\u7684 Codex app-server\uFF0C\u9700\u8981 codex-cli >= ${MINIMUM_CODEX_APP_SERVER_VERSION}${inspected.length ? `\uFF1B\u5DF2\u68C0\u67E5\uFF1A${inspected.join("\u3001")}` : ""}\u3002`
+  );
+  error.code = "CODEX_APP_SERVER_INCOMPATIBLE";
+  throw error;
 }
 function createTimeoutError(method, timeoutMs) {
   const error = new Error(
@@ -5332,13 +5351,14 @@ function threadUpdatedAt(thread) {
   );
 }
 var CodexAppServer = class {
-  constructor(codexBin = process.env.CODEX_BIN ?? "codex") {
-    this.codexBin = codexBin;
-  }
   process = null;
   nextId = 1;
   pending = /* @__PURE__ */ new Map();
   stderr = "";
+  codexBin;
+  constructor(codexBin) {
+    this.codexBin = codexBin ?? selectCodexBinary();
+  }
   async connect() {
     this.process = spawn(
       this.codexBin,
@@ -5515,17 +5535,6 @@ var CodexAppServer = class {
           CODEX_THREAD_READ_TIMEOUT_MS
         );
       } catch (error) {
-        if (error instanceof Error && error.message.includes("invalid paginated history lineage")) {
-          try {
-            const fallback = await this.request(
-              "thread/read",
-              { threadId, includeTurns: true },
-              CODEX_THREAD_READ_TIMEOUT_MS
-            );
-            if (validFullHistoryThread(fallback.thread)) return fallback.thread;
-          } catch {
-          }
-        }
         throw paginatedThreadReadError(error);
       }
       if (!Array.isArray(result.data)) {
@@ -5587,8 +5596,9 @@ function containsSensitive(value) {
     return pattern.test(text);
   });
 }
-function safeText(value, maxLength = 16e3) {
-  return redactSensitive(value).text.slice(0, maxLength);
+function safeText(value, maxLength) {
+  const text = redactSensitive(value).text;
+  return maxLength === void 0 ? text : text.slice(0, maxLength);
 }
 function timestamp2(value) {
   if (typeof value === "string") return new Date(value).getTime();
@@ -5640,16 +5650,28 @@ function isCompleteTurn(turn) {
     turn.userPrompt?.trim() && turn.assistantFinal?.trim() && !incomplete.has(turn.status?.toLowerCase() ?? "")
   );
 }
-function selectPeriodTurns(turns, period, fallbackOccurredAt) {
+function completeSessionTurns(turns) {
+  return turns.filter(isCompleteTurn);
+}
+function latestCompleteTurnInPeriod(turns, period, fallbackOccurredAt) {
   const startsAt = new Date(period.starts_at).getTime();
   const endsAt = new Date(period.ends_at).getTime();
-  return turns.filter((turn) => {
-    if (!isCompleteTurn(turn)) return false;
-    const occurredAt = new Date(
+  const complete = completeSessionTurns(turns);
+  const latest = complete.reduce((candidate, turn) => {
+    const candidateAt = new Date(
+      candidate?.occurredAt ?? fallbackOccurredAt ?? ""
+    ).getTime();
+    const occurredAt2 = new Date(
       turn.occurredAt ?? fallbackOccurredAt ?? ""
     ).getTime();
-    return Number.isFinite(occurredAt) && occurredAt >= startsAt && occurredAt <= endsAt;
-  });
+    if (!Number.isFinite(occurredAt2)) return candidate;
+    return !candidate || occurredAt2 >= candidateAt ? turn : candidate;
+  }, null);
+  if (!latest) return null;
+  const occurredAt = new Date(
+    latest.occurredAt ?? fallbackOccurredAt ?? ""
+  ).getTime();
+  return Number.isFinite(occurredAt) && occurredAt >= startsAt && occurredAt <= endsAt ? latest : null;
 }
 function isPluginSystemThread(summary) {
   const name = [summary.name, summary.title].find((value) => typeof value === "string")?.trim().toLowerCase();
@@ -5776,18 +5798,6 @@ function pathIsExcluded(cwd, excludedPaths) {
 function anonymousSessionKey(pluginInstanceId, sessionId) {
   return sha256(`partner-report/session/v1:${pluginInstanceId}:${sessionId}`);
 }
-function anonymousTurnKey(sessionKey, turn) {
-  return sha256(
-    JSON.stringify({
-      keyVersion: "1.0",
-      sessionKey,
-      turnId: turn.id,
-      occurredAt: turn.occurredAt,
-      userPrompt: turn.userPrompt,
-      assistantFinal: turn.assistantFinal
-    })
-  );
-}
 function buildSessionJob(input) {
   const normalized = normalizeProgressTurns(input.turns);
   if (isPluginAdministrationSession(normalized)) return null;
@@ -5796,13 +5806,9 @@ function buildSessionJob(input) {
     input.pluginInstanceId,
     input.sessionId
   );
-  const alreadyProcessed = new Set(input.processedTurnKeys ?? []);
-  const selected = selectPeriodTurns(
-    normalized,
-    input.period,
-    fallbackOccurredAt
-  ).filter((turn) => !alreadyProcessed.has(anonymousTurnKey(sessionKey, turn)));
-  if (selected.length === 0) return null;
+  if (!latestCompleteTurnInPeriod(normalized, input.period, fallbackOccurredAt))
+    return null;
+  const selected = completeSessionTurns(normalized);
   const project = mappedProject(
     input.cwd,
     input.projects,
@@ -5819,7 +5825,6 @@ function buildSessionJob(input) {
     assistantFinal: turn.assistantFinal
   }));
   const title = safeText(input.title?.trim() || "Codex \u4F1A\u8BDD", 200);
-  const turnKeys = selected.map((turn) => anonymousTurnKey(sessionKey, turn));
   const legacyContentHash = (legacyProject) => sha256(
     JSON.stringify({
       periodKey: input.period.period_key,
@@ -5830,6 +5835,9 @@ function buildSessionJob(input) {
     })
   );
   const compatibleContentHashes = /* @__PURE__ */ new Set([legacyContentHash(project)]);
+  compatibleContentHashes.add(
+    sha256(JSON.stringify({ hashVersion: "3.0", turns }))
+  );
   if (project.id) {
     compatibleContentHashes.add(
       legacyContentHash({
@@ -5843,20 +5851,19 @@ function buildSessionJob(input) {
   }
   const contentHash = sha256(
     JSON.stringify({
-      hashVersion: "3.0",
+      hashVersion: "4.0",
       turns
     })
   );
   const observedAt = input.observedAt ?? (/* @__PURE__ */ new Date()).toISOString();
   const production = {
     skillVersion: `partner-report-sync/${PLUGIN_VERSION}`,
-    promptVersion: "2026-08-05.zh-session-value.v3",
+    promptVersion: "2026-08-25.zh-whole-session-value.v4",
     schemaVersion: "1.0",
     producer: "codex-skill"
   };
   return {
     sessionKey,
-    turnKeys,
     contentHash,
     compatibleContentHashes: [...compatibleContentHashes].filter(
       (hash) => hash !== contentHash
@@ -5877,6 +5884,7 @@ function buildSessionJob(input) {
       language: "zh-CN",
       instructions: [
         "\u5148\u5224\u65AD\u6574\u4E2A Session \u662F\u5426\u5305\u542B\u5BF9\u6620\u5C04\u9879\u76EE\u6709\u610F\u4E49\u7684\u5B9E\u9645\u5DE5\u4F5C\uFF0C\u518D\u51B3\u5B9A\u662F\u5426\u63D0\u53D6\u3002",
+        "\u672C\u8F93\u5165\u5305\u542B\u8BE5 Session \u7684\u5168\u90E8\u5B8C\u6574\u95EE\u7B54\uFF0C\u5FC5\u987B\u4F5C\u4E3A\u4E00\u4E2A\u6574\u4F53\u5224\u65AD\u548C\u603B\u7ED3\uFF0C\u4E0D\u5F97\u62C6\u6210\u56DE\u5408\u5206\u522B\u5904\u7406\u3002",
         "\u53EA\u4F9D\u636E\u5B8C\u6574\u7684\u7528\u6237\u95EE\u9898\u548C\u52A9\u624B\u6700\u7EC8\u56DE\u7B54\uFF0C\u4E0D\u63A8\u65AD\u63A8\u7406\u8FC7\u7A0B\u3001\u547D\u4EE4\u3001\u5DE5\u5177\u8C03\u7528\u6216\u6587\u4EF6\u6539\u52A8\u3002",
         "\u9879\u76EE\u76EE\u5F55\u53EA\u63D0\u4F9B\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u80FD\u5355\u72EC\u8BC1\u660E Session \u4E0E\u9879\u76EE\u6709\u5173\u3002",
         "\u6807\u9898\u3001\u6458\u8981\u548C\u6BCF\u6761\u8D21\u732E\u6B63\u6587\u5FC5\u987B\u4F7F\u7528\u7B80\u4F53\u4E2D\u6587\u3002",
@@ -6371,7 +6379,7 @@ function scopeIsActive(entry, now = /* @__PURE__ */ new Date()) {
     entry?.status === "allowed" && entry.effectiveFrom && new Date(entry.effectiveFrom).getTime() <= now.getTime()
   );
 }
-function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__PURE__ */ new Date()) {
+function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__PURE__ */ new Date(), collectionStartsAt) {
   const policies = new Map(entries.map((entry) => [entry.scopeKey, entry]));
   return summaries.flatMap(
     (summary) => {
@@ -6380,58 +6388,14 @@ function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__
       if (!scopeKey || !scopeIsActive(policy, now) || !policy?.effectiveFrom)
         return [];
       return [
-        { ...summary, scopeKey, collectionStartsAt: policy.effectiveFrom }
+        {
+          ...summary,
+          scopeKey,
+          collectionStartsAt: collectionStartsAt ?? policy.effectiveFrom
+        }
       ];
     }
   );
-}
-
-// src/poll-wait.ts
-var MAX_BACKOFF_MS = 8e3;
-function defaultSleep(milliseconds, signal) {
-  return new Promise((resolve9) => {
-    if (signal?.aborted) return resolve9();
-    const timer = setTimeout(done, milliseconds);
-    function done() {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve9();
-    }
-    signal?.addEventListener("abort", done, { once: true });
-  });
-}
-function pollBackoff(attempt) {
-  return Math.min(
-    1e3 * 2 ** Math.min(Math.max(attempt, 0), 3),
-    MAX_BACKOFF_MS
-  );
-}
-async function waitForCondition(options) {
-  const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? defaultSleep;
-  const segmentEndsAt = Math.min(
-    options.deadlineAt,
-    now() + Math.max(1e3, options.segmentDurationMs)
-  );
-  let attempt = Math.max(0, options.attempt ?? 0);
-  let lastErrorCode = null;
-  while (now() < segmentEndsAt) {
-    if (options.signal?.aborted) return { status: "cancelled", attempt };
-    try {
-      if (await options.check()) return { status: "confirmed", attempt };
-      lastErrorCode = null;
-    } catch (error) {
-      lastErrorCode = options.errorCode?.(error) ?? "POLL_STATUS_UNAVAILABLE";
-    }
-    const remaining = segmentEndsAt - now();
-    if (remaining <= 0) break;
-    await sleep(Math.min(pollBackoff(attempt), remaining), options.signal);
-    attempt += 1;
-  }
-  if (options.signal?.aborted) return { status: "cancelled", attempt };
-  if (now() >= options.deadlineAt)
-    return { status: "timed_out", attempt, lastErrorCode };
-  return { status: "pending", attempt, lastErrorCode };
 }
 
 // src/project-description.ts
@@ -6701,6 +6665,10 @@ import {
   writeFileSync as writeFileSync5
 } from "node:fs";
 import { resolve as resolve7 } from "node:path";
+var invocationId = randomUUID3();
+var invocationCommand = process.argv[2]?.slice(0, 80) || "plugin";
+var invocationSequence = 0;
+var activeRunId;
 var OUTBOX_FILE = "plugin-log-outbox.json";
 var MAX_PENDING_EVENTS = 2e3;
 var BATCH_SIZE = 50;
@@ -6750,15 +6718,20 @@ function enqueuePluginLog(input) {
   try {
     if (!loadConfig(false)) return null;
     const details = safeDetails(input.details);
+    const eventRunId = input.runId ?? activeRunId;
     const event = {
       eventId: input.eventId ?? randomUUID3(),
+      invocationId: input.invocationId ?? invocationId,
+      sequence: input.sequence ?? ++invocationSequence,
+      command: (input.command ?? invocationCommand).slice(0, 80),
+      eventType: input.eventType ?? (input.level === "error" ? "error" : input.eventCode === "command.started" || input.eventCode === "command.completed" ? "lifecycle" : "progress"),
       level: input.level,
       stage: input.stage.slice(0, 80),
       eventCode: input.eventCode.slice(0, 120),
       message: input.message.slice(0, 4e3),
       occurredAt: input.occurredAt ?? (/* @__PURE__ */ new Date()).toISOString(),
       retryable: input.retryable ?? false,
-      ...input.runId ? { runId: input.runId } : {},
+      ...eventRunId ? { runId: eventRunId } : {},
       ...input.stack ? { stack: input.stack.slice(0, 16e3) } : {},
       ...input.attempt ? { attempt: input.attempt } : {},
       ...input.durationMs !== void 0 ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {},
@@ -6770,6 +6743,9 @@ function enqueuePluginLog(input) {
   } catch {
     return null;
   }
+}
+function setPluginLogRunId(runId) {
+  activeRunId = runId;
 }
 async function flushPluginLogs() {
   if (!loadConfig(false)) return { sent: 0, pending: 0 };
@@ -6810,7 +6786,6 @@ function pluginErrorDetails(error) {
 // src/cli.ts
 var RUN_PREFIX = "partner-report-run-";
 var RUNS_DIRECTORY = "collection-runs";
-var POLL_SEGMENT_MS = 45e3;
 function option(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
   if (index < 0) return fallback;
@@ -6822,10 +6797,12 @@ function flag(name) {
 function output(value) {
   if (value && typeof value === "object" && "status" in value && typeof value.status === "string") {
     const event = value;
+    const review = event.review && typeof event.review === "object" ? event.review : void 0;
     let runId;
     if (typeof event.runPath === "string") {
       try {
         runId = readRun(event.runPath).manifest.runId;
+        setPluginLogRunId(runId);
       } catch {
         runId = void 0;
       }
@@ -6834,17 +6811,39 @@ function output(value) {
       runId,
       level: value.status.includes("failed") || value.status === "error" ? "error" : value.status.includes("waiting") || value.status.includes("deferred") ? "warning" : "info",
       stage: (process.argv[2] ?? "plugin").replaceAll("-", "_"),
+      eventType: value.status.includes("failed") || value.status === "error" ? "error" : "result",
       eventCode: value.status,
       message: `\u63D2\u4EF6\u547D\u4EE4\u8FD4\u56DE\u72B6\u6001\uFF1A${value.status}`,
       details: {
+        status: event.status,
+        code: event.code,
+        errorCode: event.errorCode,
+        reason: event.reason,
+        jobId: event.jobId,
         periodKey: event.periodKey,
+        discovered: event.discovered,
         queued: event.queued,
         processed: event.processed,
         uploaded: event.uploaded,
+        unchanged: event.unchanged,
         ignored: event.ignored,
         skipped: event.skipped,
+        deferred: event.deferred,
+        failedRead: event.failedRead,
+        failedPermissionCheck: event.failedPermissionCheck,
+        failedThreadRead: event.failedThreadRead,
+        invalidThreadHistory: event.invalidThreadHistory,
         failedExtract: event.failedExtract,
-        checkpointAdvanced: event.checkpointAdvanced
+        checkpointAdvanced: event.checkpointAdvanced,
+        readyToFinalize: event.readyToFinalize,
+        reviewReadyToFinalize: review?.readyToFinalize,
+        attempts: event.attempts,
+        attemptsRemaining: event.attemptsRemaining,
+        validationFailures: event.validationFailures,
+        validationAttemptsRemaining: event.validationAttemptsRemaining,
+        warnings: event.warnings,
+        threadReadFailureCodes: event.threadReadFailureCodes,
+        retryable: event.retryable
       }
     });
   }
@@ -7145,13 +7144,6 @@ async function discoverProjectScopeAfterBinding() {
     });
   const synchronized = await synchronizeLocalProjectScope(remoteScope);
   const synchronizedLocalScope = synchronized.scope;
-  const currentRemoteScope = synchronized.remote;
-  if (currentRemoteScope.initialized || currentRemoteScope.entries.some((entry) => entry.status === "pending")) {
-    return projectScopePendingStatus(
-      policy.currentPeriod.period_key,
-      synchronizedLocalScope
-    );
-  }
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
   const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
   const server = new CodexAppServer();
@@ -7199,7 +7191,7 @@ async function discoverProjectScopeAfterBinding() {
     discovery.candidates
   );
   saveLocalProjectScope(localScope);
-  return projectScopePendingStatus(policy.currentPeriod.period_key, localScope);
+  return projectScopeReady(policy.currentPeriod.period_key, localScope);
 }
 async function connect() {
   const requestedServerUrl = option("server") ?? process.env.PARTNER_REPORT_SERVER_URL;
@@ -7326,41 +7318,19 @@ async function listCollectionThreadMetadata(config, updatedSince) {
     server.close();
   }
 }
-function projectScopeApprovalRequired(periodKey, localScope) {
+function projectScopeReady(periodKey, localScope) {
   return {
-    status: "project_scope_approval_required",
+    status: "project_scope_ready",
     periodKey,
     policyVersion: localScope.version,
-    pendingProjects: localScope.entries.filter(
-      (entry) => entry.status === "pending"
+    allowedProjects: localScope.entries.filter(
+      (entry) => entry.status === "allowed"
     ).length,
-    read: 0,
-    uploaded: 0,
-    message: "\u53D1\u73B0\u4E86\u5C1A\u672A\u5BA1\u6279\u7684\u9879\u76EE\uFF0C\u672A\u8BFB\u53D6\u4EFB\u4F55 Session \u5185\u5BB9\u3002\u8BF7\u5728\u98DE\u4E66\u4E2D\u5B8C\u6210\u91C7\u96C6\u6743\u9650\u5BA1\u6279\u3002"
+    deniedProjects: localScope.entries.filter(
+      (entry) => entry.status === "denied"
+    ).length,
+    message: "\u7ED1\u5B9A\u6388\u6743\u5DF2\u751F\u6548\uFF0C\u771F\u5B9E\u9879\u76EE\u4F1A\u81EA\u52A8\u7EB3\u5165\u91C7\u96C6\uFF1B\u4E3B\u52A8\u6392\u9664\u7684\u9879\u76EE\u9664\u5916\u3002"
   };
-}
-async function projectScopePendingStatus(periodKey, localScope, remind = false) {
-  const pendingProjects = localScope.entries.filter(
-    (entry) => entry.status === "pending"
-  ).length;
-  if (pendingProjects === 0)
-    return {
-      status: "project_scope_no_candidates",
-      waiting: false,
-      periodKey,
-      policyVersion: localScope.version,
-      discovered: 0,
-      read: 0,
-      uploaded: 0,
-      message: "\u8FC7\u6EE4\u4E34\u65F6\u73AF\u5883\u540E\u6CA1\u6709\u9700\u8981\u5BA1\u6279\u7684\u9879\u76EE\uFF0C\u672C\u6B21\u672A\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\uFF1B\u540E\u7EED\u5468\u671F\u4F1A\u91CD\u65B0\u53D1\u73B0\u3002"
-    };
-  if (remind) {
-    await authenticatedRequest("/v1/project-scope/remind", {
-      method: "POST",
-      body: JSON.stringify({ periodKey })
-    });
-  }
-  return projectScopeApprovalRequired(periodKey, localScope);
 }
 function createRun(manifest) {
   const root = resolve8(dataDirectory(), RUNS_DIRECTORY);
@@ -7428,7 +7398,9 @@ function readRun(runPath) {
   const absolute = assertRunPath(runPath);
   const manifest = JSON.parse(readFileSync7(absolute, "utf8"));
   const config = loadConfig();
-  if (!["1.0", "1.1", "1.2", "1.3"].includes(manifest.schemaVersion) || manifest.pluginInstanceId !== config.pluginInstanceId) {
+  if (!["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"].includes(
+    manifest.schemaVersion
+  ) || manifest.pluginInstanceId !== config.pluginInstanceId) {
     throw new Error("Run \u6E05\u5355\u65E0\u6548\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002");
   }
   manifest.deadlineAt ??= collectionDeadline(manifest.createdAt);
@@ -7439,9 +7411,22 @@ function readRun(runPath) {
   manifest.counts.failedThreadRead ??= 0;
   manifest.counts.invalidThreadHistory ??= 0;
   manifest.threadReadFailureCodes ??= {};
+  const existingCoverage = manifest.endOfRunScopeScan;
+  manifest.endOfRunScopeScan = {
+    completed: existingCoverage?.processedThreadIds !== void 0 ? existingCoverage.completed : false,
+    passes: existingCoverage?.passes ?? 0,
+    processedThreadIds: existingCoverage?.processedThreadIds ?? [],
+    unresolvedReadFailures: existingCoverage?.unresolvedReadFailures ?? {},
+    readAttempts: existingCoverage?.readAttempts ?? {}
+  };
   manifest.outcomes ??= [];
   manifest.claimedJobs ??= manifest.counts.uploaded + manifest.counts.ignored + manifest.counts.failedExtract + (manifest.current ? 1 : 0);
-  if (manifest.current) manifest.current.failures ??= [];
+  if (manifest.current) {
+    manifest.current.failures ??= [];
+    const inferredThreadId = manifest.queue[manifest.cursor - 1]?.id;
+    if (!manifest.current.threadId && inferredThreadId)
+      manifest.current.threadId = inferredThreadId;
+  }
   manifest.projectDescriptionScan ??= {
     initialized: false,
     queue: [],
@@ -7468,6 +7453,72 @@ function saveRun(runPath, manifest) {
   renameSync5(temporary, runPath);
   chmodSync6(runPath, 384);
 }
+function coverageState(manifest) {
+  manifest.endOfRunScopeScan ??= { completed: false };
+  const scan = manifest.endOfRunScopeScan;
+  scan.passes ??= 0;
+  scan.processedThreadIds ??= [];
+  scan.unresolvedReadFailures ??= {};
+  scan.readAttempts ??= {};
+  return scan;
+}
+function markThreadProcessed(manifest, threadId) {
+  if (!threadId) return;
+  const scan = coverageState(manifest);
+  if (!scan.processedThreadIds.includes(threadId))
+    scan.processedThreadIds.push(threadId);
+}
+function recordCoverageReadFailure(manifest, threadId, code) {
+  const scan = coverageState(manifest);
+  scan.completed = false;
+  scan.readAttempts[threadId] = (scan.readAttempts[threadId] ?? 0) + 1;
+  if (scan.unresolvedReadFailures[threadId]) return;
+  scan.unresolvedReadFailures[threadId] = code;
+  manifest.counts.failedRead += 1;
+  if (code === "PROJECT_SCOPE_RECHECK_FAILED") {
+    manifest.counts.failedPermissionCheck += 1;
+    return;
+  }
+  manifest.counts.failedThreadRead += 1;
+  manifest.threadReadFailureCodes ??= {};
+  manifest.threadReadFailureCodes[code] = (manifest.threadReadFailureCodes[code] ?? 0) + 1;
+  if (code === "CODEX_THREAD_HISTORY_INVALID") {
+    manifest.counts.invalidThreadHistory ??= 0;
+    manifest.counts.invalidThreadHistory += 1;
+    manifest.counts.excluded += 1;
+  }
+}
+function clearCoverageReadFailure(manifest, threadId) {
+  const scan = coverageState(manifest);
+  const code = scan.unresolvedReadFailures[threadId];
+  if (!code) return;
+  delete scan.unresolvedReadFailures[threadId];
+  manifest.counts.failedRead = Math.max(0, manifest.counts.failedRead - 1);
+  if (code === "PROJECT_SCOPE_RECHECK_FAILED") {
+    manifest.counts.failedPermissionCheck = Math.max(
+      0,
+      manifest.counts.failedPermissionCheck - 1
+    );
+    return;
+  }
+  manifest.counts.failedThreadRead = Math.max(
+    0,
+    manifest.counts.failedThreadRead - 1
+  );
+  const remaining = Math.max(
+    0,
+    (manifest.threadReadFailureCodes?.[code] ?? 0) - 1
+  );
+  if (remaining === 0) delete manifest.threadReadFailureCodes?.[code];
+  else manifest.threadReadFailureCodes[code] = remaining;
+  if (code === "CODEX_THREAD_HISTORY_INVALID") {
+    manifest.counts.invalidThreadHistory = Math.max(
+      0,
+      (manifest.counts.invalidThreadHistory ?? 0) - 1
+    );
+    manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
+  }
+}
 function writeJob(runPath, jobId, modelInput) {
   const runDirectory = dirname4(runPath);
   const inputPath = resolve8(runDirectory, `${jobId}-input.json`);
@@ -7485,7 +7536,7 @@ async function postCollectionStatus(config, manifest, phase) {
   const lastSyncAt = counts.uploaded > 0 ? (/* @__PURE__ */ new Date()).toISOString() : void 0;
   const warnings = [
     ...checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
-    ...(counts.invalidThreadHistory ?? 0) > 0 ? ["INVALID_THREAD_HISTORY_EXCLUDED"] : []
+    ...(counts.invalidThreadHistory ?? 0) > 0 ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"] : []
   ];
   const coverage = {
     discovered: counts.discovered,
@@ -7567,7 +7618,6 @@ async function collectStart() {
     fetchedRemoteScope,
     localInspection
   );
-  const remoteScope = synchronizedScope.remote;
   let localScope = synchronizedScope.scope;
   if (synchronizedScope.bootstrapped)
     discardStoredRuns(config.pluginInstanceId);
@@ -7594,15 +7644,6 @@ async function collectStart() {
       releaseCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
       throw error;
     }
-  }
-  if (!remoteScope.initialized && localScope.entries.some((entry) => entry.status === "pending")) {
-    return output(
-      await projectScopePendingStatus(
-        policy.currentPeriod.period_key,
-        localScope,
-        true
-      )
-    );
   }
   const runId = randomUUID4();
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -7636,11 +7677,7 @@ async function collectStart() {
     throw error;
   }
   const inWindow = flag("force") ? metadataEligible : metadataEligible.filter(
-    (summary) => threadIsInScanWindow(
-      summary.updatedAt,
-      window.scanStartsAt,
-      window.scanEndsAt
-    )
+    (summary) => threadCouldContainWindowAnswer(summary.updatedAt, window.scanStartsAt)
   );
   const configuredRoots = configuredProjectRoots(policy.projects);
   if (!localScope.initialized) {
@@ -7683,13 +7720,6 @@ async function collectStart() {
       releaseCollectionLease(config.pluginInstanceId, runId);
       throw error;
     }
-    releaseCollectionLease(config.pluginInstanceId, runId);
-    return output(
-      await projectScopePendingStatus(
-        policy.currentPeriod.period_key,
-        localScope
-      )
-    );
   }
   const allThreadDiscovery = discoverProjectScopes(
     config.pluginInstanceId,
@@ -7728,7 +7758,9 @@ async function collectStart() {
   const regularQueue = authorizedProjectThreads(
     inWindow,
     allThreadDiscovery.threadScopes,
-    localScope.entries
+    localScope.entries,
+    new Date(runStartedAt),
+    effectivePeriod.starts_at
   );
   let state;
   try {
@@ -7753,7 +7785,7 @@ async function collectStart() {
     (summary) => inWindowIds.has(summary.id)
   ).length;
   const manifest = {
-    schemaVersion: "1.3",
+    schemaVersion: "1.5",
     runId,
     pluginInstanceId: config.pluginInstanceId,
     createdAt: runStartedAt,
@@ -7791,9 +7823,12 @@ async function collectStart() {
     current: null,
     claimedJobs: 0,
     outcomes: [],
-    approvalWait: null,
     endOfRunScopeScan: {
-      completed: false
+      completed: false,
+      passes: 0,
+      processedThreadIds: [],
+      unresolvedReadFailures: {},
+      readAttempts: {}
     },
     projectDescriptionScan: {
       initialized: false,
@@ -7850,6 +7885,8 @@ function currentJobOutput(runPath, current) {
   });
 }
 function recordJobOutcome(manifest, current, outcome) {
+  if (["uploaded", "ignored"].includes(outcome.status))
+    markThreadProcessed(manifest, current.threadId);
   manifest.outcomes.push({
     jobId: current.jobId,
     failureCount: current.failures.length,
@@ -7902,7 +7939,7 @@ async function finishRun(runPath, manifest, config) {
     checkpointAdvanced,
     warnings: [
       ...checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
-      ...(manifest.counts.invalidThreadHistory ?? 0) > 0 ? ["INVALID_THREAD_HISTORY_EXCLUDED"] : [],
+      ...(manifest.counts.invalidThreadHistory ?? 0) > 0 ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"] : [],
       ...(manifest.projectDescriptionScan?.failed ?? 0) > 0 ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"] : []
     ],
     threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
@@ -7920,6 +7957,7 @@ async function finishRun(runPath, manifest, config) {
 }
 function completionReview(manifest) {
   const outcomeCounts = countJobOutcomes(manifest.outcomes);
+  const coverage = coverageState(manifest);
   return reviewCollectionCompletion({
     cursor: manifest.cursor,
     queueLength: manifest.queue.length,
@@ -7934,6 +7972,7 @@ function completionReview(manifest) {
     outcomeCountsMatch: Object.entries(outcomeCounts).every(
       ([key, count]) => manifest.counts[key] === count
     ),
+    coverageComplete: coverage.completed && Object.keys(coverage.unresolvedReadFailures ?? {}).length === 0,
     stopped: manifest.stopReason !== void 0,
     counts: manifest.counts
   });
@@ -8075,133 +8114,12 @@ async function submitProjectDescription() {
     });
   }
 }
-async function continueScopeApprovalWait(runPath, manifest) {
-  const wait = manifest.approvalWait;
-  if (!wait || wait.scopeKeys.length === 0) return false;
-  const applyRemote = async () => {
-    const remote = await fetchProjectScope();
-    const inspection = inspectLocalProjectScope(manifest.pluginInstanceId);
-    if (inspection.state !== "valid")
-      throw Object.assign(
-        new Error("\u91C7\u96C6\u8FC7\u7A0B\u4E2D\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u5931\u6548\uFF0C\u5DF2\u505C\u6B62\u8BFB\u53D6\u3002"),
-        { code: "PROJECT_SCOPE_LOCAL_INVALID" }
-      );
-    const local = mergeRemoteProjectScope(inspection.scope, remote);
-    saveLocalProjectScope(local);
-    const { approvedKeys, pendingKeys, deniedKeys } = resolveProjectScopeApprovals(
-      wait.scopeKeys,
-      local.entries,
-      wait.deadlineAt
-    );
-    let appended = 0;
-    const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
-    for (const summary of wait.deferredQueue) {
-      if (!approvedKeys.has(summary.scopeKey) || queuedIds.has(summary.id))
-        continue;
-      const effectiveFrom = local.entries.find(
-        (entry) => entry.scopeKey === summary.scopeKey
-      )?.effectiveFrom;
-      if (!effectiveFrom) continue;
-      manifest.queue.push({
-        ...summary,
-        collectionStartsAt: new Date(
-          Math.max(
-            new Date(manifest.period.starts_at).getTime(),
-            new Date(effectiveFrom).getTime()
-          )
-        ).toISOString()
-      });
-      queuedIds.add(summary.id);
-      appended += 1;
-      if (summary.initialCountBucket === "excluded" || summary.countedAsExcluded === true)
-        manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
-      else if (summary.initialCountBucket === "outsideWindow" || summary.countedAsExcluded === false)
-        manifest.counts.outsideWindow = Math.max(
-          0,
-          manifest.counts.outsideWindow - 1
-        );
-    }
-    if (approvedKeys.size > 0) {
-      manifest.deadlineAt = collectionDeadline((/* @__PURE__ */ new Date()).toISOString());
-      manifest.projectDescriptionScan = {
-        initialized: false,
-        queue: [],
-        cursor: 0,
-        current: null,
-        generated: manifest.projectDescriptionScan?.generated ?? 0,
-        unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
-        unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
-        failed: manifest.projectDescriptionScan?.failed ?? 0
-      };
-    }
-    const remainingKeys = deniedKeys.size > 0 ? [] : pendingKeys;
-    wait.scopeKeys = remainingKeys;
-    wait.deferredQueue = wait.deferredQueue.filter(
-      (summary) => remainingKeys.includes(summary.scopeKey)
-    );
-    return {
-      appended,
-      pending: remainingKeys.length,
-      denied: deniedKeys.size
-    };
-  };
-  const first = await applyRemote();
-  if (first.appended > 0) {
-    saveRun(runPath, manifest);
-    output({
-      status: "project_scope_approved",
-      runPath,
-      appended: first.appended,
-      pendingProjects: first.pending,
-      deniedProjects: first.denied,
-      nextCommand: `collect-next --run ${runPath}`
-    });
-    return true;
-  }
-  if (first.pending === 0 || Date.now() >= wait.deadlineAt) {
-    manifest.approvalWait = null;
-    saveRun(runPath, manifest);
-    return false;
-  }
-  const result = await waitForCondition({
-    check: async () => {
-      const remote = await fetchProjectScope();
-      const entries = new Map(
-        remote.entries.map((entry) => [entry.scopeKey, entry])
-      );
-      return wait.scopeKeys.some(
-        (scopeKey) => entries.get(scopeKey)?.status !== "pending"
-      );
-    },
-    deadlineAt: wait.deadlineAt,
-    segmentDurationMs: POLL_SEGMENT_MS,
-    attempt: wait.attempt,
-    errorCode: (error) => error instanceof HttpError ? error.code : "PROJECT_SCOPE_APPROVAL_STATUS_UNAVAILABLE"
-  });
-  wait.attempt = result.attempt;
-  if (result.status === "confirmed")
-    return continueScopeApprovalWait(runPath, manifest);
-  if (result.status === "timed_out") {
-    manifest.approvalWait = null;
-    saveRun(runPath, manifest);
-    return false;
-  }
-  saveRun(runPath, manifest);
-  output({
-    status: "project_scope_approval_waiting",
-    runPath,
-    pendingProjects: wait.scopeKeys.length,
-    ..."lastErrorCode" in result && result.lastErrorCode ? { lastErrorCode: result.lastErrorCode } : {},
-    nextCommand: `collect-next --run ${runPath}`
-  });
-  return true;
-}
 async function startEndOfRunScopeScan(runPath, manifest) {
-  const scan = manifest.endOfRunScopeScan;
-  if (!scan || scan.completed) return false;
+  const scan = coverageState(manifest);
+  if (scan.completed) return false;
   const config = loadConfig();
-  const scanStartedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const scanStartsAt = initialProjectScopeStartAt(scanStartedAt);
+  const fixedWindowEnd = manifest.scanEndsAt ?? manifest.createdAt;
+  const scanStartsAt = initialProjectScopeStartAt(fixedWindowEnd);
   const { summaries, metadataEligible } = await listCollectionThreadMetadata(
     config,
     scanStartsAt
@@ -8217,9 +8135,8 @@ async function startEndOfRunScopeScan(runPath, manifest) {
       { code: "PROJECT_SCOPE_LOCAL_INVALID" }
     );
   const localScope = inspection.scope;
-  const scanCompletedAt = (/* @__PURE__ */ new Date()).toISOString();
   const discoverySummaries = metadataEligible.filter(
-    (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, scanCompletedAt)
+    (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, fixedWindowEnd)
   );
   const discovery = discoverProjectScopes(
     manifest.pluginInstanceId,
@@ -8250,72 +8167,72 @@ async function startEndOfRunScopeScan(runPath, manifest) {
     discovery.candidates
   );
   saveLocalProjectScope(mergedScope);
-  const pendingScopeKeys = newlyPendingProjectScopeKeys(
-    knownScopeKeys,
-    mergedScope.entries
-  );
-  if (pendingScopeKeys.size === 0) {
-    scan.completed = true;
-    saveRun(runPath, manifest);
-    return false;
+  if (mergedScope.entries.some((entry) => !knownScopeKeys.has(entry.scopeKey))) {
+    manifest.projectDescriptionScan = {
+      initialized: false,
+      queue: [],
+      cursor: 0,
+      current: null,
+      generated: manifest.projectDescriptionScan?.generated ?? 0,
+      unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+      unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
+      failed: manifest.projectDescriptionScan?.failed ?? 0
+    };
   }
+  const possibleWindowSummaries = metadataEligible.filter(
+    (summary) => threadCouldContainWindowAnswer(
+      summary.updatedAt,
+      manifest.scanStartsAt ?? manifest.period.starts_at
+    )
+  );
   const allThreadDiscovery = discoverProjectScopes(
     manifest.pluginInstanceId,
     mergedScope,
-    metadataEligible,
+    possibleWindowSummaries,
     { configuredRoots: configuredProjectRoots(manifest.projects) }
   );
-  const inOriginalWindow = new Set(
-    metadataEligible.filter(
-      (summary) => manifest.force || threadIsInScanWindow(
-        summary.updatedAt,
-        manifest.scanStartsAt ?? manifest.period.starts_at,
-        manifest.scanEndsAt ?? manifest.createdAt
-      )
-    ).map((summary) => summary.id)
+  const fixedWindowSummaries = possibleWindowSummaries;
+  const authorized = authorizedProjectThreads(
+    fixedWindowSummaries,
+    allThreadDiscovery.threadScopes,
+    mergedScope.entries,
+    /* @__PURE__ */ new Date(),
+    manifest.period.starts_at
+  ).map((summary) => ({
+    ...summary,
+    collectionEndsAt: fixedWindowEnd
+  }));
+  const missing = missingSessionCoverage(
+    authorized,
+    scan.processedThreadIds ?? []
   );
-  const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
-  const reportPeriodStartsAt = manifest.period.starts_at;
-  const collectionEndsAt = new Date(
-    Math.min(
-      new Date(manifest.reportPeriodEndsAt ?? scanCompletedAt).getTime(),
-      new Date(scanCompletedAt).getTime()
-    )
-  ).toISOString();
-  const fullPeriodSummaries = metadataEligible.filter(
-    (summary) => threadIsInKnownScanWindow(
-      summary.updatedAt,
-      reportPeriodStartsAt,
-      scanCompletedAt
-    )
-  );
-  const deferredQueue = fullPeriodSummaries.flatMap(
-    (summary) => {
-      const scopeKey = allThreadDiscovery.threadScopes.get(summary.id);
-      if (!scopeKey || !pendingScopeKeys.has(scopeKey)) return [];
-      return [
-        {
-          ...summary,
-          scopeKey,
-          collectionStartsAt: manifest.period.starts_at,
-          collectionEndsAt,
-          ...initialThreadIds.has(summary.id) ? {
-            initialCountBucket: inOriginalWindow.has(summary.id) ? "excluded" : "outsideWindow"
-          } : {}
-        }
-      ];
+  scan.passes = (scan.passes ?? 0) + 1;
+  if (missing.length > 0) {
+    const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
+    const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
+    for (const summary of missing) {
+      if (!queuedIds.has(summary.id) && initialThreadIds.has(summary.id))
+        manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
+      manifest.queue.push(summary);
+      queuedIds.add(summary.id);
     }
-  );
-  manifest.approvalWait = {
-    scopeKeys: [...pendingScopeKeys],
-    deadlineAt: 0,
-    attempt: 0,
-    deferredQueue
-  };
+    manifest.deadlineAt = collectionDeadline((/* @__PURE__ */ new Date()).toISOString());
+    scan.completed = false;
+    saveRun(runPath, manifest);
+    output({
+      status: "coverage_repair_required",
+      runPath,
+      coveragePass: scan.passes,
+      missingSessions: missing.length,
+      unresolvedReadFailures: Object.keys(scan.unresolvedReadFailures ?? {}).length,
+      collectionEndsAt: fixedWindowEnd,
+      nextCommand: `collect-next --run ${runPath}`
+    });
+    return true;
+  }
   scan.completed = true;
-  manifest.approvalWait.deadlineAt = projectScopeApprovalDeadline();
   saveRun(runPath, manifest);
-  return continueScopeApprovalWait(runPath, manifest);
+  return false;
 }
 async function collectNext() {
   const runPath = option("run");
@@ -8339,39 +8256,29 @@ async function collectNext() {
       if (localScope.state !== "valid" || !threadMayBeRead(summary, localScope.scope, {
         configuredRoots: configuredProjectRoots(manifest.projects)
       })) {
-        manifest.counts.excluded += 1;
-        manifest.counts.failedRead += 1;
-        manifest.counts.failedPermissionCheck += 1;
+        recordCoverageReadFailure(
+          manifest,
+          summary.id,
+          "PROJECT_SCOPE_RECHECK_FAILED"
+        );
         saveRun(absolute, manifest);
         continue;
       }
       let thread;
       try {
         thread = await server.readThread(summary.id);
+        clearCoverageReadFailure(manifest, summary.id);
         manifest.counts.read += 1;
       } catch (error) {
-        manifest.counts.failedRead += 1;
-        manifest.counts.failedThreadRead += 1;
         const code = error && typeof error === "object" && "code" in error && [
           "CODEX_THREAD_READ_FAILED",
           "CODEX_THREAD_TURNS_LIST_FAILED",
           "CODEX_THREAD_HISTORY_INVALID"
         ].includes(String(error.code)) ? String(error.code) : "CODEX_THREAD_READ_FAILED";
-        manifest.threadReadFailureCodes ??= {};
-        manifest.threadReadFailureCodes[code] = (manifest.threadReadFailureCodes[code] ?? 0) + 1;
-        if (code === "CODEX_THREAD_HISTORY_INVALID") {
-          manifest.counts.invalidThreadHistory ??= 0;
-          manifest.counts.invalidThreadHistory += 1;
-          manifest.counts.excluded += 1;
-        }
+        recordCoverageReadFailure(manifest, summary.id, code);
         saveRun(absolute, manifest);
         continue;
       }
-      const sessionKey = anonymousSessionKey(
-        manifest.pluginInstanceId,
-        summary.id
-      );
-      const collectionState = loadCollectionState(manifest.pluginInstanceId);
       const job = buildSessionJob({
         pluginInstanceId: manifest.pluginInstanceId,
         sessionId: summary.id,
@@ -8381,7 +8288,6 @@ async function collectNext() {
         turns: Array.isArray(thread.turns) ? thread.turns : [],
         projects: manifest.projects,
         scopeKey: summary.scopeKey,
-        processedTurnKeys: manifest.force ? [] : processedTurnKeys(collectionState, sessionKey),
         period: summary.collectionStartsAt || summary.collectionEndsAt ? {
           ...manifest.period,
           starts_at: new Date(
@@ -8396,6 +8302,7 @@ async function collectNext() {
         } : manifest.period
       });
       if (!job) {
+        markThreadProcessed(manifest, summary.id);
         manifest.counts.excluded += 1;
         saveRun(absolute, manifest);
         continue;
@@ -8412,15 +8319,10 @@ async function collectNext() {
         if (knownDecision === "accepted")
           recordAcceptedSession(state, job.sessionKey, job.contentHash);
         else recordIgnoredSession(state, job.sessionKey, job.contentHash);
-        recordProcessedTurns(
-          state,
-          job.sessionKey,
-          job.turnKeys,
-          knownDecision
-        );
         saveCollectionState(state);
         if (knownDecision === "accepted") manifest.counts.unchanged += 1;
         else manifest.counts.cachedIgnored += 1;
+        markThreadProcessed(manifest, summary.id);
         saveRun(absolute, manifest);
         continue;
       }
@@ -8428,11 +8330,11 @@ async function collectNext() {
       const paths = writeJob(absolute, jobId, job.modelInput);
       manifest.current = {
         jobId,
+        threadId: summary.id,
         ...paths,
         expected: immutableContributionFromRequirements(
           job.modelInput.outputRequirements.include.contribution
         ),
-        turnKeys: job.turnKeys,
         failures: []
       };
       manifest.claimedJobs += 1;
@@ -8444,7 +8346,6 @@ async function collectNext() {
   }
   if (await continueProjectDescriptionScan(absolute, manifest)) return;
   if (await startEndOfRunScopeScan(absolute, manifest)) return;
-  if (await continueScopeApprovalWait(absolute, manifest)) return;
   output({
     status: "review_required",
     runPath: absolute,
@@ -8574,12 +8475,6 @@ async function collectSubmit() {
       current.expected.sessionKey,
       current.expected.contentHash
     );
-    recordProcessedTurns(
-      state2,
-      current.expected.sessionKey,
-      current.turnKeys ?? [],
-      "ignored"
-    );
     saveCollectionState(state2);
     manifest.knownSessions[current.expected.sessionKey] = {
       contentHashes: [current.expected.contentHash],
@@ -8648,12 +8543,6 @@ async function collectSubmit() {
     state,
     result.contribution.sessionKey,
     result.contribution.contentHash
-  );
-  recordProcessedTurns(
-    state,
-    result.contribution.sessionKey,
-    current.turnKeys ?? [],
-    "accepted"
   );
   saveCollectionState(state);
   manifest.knownSessions[result.contribution.sessionKey] = {
@@ -8741,7 +8630,7 @@ async function status() {
     projectScopeLocalState: projectScope.state,
     projectScopeVersion: projectScope.scope.version,
     projectScopeInitialized: projectScope.state === "valid" && projectScope.scope.initialized,
-    projectScopeRequiresApproval: projectScope.state !== "valid" || !projectScope.scope.initialized,
+    projectScopeRequiresApproval: projectScope.state !== "valid",
     allowedProjectCount: projectScope.state === "valid" ? projectScope.scope.entries.filter((entry) => scopeIsActive(entry)).length : 0,
     pendingProjectCount: projectScope.scope.entries.filter(
       (entry) => entry.status === "pending"
@@ -8759,7 +8648,7 @@ async function projectScopeList() {
     localState: local.state,
     version: local.scope.version,
     initialized: local.scope.initialized,
-    requiresApproval: local.state !== "valid" || !local.scope.initialized,
+    requiresApproval: local.state !== "valid",
     projects: local.scope.entries.map((entry) => ({
       scopeKey: entry.scopeKey,
       name: entry.displayName,
@@ -8786,8 +8675,8 @@ async function changeProjectScope(decision) {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error("\u672C\u5730\u91C7\u96C6\u6743\u9650\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u91C7\u96C6\u5E76\u5728\u98DE\u4E66\u5B8C\u6210\u9996\u6B21\u5BA1\u6279\u3002"),
-      { code: "PROJECT_SCOPE_APPROVAL_REQUIRED" }
+      new Error("\u672C\u5730\u9879\u76EE\u8303\u56F4\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u4E00\u6B21\u91C7\u96C6\u540C\u6B65\u7ED1\u5B9A\u6388\u6743\u3002"),
+      { code: "PROJECT_SCOPE_SYNC_REQUIRED" }
     );
   const remote = await fetchProjectScope();
   const scopeKey = option("scope-key")?.trim();
@@ -8863,7 +8752,6 @@ function help() {
       "scheduled-task-config",
       "migrate-credentials",
       "collect-start [--force]",
-      "project-scope-card-wait --period-key <base64url> --version <number> --deadline <epoch-ms> --attempt <number> [--force]",
       "collect-next --run <path>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
@@ -8887,7 +8775,6 @@ var recoveryAwareCommands = /* @__PURE__ */ new Set([
   "connectivity-test",
   "server-url-set",
   "collect-start",
-  "project-scope-card-wait",
   "daily-collect",
   "collect-next",
   "collect-review",
@@ -8938,6 +8825,7 @@ var commandRunPath = option("run");
 if (commandRunPath) {
   try {
     commandRunId = readRun(commandRunPath).manifest.runId;
+    setPluginLogRunId(commandRunId);
   } catch {
     commandRunId = void 0;
   }
@@ -8948,8 +8836,17 @@ enqueuePluginLog({
   level: "info",
   stage: command.replaceAll("-", "_"),
   eventCode: "command.started",
+  eventType: "lifecycle",
   message: `\u63D2\u4EF6\u547D\u4EE4\u5F00\u59CB\uFF1A${command}`,
-  details: { command }
+  details: {
+    command,
+    pluginVersion: PLUGIN_VERSION,
+    nodeVersion: process.versions.node,
+    platform: process.platform,
+    architecture: process.arch,
+    forced: flag("force"),
+    hasCollectionRun: Boolean(commandRunId)
+  }
 });
 await flushPluginLogs();
 try {
@@ -8959,6 +8856,7 @@ try {
     level: "info",
     stage: command.replaceAll("-", "_"),
     eventCode: "command.completed",
+    eventType: "lifecycle",
     message: `\u63D2\u4EF6\u547D\u4EE4\u5B8C\u6210\uFF1A${command}`,
     durationMs: Date.now() - commandStartedAt,
     details: { command }
@@ -8971,6 +8869,7 @@ try {
     level: "error",
     stage: command.replaceAll("-", "_"),
     eventCode: diagnostic.code,
+    eventType: "error",
     message: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : void 0,
     durationMs: Date.now() - commandStartedAt,

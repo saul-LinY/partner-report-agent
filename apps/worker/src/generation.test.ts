@@ -9,6 +9,7 @@ import {
   buildNoActivityTeamReport,
   formatReportDate,
   injectApprovedProjectDescriptions,
+  normalizePluginLogAnalysis,
   normalizeTeamReportSummary,
   projectStatusWithCompletionSupport,
 } from "./generation.js";
@@ -28,6 +29,30 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("user's correction as authoritative");
     expect(instructions).toContain("projectDescription only");
     expect(instructions).toContain("2026-08-12.project-card.v3");
+  });
+});
+
+describe("plugin log model analysis", () => {
+  it("normalizes a useful but loosely shaped model response", () => {
+    expect(
+      normalizePluginLogAnalysis(
+        {
+          failedStep: "读取本地会话",
+          cause: "连续六次返回会话历史格式无效。",
+          evidence: "CODEX_THREAD_HISTORY_INVALID: 6",
+          actions: ["升级插件后重新采集"],
+          confidence: "high",
+        },
+        "采集命令",
+      ),
+    ).toEqual({
+      summary: "读取本地会话",
+      failedStep: "读取本地会话",
+      rootCause: "连续六次返回会话历史格式无效。",
+      evidence: ["CODEX_THREAD_HISTORY_INVALID: 6"],
+      recommendedActions: ["升级插件后重新采集"],
+      confidence: "high",
+    });
   });
 });
 

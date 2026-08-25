@@ -62,8 +62,9 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
     expect(skill).toContain("第一次运行固定从当前周的周一 00:00 开始");
-    expect(skill).toContain("匿名回合断点");
-    expect(skill).toContain("同一旧 Session 后续新增的完整问答");
+    expect(skill).toContain("最近一组完整问答的最终回答时间");
+    expect(skill).toContain("全部完整问答拼成一个整体");
+    expect(skill).toContain("新版本取代该 Session 的旧贡献");
     expect(skill).toContain("CREDENTIAL_MIGRATION_REQUIRED");
     expect(skill).toContain(
       "正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain",
@@ -77,18 +78,19 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("通俗、精简、直接");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");
     expect(skill).toContain("最近 7 天有实际活动且未归档");
-    expect(skill).toContain("只读取 Codex 状态数据库中的元数据");
+    expect(skill).toContain("读取 Codex 状态数据库中的元数据");
     expect(skill).toContain("多个 worktree 归并为一个逻辑项目");
     expect(skill).toContain("每个项目至少 1 个 Session 即登记");
-    expect(skill).toContain("pending 项目保持待审批");
-    expect(skill).toContain("审批 30 分钟");
-    expect(skill).toContain("不得回采授权前内容");
+    expect(skill).toContain("用户输入绑定码即确认插件后续");
+    expect(skill).toContain("历史 pending 项目在同步时自动转为 allowed");
+    expect(skill).toContain("不发送审批卡、不轮询授权状态，也不等待用户输入");
     expect(skill).toContain("每天北京时间 16:00");
     expect(skill).toContain("不得向用户展示带 `Z` 的 UTC 时间");
     expect(skill).toContain("`gpt-5.6-sol`");
     expect(skill).toContain("作为下一周期普通工作");
     expect(skill).toContain("项目工作卡片整体接受后");
     expect(skill).toContain("终态审查");
+    expect(skill).toContain("差集和 `unresolvedReadFailures` 都为空");
     expect(skill).not.toContain("continuation-task-config");
     expect(skill).not.toContain("next-local");
     expect(skill).not.toContain("daily-finish");

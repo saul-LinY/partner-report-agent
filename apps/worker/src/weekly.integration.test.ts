@@ -18,6 +18,7 @@ suite("weekly report scheduling", () => {
     emptyPartner: randomUUID(),
     period: randomUUID(),
     fact: randomUUID(),
+    obsoleteFact: randomUUID(),
   };
 
   beforeAll(async () => {
@@ -51,11 +52,20 @@ suite("weekly report scheduling", () => {
         insert into session_facts (
           id, tenant_id, team_id, partner_id, period_id, session_id,
           external_fact_id, source_revision, source_hash, payload
-        ) values (
+        ) values
+        (
           ${fixture.fact}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner}, ${fixture.period},
-          'fixture-session', 'fixture-fact', 1, 'fixture-source',
+          'fixture-session', 'fixture-fact', 2, 'fixture-source',
           '{"summary":"本周完成项目里程碑","status":"completed"}'::jsonb
+        ),
+        (
+          ${fixture.obsoleteFact}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner}, ${fixture.period},
+          'fixture-session', 'fixture-fact-obsolete', 1, 'fixture-source-obsolete',
+          '{"summary":"不应进入报表的旧版本","status":"completed"}'::jsonb
         )
+      `;
+      await tx`
+        update session_facts set current = false where id = ${fixture.obsoleteFact}
       `;
     });
   });
@@ -76,7 +86,7 @@ suite("weekly report scheduling", () => {
       await tx`delete from work_items where tenant_id = ${fixture.tenant}`;
       await tx`delete from reviews where tenant_id = ${fixture.tenant}`;
       await tx`delete from fact_snapshots where tenant_id = ${fixture.tenant}`;
-      await tx`delete from session_facts where id = ${fixture.fact}`;
+      await tx`delete from session_facts where tenant_id = ${fixture.tenant}`;
       await tx`delete from report_periods where team_id = ${fixture.team}`;
       await tx`delete from partners where id = ${fixture.partner}`;
       await tx`delete from partners where id = ${fixture.emptyPartner}`;

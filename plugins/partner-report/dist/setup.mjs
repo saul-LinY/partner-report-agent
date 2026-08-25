@@ -4,7 +4,10 @@
 import { resolve as resolve2 } from "node:path";
 
 // src/app-server.ts
-import { spawn } from "node:child_process";
+import {
+  spawn,
+  spawnSync
+} from "node:child_process";
 import { createInterface } from "node:readline";
 
 // src/config.ts
@@ -222,6 +225,7 @@ function migrateLegacyInstallation() {
 var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
+var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 function threadReadError(code, message, cause) {
   const error = new Error(message, { cause });
   error.code = code;
@@ -241,8 +245,48 @@ function paginatedThreadReadError(cause) {
     cause
   );
 }
-function validFullHistoryThread(value) {
-  return isRecord(value) && Array.isArray(value.turns) && value.turns.length > 0;
+function versionCore(value) {
+  const match = /codex-cli\s+(\d+)\.(\d+)\.(\d+)/i.exec(value);
+  return match ? match.slice(1, 4).map(Number) : null;
+}
+function versionIsCompatible(value) {
+  const actual = versionCore(value);
+  const minimum = versionCore(`codex-cli ${MINIMUM_CODEX_APP_SERVER_VERSION}`);
+  if (!actual) return false;
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] !== minimum[index])
+      return actual[index] > minimum[index];
+  }
+  return true;
+}
+function probeCodexBinary(candidate) {
+  const result = spawnSync(candidate, ["--version"], {
+    encoding: "utf8",
+    timeout: 5e3
+  });
+  if (result.status !== 0) return null;
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
+}
+function selectCodexBinary(options = {}) {
+  const explicit = options.explicit ?? process.env.CODEX_BIN;
+  const candidates = explicit ? [explicit] : options.candidates ?? [
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "codex"
+  ];
+  const probe = options.probe ?? probeCodexBinary;
+  const inspected = [];
+  for (const candidate of [...new Set(candidates)]) {
+    const version = probe(candidate);
+    if (!version) continue;
+    inspected.push(`${candidate} (${version})`);
+    if (versionIsCompatible(version)) return candidate;
+  }
+  const error = new Error(
+    `\u672A\u627E\u5230\u517C\u5BB9\u7684 Codex app-server\uFF0C\u9700\u8981 codex-cli >= ${MINIMUM_CODEX_APP_SERVER_VERSION}${inspected.length ? `\uFF1B\u5DF2\u68C0\u67E5\uFF1A${inspected.join("\u3001")}` : ""}\u3002`
+  );
+  error.code = "CODEX_APP_SERVER_INCOMPATIBLE";
+  throw error;
 }
 function createTimeoutError(method, timeoutMs) {
   const error = new Error(
@@ -265,13 +309,14 @@ function threadUpdatedAt(thread) {
   );
 }
 var CodexAppServer = class {
-  constructor(codexBin = process.env.CODEX_BIN ?? "codex") {
-    this.codexBin = codexBin;
-  }
   process = null;
   nextId = 1;
   pending = /* @__PURE__ */ new Map();
   stderr = "";
+  codexBin;
+  constructor(codexBin) {
+    this.codexBin = codexBin ?? selectCodexBinary();
+  }
   async connect() {
     this.process = spawn(
       this.codexBin,
@@ -448,17 +493,6 @@ var CodexAppServer = class {
           CODEX_THREAD_READ_TIMEOUT_MS
         );
       } catch (error) {
-        if (error instanceof Error && error.message.includes("invalid paginated history lineage")) {
-          try {
-            const fallback = await this.request(
-              "thread/read",
-              { threadId, includeTurns: true },
-              CODEX_THREAD_READ_TIMEOUT_MS
-            );
-            if (validFullHistoryThread(fallback.thread)) return fallback.thread;
-          } catch {
-          }
-        }
         throw paginatedThreadReadError(error);
       }
       if (!Array.isArray(result.data)) {

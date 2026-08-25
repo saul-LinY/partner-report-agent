@@ -79,7 +79,7 @@ suite("project scope persistence", () => {
     });
   });
 
-  it("versions candidates and applies first versus later approvals correctly", async () => {
+  it("auto-allows every discovered project under binding consent", async () => {
     const firstKey = "a".repeat(64);
     const first = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
@@ -95,8 +95,11 @@ suite("project scope persistence", () => {
     });
     expect(first).toMatchObject({
       version: 2,
-      initialized: false,
-      entries: [{ scopeKey: firstKey }, { scopeKey: "d".repeat(64) }],
+      initialized: true,
+      entries: [
+        { scopeKey: firstKey, status: "allowed" },
+        { scopeKey: "d".repeat(64), status: "allowed" },
+      ],
     });
     const scopeEvents = await sql<
       Array<{ event_type: string; aggregate_id: string; payload: unknown }>
@@ -106,29 +109,10 @@ suite("project scope persistence", () => {
       where tenant_id = ${fixture.tenantId}
         and event_type = 'project_scope.candidates.changed'
     `;
-    expect(scopeEvents).toEqual([
-      {
-        event_type: "project_scope.candidates.changed",
-        aggregate_id: fixture.pluginInstanceId,
-        payload: expect.objectContaining({
-          partnerId: fixture.partnerId,
-          periodKey: "scope-period",
-          version: 2,
-        }),
-      },
-    ]);
-    const initialized = await decideProjectScopes(
-      actor,
-      fixture.pluginInstanceId,
-      {
-        baseVersion: first.version,
-        decisions: [{ scopeKey: firstKey, decision: "allow" }],
-      },
+    expect(scopeEvents).toEqual([]);
+    expect(new Date(first.entries[0]!.effectiveFrom!).getTime()).toBeLessThan(
+      Date.now(),
     );
-    expect(initialized.initialized).toBe(true);
-    expect(
-      new Date(initialized.entries[0]!.effectiveFrom!).getTime(),
-    ).toBeLessThanOrEqual(Date.now() + 1_000);
 
     const legacySingleKey = "e".repeat(64);
     await sql`
@@ -141,14 +125,17 @@ suite("project scope persistence", () => {
         'legacy-single-session', 'pending', 'scope-period', 1
       )
     `;
-    const preserved = await registerProjectScopeCandidates(identity, {
+    const migrated = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
       candidates: [],
     });
-    expect(preserved.version).toBe(initialized.version);
-    expect(
-      preserved.entries.some((entry) => entry.scopeKey === legacySingleKey),
-    ).toBe(true);
+    expect(migrated.version).toBe(first.version + 1);
+    expect(migrated.entries).toContainEqual(
+      expect.objectContaining({
+        scopeKey: legacySingleKey,
+        status: "allowed",
+      }),
+    );
 
     const laterKey = "b".repeat(64);
     const laterSingleKey = "f".repeat(64);
@@ -163,23 +150,20 @@ suite("project scope persistence", () => {
         },
       ],
     });
-    expect(
-      later.entries.some((entry) => entry.scopeKey === laterSingleKey),
-    ).toBe(true);
-    const decided = await decideProjectScopes(actor, fixture.pluginInstanceId, {
-      baseVersion: later.version,
-      decisions: [{ scopeKey: laterKey, decision: "allow" }],
-    });
-    const laterEntry = decided.entries.find(
+    expect(later.entries).toContainEqual(
+      expect.objectContaining({
+        scopeKey: laterSingleKey,
+        status: "allowed",
+      }),
+    );
+    const laterEntry = later.entries.find(
       (entry) => entry.scopeKey === laterKey,
     )!;
-    expect(new Date(laterEntry.effectiveFrom!).getTime()).toBeLessThanOrEqual(
-      Date.now() + 1_000,
-    );
+    expect(laterEntry.status).toBe("allowed");
 
     await expect(
       decideProjectScopes(actor, fixture.pluginInstanceId, {
-        baseVersion: later.version,
+        baseVersion: migrated.version,
         decisions: [{ scopeKey: laterKey, decision: "deny" }],
       }),
     ).rejects.toMatchObject({
@@ -187,18 +171,18 @@ suite("project scope persistence", () => {
     } satisfies Partial<ApiError>);
 
     const reset = await beginProjectScopeBootstrap(identity, {
-      baseVersion: decided.version,
+      baseVersion: later.version,
       reason: "local_scope_invalid",
     });
     expect(reset).toMatchObject({
-      version: decided.version + 1,
+      version: later.version + 1,
       initialized: false,
       initializedAt: null,
       entries: [],
     });
     await expect(
       beginProjectScopeBootstrap(identity, {
-        baseVersion: decided.version,
+        baseVersion: later.version,
         reason: "local_scope_missing",
       }),
     ).rejects.toMatchObject({
@@ -217,24 +201,6 @@ suite("project scope persistence", () => {
     });
     expect(rediscovered).toMatchObject({
       version: reset.version + 1,
-      initialized: false,
-      entries: [
-        {
-          scopeKey: "c".repeat(64),
-          status: "pending",
-        },
-      ],
-    });
-    const reapproved = await decideProjectScopes(
-      actor,
-      fixture.pluginInstanceId,
-      {
-        baseVersion: rediscovered.version,
-        decisions: [{ scopeKey: "c".repeat(64), decision: "allow" }],
-      },
-    );
-    expect(reapproved).toMatchObject({
-      version: rediscovered.version + 1,
       initialized: true,
       entries: [
         {
@@ -244,8 +210,8 @@ suite("project scope persistence", () => {
       ],
     });
     expect(
-      new Date(reapproved.entries[0]!.effectiveFrom!).getTime(),
-    ).toBeLessThanOrEqual(Date.now() + 1_000);
+      new Date(rediscovered.entries[0]!.effectiveFrom!).getTime(),
+    ).toBeLessThanOrEqual(Date.now());
   });
 
   it("renames the unique central project for an existing allowed scope", async () => {

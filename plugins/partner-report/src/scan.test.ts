@@ -2,15 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   anonymousSessionKey,
   buildSessionJob,
+  completeSessionTurns,
   containsSensitive,
   firstNonChineseContributionField,
   isOfficialAutomationThread,
   isPluginAdministrationSession,
   isPluginSystemThread,
   mappedProject,
+  latestCompleteTurnInPeriod,
   normalizeProgressTurns,
   redactSensitive,
-  selectPeriodTurns,
 } from "./scan.js";
 
 const projects = [
@@ -137,17 +138,45 @@ describe("safe Session input", () => {
     });
     expect(JSON.stringify(turns)).not.toContain("npm test");
     expect(JSON.stringify(turns)).not.toContain("内部命令");
-    expect(selectPeriodTurns(turns, period)).toHaveLength(1);
+    expect(completeSessionTurns(turns)).toHaveLength(1);
+    expect(latestCompleteTurnInPeriod(turns, period)?.id).toBe("one");
   });
 
-  it("uses the report period instead of a Turn cursor", () => {
+  it("does not truncate complete Q&A content", () => {
+    const longText = "完整内容".repeat(5_000);
+    const turns = normalizeProgressTurns([
+      {
+        id: "long",
+        status: "completed",
+        completedAt: "2026-08-04T04:00:00.000Z",
+        items: [
+          { type: "userMessage", content: longText },
+          {
+            type: "agentMessage",
+            phase: "final_answer",
+            text: longText,
+          },
+        ],
+      },
+    ]);
+    expect(turns[0]?.userPrompt).toBe(longText);
+    expect(turns[0]?.assistantFinal).toBe(longText);
+  });
+
+  it("uses the latest complete Q&A to decide whether the Session is a candidate", () => {
     const turns = normalizeProgressTurns([
       completeTurn("old", "2026-08-02T23:59:59.000Z"),
       completeTurn("current", "2026-08-04T04:00:00.000Z"),
     ]);
-    expect(selectPeriodTurns(turns, period).map((turn) => turn.id)).toEqual([
-      "current",
-    ]);
+    expect(latestCompleteTurnInPeriod(turns, period)?.id).toBe("current");
+    expect(
+      latestCompleteTurnInPeriod(
+        normalizeProgressTurns([
+          completeTurn("old", "2026-08-02T23:59:59.000Z"),
+        ]),
+        period,
+      ),
+    ).toBeNull();
   });
 
   it("builds anonymous Session metadata and never includes the raw path or id", () => {
@@ -174,7 +203,7 @@ describe("safe Session input", () => {
     );
     expect(job!.expected.production).toMatchObject({
       skillVersion: "partner-report-sync/2.0.0",
-      promptVersion: "2026-08-05.zh-session-value.v3",
+      promptVersion: "2026-08-25.zh-whole-session-value.v4",
     });
     const serialized = JSON.stringify(job);
     expect(serialized).not.toContain("raw-codex-session-id");
@@ -275,31 +304,61 @@ describe("safe Session input", () => {
     expect(next.contentHash).toBe(first.contentHash);
   });
 
-  it("sends only newly completed turns from an existing Session", () => {
-    const first = buildSessionJob({
-      pluginInstanceId: "binding",
-      sessionId: "session",
-      cwd: "/work/main",
-      turns: [completeTurn("one")],
-      projects,
-      period,
-    })!;
-    const incremental = buildSessionJob({
+  it("sends the whole Session when an old Session gets a new complete Q&A", () => {
+    const revised = buildSessionJob({
       pluginInstanceId: "binding",
       sessionId: "session",
       cwd: "/work/main",
       turns: [
-        completeTurn("one"),
+        completeTurn("one", "2026-08-02T23:59:59.000Z"),
         completeTurn("two", "2026-08-05T04:00:00.000Z"),
       ],
       projects,
       period,
-      processedTurnKeys: first.turnKeys,
     })!;
-    expect(incremental.turnKeys).toHaveLength(1);
-    expect(incremental.modelInput.session.turns).toEqual([
+    expect(revised.modelInput.session.turns).toEqual([
+      expect.objectContaining({ occurredAt: "2026-08-02T23:59:59.000Z" }),
       expect.objectContaining({ occurredAt: "2026-08-05T04:00:00.000Z" }),
     ]);
+    expect(revised.modelInput.instructions).toEqual(
+      expect.arrayContaining([expect.stringContaining("全部完整问答")]),
+    );
+  });
+
+  it("does not collect a Session whose latest complete Q&A is outside the window", () => {
+    expect(
+      buildSessionJob({
+        pluginInstanceId: "binding",
+        sessionId: "session",
+        cwd: "/work/main",
+        turns: [
+          completeTurn("current", "2026-08-05T04:00:00.000Z"),
+          completeTurn("later", "2026-08-10T04:00:00.000Z"),
+        ],
+        projects,
+        period,
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores an incomplete tail when locating the latest complete Q&A", () => {
+    const job = buildSessionJob({
+      pluginInstanceId: "binding",
+      sessionId: "session",
+      cwd: "/work/main",
+      turns: [
+        completeTurn("complete", "2026-08-05T04:00:00.000Z"),
+        {
+          id: "incomplete",
+          status: "in_progress",
+          updatedAt: "2026-08-10T04:00:00.000Z",
+          items: [{ type: "userMessage", content: "继续" }],
+        },
+      ],
+      projects,
+      period,
+    });
+    expect(job?.modelInput.session.turns).toHaveLength(1);
   });
 
   it("requires Chinese titles, summaries, and contribution text", () => {

@@ -3,7 +3,9 @@ import {
   CODEX_THREAD_LIST_TIMEOUT_MS,
   CODEX_THREAD_READ_TIMEOUT_MS,
   CODEX_THREAD_TURNS_PAGE_LIMIT,
+  MINIMUM_CODEX_APP_SERVER_VERSION,
   CodexAppServer,
+  selectCodexBinary,
 } from "./app-server.js";
 
 afterEach(() => {
@@ -125,6 +127,39 @@ describe("CodexAppServer.listThreads", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await rejection;
     expect(stdin.write).toHaveBeenCalledOnce();
+  });
+});
+
+describe("selectCodexBinary", () => {
+  it("prefers the compatible desktop binary over an outdated PATH binary", () => {
+    const versions = new Map([
+      ["desktop-codex", "codex-cli 0.149.0-alpha.4.1"],
+      ["codex", "codex-cli 0.146.1"],
+    ]);
+
+    expect(
+      selectCodexBinary({
+        candidates: ["desktop-codex", "codex"],
+        probe: (candidate) => versions.get(candidate) ?? null,
+      }),
+    ).toBe("desktop-codex");
+  });
+
+  it("fails before collection when every app-server is incompatible", () => {
+    expect(() =>
+      selectCodexBinary({
+        candidates: ["codex"],
+        probe: () => "codex-cli 0.146.1",
+      }),
+    ).toThrow(`codex-cli >= ${MINIMUM_CODEX_APP_SERVER_VERSION}`);
+    try {
+      selectCodexBinary({
+        candidates: ["codex"],
+        probe: () => "codex-cli 0.146.1",
+      });
+    } catch (error) {
+      expect(error).toMatchObject({ code: "CODEX_APP_SERVER_INCOMPATIBLE" });
+    }
   });
 });
 
@@ -258,38 +293,4 @@ describe("CodexAppServer.readThread", () => {
     });
   });
 
-  it("recovers invalid paginated lineage through a complete full-history read", async () => {
-    const server = new CodexAppServer("codex");
-    const request = vi
-      .spyOn(server, "request")
-      .mockResolvedValueOnce({
-        thread: {
-          id: "paginated-session",
-          historyMode: "paginated",
-          turns: [],
-        },
-      })
-      .mockRejectedValueOnce(
-        new Error("invalid paginated history lineage for private-id"),
-      )
-      .mockResolvedValueOnce({
-        thread: {
-          id: "paginated-session",
-          historyMode: "paginated",
-          turns: [{ id: "turn-1" }],
-        },
-      });
-
-    await expect(server.readThread("paginated-session")).resolves.toMatchObject(
-      {
-        turns: [{ id: "turn-1" }],
-      },
-    );
-    expect(request).toHaveBeenNthCalledWith(
-      3,
-      "thread/read",
-      { threadId: "paginated-session", includeTurns: true },
-      CODEX_THREAD_READ_TIMEOUT_MS,
-    );
-  });
 });

@@ -430,9 +430,11 @@ export async function completeReview(
         id, tenant_id, event_type, aggregate_type, aggregate_id, payload
       ) values (
         ${randomUUID()}, ${actor.tenantId},
-        ${approvedItems.length === 0
-          ? "work_items.all_dismissed"
-          : "work_items.snapshot.approved"},
+        ${
+          approvedItems.length === 0
+            ? "work_items.all_dismissed"
+            : "work_items.snapshot.approved"
+        },
         ${approvedItems.length === 0 ? "review" : "work_item_snapshot"},
         ${approvedItems.length === 0 ? reviewId : snapshotId},
         ${JSON.stringify({
@@ -762,7 +764,7 @@ export async function reviewRoutes(app: FastifyInstance) {
         select count(*)::int as fact_count
         from session_facts
         where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId}
-          and period_id = ${period.id} and excluded = false
+          and period_id = ${period.id} and current = true and excluded = false
       `,
     ]);
     return {

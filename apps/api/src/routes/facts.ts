@@ -216,6 +216,14 @@ export async function factRoutes(app: FastifyInstance) {
           projectRootFingerprint:
             resolvedProject?.rootFingerprint ?? input.project.rootFingerprint,
         };
+        await tx`
+          update session_facts set current = false, updated_at = now()
+          where tenant_id = ${actor.tenantId}
+            and partner_id = ${actor.partnerId}
+            and session_id = ${input.sessionKey}
+            and current = true
+            and source_hash <> ${input.contentHash}
+        `;
         const contributionRows = await tx<{ id: string }[]>`
           insert into session_facts (
             id, tenant_id, team_id, partner_id, period_id,
@@ -316,6 +324,7 @@ export async function factRoutes(app: FastifyInstance) {
       join partners p on p.id = sf.partner_id and p.tenant_id = sf.tenant_id
       left join report_periods rp on rp.id = sf.period_id
       where sf.tenant_id = ${actor.tenantId} and sf.team_id = ${actor.teamId}
+        and sf.current = true
         and sf.excluded = false
         and (${query.partnerId ?? null}::uuid is null or sf.partner_id = ${query.partnerId ?? null})
         and (${query.periodId ?? null}::uuid is null or sf.period_id = ${query.periodId ?? null})

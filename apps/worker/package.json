@@ -12,6 +12,7 @@
   "dependencies": {
     "@partner-report/contracts": "0.1.0",
     "@partner-report/db": "0.1.0",
+    "zod": "^3.24.0",
     "zod-to-json-schema": "^3.24.0"
   }
 }

@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
   CircleDot,
   Clock3,
+  ListFilter,
+  LoaderCircle,
   RefreshCw,
   Server,
+  Sparkles,
   TerminalSquare,
 } from "lucide-react";
 import { api } from "./api.js";
@@ -60,7 +63,11 @@ type PluginMonitoring = {
 
 type LogEvent = {
   id: string;
+  invocation_id: string | null;
   run_id: string | null;
+  sequence: number | null;
+  command: string | null;
+  event_type: "lifecycle" | "progress" | "result" | "error" | null;
   level: "debug" | "info" | "warning" | "error";
   stage: string;
   event_code: string;
@@ -74,32 +81,51 @@ type LogEvent = {
   occurred_at: string;
 };
 
-type LogRun = {
-  run_id: string;
-  started_at: string;
-  last_event_at: string;
-  event_count: number;
-  error_count: number;
-  warning_count: number;
+type ExecutionDiagnosis = {
+  severity: Severity;
+  state: "completed" | "failed" | "running" | "interrupted" | "warning";
+  title: string;
+  cause: string;
+  action: string;
+  failedStage: string | null;
+  evidenceCode: string | null;
+  retryable: boolean;
 };
 
-type GenerationJob = {
-  id: string;
-  type: string;
-  status: string;
-  attempt_count: number;
-  max_attempts: number;
-  error_code: string | null;
-  error_message: string | null;
-  updated_at: string;
-  completed_at: string | null;
+type PluginExecution = {
+  executionId: string;
+  invocationId: string | null;
+  runId: string | null;
+  command: string;
+  startedAt: string;
+  lastEventAt: string;
+  durationMs: number;
+  eventCount: number;
+  errorCount: number;
+  warningCount: number;
+  diagnosis: ExecutionDiagnosis;
 };
 
 type PluginLogs = {
   pluginInstanceId: string;
+  selectedExecutionId: string | null;
   events: LogEvent[];
-  runs: LogRun[];
-  generationJobs: GenerationJob[];
+  executions: PluginExecution[];
+  modelAnalysis: {
+    id: string;
+    status: "PENDING" | "LEASED" | "RETRY_WAIT" | "COMPLETED" | "FAILED";
+    output_payload: {
+      summary: string;
+      failedStep: string;
+      rootCause: string;
+      evidence: string[];
+      recommendedActions: string[];
+      confidence: "high" | "medium" | "low";
+    } | null;
+    error_code: string | null;
+    error_message: string | null;
+    updated_at: string;
+  } | null;
 };
 
 const levelTone = {
@@ -108,20 +134,39 @@ const levelTone = {
   warning: "warning",
   error: "danger",
 } as const;
-
 const levelLabel = {
   debug: "调试",
   info: "正常",
   warning: "警告",
   error: "错误",
 };
-
 const severityTone = {
   normal: "success",
   warning: "warning",
   critical: "danger",
   unknown: "neutral",
 } as const;
+const stateLabel = {
+  completed: "已完成",
+  failed: "失败",
+  running: "运行中",
+  interrupted: "已中断",
+  warning: "需关注",
+};
+const commandLabels: Record<string, string> = {
+  legacy: "历史未分组日志",
+  collection: "采集批次（旧版）",
+  "collect-start": "启动采集",
+  "collect-next": "读取并分析会话",
+  "collect-review": "检查采集结果",
+  "collect-submit": "上传贡献",
+  "collect-defer": "暂缓采集",
+  "collect-skip": "跳过会话",
+  "project-description-submit": "生成项目说明",
+  "connectivity-test": "连接检查",
+  status: "状态检查",
+  "project-scope-sync": "同步项目权限",
+};
 
 function formatTime(value: string | null) {
   if (!value) return "暂无";
@@ -139,10 +184,21 @@ function shortId(value: string) {
   return value.slice(0, 8);
 }
 
+function formatDuration(durationMs: number) {
+  if (durationMs < 1000) return `${durationMs} ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(1)} 秒`;
+  return `${Math.floor(durationMs / 60_000)} 分 ${Math.round((durationMs % 60_000) / 1000)} 秒`;
+}
+
+function commandLabel(command: string) {
+  return commandLabels[command] ?? command;
+}
+
 export function PluginMonitoringPage() {
+  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [runId, setRunId] = useState("all");
-  const [level, setLevel] = useState("all");
+  const [executionId, setExecutionId] = useState<string | null>(null);
+  const [problemsOnly, setProblemsOnly] = useState(false);
   const monitoring = useQuery({
     queryKey: ["admin-plugin-monitoring"],
     queryFn: () => api<PluginMonitoring>("/v1/admin/plugin-monitoring"),
@@ -160,16 +216,49 @@ export function PluginMonitoringPage() {
   const params = useMemo(() => {
     if (!selectedId) return "";
     const value = new URLSearchParams({ pluginInstanceId: selectedId });
-    if (runId !== "all") value.set("runId", runId);
-    if (level !== "all") value.set("level", level);
+    if (executionId) value.set("executionId", executionId);
     return value.toString();
-  }, [level, runId, selectedId]);
+  }, [executionId, selectedId]);
   const logs = useQuery({
-    queryKey: ["admin-plugin-logs", selectedId, runId, level],
+    queryKey: ["admin-plugin-logs", selectedId, executionId],
     queryFn: () => api<PluginLogs>(`/v1/admin/plugin-logs?${params}`),
     enabled: Boolean(selectedId),
     refetchInterval: 10_000,
   });
+  const requestAnalysis = useMutation({
+    mutationFn: (selectedExecutionId: string) =>
+      api("/v1/admin/plugin-logs/analyze", {
+        method: "POST",
+        body: JSON.stringify({
+          pluginInstanceId: selectedId,
+          executionId: selectedExecutionId,
+        }),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["admin-plugin-logs", selectedId, executionId],
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (!logs.data) return;
+    if (!executionId && logs.data.selectedExecutionId)
+      setExecutionId(logs.data.selectedExecutionId);
+    else if (
+      executionId &&
+      !logs.data.executions.some((item) => item.executionId === executionId)
+    )
+      setExecutionId(logs.data.selectedExecutionId);
+  }, [executionId, logs.data]);
+
+  const selectedExecution = logs.data?.executions.find(
+    (item) => item.executionId === logs.data?.selectedExecutionId,
+  );
+  const visibleEvents = (logs.data?.events ?? []).filter(
+    (event) =>
+      !problemsOnly || event.level === "warning" || event.level === "error",
+  );
 
   if (monitoring.isLoading)
     return (
@@ -186,10 +275,7 @@ export function PluginMonitoringPage() {
         <div>
           <span className="eyebrow">PLUGIN HEALTH</span>
           <h1>插件监控</h1>
-          <p>
-            每日 {monitoring.data?.schedule.time ?? "16:00"}{" "}
-            运行，超过宽限期未启动或运行中长时间无进度会自动标记异常。
-          </p>
+          <p>按每次插件命令查看运行过程、返回结果和故障位置。</p>
         </div>
         <button
           className="icon-button"
@@ -205,7 +291,9 @@ export function PluginMonitoringPage() {
           />
         </button>
       </header>
-      <ErrorBanner error={monitoring.error ?? logs.error} />
+      <ErrorBanner
+        error={monitoring.error ?? logs.error ?? requestAnalysis.error}
+      />
 
       <div className="monitor-summary" aria-label="插件状态汇总">
         <div>
@@ -242,8 +330,8 @@ export function PluginMonitoringPage() {
                 className={`plugin-instance-row ${selectedId === plugin.id ? "active" : ""}`}
                 onClick={() => {
                   setSelectedId(plugin.id);
-                  setRunId("all");
-                  setLevel("all");
+                  setExecutionId(null);
+                  setProblemsOnly(false);
                 }}
               >
                 <span
@@ -319,142 +407,302 @@ export function PluginMonitoringPage() {
               </>
             )}
 
-            <div className="plugin-log-controls">
-              <label>
-                <span>运行批次</span>
-                <select
-                  value={runId}
-                  onChange={(event) => setRunId(event.target.value)}
-                >
-                  <option value="all">全部批次</option>
-                  {(logs.data?.runs ?? []).map((run) => (
-                    <option key={run.run_id} value={run.run_id}>
-                      {formatTime(run.started_at)} · {shortId(run.run_id)} ·{" "}
-                      {run.error_count} 个错误
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>日志级别</span>
-                <select
-                  value={level}
-                  onChange={(event) => setLevel(event.target.value)}
-                >
-                  <option value="all">全部级别</option>
-                  <option value="error">错误</option>
-                  <option value="warning">警告</option>
-                  <option value="info">正常</option>
-                  <option value="debug">调试</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="plugin-log-section-title">
-              <TerminalSquare size={17} />
-              <strong>关联日志</strong>
-              <span>{logs.data?.events.length ?? 0}</span>
-            </div>
-            <div className="plugin-event-list">
-              {logs.isLoading ? (
-                <div className="plugin-log-loading">
-                  <RefreshCw size={16} className="spin" /> 加载日志
+            <div className="plugin-execution-browser">
+              <aside className="plugin-execution-list" aria-label="最近运行">
+                <div className="plugin-log-section-title">
+                  <Clock3 size={17} />
+                  <strong>最近运行</strong>
+                  <span>{logs.data?.executions.length ?? 0}</span>
                 </div>
-              ) : logs.data?.events.length ? (
-                logs.data.events.map((event) => (
-                  <details
-                    className={`plugin-event plugin-event-${event.level}`}
-                    key={event.id}
-                  >
-                    <summary>
-                      <span className="plugin-event-icon">
-                        {event.level === "error" ||
-                        event.level === "warning" ? (
-                          <AlertTriangle size={16} />
+                {logs.isLoading ? (
+                  <div className="plugin-log-loading">
+                    <RefreshCw size={16} className="spin" />
+                    加载运行记录
+                  </div>
+                ) : logs.data?.executions.length ? (
+                  logs.data.executions.map((execution) => (
+                    <button
+                      key={execution.executionId}
+                      className={`plugin-execution-row ${logs.data?.selectedExecutionId === execution.executionId ? "active" : ""}`}
+                      onClick={() => {
+                        setExecutionId(execution.executionId);
+                        setProblemsOnly(false);
+                      }}
+                    >
+                      <span
+                        className={`plugin-execution-state ${execution.diagnosis.severity}`}
+                      >
+                        {execution.diagnosis.severity === "critical" ? (
+                          <AlertTriangle size={15} />
                         ) : (
-                          <CheckCircle2 size={16} />
+                          <CheckCircle2 size={15} />
                         )}
                       </span>
-                      <span className="plugin-event-main">
-                        <span>
-                          <Badge tone={levelTone[event.level]}>
-                            {levelLabel[event.level]}
-                          </Badge>
-                          <strong>{event.message}</strong>
-                        </span>
+                      <span className="plugin-execution-copy">
+                        <strong>{commandLabel(execution.command)}</strong>
+                        <small>{formatTime(execution.startedAt)}</small>
                         <small>
-                          {event.stage} · {event.event_code}
-                          {event.duration_ms !== null
-                            ? ` · ${event.duration_ms} ms`
-                            : ""}
+                          {stateLabel[execution.diagnosis.state]} ·{" "}
+                          {execution.eventCount} 个事件
                         </small>
                       </span>
-                      <time>{formatTime(event.occurred_at)}</time>
-                    </summary>
-                    <div className="plugin-event-expanded">
-                      <dl>
-                        <div>
-                          <dt>事件编号</dt>
-                          <dd>{event.id}</dd>
-                        </div>
-                        <div>
-                          <dt>请求编号</dt>
-                          <dd>{event.request_id ?? "无"}</dd>
-                        </div>
-                        <div>
-                          <dt>运行批次</dt>
-                          <dd>{event.run_id ?? "非采集事件"}</dd>
-                        </div>
-                        <div>
-                          <dt>可重试</dt>
-                          <dd>{event.retryable ? "是" : "否"}</dd>
-                        </div>
-                      </dl>
-                      {Object.keys(event.details ?? {}).length > 0 && (
-                        <pre>{JSON.stringify(event.details, null, 2)}</pre>
+                      <ChevronRight size={15} />
+                    </button>
+                  ))
+                ) : (
+                  <EmptyState title="还没有收到运行日志" />
+                )}
+              </aside>
+
+              <section className="plugin-execution-detail">
+                {selectedExecution ? (
+                  <>
+                    <header className="plugin-execution-header">
+                      <div>
+                        <span>本次插件命令</span>
+                        <strong>
+                          {commandLabel(selectedExecution.command)}
+                        </strong>
+                      </div>
+                      <Badge
+                        tone={
+                          severityTone[selectedExecution.diagnosis.severity]
+                        }
+                      >
+                        {stateLabel[selectedExecution.diagnosis.state]}
+                      </Badge>
+                      {selectedExecution.executionId !== "legacy" && (
+                        <button
+                          className="plugin-analysis-button"
+                          onClick={() =>
+                            requestAnalysis.mutate(
+                              selectedExecution.executionId,
+                            )
+                          }
+                          disabled={
+                            requestAnalysis.isPending ||
+                            ["PENDING", "LEASED"].includes(
+                              logs.data?.modelAnalysis?.status ?? "",
+                            )
+                          }
+                        >
+                          {requestAnalysis.isPending ||
+                          ["PENDING", "LEASED"].includes(
+                            logs.data?.modelAnalysis?.status ?? "",
+                          ) ? (
+                            <LoaderCircle size={14} className="spin" />
+                          ) : (
+                            <Sparkles size={14} />
+                          )}
+                          {logs.data?.modelAnalysis?.status === "COMPLETED"
+                            ? "重新分析"
+                            : "模型分析"}
+                        </button>
                       )}
-                      {event.stack && (
-                        <pre className="plugin-event-stack">{event.stack}</pre>
+                    </header>
+                    <div
+                      className={`execution-diagnosis execution-diagnosis-${selectedExecution.diagnosis.severity}`}
+                    >
+                      <span className="execution-diagnosis-icon">
+                        {selectedExecution.diagnosis.severity === "critical" ? (
+                          <AlertTriangle size={18} />
+                        ) : (
+                          <CheckCircle2 size={18} />
+                        )}
+                      </span>
+                      <div>
+                        <strong>{selectedExecution.diagnosis.title}</strong>
+                        <p>{selectedExecution.diagnosis.cause}</p>
+                        <small>{selectedExecution.diagnosis.action}</small>
+                      </div>
+                    </div>
+                    {logs.data?.modelAnalysis && (
+                      <div className="plugin-model-analysis">
+                        <span className="plugin-model-analysis-icon">
+                          {logs.data.modelAnalysis.status === "COMPLETED" ? (
+                            <Sparkles size={17} />
+                          ) : logs.data.modelAnalysis.status === "FAILED" ? (
+                            <AlertTriangle size={17} />
+                          ) : (
+                            <LoaderCircle size={17} className="spin" />
+                          )}
+                        </span>
+                        {logs.data.modelAnalysis.status === "COMPLETED" &&
+                        logs.data.modelAnalysis.output_payload ? (
+                          <div>
+                            <strong>
+                              模型分析 ·{" "}
+                              {logs.data.modelAnalysis.output_payload.summary}
+                            </strong>
+                            <p>
+                              <b>最可能原因：</b>
+                              {logs.data.modelAnalysis.output_payload.rootCause}
+                            </p>
+                            <ul>
+                              {logs.data.modelAnalysis.output_payload.recommendedActions.map(
+                                (action) => (
+                                  <li key={action}>{action}</li>
+                                ),
+                              )}
+                            </ul>
+                            <small>
+                              可信度：
+                              {
+                                { high: "高", medium: "中", low: "低" }[
+                                  logs.data.modelAnalysis.output_payload
+                                    .confidence
+                                ]
+                              }
+                            </small>
+                          </div>
+                        ) : logs.data.modelAnalysis.status === "FAILED" ? (
+                          <div>
+                            <strong>模型分析失败</strong>
+                            <p>
+                              {logs.data.modelAnalysis.error_message ??
+                                logs.data.modelAnalysis.error_code ??
+                                "模型服务暂时不可用。"}
+                            </p>
+                          </div>
+                        ) : (
+                          <div>
+                            <strong>模型正在分析这次运行</strong>
+                            <p>完成后会自动显示最可能原因和处理建议。</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <dl className="plugin-execution-meta">
+                      <div>
+                        <dt>开始时间</dt>
+                        <dd>{formatTime(selectedExecution.startedAt)}</dd>
+                      </div>
+                      <div>
+                        <dt>耗时</dt>
+                        <dd>{formatDuration(selectedExecution.durationMs)}</dd>
+                      </div>
+                      <div>
+                        <dt>命令执行 ID</dt>
+                        <dd>
+                          {selectedExecution.invocationId
+                            ? shortId(selectedExecution.invocationId)
+                            : "旧版未上传"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>采集批次</dt>
+                        <dd>
+                          {selectedExecution.runId
+                            ? shortId(selectedExecution.runId)
+                            : "非采集命令"}
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="plugin-event-toolbar">
+                      <div>
+                        <TerminalSquare size={17} />
+                        <strong>执行时间线</strong>
+                        <span>{visibleEvents.length}</span>
+                      </div>
+                      <div className="plugin-event-mode" aria-label="日志筛选">
+                        <button
+                          className={!problemsOnly ? "active" : ""}
+                          onClick={() => setProblemsOnly(false)}
+                          title="显示全部事件"
+                        >
+                          <TerminalSquare size={14} />
+                          全部
+                        </button>
+                        <button
+                          className={problemsOnly ? "active" : ""}
+                          onClick={() => setProblemsOnly(true)}
+                          title="只显示错误和警告"
+                        >
+                          <ListFilter size={14} />
+                          仅看问题
+                        </button>
+                      </div>
+                    </div>
+                    <div className="plugin-event-list">
+                      {visibleEvents.length ? (
+                        visibleEvents.map((event) => (
+                          <details
+                            className={`plugin-event plugin-event-${event.level}`}
+                            key={event.id}
+                            open={event.level === "error"}
+                          >
+                            <summary>
+                              <span className="plugin-event-icon">
+                                {event.level === "error" ||
+                                event.level === "warning" ? (
+                                  <AlertTriangle size={16} />
+                                ) : (
+                                  <CheckCircle2 size={16} />
+                                )}
+                              </span>
+                              <span className="plugin-event-main">
+                                <span>
+                                  <Badge tone={levelTone[event.level]}>
+                                    {levelLabel[event.level]}
+                                  </Badge>
+                                  <strong>{event.message}</strong>
+                                </span>
+                                <small>
+                                  {event.stage} · {event.event_code}
+                                  {event.duration_ms !== null
+                                    ? ` · ${formatDuration(event.duration_ms)}`
+                                    : ""}
+                                </small>
+                              </span>
+                              <time>{formatTime(event.occurred_at)}</time>
+                            </summary>
+                            <div className="plugin-event-expanded">
+                              <dl>
+                                <div>
+                                  <dt>事件编号</dt>
+                                  <dd>{event.id}</dd>
+                                </div>
+                                <div>
+                                  <dt>请求编号</dt>
+                                  <dd>{event.request_id ?? "无"}</dd>
+                                </div>
+                                <div>
+                                  <dt>事件顺序</dt>
+                                  <dd>{event.sequence ?? "旧版未上传"}</dd>
+                                </div>
+                                <div>
+                                  <dt>可重试</dt>
+                                  <dd>{event.retryable ? "是" : "否"}</dd>
+                                </div>
+                              </dl>
+                              {Object.keys(event.details ?? {}).length > 0 && (
+                                <pre>
+                                  {JSON.stringify(event.details, null, 2)}
+                                </pre>
+                              )}
+                              {event.stack && (
+                                <pre className="plugin-event-stack">
+                                  {event.stack}
+                                </pre>
+                              )}
+                            </div>
+                          </details>
+                        ))
+                      ) : (
+                        <EmptyState
+                          title={
+                            problemsOnly
+                              ? "这次运行没有错误或警告"
+                              : "这次运行没有事件"
+                          }
+                        />
                       )}
                     </div>
-                  </details>
-                ))
-              ) : (
-                <EmptyState title="当前筛选条件下没有关联日志" />
-              )}
-            </div>
-
-            <div className="plugin-log-section-title generation-title">
-              <Clock3 size={17} />
-              <strong>内容生成任务</strong>
-              <span>{logs.data?.generationJobs.length ?? 0}</span>
-            </div>
-            <div className="generation-log-table">
-              {(logs.data?.generationJobs ?? []).map((job) => (
-                <div className="generation-log-row" key={job.id}>
-                  <span>
-                    <strong>{job.type}</strong>
-                    <small>
-                      {shortId(job.id)} · {formatTime(job.updated_at)}
-                    </small>
-                  </span>
-                  <span>{job.error_message ?? "任务正常完成或仍在运行"}</span>
-                  <Badge
-                    tone={
-                      job.status === "FAILED"
-                        ? "danger"
-                        : job.status === "RETRY_WAIT"
-                          ? "warning"
-                          : "neutral"
-                    }
-                  >
-                    {job.status}
-                  </Badge>
-                </div>
-              ))}
-              {!logs.isLoading && !logs.data?.generationJobs.length && (
-                <EmptyState title="该用户还没有内容生成任务" />
-              )}
+                  </>
+                ) : (
+                  <EmptyState title="请选择一次运行" />
+                )}
+              </section>
             </div>
           </section>
         </div>

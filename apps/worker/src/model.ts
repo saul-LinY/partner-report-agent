@@ -6,6 +6,8 @@ type GenerateInput = {
   instructions: string;
   input: unknown;
   model: string;
+  timeoutMs?: number;
+  maxOutputTokens?: number;
 };
 
 const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 240_000;
@@ -114,6 +116,8 @@ export async function generateStructured<T>({
   instructions,
   input,
   model,
+  timeoutMs: timeoutOverride,
+  maxOutputTokens,
 }: GenerateInput): Promise<T> {
   const apiKey = process.env.MODEL_API_KEY ?? process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("MODEL_API_KEY is not configured");
@@ -121,7 +125,7 @@ export async function generateStructured<T>({
     $refStrategy: "none",
   }) as Record<string, unknown>;
   delete jsonSchema.$schema;
-  const timeoutMs = modelRequestTimeoutMs();
+  const timeoutMs = timeoutOverride ?? modelRequestTimeoutMs();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -136,7 +140,7 @@ export async function generateStructured<T>({
         model,
         store: false,
         ...reasoningRequest(),
-        max_output_tokens: modelMaxOutputTokens(),
+        max_output_tokens: maxOutputTokens ?? modelMaxOutputTokens(),
         input: [
           {
             role: "developer",

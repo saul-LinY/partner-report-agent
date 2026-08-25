@@ -10,6 +10,12 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "首次运行固定从当前周的周一 00:00（北京时间）开始采集",
     );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "最近一组完整问答的时间是否落在窗口内",
+    );
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "全部完整问答作为一个整体只交给模型一次",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("检查同名 Codex");
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain("更新 Prompt");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("必须使用中文");
@@ -26,17 +32,21 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("禁止批量 collect_skip");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("不得运行 CLI 或 shell");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "deferred、failedExtract 和 notProcessed",
+      "failedRead、failedExtract、deferred、skipped 和 notProcessed",
     );
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("本地项目权限文件缺失");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("绑定命令负责项目发现");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain("本地项目范围文件缺失");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "绑定成功后通过 thread/list",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "只读取 Codex 状态数据库中的元数据",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "最近 7 天有实际活动且未归档",
     );
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("重新发送项目范围审核提醒");
+    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
+      "用户输入绑定码即确认插件后续扫描、读取、价值判断和上传行为",
+    );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("worktree 合并");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
       "每个真实项目至少 1 个 Session 即可登记",
@@ -45,26 +55,21 @@ describe("scheduled collection prompt", () => {
       "本地 allowed/denied 修改会在采集前提交中台",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "project_scope_approval_required",
+      "不得停下来等待任何项目授权",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "project_scope_approval_waiting",
+      "后续发现的新项目都按绑定授权自动转为 allowed",
     );
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "已有授权队列清空后才重新读取 thread/list 元数据扫描新项目",
-    );
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("审批 30 分钟");
-    expect(SCHEDULED_COLLECTION_PROMPT).toContain("不得回采授权前内容");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("稳定本地目录");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("上传成功时当前开放周期");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("约 150 字中文候选描述");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("语义指纹变化时才生成");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain("project_description_job");
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "project_scope_no_candidates",
+      "直到差集和 unresolvedReadFailures 都为空",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).toContain(
-      "checkpointAdvanced 为 true 才记录成功",
+      "checkpointAdvanced 为 true 且没有 nextTool 时才允许收尾",
     );
     expect(SCHEDULED_COLLECTION_PROMPT).not.toContain(
       "Use $partner-report-sync",

@@ -693,6 +693,7 @@ export function authorizedProjectThreads<T extends { id: string }>(
   threadScopes: Map<string, string>,
   entries: RemoteProjectScopeEntry[],
   now = new Date(),
+  collectionStartsAt?: string,
 ) {
   const policies = new Map(entries.map((entry) => [entry.scopeKey, entry]));
   return summaries.flatMap(
@@ -702,7 +703,11 @@ export function authorizedProjectThreads<T extends { id: string }>(
       if (!scopeKey || !scopeIsActive(policy, now) || !policy?.effectiveFrom)
         return [];
       return [
-        { ...summary, scopeKey, collectionStartsAt: policy.effectiveFrom },
+        {
+          ...summary,
+          scopeKey,
+          collectionStartsAt: collectionStartsAt ?? policy.effectiveFrom,
+        },
       ];
     },
   );

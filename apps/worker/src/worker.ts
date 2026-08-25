@@ -34,6 +34,12 @@ async function tick() {
   `;
   await sql`delete from web_sessions where expires_at < now()`;
   await sql`delete from invitations where accepted_at is null and expires_at < now() - interval '7 days'`;
+  await sql`
+    delete from agent_jobs
+    where type like 'SYSTEM_HEALTH_%'
+      and status in ('COMPLETED', 'FAILED', 'CANCELLED')
+      and updated_at < now() - interval '10 minutes'
+  `;
 }
 
 async function loop() {

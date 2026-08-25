@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { pluginLogBatchSchema } from "@partner-report/contracts";
@@ -14,14 +15,31 @@ import {
   projectSystemComponents,
   type MonitoringSeverity,
 } from "../monitoring.js";
+import {
+  groupPluginExecutions,
+  type PluginExecutionEvent,
+} from "../plugin-log-diagnostics.js";
+import { runSystemProbe, systemProbeKeys } from "../system-probes.js";
 
 const adminLogQuerySchema = z
   .object({
     pluginInstanceId: z.string().uuid(),
+    executionId: z.string().trim().min(1).max(120).optional(),
     runId: z.string().uuid().optional(),
     level: z.enum(["debug", "info", "warning", "error"]).optional(),
-    limit: z.coerce.number().int().min(1).max(500).default(200),
+    limit: z.coerce.number().int().min(1).max(2_000).default(1_000),
   })
+  .strict();
+
+const pluginLogAnalysisSchema = z
+  .object({
+    pluginInstanceId: z.string().uuid(),
+    executionId: z.string().trim().min(1).max(120),
+  })
+  .strict();
+
+const systemProbeParamsSchema = z
+  .object({ component: z.enum(systemProbeKeys) })
   .strict();
 
 const secretPatterns: Array<[RegExp, string]> = [
@@ -67,7 +85,11 @@ export async function observabilityRoutes(app: FastifyInstance) {
     const input = pluginLogBatchSchema.parse(request.body) as {
       events: Array<{
         eventId: string;
+        invocationId?: string;
         runId?: string;
+        sequence?: number;
+        command?: string;
+        eventType?: string;
         level: string;
         stage: string;
         eventCode: string;
@@ -86,12 +108,15 @@ export async function observabilityRoutes(app: FastifyInstance) {
       for (const event of input.events) {
         const rows = await tx<{ id: string }[]>`
           insert into plugin_log_events (
-            id, tenant_id, team_id, partner_id, plugin_instance_id, run_id,
+            id, tenant_id, team_id, partner_id, plugin_instance_id,
+            invocation_id, run_id, sequence, command, event_type,
             level, stage, event_code, message, stack, retryable, attempt,
             duration_ms, request_id, details, occurred_at
           ) values (
             ${event.eventId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
-            ${actor.pluginInstanceId}, ${event.runId ?? null}, ${event.level},
+            ${actor.pluginInstanceId}, ${event.invocationId ?? null},
+            ${event.runId ?? null}, ${event.sequence ?? null},
+            ${event.command ?? null}, ${event.eventType ?? null}, ${event.level},
             ${event.stage}, ${event.eventCode}, ${sanitizePluginLogText(event.message)},
             ${event.stack ? sanitizePluginLogText(event.stack) : null},
             ${event.retryable}, ${event.attempt ?? null}, ${event.durationMs ?? null},
@@ -104,6 +129,35 @@ export async function observabilityRoutes(app: FastifyInstance) {
         accepted += rows.length;
       }
     });
+    const issueInvocations = new Map<string, (typeof input.events)[number]>();
+    for (const event of input.events)
+      if (
+        event.invocationId &&
+        (event.level === "error" || event.level === "warning")
+      )
+        issueInvocations.set(event.invocationId, event);
+    await Promise.all(
+      [...issueInvocations.entries()].map(
+        ([invocationId, event]) =>
+          sql`
+          insert into agent_jobs (
+            id, tenant_id, team_id, partner_id, plugin_instance_id,
+            type, status, idempotency_key, input_payload, max_attempts
+          ) values (
+            ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
+            ${actor.pluginInstanceId}, 'ANALYZE_PLUGIN_LOGS', 'PENDING',
+            ${`plugin-log-analysis:${actor.pluginInstanceId}:${invocationId}`},
+            ${JSON.stringify({
+              executionId: `invocation:${invocationId}`,
+              invocationId,
+              runId: event.runId ?? null,
+              command: event.command ?? null,
+            })}::jsonb,
+            2
+          ) on conflict (tenant_id, idempotency_key) do nothing
+        `,
+      ),
+    );
     await audit(
       request,
       actor,
@@ -128,41 +182,130 @@ export async function observabilityRoutes(app: FastifyInstance) {
     if (!plugin)
       throw new ApiError(404, "PLUGIN_NOT_FOUND", "Plugin Instance 不存在。");
 
-    const events = await sql<any[]>`
-      select id, run_id, level, stage, event_code, message, stack, retryable,
+    const recentEvents = await sql<any[]>`
+      select id, invocation_id, run_id, sequence, command, event_type,
+        level, stage, event_code, message, stack, retryable,
         attempt, duration_ms, request_id, details, occurred_at, created_at
       from plugin_log_events
       where tenant_id = ${actor.tenantId}
         and plugin_instance_id = ${query.pluginInstanceId}
-        and (${query.runId ?? null}::uuid is null or run_id = ${query.runId ?? null})
-        and (${query.level ?? null}::text is null or level = ${query.level ?? null})
       order by occurred_at desc, created_at desc
       limit ${query.limit}
     `;
-    const generationJobs = await sql<any[]>`
-      select aj.id, aj.type, aj.status, aj.attempt_count, aj.max_attempts,
-        aj.error_code, aj.error_message, aj.created_at, aj.updated_at,
-        aj.completed_at
-      from agent_jobs aj
-      where aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
-        and aj.partner_id = ${plugin.partner_id}
-      order by aj.updated_at desc limit 100
+    const grouped = groupPluginExecutions(
+      recentEvents as PluginExecutionEvent[],
+    ).slice(0, 50);
+    const selected = query.executionId
+      ? grouped.find((execution) => execution.executionId === query.executionId)
+      : query.runId
+        ? grouped.find((execution) => execution.runId === query.runId)
+        : grouped[0];
+    const events = (selected?.events ?? []).filter(
+      (event) => !query.level || event.level === query.level,
+    );
+    const executions = grouped.map(
+      ({ events: _events, ...execution }) => execution,
+    );
+    const analysisRows = selected
+      ? await sql<any[]>`
+          select id, status, output_payload, error_code, error_message,
+            created_at, updated_at, completed_at
+          from agent_jobs
+          where tenant_id = ${actor.tenantId}
+            and plugin_instance_id = ${query.pluginInstanceId}
+            and type = 'ANALYZE_PLUGIN_LOGS'
+            and input_payload ->> 'executionId' = ${selected.executionId}
+          order by created_at desc limit 1
+        `
+      : [];
+    return {
+      pluginInstanceId: plugin.id,
+      selectedExecutionId: selected?.executionId ?? null,
+      events,
+      executions,
+      modelAnalysis: analysisRows[0] ?? null,
+      // Kept for older admin clients while they upgrade to execution-level grouping.
+      runs: executions
+        .filter((execution) => execution.runId)
+        .map((execution) => ({
+          run_id: execution.runId,
+          started_at: execution.startedAt,
+          last_event_at: execution.lastEventAt,
+          event_count: execution.eventCount,
+          error_count: execution.errorCount,
+          warning_count: execution.warningCount,
+        })),
+      generationJobs: [],
+    };
+  });
+
+  app.post("/v1/admin/plugin-logs/analyze", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const input = pluginLogAnalysisSchema.parse(request.body);
+    const pluginRows = await sql<Array<{ id: string; partner_id: string }>>`
+      select id, partner_id from plugin_instances
+      where id = ${input.pluginInstanceId} and tenant_id = ${actor.tenantId}
+        and team_id = ${actor.teamId}
+      limit 1
     `;
-    const runs = await sql<any[]>`
-      select run_id,
-        min(occurred_at) as started_at,
-        max(occurred_at) as last_event_at,
-        count(*)::int as event_count,
-        count(*) filter (where level = 'error')::int as error_count,
-        count(*) filter (where level = 'warning')::int as warning_count
+    const plugin = pluginRows[0];
+    if (!plugin)
+      throw new ApiError(404, "PLUGIN_NOT_FOUND", "Plugin Instance 不存在。");
+    const recentEvents = await sql<any[]>`
+      select id, invocation_id, run_id, sequence, command, event_type,
+        level, stage, event_code, message, stack, retryable,
+        attempt, duration_ms, request_id, details, occurred_at, created_at
       from plugin_log_events
       where tenant_id = ${actor.tenantId}
-        and plugin_instance_id = ${query.pluginInstanceId}
-        and run_id is not null
-      group by run_id
-      order by max(occurred_at) desc limit 50
+        and plugin_instance_id = ${input.pluginInstanceId}
+      order by occurred_at desc, created_at desc limit 2000
     `;
-    return { pluginInstanceId: plugin.id, events, runs, generationJobs };
+    const execution = groupPluginExecutions(
+      recentEvents as PluginExecutionEvent[],
+    ).find((item) => item.executionId === input.executionId);
+    if (!execution)
+      throw new ApiError(
+        404,
+        "PLUGIN_EXECUTION_NOT_FOUND",
+        "找不到这次插件运行。",
+      );
+    if (execution.executionId === "legacy")
+      throw new ApiError(
+        409,
+        "PLUGIN_EXECUTION_NOT_ANALYZABLE",
+        "旧版未分组日志包含多次命令，无法可靠进行模型分析。",
+      );
+    const idempotencyKey = `plugin-log-analysis:${input.pluginInstanceId}:${execution.executionId}:${execution.lastEventAt}`;
+    const rows = await sql<Array<{ id: string; status: string }>>`
+      insert into agent_jobs (
+        id, tenant_id, team_id, partner_id, plugin_instance_id,
+        type, status, idempotency_key, input_payload, max_attempts
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${plugin.partner_id},
+        ${input.pluginInstanceId}, 'ANALYZE_PLUGIN_LOGS', 'PENDING',
+        ${idempotencyKey},
+        ${JSON.stringify({
+          executionId: execution.executionId,
+          invocationId: execution.invocationId,
+          runId: execution.runId,
+          command: execution.command,
+        })}::jsonb,
+        2
+      ) on conflict (tenant_id, idempotency_key) do update
+        set status = 'PENDING', attempt_count = 0, output_payload = null,
+          error_code = null, error_message = null, completed_at = null,
+          lease_until = null, updated_at = now()
+      returning id, status
+    `;
+    await audit(
+      request,
+      actor,
+      "plugin.logs.analysis_requested",
+      "plugin_instance",
+      input.pluginInstanceId,
+      { executionId: input.executionId, jobId: rows[0]?.id },
+    );
+    return { ok: true, job: rows[0] };
   });
 
   app.get("/v1/admin/plugin-monitoring", async (request) => {
@@ -291,6 +434,8 @@ export async function observabilityRoutes(app: FastifyInstance) {
             count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'SUCCEEDED' and completed_at >= now() - interval '24 hours')::int as generation_completed_24h
           from agent_jobs
           where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+            and type not like 'SYSTEM_HEALTH_%'
+            and type <> 'ANALYZE_PLUGIN_LOGS'
         `,
       sql<any[]>`
           select
@@ -318,6 +463,8 @@ export async function observabilityRoutes(app: FastifyInstance) {
           from agent_jobs aj
           left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
           where aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
+            and aj.type not like 'SYSTEM_HEALTH_%'
+            and aj.type <> 'ANALYZE_PLUGIN_LOGS'
             and (
               aj.status in ('FAILED', 'RETRY_WAIT')
               or (aj.status = 'LEASED' and aj.lease_until < now())
@@ -467,5 +614,27 @@ export async function observabilityRoutes(app: FastifyInstance) {
       components,
       incidents,
     };
+  });
+
+  app.post("/v1/admin/system-monitoring/:component/test", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { component } = systemProbeParamsSchema.parse(request.params);
+    const result = await runSystemProbe(component, {
+      tenantId: actor.tenantId,
+      teamId: actor.teamId,
+    });
+    await audit(
+      request,
+      actor,
+      "system_component.tested",
+      "system_component",
+      component,
+      {
+        status: result.status,
+        errorCode: result.errorCode,
+        durationMs: result.durationMs,
+      },
+    );
+    return result;
   });
 }

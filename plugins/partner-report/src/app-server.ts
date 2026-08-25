@@ -1,4 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  spawn,
+  spawnSync,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
 import { createInterface } from "node:readline";
 import { PLUGIN_VERSION } from "./config.js";
 
@@ -15,6 +19,7 @@ type ThreadListOptions = {
 export const CODEX_THREAD_LIST_TIMEOUT_MS = 120_000;
 export const CODEX_THREAD_READ_TIMEOUT_MS = 60_000;
 export const CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
+export const MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 
 export type CodexThreadReadFailureCode =
   | "CODEX_THREAD_READ_FAILED"
@@ -51,10 +56,59 @@ function paginatedThreadReadError(cause: unknown) {
   );
 }
 
-function validFullHistoryThread(value: unknown) {
-  return (
-    isRecord(value) && Array.isArray(value.turns) && value.turns.length > 0
-  );
+type CodexBinaryProbe = (candidate: string) => string | null;
+
+function versionCore(value: string) {
+  const match = /codex-cli\s+(\d+)\.(\d+)\.(\d+)/i.exec(value);
+  return match ? match.slice(1, 4).map(Number) : null;
+}
+
+function versionIsCompatible(value: string) {
+  const actual = versionCore(value);
+  const minimum = versionCore(`codex-cli ${MINIMUM_CODEX_APP_SERVER_VERSION}`)!;
+  if (!actual) return false;
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] !== minimum[index])
+      return actual[index]! > minimum[index]!;
+  }
+  return true;
+}
+
+function probeCodexBinary(candidate: string) {
+  const result = spawnSync(candidate, ["--version"], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  if (result.status !== 0) return null;
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
+}
+
+export function selectCodexBinary(options: {
+  explicit?: string;
+  candidates?: string[];
+  probe?: CodexBinaryProbe;
+} = {}) {
+  const explicit = options.explicit ?? process.env.CODEX_BIN;
+  const candidates = explicit
+    ? [explicit]
+    : (options.candidates ?? [
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/Applications/Codex.app/Contents/Resources/codex",
+        "codex",
+      ]);
+  const probe = options.probe ?? probeCodexBinary;
+  const inspected: string[] = [];
+  for (const candidate of [...new Set(candidates)]) {
+    const version = probe(candidate);
+    if (!version) continue;
+    inspected.push(`${candidate} (${version})`);
+    if (versionIsCompatible(version)) return candidate;
+  }
+  const error = new Error(
+    `未找到兼容的 Codex app-server，需要 codex-cli >= ${MINIMUM_CODEX_APP_SERVER_VERSION}${inspected.length ? `；已检查：${inspected.join("、")}` : ""}。`,
+  ) as Error & { code: string };
+  error.code = "CODEX_APP_SERVER_INCOMPATIBLE";
+  throw error;
 }
 
 function createTimeoutError(method: string, timeoutMs: number) {
@@ -95,7 +149,11 @@ export class CodexAppServer {
   private pending = new Map<number, Pending>();
   private stderr = "";
 
-  constructor(private readonly codexBin = process.env.CODEX_BIN ?? "codex") {}
+  private readonly codexBin: string;
+
+  constructor(codexBin?: string) {
+    this.codexBin = codexBin ?? selectCodexBinary();
+  }
 
   async connect() {
     this.process = spawn(
@@ -293,21 +351,6 @@ export class CodexAppServer {
           CODEX_THREAD_READ_TIMEOUT_MS,
         );
       } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message.includes("invalid paginated history lineage")
-        ) {
-          try {
-            const fallback = await this.request(
-              "thread/read",
-              { threadId, includeTurns: true },
-              CODEX_THREAD_READ_TIMEOUT_MS,
-            );
-            if (validFullHistoryThread(fallback.thread)) return fallback.thread;
-          } catch {
-            // Preserve the stable paginated-history error below.
-          }
-        }
         throw paginatedThreadReadError(error);
       }
       if (!Array.isArray(result.data)) {

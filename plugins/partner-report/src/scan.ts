@@ -67,8 +67,9 @@ export function containsSensitive(value: unknown): boolean {
   });
 }
 
-function safeText(value: string, maxLength = 16_000) {
-  return redactSensitive(value).text.slice(0, maxLength);
+function safeText(value: string, maxLength?: number) {
+  const text = redactSensitive(value).text;
+  return maxLength === undefined ? text : text.slice(0, maxLength);
 }
 
 function timestamp(value: unknown) {
@@ -143,24 +144,37 @@ export function isCompleteTurn(turn: ProgressTurn) {
   );
 }
 
-export function selectPeriodTurns(
+export function completeSessionTurns(turns: ProgressTurn[]) {
+  return turns.filter(isCompleteTurn);
+}
+
+export function latestCompleteTurnInPeriod(
   turns: ProgressTurn[],
   period: CollectionPeriod,
   fallbackOccurredAt?: string,
 ) {
   const startsAt = new Date(period.starts_at).getTime();
   const endsAt = new Date(period.ends_at).getTime();
-  return turns.filter((turn) => {
-    if (!isCompleteTurn(turn)) return false;
+  const complete = completeSessionTurns(turns);
+  const latest = complete.reduce<ProgressTurn | null>((candidate, turn) => {
+    const candidateAt = new Date(
+      candidate?.occurredAt ?? fallbackOccurredAt ?? "",
+    ).getTime();
     const occurredAt = new Date(
       turn.occurredAt ?? fallbackOccurredAt ?? "",
     ).getTime();
-    return (
-      Number.isFinite(occurredAt) &&
-      occurredAt >= startsAt &&
-      occurredAt <= endsAt
-    );
-  });
+    if (!Number.isFinite(occurredAt)) return candidate;
+    return !candidate || occurredAt >= candidateAt ? turn : candidate;
+  }, null);
+  if (!latest) return null;
+  const occurredAt = new Date(
+    latest.occurredAt ?? fallbackOccurredAt ?? "",
+  ).getTime();
+  return Number.isFinite(occurredAt) &&
+    occurredAt >= startsAt &&
+    occurredAt <= endsAt
+    ? latest
+    : null;
 }
 
 export function isPluginSystemThread(summary: Record<string, unknown>) {
@@ -351,19 +365,6 @@ export function anonymousSessionKey(
   return sha256(`partner-report/session/v1:${pluginInstanceId}:${sessionId}`);
 }
 
-export function anonymousTurnKey(sessionKey: string, turn: ProgressTurn) {
-  return sha256(
-    JSON.stringify({
-      keyVersion: "1.0",
-      sessionKey,
-      turnId: turn.id,
-      occurredAt: turn.occurredAt,
-      userPrompt: turn.userPrompt,
-      assistantFinal: turn.assistantFinal,
-    }),
-  );
-}
-
 export function buildSessionJob(input: {
   pluginInstanceId: string;
   sessionId: string;
@@ -375,7 +376,6 @@ export function buildSessionJob(input: {
   period: CollectionPeriod;
   observedAt?: string;
   scopeKey?: string;
-  processedTurnKeys?: Iterable<string>;
 }) {
   const normalized = normalizeProgressTurns(input.turns);
   if (isPluginAdministrationSession(normalized)) return null;
@@ -385,13 +385,9 @@ export function buildSessionJob(input: {
     input.pluginInstanceId,
     input.sessionId,
   );
-  const alreadyProcessed = new Set(input.processedTurnKeys ?? []);
-  const selected = selectPeriodTurns(
-    normalized,
-    input.period,
-    fallbackOccurredAt,
-  ).filter((turn) => !alreadyProcessed.has(anonymousTurnKey(sessionKey, turn)));
-  if (selected.length === 0) return null;
+  if (!latestCompleteTurnInPeriod(normalized, input.period, fallbackOccurredAt))
+    return null;
+  const selected = completeSessionTurns(normalized);
 
   const project = mappedProject(
     input.cwd,
@@ -411,7 +407,6 @@ export function buildSessionJob(input: {
     assistantFinal: turn.assistantFinal,
   }));
   const title = safeText(input.title?.trim() || "Codex 会话", 200);
-  const turnKeys = selected.map((turn) => anonymousTurnKey(sessionKey, turn));
   const legacyContentHash = (legacyProject: ProjectIdentity) =>
     sha256(
       JSON.stringify({
@@ -423,6 +418,9 @@ export function buildSessionJob(input: {
       }),
     );
   const compatibleContentHashes = new Set([legacyContentHash(project)]);
+  compatibleContentHashes.add(
+    sha256(JSON.stringify({ hashVersion: "3.0", turns })),
+  );
   if (project.id) {
     compatibleContentHashes.add(
       legacyContentHash({
@@ -436,21 +434,20 @@ export function buildSessionJob(input: {
   }
   const contentHash = sha256(
     JSON.stringify({
-      hashVersion: "3.0",
+      hashVersion: "4.0",
       turns,
     }),
   );
   const observedAt = input.observedAt ?? new Date().toISOString();
   const production = {
     skillVersion: `partner-report-sync/${PLUGIN_VERSION}`,
-    promptVersion: "2026-08-05.zh-session-value.v3",
+    promptVersion: "2026-08-25.zh-whole-session-value.v4",
     schemaVersion: "1.0" as const,
     producer: "codex-skill" as const,
   };
 
   return {
     sessionKey,
-    turnKeys,
     contentHash,
     compatibleContentHashes: [...compatibleContentHashes].filter(
       (hash) => hash !== contentHash,
@@ -471,6 +468,7 @@ export function buildSessionJob(input: {
       language: "zh-CN",
       instructions: [
         "先判断整个 Session 是否包含对映射项目有意义的实际工作，再决定是否提取。",
+        "本输入包含该 Session 的全部完整问答，必须作为一个整体判断和总结，不得拆成回合分别处理。",
         "只依据完整的用户问题和助手最终回答，不推断推理过程、命令、工具调用或文件改动。",
         "项目目录只提供上下文，不能单独证明 Session 与项目有关。",
         "标题、摘要和每条贡献正文必须使用简体中文。",

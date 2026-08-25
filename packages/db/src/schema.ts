@@ -668,7 +668,11 @@ export const pluginLogEvents = pgTable(
     pluginInstanceId: uuid("plugin_instance_id")
       .notNull()
       .references(() => pluginInstances.id),
+    invocationId: uuid("invocation_id"),
     runId: uuid("run_id"),
+    sequence: integer("sequence"),
+    command: text("command"),
+    eventType: text("event_type"),
     level: text("level").notNull(),
     stage: text("stage").notNull(),
     eventCode: text("event_code").notNull(),
@@ -697,6 +701,11 @@ export const pluginLogEvents = pgTable(
     index("plugin_log_events_run_recent_idx").on(
       table.tenantId,
       table.runId,
+      table.occurredAt,
+    ),
+    index("plugin_log_events_invocation_recent_idx").on(
+      table.tenantId,
+      table.invocationId,
       table.occurredAt,
     ),
   ],

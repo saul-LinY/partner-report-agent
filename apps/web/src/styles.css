@@ -1656,6 +1656,292 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
+.plugin-execution-browser {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  min-height: 520px;
+}
+
+.plugin-execution-list {
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  background: #f8f9f9;
+}
+
+.plugin-execution-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 15px;
+  gap: 8px;
+  width: 100%;
+  min-height: 82px;
+  padding: 11px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plugin-execution-row:hover,
+.plugin-execution-row.active {
+  background: #fff;
+}
+
+.plugin-execution-row.active {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.plugin-execution-state.normal {
+  color: #23845d;
+}
+
+.plugin-execution-state.warning {
+  color: #9a6818;
+}
+
+.plugin-execution-state.critical {
+  color: #b8423b;
+}
+
+.plugin-execution-state.unknown {
+  color: #879094;
+}
+
+.plugin-execution-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.plugin-execution-copy strong,
+.plugin-execution-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-execution-copy strong {
+  font-size: 13px;
+}
+
+.plugin-execution-copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.plugin-execution-detail {
+  min-width: 0;
+  background: #fff;
+}
+
+.plugin-execution-header {
+  min-height: 62px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.plugin-execution-header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.plugin-execution-header span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.plugin-execution-header strong {
+  font-size: 15px;
+}
+
+.plugin-analysis-button {
+  min-height: 30px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #a9cfc0;
+  border-radius: 5px;
+  background: #f2f8f5;
+  color: #1e6d53;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.plugin-analysis-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.execution-diagnosis {
+  min-height: 108px;
+  padding: 15px 16px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  background: #f2f8f5;
+}
+
+.execution-diagnosis-warning {
+  background: #fff9e9;
+}
+
+.execution-diagnosis-critical {
+  background: #fff5f4;
+}
+
+.execution-diagnosis-icon {
+  color: #23845d;
+}
+
+.execution-diagnosis-warning .execution-diagnosis-icon {
+  color: #9a6818;
+}
+
+.execution-diagnosis-critical .execution-diagnosis-icon {
+  color: #b8423b;
+}
+
+.execution-diagnosis strong {
+  font-size: 13px;
+}
+
+.execution-diagnosis p,
+.execution-diagnosis small {
+  display: block;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.plugin-model-analysis {
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  background: #f7f8fa;
+}
+
+.plugin-model-analysis-icon {
+  color: #176b81;
+}
+
+.plugin-model-analysis strong {
+  font-size: 13px;
+}
+
+.plugin-model-analysis p,
+.plugin-model-analysis li,
+.plugin-model-analysis small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.plugin-model-analysis p {
+  margin: 6px 0;
+}
+
+.plugin-model-analysis p b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.plugin-model-analysis ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.plugin-execution-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
+
+.plugin-execution-meta > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.plugin-execution-meta > div:last-child {
+  border-right: 0;
+}
+
+.plugin-execution-meta dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.plugin-execution-meta dd {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-event-toolbar {
+  min-height: 48px;
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.plugin-event-toolbar > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plugin-event-toolbar strong {
+  color: var(--ink);
+}
+
+.plugin-event-mode {
+  display: inline-grid;
+  grid-template-columns: repeat(2, max-content);
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #f4f6f6;
+}
+
+.plugin-event-mode button {
+  min-height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.plugin-event-mode button.active {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(28 39 43 / 10%);
+}
+
 .plugin-log-controls {
   display: flex;
   gap: 12px;
@@ -1917,17 +2203,17 @@ select:focus {
   border-color: #efd5d2;
 }
 
-.system-component-row > div {
+.system-component-copy {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-.system-component-row > div strong {
+.system-component-copy strong {
   font-size: 13px;
 }
 
-.system-component-row > div span {
+.system-component-copy span {
   font-size: 12px;
 }
 
@@ -1936,6 +2222,85 @@ select:focus {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.system-component-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system-probe-button {
+  min-width: 66px;
+  height: 30px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #365c50;
+  background: #fff;
+  border: 1px solid #cbd9d4;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.system-probe-button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: #88b9a8;
+  background: #f5faf8;
+}
+
+.system-probe-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.system-probe-result {
+  grid-column: 2 / -1;
+  min-width: 0;
+  padding: 10px 11px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  border-left: 2px solid #2c8b69;
+  background: #f3faf7;
+}
+
+.system-probe-result-failed {
+  border-left-color: #b8423b;
+  background: #fcf5f4;
+}
+
+.system-probe-result-icon {
+  color: #237558;
+}
+
+.system-probe-result-failed .system-probe-result-icon {
+  color: #a13c37;
+}
+
+.system-probe-result > div {
+  min-width: 0;
+}
+
+.system-probe-result strong {
+  display: block;
+  font-size: 12px;
+}
+
+.system-probe-result p {
+  margin: 3px 0;
+  color: #3d484e;
+  font-size: 11px;
+}
+
+.system-probe-result small {
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }
 
 .system-incident-list {
@@ -2066,6 +2431,16 @@ select:focus {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
+  .system-component-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+  .system-component-actions,
+  .system-probe-result {
+    grid-column: 2;
+  }
+  .system-component-actions {
+    justify-content: space-between;
+  }
   .system-incident-list {
     min-height: 140px;
   }
@@ -2102,6 +2477,34 @@ select:focus {
   }
   .plugin-log-controls select {
     max-width: 70%;
+  }
+  .plugin-execution-browser {
+    grid-template-columns: 1fr;
+  }
+  .plugin-execution-list {
+    max-height: 300px;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .plugin-execution-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .plugin-execution-meta > div:nth-child(2) {
+    border-right: 0;
+  }
+  .plugin-execution-meta > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+  .plugin-event-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .plugin-event-mode {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .plugin-event-mode button {
+    justify-content: center;
   }
   .plugin-event summary {
     grid-template-columns: 18px minmax(0, 1fr);

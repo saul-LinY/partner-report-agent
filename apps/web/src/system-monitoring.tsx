@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Bot,
@@ -11,9 +11,10 @@ import {
   MessageSquare,
   RefreshCw,
   ServerCog,
+  TestTube2,
 } from "lucide-react";
 import { Link } from "wouter";
-import { api } from "./api.js";
+import { api, ApiClientError } from "./api.js";
 import { Badge, EmptyState, ErrorBanner } from "./components.js";
 
 type Severity = "normal" | "warning" | "critical" | "unknown";
@@ -53,6 +54,16 @@ type SystemMonitoring = {
   };
   components: SystemComponent[];
   incidents: Incident[];
+};
+
+type SystemProbeResult = {
+  component: SystemComponent["key"];
+  status: "passed" | "failed";
+  summary: string;
+  detail: string;
+  errorCode: string | null;
+  durationMs: number;
+  checkedAt: string;
 };
 
 const severityTone = {
@@ -96,6 +107,97 @@ function ComponentIcon({
   if (componentKey === "generation") return <Bot size={18} />;
   if (componentKey === "feishu") return <MessageSquare size={18} />;
   return <FileCheck2 size={18} />;
+}
+
+function formatDuration(durationMs: number) {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  return `${(durationMs / 1_000).toFixed(1)} 秒`;
+}
+
+function SystemComponentRow({ component }: { component: SystemComponent }) {
+  const [result, setResult] = useState<SystemProbeResult | null>(null);
+  const probe = useMutation({
+    mutationFn: () =>
+      api<SystemProbeResult>(
+        `/v1/admin/system-monitoring/${component.key}/test`,
+        { method: "POST" },
+      ),
+    onSuccess: setResult,
+    onError: (error) => {
+      setResult({
+        component: component.key,
+        status: "failed",
+        summary: "模块测试未完成",
+        detail:
+          error instanceof ApiClientError
+            ? error.message
+            : "请求没有正常完成，请稍后重试。",
+        errorCode: error instanceof ApiClientError ? error.code : null,
+        durationMs: 0,
+        checkedAt: new Date().toISOString(),
+      });
+    },
+  });
+
+  return (
+    <div
+      className={`system-component-row system-component-${component.severity}`}
+    >
+      <span className="system-component-icon">
+        <ComponentIcon componentKey={component.key} />
+      </span>
+      <div className="system-component-copy">
+        <strong>{component.label}</strong>
+        <span>{component.summary}</span>
+        <p>{component.detail}</p>
+      </div>
+      <div className="system-component-actions">
+        <button
+          type="button"
+          className="system-probe-button"
+          title={`测试${component.label}`}
+          aria-label={`测试${component.label}`}
+          disabled={probe.isPending}
+          onClick={() => probe.mutate()}
+        >
+          {probe.isPending ? (
+            <RefreshCw size={14} className="spin" />
+          ) : (
+            <TestTube2 size={14} />
+          )}
+          <span>{probe.isPending ? "测试中" : "测试"}</span>
+        </button>
+        <Badge tone={severityTone[component.severity]}>
+          {severityLabel[component.severity]}
+        </Badge>
+      </div>
+      {result && (
+        <div
+          className={`system-probe-result system-probe-result-${result.status}`}
+          aria-live="polite"
+        >
+          <span className="system-probe-result-icon">
+            {result.status === "passed" ? (
+              <CheckCircle2 size={16} />
+            ) : (
+              <AlertTriangle size={16} />
+            )}
+          </span>
+          <div>
+            <strong>{result.summary}</strong>
+            <p>{result.detail}</p>
+            <small>
+              {formatTime(result.checkedAt)}
+              {result.durationMs > 0
+                ? ` · 耗时 ${formatDuration(result.durationMs)}`
+                : ""}
+              {result.errorCode ? ` · ${result.errorCode}` : ""}
+            </small>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function SystemMonitoringPage() {
@@ -193,22 +295,10 @@ export function SystemMonitoringPage() {
               </div>
               <div className="system-component-list">
                 {data.components.map((component) => (
-                  <div
-                    className={`system-component-row system-component-${component.severity}`}
+                  <SystemComponentRow
+                    component={component}
                     key={component.key}
-                  >
-                    <span className="system-component-icon">
-                      <ComponentIcon componentKey={component.key} />
-                    </span>
-                    <div>
-                      <strong>{component.label}</strong>
-                      <span>{component.summary}</span>
-                      <p>{component.detail}</p>
-                    </div>
-                    <Badge tone={severityTone[component.severity]}>
-                      {severityLabel[component.severity]}
-                    </Badge>
-                  </div>
+                  />
                 ))}
               </div>
             </section>

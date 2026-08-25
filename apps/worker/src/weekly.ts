@@ -247,7 +247,7 @@ export async function scheduleDueWeeklyReports(
         const facts = await tx<any[]>`
           select id, payload, source_occurred_at from session_facts
           where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}
-            and period_id = ${period.id} and excluded = false
+            and period_id = ${period.id} and current = true and excluded = false
           order by source_occurred_at nulls last, created_at, id
         `;
         const projectBuckets = buildProjectBuckets(facts, partnerProjects);

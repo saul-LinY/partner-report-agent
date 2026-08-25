@@ -10,16 +10,15 @@ import {
   initialProjectScopeStartAt,
   initializeCollectionFloor,
   loadCollectionState,
-  processedTurnKeys,
   recordAcceptedSession,
   recordIgnoredSession,
-  recordProcessedTurns,
   refreshCollectionLease,
   releaseCollectionLease,
   reviewCollectionCompletion,
   saveCollectionState,
   threadIsInKnownScanWindow,
   threadIsInScanWindow,
+  threadCouldContainWindowAnswer,
 } from "./collection-state.js";
 
 const pluginInstanceId = "33333333-3333-4333-8333-333333333333";
@@ -131,6 +130,43 @@ describe("collection state", () => {
     });
   });
 
+  it("reopens the current week once after upgrading the coverage semantics", () => {
+    const directory = temporaryDirectory();
+    writeFileSync(
+      resolve(directory, "collection-state.json"),
+      JSON.stringify({
+        schemaVersion: "3.0",
+        pluginInstanceId,
+        collectionFloorAt: "2026-08-23T16:00:00.000Z",
+        lastSuccessfulRunStartedAt: "2026-08-25T04:10:52.000Z",
+        weekBackfillCompletedFor: "2026-08-23T16:00:00.000Z",
+        acceptedSessions: {},
+        ignoredSessions: {},
+        processedTurns: {},
+      }),
+    );
+
+    const state = loadCollectionState(pluginInstanceId, directory);
+    expect(state).toMatchObject({
+      schemaVersion: "5.0",
+      lastSuccessfulRunStartedAt: "2026-08-25T04:10:52.000Z",
+      weekBackfillCompletedFor: null,
+    });
+    expect(
+      collectionWindow(
+        state,
+        {
+          starts_at: "2026-08-23T16:00:00.000Z",
+          ends_at: "2026-08-30T16:00:00.000Z",
+        },
+        "2026-08-25T06:00:00.000Z",
+      ),
+    ).toMatchObject({
+      extractionStartsAt: "2026-08-23T16:00:00.000Z",
+      scanStartsAt: "2026-08-23T16:00:00.000Z",
+    });
+  });
+
   it("persists ignored content hashes without raw Session data", () => {
     const directory = temporaryDirectory();
     const state = loadCollectionState(pluginInstanceId, directory);
@@ -174,18 +210,25 @@ describe("collection state", () => {
     expect(state.ignoredSessions[sessionKey]?.contentHash).toBe("c".repeat(64));
   });
 
-  it("persists anonymous turn checkpoints independently per Session", () => {
-    const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
-    const turnKey = "d".repeat(64);
-    recordProcessedTurns(
-      state,
-      sessionKey,
-      [turnKey],
-      "accepted",
-      "2026-08-05T02:00:00.000Z",
+  it("drops obsolete turn checkpoints when migrating to whole-Session versions", () => {
+    const directory = temporaryDirectory();
+    writeFileSync(
+      resolve(directory, "collection-state.json"),
+      JSON.stringify({
+        schemaVersion: "4.0",
+        pluginInstanceId,
+        collectionFloorAt: "2026-08-03T00:00:00.000Z",
+        lastSuccessfulRunStartedAt: "2026-08-05T02:00:00.000Z",
+        weekBackfillCompletedFor: "2026-08-02T16:00:00.000Z",
+        acceptedSessions: {},
+        ignoredSessions: {},
+        processedTurns: { [sessionKey]: { ["d".repeat(64)]: {} } },
+      }),
     );
-    expect(processedTurnKeys(state, sessionKey)).toEqual(new Set([turnKey]));
-    expect(JSON.stringify(state)).not.toContain("raw-turn");
+    const state = loadCollectionState(pluginInstanceId, directory);
+    expect(state.schemaVersion).toBe("5.0");
+    expect(state.weekBackfillCompletedFor).toBeNull();
+    expect(state).not.toHaveProperty("processedTurns");
   });
 
   it("migrates state written before accepted hashes existed", () => {
@@ -254,6 +297,24 @@ describe("collection state", () => {
     ).toBe(false);
   });
 
+  it("keeps metadata updated after the cutoff for complete-Q&A inspection", () => {
+    expect(
+      threadCouldContainWindowAnswer(
+        "2026-08-06T02:00:00.000Z",
+        "2026-08-03T02:00:00.000Z",
+      ),
+    ).toBe(true);
+    expect(
+      threadCouldContainWindowAnswer(
+        "2026-08-02T23:59:59.000Z",
+        "2026-08-03T02:00:00.000Z",
+      ),
+    ).toBe(false);
+    expect(
+      threadCouldContainWindowAnswer(null, "2026-08-03T02:00:00.000Z"),
+    ).toBe(true);
+  });
+
   it("limits first project discovery to the previous seven days", () => {
     expect(initialProjectScopeStartAt("2026-08-07T11:46:00+08:00")).toBe(
       "2026-07-31T03:46:00.000Z",
@@ -273,7 +334,7 @@ describe("collection state", () => {
         invalidThreadHistory: 1,
         failedExtract: 0,
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       canAdvanceCollectionCheckpoint({
         failedRead: 2,
@@ -339,13 +400,14 @@ describe("collection state", () => {
       validFailureAudits: true,
       noUnexplainedFailedExtract: true,
       outcomeCountsMatch: true,
+      coverageComplete: true,
       remainingQueueExplained: true,
       readyToFinalize: true,
       checkpointEligible: true,
     });
   });
 
-  it("allows partial runs to finalize without advancing the checkpoint", () => {
+  it("refuses to finalize partial runs", () => {
     expect(
       reviewCollectionCompletion({
         cursor: 3,
@@ -361,13 +423,14 @@ describe("collection state", () => {
       validFailureAudits: true,
       noUnexplainedFailedExtract: true,
       outcomeCountsMatch: true,
+      coverageComplete: true,
       remainingQueueExplained: true,
-      readyToFinalize: true,
+      readyToFinalize: false,
       checkpointEligible: false,
     });
   });
 
-  it("advances after only irrecoverable thread history failures", () => {
+  it("does not advance after invalid thread history failures", () => {
     expect(
       reviewCollectionCompletion({
         cursor: 3,
@@ -380,8 +443,24 @@ describe("collection state", () => {
         },
       }),
     ).toMatchObject({
-      readyToFinalize: true,
-      checkpointEligible: true,
+      readyToFinalize: false,
+      checkpointEligible: false,
+    });
+  });
+
+  it("requires the fixed-window coverage audit to complete", () => {
+    expect(
+      reviewCollectionCompletion({
+        cursor: 3,
+        queueLength: 3,
+        hasCurrentJob: false,
+        coverageComplete: false,
+        counts: { failedRead: 0, failedExtract: 0 },
+      }),
+    ).toMatchObject({
+      coverageComplete: false,
+      readyToFinalize: false,
+      checkpointEligible: false,
     });
   });
 });

@@ -11,10 +11,20 @@ import { dataDirectory, loadConfig } from "./config.js";
 import { authenticatedRequest } from "./http.js";
 
 export type PluginLogLevel = "debug" | "info" | "warning" | "error";
+export type PluginLogEventType = "lifecycle" | "progress" | "result" | "error";
+
+const invocationId = randomUUID();
+const invocationCommand = process.argv[2]?.slice(0, 80) || "plugin";
+let invocationSequence = 0;
+let activeRunId: string | undefined;
 
 export type PendingPluginLog = {
   eventId: string;
+  invocationId?: string;
   runId?: string;
+  sequence?: number;
+  command?: string;
+  eventType?: PluginLogEventType;
   level: PluginLogLevel;
   stage: string;
   eventCode: string;
@@ -30,7 +40,11 @@ export type PendingPluginLog = {
 
 type PluginLogInput = {
   eventId?: string | undefined;
+  invocationId?: string | undefined;
   runId?: string | undefined;
+  sequence?: number | undefined;
+  command?: string | undefined;
+  eventType?: PluginLogEventType | undefined;
   level: PluginLogLevel;
   stage: string;
   eventCode: string;
@@ -99,15 +113,27 @@ export function enqueuePluginLog(input: PluginLogInput) {
   try {
     if (!loadConfig(false)) return null;
     const details = safeDetails(input.details);
+    const eventRunId = input.runId ?? activeRunId;
     const event: PendingPluginLog = {
       eventId: input.eventId ?? randomUUID(),
+      invocationId: input.invocationId ?? invocationId,
+      sequence: input.sequence ?? ++invocationSequence,
+      command: (input.command ?? invocationCommand).slice(0, 80),
+      eventType:
+        input.eventType ??
+        (input.level === "error"
+          ? "error"
+          : input.eventCode === "command.started" ||
+              input.eventCode === "command.completed"
+            ? "lifecycle"
+            : "progress"),
       level: input.level,
       stage: input.stage.slice(0, 80),
       eventCode: input.eventCode.slice(0, 120),
       message: input.message.slice(0, 4000),
       occurredAt: input.occurredAt ?? new Date().toISOString(),
       retryable: input.retryable ?? false,
-      ...(input.runId ? { runId: input.runId } : {}),
+      ...(eventRunId ? { runId: eventRunId } : {}),
       ...(input.stack ? { stack: input.stack.slice(0, 16000) } : {}),
       ...(input.attempt ? { attempt: input.attempt } : {}),
       ...(input.durationMs !== undefined
@@ -121,6 +147,14 @@ export function enqueuePluginLog(input: PluginLogInput) {
   } catch {
     return null;
   }
+}
+
+export function setPluginLogRunId(runId: string | undefined) {
+  activeRunId = runId;
+}
+
+export function pluginLogInvocationId() {
+  return invocationId;
 }
 
 export async function flushPluginLogs() {

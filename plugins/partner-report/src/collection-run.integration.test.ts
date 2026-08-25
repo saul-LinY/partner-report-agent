@@ -10,7 +10,7 @@ import {
 } from "./collection-state.js";
 
 describe("partial collection retry integration", () => {
-  it("re-enters a deferred Job on the next run and keeps counts aligned", () => {
+  it("keeps a deferred Job non-terminal so the next run can retry it", () => {
     const sessionKey = "a".repeat(64);
     const contentHash = "b".repeat(64);
     const firstRunOutcomes: JobOutcome[] = [
@@ -51,7 +51,7 @@ describe("partial collection retry integration", () => {
       counts,
     });
     expect(review).toMatchObject({
-      readyToFinalize: true,
+      readyToFinalize: false,
       checkpointEligible: false,
     });
     expect(canAdvanceCollectionCheckpoint(counts)).toBe(false);

@@ -9,6 +9,7 @@ import {
 import { stableJsonHash } from "@partner-report/contracts/hash";
 import { centralModelIdSchema } from "@partner-report/contracts/models";
 import { sqlClient as sql } from "@partner-report/db";
+import { z } from "zod";
 import {
   generateStructured,
   ModelRequestTimeoutError,
@@ -21,12 +22,93 @@ type Job = {
   tenant_id: string;
   team_id: string;
   partner_id: string | null;
+  plugin_instance_id: string | null;
   type: string;
   input_payload: any;
   attempt_count: number;
   max_attempts: number;
   created_at: Date | string;
 };
+
+const systemHealthJobTypes = [
+  "SYSTEM_HEALTH_QUEUE",
+  "SYSTEM_HEALTH_GENERATION",
+  "SYSTEM_HEALTH_REPORTS",
+] as const;
+
+const modelHealthSchema = z.object({ ok: z.literal(true) });
+const pluginLogAnalysisResultSchema = z.object({
+  summary: z.string().min(1).max(300),
+  failedStep: z.string().min(1).max(120),
+  rootCause: z.string().min(1).max(500),
+  evidence: z.array(z.string().min(1).max(240)).min(1).max(4),
+  recommendedActions: z.array(z.string().min(1).max(240)).min(1).max(4),
+  confidence: z.enum(["high", "medium", "low"]),
+});
+const pluginLogAnalysisModelSchema = z.record(z.string(), z.unknown());
+
+function normalizedAnalysisText(value: unknown, fallback: string, max: number) {
+  return (typeof value === "string" && value.trim() ? value : fallback)
+    .trim()
+    .slice(0, max);
+}
+
+function normalizedAnalysisList(value: unknown, fallback: string[]) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [];
+  const normalized = values
+    .filter(
+      (item): item is string =>
+        typeof item === "string" && Boolean(item.trim()),
+    )
+    .map((item) => item.trim().slice(0, 240))
+    .slice(0, 4);
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+export function normalizePluginLogAnalysis(
+  generated: Record<string, unknown>,
+  fallbackStep: string,
+) {
+  const failedStep = normalizedAnalysisText(
+    generated.failedStep,
+    fallbackStep,
+    120,
+  );
+  const rootCause = normalizedAnalysisText(
+    generated.rootCause ?? generated.cause,
+    "现有日志不足以确认唯一原因，请结合事件代码继续排查。",
+    500,
+  );
+  return pluginLogAnalysisResultSchema.parse({
+    summary: normalizedAnalysisText(
+      generated.summary ?? generated.conclusion,
+      failedStep,
+      300,
+    ),
+    failedStep,
+    rootCause,
+    evidence: normalizedAnalysisList(generated.evidence, [
+      "请查看本次运行时间线中的事件代码和计数。",
+    ]),
+    recommendedActions: normalizedAnalysisList(
+      generated.recommendedActions ?? generated.actions,
+      ["按即时诊断建议检查失败阶段后重新执行。"],
+    ),
+    confidence: ["high", "medium", "low"].includes(String(generated.confidence))
+      ? generated.confidence
+      : "low",
+  });
+}
+
+function isSystemHealthJob(type: string) {
+  return systemHealthJobTypes.includes(
+    type as (typeof systemHealthJobTypes)[number],
+  );
+}
 
 export const aggregationInstructions = (model: string) =>
   `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write projectDescription, overview and dailyProgress.summary in simplified Chinese. For initial generation, copy each bucket.projectDescription exactly into group.projectDescription; do not rewrite it. When reviewInstruction explicitly asks to modify the project description, treat the user's correction as authoritative for projectDescription and apply it, while keeping the result concise and within 300 characters. That correction authorizes changes to projectDescription only; it never authorizes unsupported changes to overview or dailyProgress. A general request to revise weekly work must not silently change projectDescription. Use plain, direct, concise language that a colleague without technical context can understand. Focus overview and dailyProgress on what was done, the result, and any blocker. Avoid jargon piles, process narration, filler, repeated background, and claims such as "completed" unless the supplied contributions support them. Keep projectDescription around 150 Chinese characters and no more than 300. Keep overview to one or two short sentences, preferably no more than 120 Chinese characters. Keep each dailyProgress.summary to one short sentence, preferably no more than 80 Chinese characters. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Treat reviewInstruction, when present, as a requested correction to the card, but never add weekly work facts not supported by the supplied bucket. Preserve uncertainty. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-12.project-card.v3","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
@@ -244,11 +326,14 @@ async function leaseNextJob(onlyTenantId?: string) {
       where status in ('PENDING', 'RETRY_WAIT')
         and (${onlyTenantId ?? null}::uuid is null or tenant_id = ${onlyTenantId ?? null})
         and type in (
-          'AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT'
+          'AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT',
+          'SYSTEM_HEALTH_QUEUE', 'SYSTEM_HEALTH_GENERATION', 'SYSTEM_HEALTH_REPORTS',
+          'ANALYZE_PLUGIN_LOGS'
         )
         and attempt_count < max_attempts
         and (status = 'PENDING' or updated_at < now() - interval '1 minute')
-      order by created_at asc
+      order by case when type like 'SYSTEM_HEALTH_%' then 0 else 1 end,
+        created_at asc
       for update skip locked limit 1
     `;
     const job = rows[0];
@@ -730,10 +815,153 @@ function generationErrorCode(error: unknown) {
     : "MODEL_NOT_CONFIGURED";
 }
 
+async function runSystemHealthJob(job: Job) {
+  if (job.type === "SYSTEM_HEALTH_QUEUE") {
+    return { ok: true, component: "queue" };
+  }
+  if (job.type === "SYSTEM_HEALTH_GENERATION") {
+    const { model } = await selectedTeamSettingsFor(job);
+    await generateStructured({
+      name: "partner_report_system_health",
+      schema: modelHealthSchema,
+      instructions: 'Return {"ok":true}.',
+      input: { probe: "content_generation" },
+      model,
+      timeoutMs: 25_000,
+      maxOutputTokens: 64,
+    });
+    return { ok: true, component: "generation", model };
+  }
+  if (job.type === "SYSTEM_HEALTH_REPORTS") {
+    const generated = buildNoActivityTeamReport(
+      [
+        {
+          partnerId: "00000000-0000-4000-8000-000000000001",
+          partnerName: "测试成员",
+          snapshotId: "00000000-0000-4000-8000-000000000002",
+        },
+      ],
+      "health-check",
+    );
+    teamReportGenerationResultSchema.parse(generated);
+    assertTeamReportSemantics(generated);
+    assertChineseTeamReport(generated);
+    return { ok: true, component: "reports" };
+  }
+  throw new Error(`UNSUPPORTED_SYSTEM_HEALTH_JOB:${job.type}`);
+}
+
+async function runPluginLogAnalysisJob(job: Job) {
+  if (!job.plugin_instance_id) throw new Error("PLUGIN_INSTANCE_MISSING");
+  const invocationId =
+    typeof job.input_payload.invocationId === "string"
+      ? job.input_payload.invocationId
+      : null;
+  const runId =
+    typeof job.input_payload.runId === "string"
+      ? job.input_payload.runId
+      : null;
+  if (!invocationId && !runId) throw new Error("PLUGIN_EXECUTION_ID_MISSING");
+  const events = await sql<any[]>`
+    select sequence, command, event_type, level, stage, event_code, message,
+      stack, retryable, attempt, duration_ms, request_id, details, occurred_at
+    from plugin_log_events
+    where tenant_id = ${job.tenant_id}
+      and plugin_instance_id = ${job.plugin_instance_id}
+      and (
+        (${invocationId}::uuid is not null and invocation_id = ${invocationId})
+        or (${invocationId}::uuid is null and invocation_id is null and run_id = ${runId})
+      )
+    order by occurred_at asc, sequence asc nulls last
+    limit 200
+  `;
+  if (events.length === 0) throw new Error("PLUGIN_EXECUTION_LOGS_MISSING");
+  const { model } = await selectedTeamSettingsFor(job);
+  const generated = await generateStructured<Record<string, unknown>>({
+    name: "partner_report_plugin_log_analysis",
+    schema: pluginLogAnalysisModelSchema,
+    instructions:
+      '你是 Partner Report 插件故障分析器。只根据提供的插件命令、结构化事件和输出摘要判断，不补充日志中没有的事实。插件链路依次包含：本地 Codex 会话读取、项目权限检查、模型结构化提取、结果校验、贡献上传和采集收尾。区分直接证据与推测；证据不足时降低 confidence 并明确说明。使用通俗、简短的中文，不暴露凭证、用户路径或会话内容。failedStep 写出具体失败环节，rootCause 解释最可能原因，evidence 优先返回由事件代码或计数组成的字符串数组，recommendedActions 返回中台管理员可执行的步骤数组。示例形状：{"summary":"会话读取阶段连续失败","failedStep":"读取本地 Codex 会话","rootCause":"日志表明会话历史格式无效","evidence":["CODEX_THREAD_HISTORY_INVALID: 6"],"recommendedActions":["让用户升级插件后重试"],"confidence":"high"}。',
+    input: {
+      command: job.input_payload.command,
+      executionId: job.input_payload.executionId,
+      events: events.map((event) => ({
+        sequence: event.sequence,
+        eventType: event.event_type,
+        level: event.level,
+        stage: event.stage,
+        eventCode: event.event_code,
+        message: event.message,
+        retryable: event.retryable,
+        attempt: event.attempt,
+        durationMs: event.duration_ms,
+        requestId: event.request_id,
+        details: event.details,
+        stack: event.stack ? String(event.stack).slice(0, 4000) : null,
+        occurredAt: event.occurred_at,
+      })),
+    },
+    model,
+    timeoutMs: 35_000,
+    maxOutputTokens: 900,
+  });
+  return normalizePluginLogAnalysis(
+    generated,
+    String(job.input_payload.command ?? "插件运行"),
+  );
+}
+
+function pluginLogAnalysisError(error: unknown) {
+  if (error instanceof z.ZodError)
+    return {
+      code: "MODEL_ANALYSIS_FORMAT_INVALID",
+      message: "模型返回的诊断格式不完整，请重新分析。",
+    };
+  if (error instanceof ModelRequestTimeoutError)
+    return { code: error.code, message: "模型分析超时，请稍后重试。" };
+  if (!modelGatewayConfigured())
+    return {
+      code: "MODEL_NOT_CONFIGURED",
+      message: "中台尚未配置可用的模型服务。",
+    };
+  return {
+    code: "PLUGIN_LOG_ANALYSIS_FAILED",
+    message: "模型分析暂时失败，请稍后重试。",
+  };
+}
+
+function systemHealthErrorCode(job: Job, error: unknown) {
+  if (job.type === "SYSTEM_HEALTH_QUEUE") return "QUEUE_WORKER_UNHEALTHY";
+  if (job.type === "SYSTEM_HEALTH_REPORTS") return "REPORT_PIPELINE_UNHEALTHY";
+  return generationErrorCode(error);
+}
+
 export async function processNextGenerationJob(onlyTenantId?: string) {
   const job = await leaseNextJob(onlyTenantId);
   if (!job) return { processed: false };
   try {
+    if (isSystemHealthJob(job.type)) {
+      const output = await runSystemHealthJob(job);
+      await sql`
+        update agent_jobs set status = 'COMPLETED',
+          output_payload = ${JSON.stringify(output)}::jsonb,
+          completed_at = now(), lease_until = null, error_code = null,
+          error_message = null, updated_at = now()
+        where id = ${job.id} and status = 'LEASED'
+      `;
+      return { processed: true, jobId: job.id, type: job.type };
+    }
+    if (job.type === "ANALYZE_PLUGIN_LOGS") {
+      const output = await runPluginLogAnalysisJob(job);
+      await sql`
+        update agent_jobs set status = 'COMPLETED',
+          output_payload = ${JSON.stringify(output)}::jsonb,
+          completed_at = now(), lease_until = null, error_code = null,
+          error_message = null, updated_at = now()
+        where id = ${job.id} and status = 'LEASED'
+      `;
+      return { processed: true, jobId: job.id, type: job.type };
+    }
     const { model, timezone } = await selectedTeamSettingsFor(job);
     const isAggregation = job.type === "AGGREGATE_WORK_ITEMS";
     const isTeamReport = [
@@ -787,10 +1015,18 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
     return { processed: true, jobId: job.id, type: job.type };
   } catch (error) {
     const terminal = job.attempt_count >= job.max_attempts;
+    const analysisError =
+      job.type === "ANALYZE_PLUGIN_LOGS" ? pluginLogAnalysisError(error) : null;
     await sql`
       update agent_jobs set status = ${terminal ? "FAILED" : "RETRY_WAIT"},
-        error_code = ${generationErrorCode(error)},
-        error_message = ${safeError(error)}, lease_until = null, updated_at = now()
+        error_code = ${
+          analysisError?.code ??
+          (isSystemHealthJob(job.type)
+            ? systemHealthErrorCode(job, error)
+            : generationErrorCode(error))
+        },
+        error_message = ${analysisError?.message ?? safeError(error)},
+        lease_until = null, updated_at = now()
       where id = ${job.id} and status = 'LEASED'
     `;
     return { processed: true, jobId: job.id, type: job.type, failed: true };

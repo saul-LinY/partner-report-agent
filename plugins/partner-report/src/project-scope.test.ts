@@ -398,6 +398,36 @@ describe("project scope privacy boundary", () => {
     ]);
   });
 
+  it("uses the frozen run window instead of the permission timestamp", () => {
+    const scopeKey = "4".repeat(64);
+    expect(
+      authorizedProjectThreads(
+        [{ id: "thread" }],
+        new Map([["thread", scopeKey]]),
+        [
+          {
+            scopeKey,
+            displayName: "project",
+            status: "allowed",
+            effectiveFrom: "2026-08-25T04:10:00.000Z",
+            firstSeenPeriodKey: "2026-W34",
+            firstSeenAt: "2026-08-25T04:00:00.000Z",
+            lastSeenAt: "2026-08-25T04:10:00.000Z",
+            sessionCount: 1,
+          },
+        ],
+        new Date("2026-08-25T04:11:00.000Z"),
+        "2026-08-23T16:00:00.000Z",
+      ),
+    ).toEqual([
+      {
+        id: "thread",
+        scopeKey,
+        collectionStartsAt: "2026-08-23T16:00:00.000Z",
+      },
+    ]);
+  });
+
   it("filters explicit temporary environments but not a directory name alone", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-filter-test-"));
     const temporary = resolve(root, "system-temp");
