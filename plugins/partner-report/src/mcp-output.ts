@@ -2,6 +2,45 @@ import { readFileSync } from "node:fs";
 
 export type CliOutput = Record<string, unknown>;
 
+const BEIJING_TIME_KEYS = new Set([
+  "collectionStartsAt",
+  "collectionEndsAt",
+  "scanStartsAt",
+  "scanEndsAt",
+  "collectionFloorAt",
+  "lastSuccessfulRunStartedAt",
+]);
+
+function formatBeijingTime(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}（北京时间）`;
+}
+
+export function withBeijingDisplayTimes(result: CliOutput) {
+  const displayed: CliOutput = {
+    ...result,
+    displayTimezone: "Asia/Shanghai",
+  };
+  for (const key of BEIJING_TIME_KEYS) {
+    const value = displayed[key];
+    if (typeof value === "string") displayed[key] = formatBeijingTime(value);
+  }
+  return displayed;
+}
+
 export function withoutInternalPaths(result: CliOutput) {
   const {
     inputPath: _input,

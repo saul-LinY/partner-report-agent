@@ -61,16 +61,17 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("`notProcessed`");
     expect(skill).toContain('decision: "ignore"');
     expect(skill).toContain("项目目录只是上下文");
-    expect(skill).toContain("第一次运行以插件绑定成功时间前 24 小时为采集下界");
+    expect(skill).toContain("第一次运行固定从当前周的周一 00:00 开始");
     expect(skill).toContain("匿名回合断点");
     expect(skill).toContain("同一旧 Session 后续新增的完整问答");
     expect(skill).toContain("CREDENTIAL_MIGRATION_REQUIRED");
     expect(skill).toContain(
       "正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain",
     );
-    expect(skill).toContain("Codex Scheduled Task");
-    expect(skill).toContain("由插件自身幂等创建");
-    expect(skill).toContain("不得要求用户进入 Scheduled 面板手动配置");
+    expect(skill).toContain("Partner Report daily collection");
+    expect(skill).toContain("Codex 官方自动化工具");
+    expect(skill).toContain("打开该任务做可见性确认");
+    expect(skill).toContain("不得让用户手动配置");
     expect(skill).toContain("`scheduledTaskInstallation`");
     expect(skill).toContain("必须使用简体中文");
     expect(skill).toContain("通俗、精简、直接");
@@ -83,6 +84,7 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("审批 30 分钟");
     expect(skill).toContain("不得回采授权前内容");
     expect(skill).toContain("每天北京时间 16:00");
+    expect(skill).toContain("不得向用户展示带 `Z` 的 UTC 时间");
     expect(skill).toContain("`gpt-5.6-sol`");
     expect(skill).toContain("作为下一周期普通工作");
     expect(skill).toContain("项目工作卡片整体接受后");

@@ -43,9 +43,11 @@ import {
   acquireCollectionLease,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
+  beijingWeekStartsAt,
   initialProjectDiscoveryNeedsResume,
   initialProjectScopeStartAt,
   initializeCollectionFloor,
+  markWeekBackfillCompleted,
   loadCollectionState,
   processedTurnKeys,
   recordAcceptedSession,
@@ -1566,6 +1568,7 @@ async function finishRun(
   if (checkpointAdvanced) {
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
+    markWeekBackfillCompleted(state, beijingWeekStartsAt(manifest.createdAt));
     saveCollectionState(state);
   }
   const summary = {

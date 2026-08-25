@@ -5,7 +5,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 # Partner Report 同步
 
-本 Skill 只使用插件自带的 `partner-report` MCP 工具。不得定位或运行插件 CLI，不得用 shell 读写 Job 文件，也不得修改 Codex 的全局权限模式。MCP 在独立进程中读取 Codex Session、维护稳定状态、校验模型输出并上传结果。
+除绑定时通过 Codex 官方自动化工具核验定时任务外，本 Skill 只使用插件自带的 `partner-report` MCP 工具。不得定位或运行插件 CLI，不得用 shell 读写 Job 文件，也不得修改 Codex 的全局权限模式。MCP 在独立进程中读取 Codex Session、维护稳定状态、校验模型输出并上传结果。
 
 不得直接读取 rollout 或 transcript 文件。不得启动其他模型或执行 `codex exec`；当前聊天或定时任务选择的模型直接完成筛选和摘要。
 
@@ -27,9 +27,9 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 普通聊天调用和每次定时采集都不得检查、比较或修改现有定时任务。用户在 Scheduled 面板中的修改始终保留，与插件内置默认值不同不构成错误。
 
-`connect` 在绑定和连通性验证成功后由插件自身幂等创建精确名称 `Partner Report daily collection` 的 Codex Scheduled Task。任务不存在时自动创建；已有同名任务时完整保留用户配置，不得重复创建或覆盖。连接恢复也会重试缺失任务。检查 `scheduledTaskInstallation`：`created` 和 `existing` 都表示成功；`failed` 表示绑定仍有效，但必须明确报告自动创建失败和安全错误码。
+`connect` 在绑定和连通性验证成功后由插件写入精确名称 `Partner Report daily collection` 的幂等任务配置。随后必须立即使用 Codex 官方自动化工具按 `scheduledTaskInstallation.taskId` 打开该任务做可见性确认；成功打开后才可以向用户报告定时任务已创建。已有同名任务完整保留用户配置，不得重复创建或覆盖。连接恢复也会重试缺失任务。`scheduledTaskInstallation` 为 `failed` 时表示绑定仍有效，但必须明确报告自动创建失败和安全错误码。
 
-首次连接不得再调用 Codex 自动化工具创建任务，也不得要求用户进入 Scheduled 面板手动配置。只有以下情况才调用 `scheduled_task_config`：
+如果官方自动化工具无法按该任务 ID 打开任务，调用 `scheduled_task_config` 取得默认值，再通过官方自动化工具创建一次无项目的本地 cron 任务；不得让用户手动配置，也不得创建同名重复任务。绑定时创建和核验均为无感操作，不向用户请求额外确认。除此之外，只有以下情况才调用 `scheduled_task_config`：
 
 1. 用户明确要求修改该任务 Prompt 时：只更新 `prompt`。用户提供新 Prompt 时使用原文；明确要求“恢复默认 Prompt”时才用工具返回的默认 Prompt。
 2. 用户明确要求“重置整个定时任务”时：在原任务上恢复工具返回的全部默认字段；不存在时重新创建。不得先删除，不得创建重复任务，任务身份保持不变。
@@ -76,7 +76,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 本地持久状态同时服务自动和手动运行：
 
-- 第一次运行以插件绑定成功时间前 24 小时为采集下界。项目授权通过后，可以处理这个首次窗口内属于已允许项目的完整问答；这项回看仅适用于首次绑定，日后新增项目仍不得回采授权前内容。
+- 第一次运行固定从当前周的周一 00:00 开始，周起点和所有对用户展示的时间统一使用 `Asia/Shanghai`（北京时间）。项目授权通过后，可以处理该窗口内属于已允许项目的完整问答；日后新增项目仍不得回采授权前内容。
 - 后续运行以上次完整成功运行的开始时间为增量游标，并保留 24 小时元数据重叠窗口；模型只接收尚未处理的新增完整问答。
 - 已接收和已忽略 Session 的匿名 key、稳定 hash、匿名回合断点与处理时间保存在 `collection-state.json`；插件更新或重装不得删除。
 - 项目权限版本、匿名键盐值和本机根目录映射保存在 `project-scope.json`；正常更新不得删除。
@@ -121,7 +121,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 审查不通过时按 `nextTool` 继续；只有 `completed` 且不再包含 `nextTool` 才结束。队列完整处理且不存在 defer、skip、读取失败或真实提取失败时，`checkpointAdvanced` 才能为 `true`；否则必须为 `false` 并保留 `PARTIAL_COLLECTION_RETRY_REQUIRED`。
 
-最终只返回中文的周期 key、采集起止时间、`checkpointAdvanced`、安全 warning，以及分开的 `uploaded`、`ignored`、`skipped`、`failedExtract`、`deferred`、`notProcessed` 聚合计数。不得输出 Session 文本、本地路径、指纹或标识。
+最终只返回中文的周期 key、北京时间采集起止时间、`checkpointAdvanced`、安全 warning，以及分开的 `uploaded`、`ignored`、`skipped`、`failedExtract`、`deferred`、`notProcessed` 聚合计数。不得向用户展示带 `Z` 的 UTC 时间，不得输出 Session 文本、本地路径、指纹或标识。
 
 Job 输入、结果和安全失败审计在终态审查完成前由 MCP 以私有文件权限保留，完成后统一清理。不得自行清理 Run。
 

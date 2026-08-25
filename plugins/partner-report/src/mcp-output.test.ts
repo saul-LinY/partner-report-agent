@@ -2,9 +2,29 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { exposeJobInput, withNextTool } from "./mcp-output.js";
+import {
+  exposeJobInput,
+  withBeijingDisplayTimes,
+  withNextTool,
+} from "./mcp-output.js";
 
 describe("MCP output adapter", () => {
+  it("presents collection timestamps in Beijing time without changing job input", () => {
+    const jobInput = {
+      period: { startsAt: "2026-08-24T16:00:00.000Z" },
+    };
+    expect(
+      withBeijingDisplayTimes({
+        collectionStartsAt: "2026-08-24T16:00:00.000Z",
+        jobInput,
+      }),
+    ).toEqual({
+      collectionStartsAt: "2026-08-25 00:00:00（北京时间）",
+      displayTimezone: "Asia/Shanghai",
+      jobInput,
+    });
+  });
+
   it("turns CLI continuation strings into structured MCP calls", () => {
     expect(
       withNextTool({

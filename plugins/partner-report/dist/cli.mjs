@@ -4736,7 +4736,7 @@ var SCHEDULED_COLLECTION_PROMPT = [
   "\u672C\u4EFB\u52A1\u5FC5\u987B\u5B8C\u6574\u6267\u884C\u91C7\u96C6\u548C\u7EC8\u6001\u5BA1\u67E5\u4E24\u4E2A\u9636\u6BB5\uFF0C\u4EFB\u4F55\u9636\u6BB5\u90FD\u4E0D\u5F97\u63D0\u524D\u6536\u5C3E\u3002",
   "\u4E25\u683C\u6309\u7167 Skill \u8C03\u7528 partner-report MCP \u5DE5\u5177\uFF0C\u4E0D\u5F97\u8FD0\u884C CLI \u6216 shell\uFF1B\u6BCF\u6B21\u53EA\u8BFB\u53D6\u548C\u5904\u7406\u4E00\u4E2A Session\u3002",
   "\u63A5\u8FD1\u8FD0\u884C\u65F6\u95F4\u4E0A\u9650\u65F6\u505C\u6B62\u9886\u53D6\u65B0 Job\uFF1B\u5F53\u524D Job \u65E0\u6CD5\u5B8C\u6210\u65F6\u4F7F\u7528 collect_defer\uFF0C\u4FDD\u7559\u961F\u5217\u5230\u4E0B\u4E00\u6B21\u8FD0\u884C\uFF0C\u7EDD\u4E0D\u80FD\u7528 EXTRACT_FAILED \u6E05\u7A7A\u961F\u5217\u3002",
-  "\u9996\u6B21\u8FD0\u884C\u4EE5\u63D2\u4EF6\u7ED1\u5B9A\u6210\u529F\u65F6\u95F4\u524D 24 \u5C0F\u65F6\u4E3A\u91C7\u96C6\u4E0B\u754C\uFF1B\u9879\u76EE\u6388\u6743\u901A\u8FC7\u540E\uFF0C\u53EF\u5904\u7406\u8BE5\u9996\u6B21\u7A97\u53E3\u5185\u7684\u5B8C\u6574\u95EE\u7B54\u3002\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u533F\u540D\u56DE\u5408\u65AD\u70B9\u3001\u91CD\u53E0\u626B\u63CF\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\uFF0C\u540C\u4E00\u65E7 Session \u53EA\u5904\u7406\u65B0\u589E\u7684\u5B8C\u6574\u95EE\u7B54\u3002",
+  "\u9996\u6B21\u8FD0\u884C\u56FA\u5B9A\u4ECE\u5F53\u524D\u5468\u7684\u5468\u4E00 00:00\uFF08\u5317\u4EAC\u65F6\u95F4\uFF09\u5F00\u59CB\u91C7\u96C6\uFF1B\u9879\u76EE\u6388\u6743\u901A\u8FC7\u540E\uFF0C\u53EF\u5904\u7406\u8BE5\u7A97\u53E3\u5185\u7684\u5B8C\u6574\u95EE\u7B54\u3002\u540E\u7EED\u7531\u63D2\u4EF6\u672C\u5730\u6210\u529F\u6E38\u6807\u3001\u533F\u540D\u56DE\u5408\u65AD\u70B9\u3001\u91CD\u53E0\u626B\u63CF\u7A97\u53E3\u548C\u5185\u5BB9\u54C8\u5E0C\u81EA\u52A8\u786E\u5B9A\u589E\u91CF\u8303\u56F4\uFF0C\u540C\u4E00\u65E7 Session \u53EA\u5904\u7406\u65B0\u589E\u7684\u5B8C\u6574\u95EE\u7B54\u3002",
   "\u63D2\u4EF6\u7ED1\u5B9A\u547D\u4EE4\u8D1F\u8D23\u9879\u76EE\u53D1\u73B0\uFF1A\u7ED1\u5B9A\u6210\u529F\u540E\u901A\u8FC7 thread/list \u53EA\u8BFB\u53D6 Codex \u72B6\u6001\u6570\u636E\u5E93\u4E2D\u7684\u5143\u6570\u636E\uFF0C\u6309\u6700\u8FD1 7 \u5929\u6709\u5B9E\u9645\u6D3B\u52A8\u4E14\u672A\u5F52\u6863\u7684 Session \u5DE5\u4F5C\u76EE\u5F55\u5F52\u5E76\u9879\u76EE\u5E76\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\uFF1B\u6BCF\u4E2A\u771F\u5B9E\u9879\u76EE\u81F3\u5C11 1 \u4E2A Session \u5373\u53EF\u767B\u8BB0\uFF1B\u7ED1\u5B9A\u547D\u4EE4\u8FDB\u5165\u5BA1\u6279\u7B49\u5F85\u540E\u7ED3\u675F\uFF0C\u4E0D\u8BFB\u53D6 thread/read\u3002",
   "\u63D2\u4EF6\u6FC0\u6D3B\u547D\u4EE4\u7684\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u7F3A\u5931\u3001\u635F\u574F\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u65F6\uFF0C\u5148\u4ECE\u4E2D\u53F0\u540C\u6B65\u5DF2\u5BA1\u6279\u6743\u9650\uFF1B\u4E2D\u53F0\u4ECD\u6709 pending \u9879\u76EE\u65F6\u53EA\u91CD\u65B0\u53D1\u9001\u9879\u76EE\u8303\u56F4\u5BA1\u6838\u63D0\u9192\u5E76\u7ED3\u675F\uFF0C\u672C\u6B21\u4E0D\u5F97\u8BFB\u53D6\u6216\u4E0A\u4F20 Session\u3002",
   "\u9996\u6B21\u6388\u6743\u5B8C\u6210\u540E\u7684\u65E5\u5E38\u8FD0\u884C\u5FC5\u987B\u5148\u6309\u73B0\u6709\u6743\u9650\u5B8C\u6210\u5168\u90E8 Session \u63D0\u53D6\u548C\u4E0A\u4F20\uFF1B\u5DF2\u6709\u6388\u6743\u961F\u5217\u6E05\u7A7A\u540E\u624D\u91CD\u65B0\u8BFB\u53D6 thread/list \u5143\u6570\u636E\u626B\u63CF\u65B0\u9879\u76EE\u3002\u53D1\u73B0\u65B0\u9879\u76EE\u65F6\u53D1\u9001\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u5E76\u7B49\u5F85\u7528\u6237\u5BA1\u6279 30 \u5206\u949F\uFF1B\u53CA\u65F6\u5141\u8BB8\u5219\u53EA\u628A\u6388\u6743\u751F\u6548\u540E\u65B0\u589E\u7684\u5B8C\u6574\u95EE\u7B54\u8FFD\u52A0\u5230\u5F53\u524D\u961F\u5217\uFF0C\u62D2\u7EDD\u6216\u8D85\u65F6\u5219\u6B63\u5E38\u7ED3\u675F\u4E14\u4FDD\u6301\u4E2D\u53F0\u72B6\u6001\uFF0C\u540E\u7EED\u8FD0\u884C\u4E5F\u4E0D\u5F97\u56DE\u91C7\u6388\u6743\u524D\u5185\u5BB9\u3002",
@@ -4851,8 +4851,8 @@ import {
 import { resolve as resolve2 } from "node:path";
 var INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 var INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1e3;
-var INITIAL_COLLECTION_LOOKBACK_MS = 24 * 60 * 60 * 1e3;
 var COLLECTION_LEASE_MS = 5 * 60 * 1e3;
+var BEIJING_OFFSET_MS = 8 * 60 * 60 * 1e3;
 function initialProjectDiscoveryNeedsResume(hasPendingConnectivityChallenge, remoteScopeInitialized) {
   return hasPendingConnectivityChallenge || !remoteScopeInitialized;
 }
@@ -4864,10 +4864,11 @@ function leasePath(directory) {
 }
 function emptyState(pluginInstanceId) {
   return {
-    schemaVersion: "2.0",
+    schemaVersion: "3.0",
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
+    weekBackfillCompletedFor: null,
     acceptedSessions: {},
     ignoredSessions: {},
     processedTurns: {}
@@ -4886,7 +4887,7 @@ function validateState(value, pluginInstanceId) {
     return emptyState(pluginInstanceId);
   const acceptedSessions = state.acceptedSessions ?? {};
   const processedTurns = state.processedTurns ?? {};
-  if (!["1.0", "2.0"].includes(state.schemaVersion ?? "") || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || !acceptedSessions || typeof acceptedSessions !== "object" || !state.ignoredSessions || typeof state.ignoredSessions !== "object" || !processedTurns || typeof processedTurns !== "object") {
+  if (!["1.0", "2.0", "3.0"].includes(state.schemaVersion ?? "") || state.collectionFloorAt !== null && !validIso(state.collectionFloorAt) || state.lastSuccessfulRunStartedAt !== null && !validIso(state.lastSuccessfulRunStartedAt) || state.weekBackfillCompletedFor !== void 0 && state.weekBackfillCompletedFor !== null && !validIso(state.weekBackfillCompletedFor) || !acceptedSessions || typeof acceptedSessions !== "object" || !state.ignoredSessions || typeof state.ignoredSessions !== "object" || !processedTurns || typeof processedTurns !== "object") {
     throw Object.assign(new Error("\u672C\u5730\u91C7\u96C6\u72B6\u6001\u683C\u5F0F\u65E0\u6548\u3002"), {
       code: "COLLECTION_STATE_INVALID"
     });
@@ -4914,7 +4915,8 @@ function validateState(value, pluginInstanceId) {
   }
   return {
     ...state,
-    schemaVersion: "2.0",
+    schemaVersion: "3.0",
+    weekBackfillCompletedFor: state.weekBackfillCompletedFor ?? null,
     acceptedSessions,
     processedTurns
   };
@@ -4950,22 +4952,39 @@ function saveCollectionState(state, directory = dataDirectory()) {
 }
 function initializeCollectionFloor(state, connectedAt) {
   if (state.collectionFloorAt) return state.collectionFloorAt;
-  const connectedAtMs = new Date(connectedAt).getTime();
-  if (!Number.isFinite(connectedAtMs))
-    throw new Error("\u63D2\u4EF6\u7ED1\u5B9A\u65F6\u95F4\u65E0\u6548\uFF0C\u65E0\u6CD5\u521D\u59CB\u5316\u91C7\u96C6\u4E0B\u754C\u3002");
-  state.collectionFloorAt = new Date(
-    connectedAtMs - INITIAL_COLLECTION_LOOKBACK_MS
-  ).toISOString();
+  state.collectionFloorAt = beijingWeekStartsAt(connectedAt);
   return state.collectionFloorAt;
+}
+function beijingWeekStartsAt(value) {
+  const instant = new Date(value).getTime();
+  if (!Number.isFinite(instant))
+    throw new Error("\u65F6\u95F4\u65E0\u6548\uFF0C\u65E0\u6CD5\u8BA1\u7B97\u5317\u4EAC\u65F6\u95F4\u5468\u8D77\u70B9\u3002");
+  const beijing = new Date(instant + BEIJING_OFFSET_MS);
+  const daysSinceMonday = (beijing.getUTCDay() + 6) % 7;
+  return new Date(
+    Date.UTC(
+      beijing.getUTCFullYear(),
+      beijing.getUTCMonth(),
+      beijing.getUTCDate() - daysSinceMonday
+    ) - BEIJING_OFFSET_MS
+  ).toISOString();
 }
 function collectionWindow(state, period, runStartedAt) {
   const runStart = new Date(runStartedAt).getTime();
+  const weekStartsAt = beijingWeekStartsAt(runStartedAt);
+  const weekStart = new Date(weekStartsAt).getTime();
   const floor = new Date(state.collectionFloorAt ?? runStartedAt).getTime();
-  const extractionStart = state.lastSuccessfulRunStartedAt ? Math.max(floor, new Date(state.lastSuccessfulRunStartedAt).getTime()) : floor;
-  const scanStart = state.lastSuccessfulRunStartedAt ? Math.max(
+  const weekBackfillRequired = state.weekBackfillCompletedFor !== weekStartsAt;
+  const extractionStart = !weekBackfillRequired && state.lastSuccessfulRunStartedAt ? Math.max(
+    weekStart,
+    floor,
+    new Date(state.lastSuccessfulRunStartedAt).getTime()
+  ) : weekStart;
+  const scanStart = !weekBackfillRequired && state.lastSuccessfulRunStartedAt ? Math.max(
+    weekStart,
     floor,
     new Date(state.lastSuccessfulRunStartedAt).getTime() - INCREMENTAL_OVERLAP_MS
-  ) : floor;
+  ) : weekStart;
   return {
     extractionStartsAt: new Date(extractionStart).toISOString(),
     extractionEndsAt: new Date(
@@ -4974,6 +4993,11 @@ function collectionWindow(state, period, runStartedAt) {
     scanStartsAt: new Date(scanStart).toISOString(),
     scanEndsAt: new Date(runStart).toISOString()
   };
+}
+function markWeekBackfillCompleted(state, weekStartsAt) {
+  if (!validIso(weekStartsAt))
+    throw new Error("\u5317\u4EAC\u65F6\u95F4\u5468\u8D77\u70B9\u65E0\u6548\uFF0C\u65E0\u6CD5\u8BB0\u5F55\u56DE\u91C7\u72B6\u6001\u3002");
+  state.weekBackfillCompletedFor = weekStartsAt;
 }
 function processedTurnKeys(state, sessionKey) {
   return new Set(Object.keys(state.processedTurns[sessionKey] ?? {}));
@@ -5284,6 +5308,9 @@ function paginatedThreadReadError(cause) {
     cause
   );
 }
+function validFullHistoryThread(value) {
+  return isRecord(value) && Array.isArray(value.turns) && value.turns.length > 0;
+}
 function createTimeoutError(method, timeoutMs) {
   const error = new Error(
     `${method} timed out after ${timeoutMs}ms`
@@ -5488,6 +5515,17 @@ var CodexAppServer = class {
           CODEX_THREAD_READ_TIMEOUT_MS
         );
       } catch (error) {
+        if (error instanceof Error && error.message.includes("invalid paginated history lineage")) {
+          try {
+            const fallback = await this.request(
+              "thread/read",
+              { threadId, includeTurns: true },
+              CODEX_THREAD_READ_TIMEOUT_MS
+            );
+            if (validFullHistoryThread(fallback.thread)) return fallback.thread;
+          } catch {
+          }
+        }
         throw paginatedThreadReadError(error);
       }
       if (!Array.isArray(result.data)) {
@@ -7852,6 +7890,7 @@ async function finishRun(runPath, manifest, config) {
   if (checkpointAdvanced) {
     const state = loadCollectionState(manifest.pluginInstanceId);
     state.lastSuccessfulRunStartedAt = manifest.createdAt;
+    markWeekBackfillCompleted(state, beijingWeekStartsAt(manifest.createdAt));
     saveCollectionState(state);
   }
   const summary = {

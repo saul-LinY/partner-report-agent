@@ -243,11 +243,53 @@ describe("CodexAppServer.readThread", () => {
         new Error(
           "invalid paginated history lineage for private-id: cycle detected",
         ),
-      );
+      )
+      .mockResolvedValueOnce({
+        thread: {
+          id: "paginated-session",
+          historyMode: "paginated",
+          turns: [],
+        },
+      });
 
     await expect(server.readThread("paginated-session")).rejects.toMatchObject({
       code: "CODEX_THREAD_HISTORY_INVALID",
       message: "Codex Session 分页历史无效。",
     });
+  });
+
+  it("recovers invalid paginated lineage through a complete full-history read", async () => {
+    const server = new CodexAppServer("codex");
+    const request = vi
+      .spyOn(server, "request")
+      .mockResolvedValueOnce({
+        thread: {
+          id: "paginated-session",
+          historyMode: "paginated",
+          turns: [],
+        },
+      })
+      .mockRejectedValueOnce(
+        new Error("invalid paginated history lineage for private-id"),
+      )
+      .mockResolvedValueOnce({
+        thread: {
+          id: "paginated-session",
+          historyMode: "paginated",
+          turns: [{ id: "turn-1" }],
+        },
+      });
+
+    await expect(server.readThread("paginated-session")).resolves.toMatchObject(
+      {
+        turns: [{ id: "turn-1" }],
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      "thread/read",
+      { threadId: "paginated-session", includeTurns: true },
+      CODEX_THREAD_READ_TIMEOUT_MS,
+    );
   });
 });

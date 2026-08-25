@@ -47,9 +47,10 @@ describe("collection state", () => {
     expect(initialProjectDiscoveryNeedsResume(false, true)).toBe(false);
   });
 
-  it("starts the first collection 24 hours before binding", () => {
+  it("starts the first collection at Monday 00:00 Beijing time", () => {
     const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
     initializeCollectionFloor(state, "2026-08-05T02:00:00.000Z");
+    expect(state.collectionFloorAt).toBe("2026-08-02T16:00:00.000Z");
     expect(
       collectionWindow(
         state,
@@ -60,8 +61,8 @@ describe("collection state", () => {
         "2026-08-05T02:00:00.000Z",
       ),
     ).toMatchObject({
-      extractionStartsAt: "2026-08-04T02:00:00.000Z",
-      scanStartsAt: "2026-08-04T02:00:00.000Z",
+      extractionStartsAt: "2026-08-02T16:00:00.000Z",
+      scanStartsAt: "2026-08-02T16:00:00.000Z",
     });
   });
 
@@ -78,6 +79,7 @@ describe("collection state", () => {
     const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
     state.collectionFloorAt = "2026-08-02T02:00:00.000Z";
     state.lastSuccessfulRunStartedAt = "2026-08-04T02:00:00.000Z";
+    state.weekBackfillCompletedFor = "2026-08-02T16:00:00.000Z";
     expect(
       collectionWindow(
         state,
@@ -104,8 +106,28 @@ describe("collection state", () => {
         "2026-08-08T08:00:00.000Z",
       ),
     ).toMatchObject({
-      extractionStartsAt: "2026-08-07T08:00:00.000Z",
-      scanStartsAt: "2026-08-06T08:00:00.000Z",
+      extractionStartsAt: "2026-08-02T16:00:00.000Z",
+      scanStartsAt: "2026-08-02T16:00:00.000Z",
+    });
+  });
+
+  it("backfills a period once after upgrading an existing successful state", () => {
+    const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
+    state.collectionFloorAt = "2026-08-04T02:00:00.000Z";
+    state.lastSuccessfulRunStartedAt = "2026-08-05T02:00:00.000Z";
+
+    expect(
+      collectionWindow(
+        state,
+        {
+          starts_at: "2026-08-03T16:00:00.000Z",
+          ends_at: "2026-08-10T16:00:00.000Z",
+        },
+        "2026-08-06T02:00:00.000Z",
+      ),
+    ).toMatchObject({
+      extractionStartsAt: "2026-08-02T16:00:00.000Z",
+      scanStartsAt: "2026-08-02T16:00:00.000Z",
     });
   });
 

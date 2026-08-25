@@ -12,8 +12,8 @@ import { dataDirectory } from "./config.js";
 
 export const INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 export const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1_000;
-export const INITIAL_COLLECTION_LOOKBACK_MS = 24 * 60 * 60 * 1_000;
 export const COLLECTION_LEASE_MS = 5 * 60 * 1_000;
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1_000;
 
 export function initialProjectDiscoveryNeedsResume(
   hasPendingConnectivityChallenge: boolean,
@@ -33,10 +33,11 @@ type ProcessedTurnState = {
 };
 
 export type CollectionState = {
-  schemaVersion: "2.0";
+  schemaVersion: "3.0";
   pluginInstanceId: string;
   collectionFloorAt: string | null;
   lastSuccessfulRunStartedAt: string | null;
+  weekBackfillCompletedFor: string | null;
   acceptedSessions: Record<string, ProcessedSessionState>;
   ignoredSessions: Record<string, ProcessedSessionState>;
   processedTurns: Record<string, Record<string, ProcessedTurnState>>;
@@ -60,10 +61,11 @@ function leasePath(directory: string) {
 
 function emptyState(pluginInstanceId: string): CollectionState {
   return {
-    schemaVersion: "2.0",
+    schemaVersion: "3.0",
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
+    weekBackfillCompletedFor: null,
     acceptedSessions: {},
     ignoredSessions: {},
     processedTurns: {},
@@ -90,10 +92,13 @@ function validateState(
   const acceptedSessions = state.acceptedSessions ?? {};
   const processedTurns = state.processedTurns ?? {};
   if (
-    !["1.0", "2.0"].includes(state.schemaVersion ?? "") ||
+    !["1.0", "2.0", "3.0"].includes(state.schemaVersion ?? "") ||
     (state.collectionFloorAt !== null && !validIso(state.collectionFloorAt)) ||
     (state.lastSuccessfulRunStartedAt !== null &&
       !validIso(state.lastSuccessfulRunStartedAt)) ||
+    (state.weekBackfillCompletedFor !== undefined &&
+      state.weekBackfillCompletedFor !== null &&
+      !validIso(state.weekBackfillCompletedFor)) ||
     !acceptedSessions ||
     typeof acceptedSessions !== "object" ||
     !state.ignoredSessions ||
@@ -144,7 +149,8 @@ function validateState(
   }
   return {
     ...state,
-    schemaVersion: "2.0",
+    schemaVersion: "3.0",
+    weekBackfillCompletedFor: state.weekBackfillCompletedFor ?? null,
     acceptedSessions,
     processedTurns,
   } as CollectionState;
@@ -191,13 +197,23 @@ export function initializeCollectionFloor(
   connectedAt: string,
 ) {
   if (state.collectionFloorAt) return state.collectionFloorAt;
-  const connectedAtMs = new Date(connectedAt).getTime();
-  if (!Number.isFinite(connectedAtMs))
-    throw new Error("插件绑定时间无效，无法初始化采集下界。");
-  state.collectionFloorAt = new Date(
-    connectedAtMs - INITIAL_COLLECTION_LOOKBACK_MS,
-  ).toISOString();
+  state.collectionFloorAt = beijingWeekStartsAt(connectedAt);
   return state.collectionFloorAt;
+}
+
+export function beijingWeekStartsAt(value: string) {
+  const instant = new Date(value).getTime();
+  if (!Number.isFinite(instant))
+    throw new Error("时间无效，无法计算北京时间周起点。");
+  const beijing = new Date(instant + BEIJING_OFFSET_MS);
+  const daysSinceMonday = (beijing.getUTCDay() + 6) % 7;
+  return new Date(
+    Date.UTC(
+      beijing.getUTCFullYear(),
+      beijing.getUTCMonth(),
+      beijing.getUTCDate() - daysSinceMonday,
+    ) - BEIJING_OFFSET_MS,
+  ).toISOString();
 }
 
 export function collectionWindow(
@@ -206,17 +222,27 @@ export function collectionWindow(
   runStartedAt: string,
 ) {
   const runStart = new Date(runStartedAt).getTime();
+  const weekStartsAt = beijingWeekStartsAt(runStartedAt);
+  const weekStart = new Date(weekStartsAt).getTime();
   const floor = new Date(state.collectionFloorAt ?? runStartedAt).getTime();
-  const extractionStart = state.lastSuccessfulRunStartedAt
-    ? Math.max(floor, new Date(state.lastSuccessfulRunStartedAt).getTime())
-    : floor;
-  const scanStart = state.lastSuccessfulRunStartedAt
-    ? Math.max(
-        floor,
-        new Date(state.lastSuccessfulRunStartedAt).getTime() -
-          INCREMENTAL_OVERLAP_MS,
-      )
-    : floor;
+  const weekBackfillRequired = state.weekBackfillCompletedFor !== weekStartsAt;
+  const extractionStart =
+    !weekBackfillRequired && state.lastSuccessfulRunStartedAt
+      ? Math.max(
+          weekStart,
+          floor,
+          new Date(state.lastSuccessfulRunStartedAt).getTime(),
+        )
+      : weekStart;
+  const scanStart =
+    !weekBackfillRequired && state.lastSuccessfulRunStartedAt
+      ? Math.max(
+          weekStart,
+          floor,
+          new Date(state.lastSuccessfulRunStartedAt).getTime() -
+            INCREMENTAL_OVERLAP_MS,
+        )
+      : weekStart;
   return {
     extractionStartsAt: new Date(extractionStart).toISOString(),
     extractionEndsAt: new Date(
@@ -225,6 +251,15 @@ export function collectionWindow(
     scanStartsAt: new Date(scanStart).toISOString(),
     scanEndsAt: new Date(runStart).toISOString(),
   };
+}
+
+export function markWeekBackfillCompleted(
+  state: CollectionState,
+  weekStartsAt: string,
+) {
+  if (!validIso(weekStartsAt))
+    throw new Error("北京时间周起点无效，无法记录回采状态。");
+  state.weekBackfillCompletedFor = weekStartsAt;
 }
 
 export function processedTurnKeys(state: CollectionState, sessionKey: string) {

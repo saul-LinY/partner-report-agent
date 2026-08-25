@@ -241,6 +241,9 @@ function paginatedThreadReadError(cause) {
     cause
   );
 }
+function validFullHistoryThread(value) {
+  return isRecord(value) && Array.isArray(value.turns) && value.turns.length > 0;
+}
 function createTimeoutError(method, timeoutMs) {
   const error = new Error(
     `${method} timed out after ${timeoutMs}ms`
@@ -445,6 +448,17 @@ var CodexAppServer = class {
           CODEX_THREAD_READ_TIMEOUT_MS
         );
       } catch (error) {
+        if (error instanceof Error && error.message.includes("invalid paginated history lineage")) {
+          try {
+            const fallback = await this.request(
+              "thread/read",
+              { threadId, includeTurns: true },
+              CODEX_THREAD_READ_TIMEOUT_MS
+            );
+            if (validFullHistoryThread(fallback.thread)) return fallback.thread;
+          } catch {
+          }
+        }
         throw paginatedThreadReadError(error);
       }
       if (!Array.isArray(result.data)) {

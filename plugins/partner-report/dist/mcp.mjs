@@ -25958,6 +25958,41 @@ var PLUGIN_VERSION = "1.1.0";
 
 // src/mcp-output.ts
 import { readFileSync } from "node:fs";
+var BEIJING_TIME_KEYS = /* @__PURE__ */ new Set([
+  "collectionStartsAt",
+  "collectionEndsAt",
+  "scanStartsAt",
+  "scanEndsAt",
+  "collectionFloorAt",
+  "lastSuccessfulRunStartedAt"
+]);
+function formatBeijingTime(value) {
+  const date3 = new Date(value);
+  if (!Number.isFinite(date3.getTime())) return value;
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date3);
+  const part = (type) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}\uFF08\u5317\u4EAC\u65F6\u95F4\uFF09`;
+}
+function withBeijingDisplayTimes(result) {
+  const displayed = {
+    ...result,
+    displayTimezone: "Asia/Shanghai"
+  };
+  for (const key of BEIJING_TIME_KEYS) {
+    const value = displayed[key];
+    if (typeof value === "string") displayed[key] = formatBeijingTime(value);
+  }
+  return displayed;
+}
 function withoutInternalPaths(result) {
   const {
     inputPath: _input,
@@ -26091,7 +26126,7 @@ async function submitResult(runPath, jobId, result, expectedStatus) {
   ]);
 }
 function toolResult(result) {
-  const prepared = withNextTool(result);
+  const prepared = withBeijingDisplayTimes(withNextTool(result));
   return {
     content: [{ type: "text", text: JSON.stringify(prepared) }],
     structuredContent: prepared

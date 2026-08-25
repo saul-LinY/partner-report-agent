@@ -8,6 +8,7 @@ import { z } from "zod";
 import { PLUGIN_VERSION } from "./config.js";
 import {
   exposeJobInput,
+  withBeijingDisplayTimes,
   withNextTool,
   withoutInternalPaths,
   type CliOutput,
@@ -110,7 +111,7 @@ async function submitResult(
 }
 
 function toolResult(result: CliOutput) {
-  const prepared = withNextTool(result);
+  const prepared = withBeijingDisplayTimes(withNextTool(result));
   return {
     content: [{ type: "text" as const, text: JSON.stringify(prepared) }],
     structuredContent: prepared,
