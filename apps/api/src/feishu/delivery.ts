@@ -6,6 +6,7 @@ import {
   renderReviewCard,
   renderScopeCard,
   renderScopeStatusCard,
+  renderStatusCard,
   type FeishuCard,
 } from "./cards.js";
 import { FeishuApiError, type FeishuMessageClient } from "./client.js";
@@ -51,6 +52,8 @@ export type ReviewDeliveryView = FeishuDeliveryScope & {
     approved: number;
     excluded: number;
   };
+  regenerationPending: boolean;
+  regenerationError?: string;
   item: {
     id: string;
     title: string;
@@ -278,10 +281,12 @@ export class FeishuDeliveryService {
         excluded: number;
         pending: number;
         total: number;
+        regeneration_status: string | null;
       }>
     >`
       select wi.id, wi.title, wi.status, wi.payload,
-        counts.approved, counts.excluded, counts.pending, counts.total
+        counts.approved, counts.excluded, counts.pending, counts.total,
+        regeneration.status as regeneration_status
       from work_items wi
       cross join lateral (
         select
@@ -295,6 +300,16 @@ export class FeishuDeliveryService {
           and counted.team_id = ${scope.teamId}
           and counted.partner_id = ${scope.partnerId}
       ) counts
+      left join lateral (
+        select status
+        from agent_jobs
+        where tenant_id = ${scope.tenantId}
+          and partner_id = ${scope.partnerId}
+          and type = 'AGGREGATE_WORK_ITEMS'
+          and input_payload->>'targetWorkItemId' = wi.id::text
+        order by created_at desc, id desc
+        limit 1
+      ) regeneration on true
       where wi.review_id = ${reviewId} and wi.tenant_id = ${scope.tenantId}
         and wi.team_id = ${scope.teamId} and wi.partner_id = ${scope.partnerId}
         and wi.review_status = 'pending'
@@ -317,6 +332,15 @@ export class FeishuDeliveryService {
         approved: item.approved,
         excluded: item.excluded,
       },
+      regenerationPending: ["PENDING", "LEASED", "RETRY_WAIT"].includes(
+        item.regeneration_status ?? "",
+      ),
+      ...(item.regeneration_status === "FAILED"
+        ? {
+            regenerationError:
+              "系统暂时未能根据修改意见生成新版内容，请调整意见后重试，或稍后再试。",
+          }
+        : {}),
       item: {
         id: item.id,
         title: item.title,
@@ -477,6 +501,14 @@ export class FeishuDeliveryService {
     view: ReviewDeliveryView,
     deliveryId: string,
   ): FeishuCard {
+    if (view.regenerationPending) {
+      return renderStatusCard({
+        kind: "locked",
+        title: "正在重新生成工作卡片",
+        message:
+          "修改意见已收到，系统正在重新整理当前项目的工作内容。生成完成后，这张卡片会自动更新并继续等待你通过、忽略或再次修改。",
+      });
+    }
     return renderReviewCard({
       deliveryId,
       aggregateId: view.reviewId,
@@ -484,6 +516,9 @@ export class FeishuDeliveryService {
       periodLabel: view.periodLabel,
       progress: view.progress,
       item: view.item,
+      ...(view.regenerationError
+        ? { regenerationError: view.regenerationError }
+        : {}),
     });
   }
 

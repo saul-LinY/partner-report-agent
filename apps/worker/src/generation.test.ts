@@ -15,20 +15,21 @@ import {
 } from "./generation.js";
 
 describe("reader-facing generation instructions", () => {
-  it("asks work cards to use short, plain Chinese", () => {
+  it("asks work cards to use detailed, plain Chinese", () => {
     const instructions = aggregationInstructions("test-model");
 
     expect(instructions).toContain("simplified Chinese");
-    expect(instructions).toContain("plain, direct, concise language");
-    expect(instructions).toContain("120 Chinese characters");
-    expect(instructions).toContain("80 Chinese characters");
+    expect(instructions).toContain("plain, direct, everyday Chinese");
+    expect(instructions).toContain("120 to 240 Chinese characters");
+    expect(instructions).toContain("60 to 160 Chinese characters");
+    expect(instructions).toContain("detailed enough for the user to verify");
+    expect(instructions).toContain("authoritative first-hand correction");
     expect(instructions).toContain("projectDescription");
     expect(instructions).toContain(
       "copy each bucket.projectDescription exactly",
     );
-    expect(instructions).toContain("user's correction as authoritative");
-    expect(instructions).toContain("projectDescription only");
-    expect(instructions).toContain("2026-08-12.project-card.v3");
+    expect(instructions).toContain("must not silently change");
+    expect(instructions).toContain("2026-08-12.project-card.v4");
   });
 });
 

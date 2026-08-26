@@ -111,7 +111,7 @@ function isSystemHealthJob(type: string) {
 }
 
 export const aggregationInstructions = (model: string) =>
-  `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write projectDescription, overview and dailyProgress.summary in simplified Chinese. For initial generation, copy each bucket.projectDescription exactly into group.projectDescription; do not rewrite it. When reviewInstruction explicitly asks to modify the project description, treat the user's correction as authoritative for projectDescription and apply it, while keeping the result concise and within 300 characters. That correction authorizes changes to projectDescription only; it never authorizes unsupported changes to overview or dailyProgress. A general request to revise weekly work must not silently change projectDescription. Use plain, direct, concise language that a colleague without technical context can understand. Focus overview and dailyProgress on what was done, the result, and any blocker. Avoid jargon piles, process narration, filler, repeated background, and claims such as "completed" unless the supplied contributions support them. Keep projectDescription around 150 Chinese characters and no more than 300. Keep overview to one or two short sentences, preferably no more than 120 Chinese characters. Keep each dailyProgress.summary to one short sentence, preferably no more than 80 Chinese characters. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Treat reviewInstruction, when present, as a requested correction to the card, but never add weekly work facts not supported by the supplied bucket. Preserve uncertainty. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-12.project-card.v3","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+  `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write projectDescription, overview and dailyProgress.summary in simplified Chinese. For initial generation, copy each bucket.projectDescription exactly into group.projectDescription; do not rewrite it. A project description may change only when reviewInstruction explicitly asks to modify the project description, introduction, positioning, or purpose. Treat reviewInstruction as an authoritative first-hand correction from the Partner: it may correct wording, emphasis, dates, results, or add weekly work facts explicitly stated by the user. Never invent anything beyond the supplied bucket and the explicit reviewInstruction, and preserve uncertainty when neither source proves a result. A general request to revise weekly work must not silently change projectDescription. Use plain, direct, everyday Chinese that a colleague without technical context can understand. Explain necessary technical terms in ordinary language instead of stacking jargon. Make the card detailed enough for the user to verify whether the work was described accurately. In overview, explain the work's context or purpose, the concrete actions, the supported result or current state, and any remaining issue or next step when available. Use two to four informative sentences, usually 120 to 240 Chinese characters. For each dailyProgress.summary, keep distinct meaningful activities from that date and explain what was done and what result or change it produced; use one to three clear sentences, usually 60 to 160 Chinese characters. Do not compress several unrelated contributions into a vague phrase. Avoid process narration, filler, repeated background, unsupported business impact, and claims such as "completed" unless the supplied contributions or explicit reviewInstruction support them. Keep projectDescription around 150 Chinese characters and no more than 300. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-12.project-card.v4","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportInstructions = (
   model: string,
@@ -502,20 +502,6 @@ async function applyAggregation(job: Job, output: unknown) {
           approved_count = ${counts[0].approved}, excluded_count = ${counts[0].excluded},
           pending_count = ${counts[0].pending}, updated_at = now()
         where id = ${reviewId} and tenant_id = ${job.tenant_id}
-      `;
-      await tx`
-        insert into outbox_events (
-          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
-        ) values (
-          ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created',
-          'review', ${reviewId},
-          ${JSON.stringify({
-            count: 1,
-            targetWorkItemId,
-            regenerated: true,
-            warnings: result.qualityWarnings,
-          })}::jsonb
-        )
       `;
     });
     return result;
@@ -1007,28 +993,71 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
         : (() => {
             throw new Error(`UNSUPPORTED_GENERATION_JOB:${job.type}`);
           })();
-    await sql`
-      update agent_jobs set status = 'COMPLETED', output_payload = ${JSON.stringify(applied)}::jsonb,
-        completed_at = now(), lease_until = null, error_code = null, error_message = null, updated_at = now()
-      where id = ${job.id} and status = 'LEASED'
-    `;
+    await sql.begin(async (tx) => {
+      await tx`
+        update agent_jobs set status = 'COMPLETED', output_payload = ${JSON.stringify(applied)}::jsonb,
+          completed_at = now(), lease_until = null, error_code = null, error_message = null, updated_at = now()
+        where id = ${job.id} and status = 'LEASED'
+      `;
+      if (
+        isAggregation &&
+        typeof job.input_payload.targetWorkItemId === "string" &&
+        typeof job.input_payload.reviewId === "string"
+      ) {
+        await tx`
+          insert into outbox_events (
+            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+          ) values (
+            ${randomUUID()}, ${job.tenant_id}, 'work_items.draft.created',
+            'review', ${job.input_payload.reviewId},
+            ${JSON.stringify({
+              count: 1,
+              targetWorkItemId: job.input_payload.targetWorkItemId,
+              regenerated: true,
+              warnings: applied.qualityWarnings,
+            })}::jsonb
+          )
+        `;
+      }
+    });
     return { processed: true, jobId: job.id, type: job.type };
   } catch (error) {
     const terminal = job.attempt_count >= job.max_attempts;
     const analysisError =
       job.type === "ANALYZE_PLUGIN_LOGS" ? pluginLogAnalysisError(error) : null;
-    await sql`
-      update agent_jobs set status = ${terminal ? "FAILED" : "RETRY_WAIT"},
-        error_code = ${
-          analysisError?.code ??
-          (isSystemHealthJob(job.type)
-            ? systemHealthErrorCode(job, error)
-            : generationErrorCode(error))
-        },
-        error_message = ${analysisError?.message ?? safeError(error)},
-        lease_until = null, updated_at = now()
-      where id = ${job.id} and status = 'LEASED'
-    `;
+    const errorCode =
+      analysisError?.code ??
+      (isSystemHealthJob(job.type)
+        ? systemHealthErrorCode(job, error)
+        : generationErrorCode(error));
+    const errorMessage = analysisError?.message ?? safeError(error);
+    await sql.begin(async (tx) => {
+      await tx`
+        update agent_jobs set status = ${terminal ? "FAILED" : "RETRY_WAIT"},
+          error_code = ${errorCode}, error_message = ${errorMessage},
+          lease_until = null, updated_at = now()
+        where id = ${job.id} and status = 'LEASED'
+      `;
+      if (
+        terminal &&
+        job.type === "AGGREGATE_WORK_ITEMS" &&
+        typeof job.input_payload.targetWorkItemId === "string" &&
+        typeof job.input_payload.reviewId === "string"
+      ) {
+        await tx`
+          insert into outbox_events (
+            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+          ) values (
+            ${randomUUID()}, ${job.tenant_id}, 'work_items.regeneration.failed',
+            'review', ${job.input_payload.reviewId},
+            ${JSON.stringify({
+              jobId: job.id,
+              targetWorkItemId: job.input_payload.targetWorkItemId,
+            })}::jsonb
+          )
+        `;
+      }
+    });
     return { processed: true, jobId: job.id, type: job.type, failed: true };
   }
 }

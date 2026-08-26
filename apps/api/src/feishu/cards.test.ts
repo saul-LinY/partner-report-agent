@@ -208,7 +208,7 @@ describe("Feishu JSON 2.0 cards", () => {
     );
   });
 
-  it("renders one current review item with only accept and ignore actions", () => {
+  it("renders one current review item with natural-language revision controls", () => {
     const card = renderReviewCard({
       deliveryId: ids.deliveryId,
       aggregateId: ids.aggregateId,
@@ -233,6 +233,13 @@ describe("Feishu JSON 2.0 cards", () => {
         aggregateId: ids.aggregateId,
         itemId: ids.itemId,
         baseVersion: 7,
+        action: "review_regenerate",
+      },
+      {
+        deliveryId: ids.deliveryId,
+        aggregateId: ids.aggregateId,
+        itemId: ids.itemId,
+        baseVersion: 7,
         action: "review_exclude",
       },
       {
@@ -246,15 +253,19 @@ describe("Feishu JSON 2.0 cards", () => {
     expect(JSON.stringify(card)).toContain("项目描述");
     expect(JSON.stringify(card)).toContain("用于采集、审核并汇总");
     expect(JSON.stringify(card)).not.toContain("状态：进行中");
-    expect(findByElementId(card, "review_regen_input")).toBeUndefined();
+    expect(findByElementId(card, "review_regen_input")).toMatchObject({
+      tag: "input",
+      name: "review_regeneration_instruction",
+      required: true,
+      max_length: 1200,
+      input_type: "multiline_text",
+    });
+    expect(JSON.stringify(card)).toContain("已通过 1");
+    expect(JSON.stringify(card)).toContain("按修改意见重新生成");
   });
 
-  it("rejects removed review and report actions", () => {
-    for (const action of [
-      "review_regenerate",
-      "report_submit",
-      "report_regenerate",
-    ]) {
+  it("rejects removed report actions", () => {
+    for (const action of ["report_submit", "report_regenerate"]) {
       expect(
         feishuActionValueSchema.safeParse({
           deliveryId: ids.deliveryId,
@@ -267,7 +278,7 @@ describe("Feishu JSON 2.0 cards", () => {
     }
   });
 
-  it("always renders only the two review decisions", () => {
+  it("always keeps regenerate, ignore and approve available while pending", () => {
     const card = renderReviewCard({
       deliveryId: ids.deliveryId,
       aggregateId: ids.aggregateId,
@@ -282,10 +293,34 @@ describe("Feishu JSON 2.0 cards", () => {
     });
 
     expect(callbackValues(card).map((value) => value.action)).toEqual([
+      "review_regenerate",
       "review_exclude",
       "review_approve",
     ]);
-    expect(findByElementId(card, "review_regen_input")).toBeUndefined();
+    expect(findByElementId(card, "review_regen_input")).toBeDefined();
+  });
+
+  it("keeps review actions available after a regeneration failure", () => {
+    const card = renderReviewCard({
+      deliveryId: ids.deliveryId,
+      aggregateId: ids.aggregateId,
+      baseVersion: 2,
+      progress: { current: 1, total: 1, approved: 0, excluded: 0 },
+      regenerationError: "模型服务暂时不可用。",
+      item: {
+        id: ids.itemId,
+        title: "单项审核",
+        status: "待审核",
+        overview: "保留上一次可审核内容。",
+      },
+    });
+
+    expect(JSON.stringify(card)).toContain("上次重新生成未完成");
+    expect(callbackValues(card).map((value) => value.action)).toEqual([
+      "review_regenerate",
+      "review_exclude",
+      "review_approve",
+    ]);
   });
 
   it("rejects extra identity fields in inputs and action payloads", () => {

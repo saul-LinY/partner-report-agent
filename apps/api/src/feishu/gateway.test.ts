@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
 import { FeishuDeliveryService } from "./delivery.js";
-import { FeishuGateway, projectScopeFormDecisions } from "./gateway.js";
+import {
+  FeishuGateway,
+  projectScopeFormDecisions,
+  reviewRegenerationInstruction,
+} from "./gateway.js";
 
 describe("project scope form decisions", () => {
   it("maps every visible form field to its project", () => {
@@ -32,8 +36,26 @@ describe("project scope form decisions", () => {
   });
 });
 
+describe("review regeneration form", () => {
+  it("trims and validates the natural-language instruction", () => {
+    expect(
+      reviewRegenerationInstruction({
+        review_regeneration_instruction: "  请把结果写得更通俗一些。  ",
+      }),
+    ).toBe("请把结果写得更通俗一些。");
+  });
+
+  it("rejects an empty instruction", () => {
+    expect(() =>
+      reviewRegenerationInstruction({
+        review_regeneration_instruction: " ",
+      }),
+    ).toThrow("请填写 2 至 1200 个字符的修改意见。");
+  });
+});
+
 describe("disabled legacy card actions", () => {
-  it.each(["review_regenerate", "report_submit", "report_regenerate"])(
+  it.each(["report_submit", "report_regenerate"])(
     "rejects %s before storing an inbox event",
     async (action) => {
       const appId = `cli_disabled_action_${randomUUID()}`;
@@ -60,9 +82,6 @@ describe("disabled legacy card actions", () => {
               aggregateId: randomUUID(),
               baseVersion: 1,
               action,
-              ...(action === "review_regenerate"
-                ? { itemId: randomUUID() }
-                : {}),
             },
           },
           context: { open_message_id: `om_${randomUUID()}` },
@@ -227,6 +246,192 @@ describe("FeishuGateway review decisions", () => {
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
       await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
       await sql`delete from work_items where tenant_id = ${tenantId}`;
+      await sql`delete from reviews where tenant_id = ${tenantId}`;
+      await sql`delete from report_periods where tenant_id = ${tenantId}`;
+      await sql`delete from partners where tenant_id = ${tenantId}`;
+      await sql`delete from teams where tenant_id = ${tenantId}`;
+      await sql`delete from tenants where id = ${tenantId}`;
+    }
+  });
+
+  it("queues a natural-language regeneration and shows progress in the same message", async () => {
+    const tenantId = randomUUID();
+    const teamId = randomUUID();
+    const partnerId = randomUUID();
+    const periodId = randomUUID();
+    const reviewId = randomUUID();
+    const workItemId = randomUUID();
+    const factId = randomUUID();
+    const bindingId = randomUUID();
+    const deliveryId = randomUUID();
+    const eventId = randomUUID();
+    const appId = `cli_review_regeneration_test_${randomUUID()}`;
+    const openId = `ou_${randomUUID()}`;
+    const messageId = `om_${randomUUID()}`;
+    const email = `review-regeneration-${partnerId}@example.com`;
+    const instruction =
+      "请把每天做了什么、解决了什么问题和最终结果写得更通俗。";
+    const sendInteractiveCard = vi.fn();
+    const updateInteractiveCard = vi.fn(async (_input: unknown) => undefined);
+
+    try {
+      await sql`insert into tenants (id, name) values (${tenantId}, 'Feishu regeneration test')`;
+      await sql`
+        insert into teams (id, tenant_id, name)
+        values (${teamId}, ${tenantId}, 'Feishu regeneration test')
+      `;
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${partnerId}, ${tenantId}, ${teamId}, ${email}, 'Regeneration Partner')
+      `;
+      await sql`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at,
+          cutoff_at, submission_deadline_at, timezone
+        ) values (
+          ${periodId}, ${tenantId}, ${teamId}, ${`regeneration-${periodId}`},
+          '2099-04-01T00:00:00Z', '2099-04-07T23:59:59Z',
+          '2099-04-07T12:00:00Z', '2099-04-08T12:00:00Z', 'Asia/Shanghai'
+        )
+      `;
+      await sql`
+        insert into reviews (
+          id, tenant_id, team_id, partner_id, period_id, state, version,
+          approved_count, excluded_count, pending_count
+        ) values (
+          ${reviewId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
+          'IN_PROGRESS', 1, 0, 0, 1
+        )
+      `;
+      await sql`
+        insert into session_facts (
+          id, tenant_id, team_id, partner_id, period_id, session_id,
+          external_fact_id, source_revision, source_hash, payload
+        ) values (
+          ${factId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
+          'regeneration-session', 'regeneration-fact', 1, ${"f".repeat(64)},
+          ${JSON.stringify({
+            recordType: "session_contribution",
+            contributions: [
+              {
+                kind: "outcome",
+                confidence: "high",
+                text: "完成飞书卡片审核链路",
+              },
+            ],
+          })}::jsonb
+        )
+      `;
+      await sql`
+        insert into work_items (
+          id, tenant_id, team_id, partner_id, period_id, review_id,
+          title, status, review_status, fact_ids, payload
+        ) values (
+          ${workItemId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
+          ${reviewId}, '飞书审核接入', 'completed', 'pending',
+          ${JSON.stringify([factId])}::jsonb,
+          ${JSON.stringify({
+            projectKey: "project:feishu-review",
+            projectDescription: "用于审核团队工作记录。",
+            overview: "完成审核链路。",
+            dailyProgress: [],
+          })}::jsonb
+        )
+      `;
+      await sql`
+        insert into work_item_facts (work_item_id, fact_id)
+        values (${workItemId}, ${factId})
+      `;
+      await sql`
+        insert into feishu_partner_bindings (
+          id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
+        ) values (
+          ${bindingId}, ${tenantId}, ${teamId}, ${partnerId}, ${appId},
+          ${openId}, 'active', now()
+        )
+      `;
+      await sql`
+        insert into feishu_deliveries (
+          id, tenant_id, team_id, partner_id, kind, aggregate_type,
+          aggregate_id, receive_id, receive_id_type, message_id,
+          domain_version, status, idempotency_key, sent_at
+        ) values (
+          ${deliveryId}, ${tenantId}, ${teamId}, ${partnerId}, 'review', 'review',
+          ${reviewId}, ${openId}, 'open_id', ${messageId}, 1, 'sent',
+          ${`review:${appId}:${partnerId}:${reviewId}`}, now()
+        )
+      `;
+
+      const service = new FeishuDeliveryService({
+        appId,
+        messageClient: { sendInteractiveCard, updateInteractiveCard },
+      });
+      const gateway = new FeishuGateway(
+        { appId, appSecret: "review-regeneration-test-secret" },
+        { updateInteractiveCard },
+        service,
+        { tenantIdFilter: tenantId },
+      );
+
+      await expect(
+        gateway.acceptCardAction({
+          event_id: eventId,
+          event_type: "card.action.trigger",
+          app_id: appId,
+          operator: { open_id: openId },
+          action: {
+            value: {
+              deliveryId,
+              aggregateId: reviewId,
+              itemId: workItemId,
+              baseVersion: 1,
+              action: "review_regenerate",
+            },
+            form_value: {
+              review_regeneration_instruction: instruction,
+            },
+          },
+          context: { open_message_id: messageId },
+        }),
+      ).resolves.toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+
+      const jobs = await sql<
+        Array<{ status: string; input_payload: Record<string, unknown> }>
+      >`
+        select status, input_payload from agent_jobs
+        where tenant_id = ${tenantId} and type = 'AGGREGATE_WORK_ITEMS'
+      `;
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({ status: "PENDING" });
+      expect(jobs[0]!.input_payload).toMatchObject({
+        reviewId,
+        targetWorkItemId: workItemId,
+        reviewInstruction: instruction,
+      });
+      const reviews = await sql<
+        Array<{ version: number; pending_count: number }>
+      >`
+        select version, pending_count from reviews where id = ${reviewId}
+      `;
+      expect(reviews).toEqual([{ version: 2, pending_count: 1 }]);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(
+        JSON.stringify(updateInteractiveCard.mock.calls[0]?.[0]),
+      ).toContain("正在重新生成工作卡片");
+      expect(sendInteractiveCard).not.toHaveBeenCalled();
+    } finally {
+      await sql`delete from feishu_inbox_events where event_id = ${eventId}`;
+      await sql`delete from audit_events where tenant_id = ${tenantId}`;
+      await sql`delete from outbox_events where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
+      await sql`delete from agent_jobs where tenant_id = ${tenantId}`;
+      await sql`delete from work_item_facts where work_item_id = ${workItemId}`;
+      await sql`delete from work_items where tenant_id = ${tenantId}`;
+      await sql`delete from session_facts where tenant_id = ${tenantId}`;
       await sql`delete from reviews where tenant_id = ${tenantId}`;
       await sql`delete from report_periods where tenant_id = ${tenantId}`;
       await sql`delete from partners where tenant_id = ${tenantId}`;

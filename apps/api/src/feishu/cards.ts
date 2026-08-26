@@ -7,6 +7,8 @@ const displayTextSchema = z.string().max(60_000);
 export const FEISHU_CARD_BODY_TEXT_LIMIT = 3_200;
 export const FEISHU_CARD_SUMMARY_LIMIT = 1_600;
 export const FEISHU_CARD_MAX_JSON_BYTES = 30_000;
+export const REVIEW_REGENERATION_INSTRUCTION_FIELD =
+  "review_regeneration_instruction";
 
 const actionBase = {
   deliveryId: opaqueIdSchema,
@@ -31,7 +33,7 @@ const recoveryActionValueSchema = z
 const reviewActionValueSchema = z
   .object({
     ...actionBase,
-    action: z.enum(["review_approve", "review_exclude"]),
+    action: z.enum(["review_approve", "review_exclude", "review_regenerate"]),
     itemId: opaqueIdSchema,
   })
   .strict();
@@ -136,6 +138,7 @@ export const reviewCardInputSchema = z
         dailyProgress: z.array(dailyProgressSchema).max(366).default([]),
       })
       .strict(),
+    regenerationError: z.string().trim().min(1).max(1_600).optional(),
   })
   .strict();
 
@@ -374,6 +377,41 @@ function scopeDecisionForm(input: {
         },
       ]),
       buttonRow([submit]),
+    ],
+  };
+}
+
+function reviewRegenerationForm(input: {
+  value: FeishuActionValue;
+}): FeishuCardElement {
+  return {
+    tag: "form",
+    name: "review_regeneration_form",
+    elements: [
+      {
+        tag: "input",
+        element_id: "review_regen_input",
+        name: REVIEW_REGENERATION_INSTRUCTION_FIELD,
+        required: true,
+        max_length: 1_200,
+        input_type: "multiline_text",
+        width: "fill",
+        label: plainText("修改意见"),
+        label_position: "top",
+        placeholder: plainText(
+          "例如：把 8 月 25 日写得更通俗，并补充说明监控上线后的实际结果。",
+        ),
+      },
+      {
+        tag: "button",
+        element_id: "review_regenerate",
+        text: plainText("按修改意见重新生成"),
+        type: "default",
+        width: "fill",
+        action_type: "form_submit",
+        name: "review_regenerate",
+        value: feishuActionValueSchema.parse(input.value),
+      },
     ],
   };
 }
@@ -621,7 +659,7 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
   );
   const progressText = [
     `第 ${input.progress.current} / ${input.progress.total} 项`,
-    `已接受 ${input.progress.approved}`,
+    `已通过 ${input.progress.approved}`,
     `已忽略 ${input.progress.excluded}`,
     `待审核 ${pending}`,
   ].join(" · ");
@@ -631,7 +669,7 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
       (entry) =>
         `- ${safeMarkdownText(entry.date, 40)}：${safeMarkdownText(
           entry.summary,
-          180,
+          300,
         )}`,
     );
   if (input.item.dailyProgress.length > dailyProgress.length) {
@@ -649,7 +687,7 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
         ]
       : []),
     "",
-    safeMarkdownText(input.item.overview, 500),
+    safeMarkdownText(input.item.overview, 900),
     ...(dailyProgress.length > 0 ? ["", "**每日进展**", ...dailyProgress] : []),
   ].join("\n");
   const baseValue = {
@@ -664,6 +702,20 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
       truncateCardText(itemBody, FEISHU_CARD_BODY_TEXT_LIMIT),
       "review_item",
     ),
+    ...(input.regenerationError
+      ? [
+          markdown(
+            `**上次重新生成未完成**\n${safeMarkdownText(input.regenerationError, 1_200)}\n\n你可以调整修改意见后重试，也可以直接通过或忽略当前内容。`,
+            "review_regeneration_error",
+          ),
+        ]
+      : []),
+    reviewRegenerationForm({
+      value: {
+        ...baseValue,
+        action: "review_regenerate",
+      },
+    }),
   ];
 
   elements.push(
@@ -683,7 +735,7 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
       }),
       callbackButton({
         elementId: "review_approve",
-        label: "接受",
+        label: "通过",
         type: "primary",
         value: {
           ...baseValue,

@@ -100,7 +100,7 @@ export function ReviewQueuePage() {
                     {reviewLabel(item.review_state)}
                   </Badge>
                   <span className="queue-counts">
-                    {item.pending_count} 待审 · {item.approved_count} 接受 ·{" "}
+                    {item.pending_count} 待审 · {item.approved_count} 通过 ·{" "}
                     {item.excluded_count} 忽略
                   </span>
                 </div>

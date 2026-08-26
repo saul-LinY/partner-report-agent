@@ -46,7 +46,7 @@ const statusLabels: Record<string, string> = {
 
 const decisionLabels: Record<string, string> = {
   pending: "待审核",
-  approved: "已接受",
+  approved: "已通过",
   excluded: "已忽略",
 };
 
@@ -351,7 +351,7 @@ export function ReviewPage() {
                       disabled={isRegenerating}
                       onClick={() => decisionMutation.mutate("approve")}
                     >
-                      接受
+                      通过
                     </Button>
                   </div>
                 </div>

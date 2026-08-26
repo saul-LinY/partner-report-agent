@@ -2,9 +2,13 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sqlClient as defaultDatabase } from "@partner-report/db";
 import { ApiError, type DomainActor } from "../common.js";
-import { decideReviewWorkItem } from "../routes/reviews.js";
+import {
+  decideReviewWorkItem,
+  regenerateReviewWorkItem,
+} from "../routes/reviews.js";
 import {
   feishuActionValueSchema,
+  REVIEW_REGENERATION_INSTRUCTION_FIELD,
   renderErrorCard,
   renderLockedCard,
   renderStaleCard,
@@ -165,6 +169,25 @@ export function projectScopeFormDecisions(
     }
     return { scopeKey: project.scopeKey, decision: decision.data };
   });
+}
+
+export function reviewRegenerationInstruction(
+  formValue: Record<string, unknown>,
+): string {
+  const instruction = z
+    .string()
+    .trim()
+    .min(2)
+    .max(1_200)
+    .safeParse(formValue[REVIEW_REGENERATION_INSTRUCTION_FIELD]);
+  if (!instruction.success) {
+    throw new ApiError(
+      400,
+      "REVIEW_REGENERATION_INSTRUCTION_REQUIRED",
+      "请填写 2 至 1200 个字符的修改意见。",
+    );
+  }
+  return instruction.data;
 }
 
 function isExpectedError(error: unknown): error is ApiError {
@@ -702,6 +725,37 @@ export class FeishuGateway {
       return;
     }
 
+    if (event.value.action === "review_regenerate") {
+      const instruction = reviewRegenerationInstruction(event.formValue);
+      const result = await regenerateReviewWorkItem(actor, {
+        reviewId: event.value.aggregateId,
+        workItemId: event.value.itemId,
+        instruction,
+        baseVersion: event.value.baseVersion,
+      });
+      await this.auditOnce(
+        row.event_id,
+        actor,
+        "project_card.regeneration_requested",
+        "work_item",
+        event.value.itemId,
+        {
+          reviewId: event.value.aggregateId,
+          jobId: result.jobId,
+          version: result.version,
+          instructionLength: Array.from(instruction).length,
+        },
+      );
+      const refreshed = await this.deliveries.deliverReview({
+        ...scope,
+        reviewId: event.value.aggregateId,
+      });
+      if (deliveryNeedsStatusRetry(refreshed)) {
+        throw new Error("FEISHU_REGENERATION_STATUS_DEFERRED");
+      }
+      return;
+    }
+
     throw new ApiError(
       409,
       "FEISHU_ACTION_DISABLED",
@@ -1124,6 +1178,7 @@ export class FeishuGateway {
     if (
       [
         "work_items.draft.created",
+        "work_items.regeneration.failed",
         "work_item.review.changed",
         "review.change.applied",
         "review.reopened",

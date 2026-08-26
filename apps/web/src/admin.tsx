@@ -365,7 +365,7 @@ function Operations({ data }: { data: Overview }) {
                   </div>
                   <div
                     className="review-progress-cell"
-                    title={`接受 ${connection.reviewProgress.approved} · 忽略 ${connection.reviewProgress.excluded} · 待审核 ${connection.reviewProgress.pending}`}
+                    title={`通过 ${connection.reviewProgress.approved} · 忽略 ${connection.reviewProgress.excluded} · 待审核 ${connection.reviewProgress.pending}`}
                   >
                     <span className="cell-label">审核卡片</span>
                     <div className="review-progress-value">
