@@ -33,6 +33,15 @@ describe("project description source", () => {
       });
       const serialized = JSON.stringify(source);
       expect(source?.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/);
+      expect(source?.modelInput).toMatchObject({
+        promptVersion: "2026-08-27.project-description.v2",
+        outputRequirements: {
+          description: "50 至 300 字、目标约 200 字的中文项目整体描述",
+        },
+      });
+      expect(JSON.stringify(source?.modelInput)).toContain(
+        "建议 150 至 250 字",
+      );
       expect(serialized).toContain("[REDACTED_SECRET]");
       expect(serialized).not.toContain(root);
       expect(serialized).not.toContain("do-not-upload");

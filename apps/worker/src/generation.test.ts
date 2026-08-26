@@ -21,7 +21,9 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("simplified Chinese");
     expect(instructions).toContain("plain, direct, everyday Chinese");
     expect(instructions).toContain("120 to 240 Chinese characters");
-    expect(instructions).toContain("60 to 160 Chinese characters");
+    expect(instructions).toContain("about 150 Chinese characters");
+    expect(instructions).toContain("never more than 200");
+    expect(instructions).toContain("around 200 Chinese characters");
     expect(instructions).toContain("detailed enough for the user to verify");
     expect(instructions).toContain("authoritative first-hand correction");
     expect(instructions).toContain("projectDescription");
@@ -29,7 +31,7 @@ describe("reader-facing generation instructions", () => {
       "copy each bucket.projectDescription exactly",
     );
     expect(instructions).toContain("must not silently change");
-    expect(instructions).toContain("2026-08-12.project-card.v4");
+    expect(instructions).toContain("2026-08-27.project-card.v5");
   });
 });
 

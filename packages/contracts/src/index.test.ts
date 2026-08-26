@@ -351,6 +351,17 @@ describe("project card aggregation contract", () => {
       aggregationResultSchema.safeParse({
         ...result,
         groups: [
+          {
+            ...result.groups[0],
+            dailyProgress: [{ date: "2026-08-03", summary: "进".repeat(201) }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      aggregationResultSchema.safeParse({
+        ...result,
+        groups: [
           { ...result.groups[0], factIds: ["model-must-not-assign-facts"] },
         ],
       }).success,
