@@ -6738,6 +6738,26 @@ function enqueuePluginLog(input) {
     return null;
   }
 }
+function collectionFinalStateLogInput(input) {
+  return {
+    ...input.runId ? { runId: input.runId } : {},
+    level: input.outcome === "success" ? "info" : "error",
+    stage: "collection",
+    eventCode: `collection.final.${input.outcome}`,
+    eventType: "result",
+    message: input.summary,
+    retryable: input.outcome === "failed",
+    details: {
+      finalState: input.outcome,
+      summary: input.summary,
+      ...input.reasonCode ? { reasonCode: input.reasonCode } : {},
+      ...input.details ?? {}
+    }
+  };
+}
+function enqueueCollectionFinalState(input) {
+  return enqueuePluginLog(collectionFinalStateLogInput(input));
+}
 function setPluginLogRunId(runId) {
   activeRunId = runId;
 }
@@ -6845,6 +6865,7 @@ function output(value) {
       try {
         runId = readRun(event.runPath).manifest.runId;
         setPluginLogRunId(runId);
+        commandRunId = runId;
       } catch {
         runId = void 0;
       }
@@ -6888,9 +6909,38 @@ function output(value) {
         retryable: event.retryable
       }
     });
+    const currentCommand = process.argv[2] ?? "plugin";
+    if (["collect-start", "daily-collect"].includes(currentCommand) && [
+      "project_scope_approval_required",
+      "project_scope_waiting_for_projects"
+    ].includes(value.status)) {
+      const pendingProjects = Array.isArray(event.pendingProjects) ? event.pendingProjects.length : 0;
+      enqueueCollectionFinalState({
+        outcome: "failed",
+        summary: value.status === "project_scope_approval_required" ? `\u91C7\u96C6\u672A\u5F00\u59CB\uFF1A${pendingProjects} \u4E2A\u9879\u76EE\u4ECD\u5728\u7B49\u5F85\u98DE\u4E66\u6743\u9650\u5BA1\u6838\u3002` : "\u91C7\u96C6\u672A\u5F00\u59CB\uFF1A\u5F53\u524D\u626B\u63CF\u8303\u56F4\u5185\u8FD8\u6CA1\u6709\u53EF\u5BA1\u6838\u9879\u76EE\u3002",
+        reasonCode: value.status,
+        details: { pendingProjects, periodKey: event.periodKey }
+      });
+    }
   }
   process.stdout.write(`${JSON.stringify(value, null, 2)}
 `);
+}
+function collectionFailureSummary(code, command2) {
+  const signal = code.toUpperCase();
+  if (/AUTH|TOKEN|UNAUTHORIZED|FORBIDDEN/.test(signal))
+    return "\u91C7\u96C6\u5931\u8D25\uFF1A\u63D2\u4EF6\u8FDE\u63A5\u51ED\u636E\u65E0\u6548\uFF0C\u65E0\u6CD5\u8BBF\u95EE\u6570\u636E\u4E2D\u53F0\u3002";
+  if (/THREAD|SESSION|APP_SERVER|CODEX|LOCAL_AGENT/.test(signal))
+    return "\u91C7\u96C6\u5931\u8D25\uFF1A\u63D2\u4EF6\u65E0\u6CD5\u8BFB\u53D6\u672C\u673A Codex \u4F1A\u8BDD\u3002";
+  if (/PROJECT_SCOPE|PERMISSION/.test(signal))
+    return "\u91C7\u96C6\u5931\u8D25\uFF1A\u9879\u76EE\u91C7\u96C6\u6743\u9650\u68C0\u67E5\u672A\u901A\u8FC7\u3002";
+  if (/EXTRACT|MODEL|VALIDATION|SCHEMA|OUTPUT/.test(signal))
+    return "\u91C7\u96C6\u5931\u8D25\uFF1A\u4F1A\u8BDD\u5206\u6790\u7ED3\u679C\u6CA1\u6709\u901A\u8FC7\u63D2\u4EF6\u6821\u9A8C\u3002";
+  if (/UPLOAD|SYNC|HTTP|NETWORK|TIMEOUT|ECONN|RATE_LIMIT/.test(signal))
+    return "\u91C7\u96C6\u5931\u8D25\uFF1A\u63D2\u4EF6\u4E0E\u6570\u636E\u4E2D\u53F0\u901A\u4FE1\u6216\u4E0A\u4F20\u7ED3\u679C\u65F6\u53D1\u751F\u5F02\u5E38\u3002";
+  if (/LOCAL_STORAGE|ENOSPC|EACCES|FILE|DISK/.test(signal))
+    return "\u91C7\u96C6\u5931\u8D25\uFF1A\u63D2\u4EF6\u65E0\u6CD5\u8BFB\u5199\u672C\u5730\u91C7\u96C6\u72B6\u6001\u3002";
+  return `\u91C7\u96C6\u5931\u8D25\uFF1A${command2} \u8FD4\u56DE\u9519\u8BEF ${code}\u3002`;
 }
 function sha2563(value) {
   return createHash3("sha256").update(value).digest("hex");
@@ -7916,6 +7966,17 @@ function deferRun(runPath, manifest, reason) {
     manifest.queue.length - manifest.cursor
   );
   saveRun(runPath, manifest);
+  enqueueCollectionFinalState({
+    runId: manifest.runId,
+    outcome: "failed",
+    summary: `\u91C7\u96C6\u672A\u5B8C\u6210\uFF1A\u8FD0\u884C\u5DF2\u5EF6\u540E\uFF0C\u5269\u4F59 ${manifest.counts.notProcessed} \u4E2A\u5019\u9009\u4F1A\u8BDD\u5F85\u5904\u7406\u3002`,
+    reasonCode: reason,
+    details: {
+      periodKey: manifest.period.period_key,
+      deferred: manifest.counts.deferred,
+      notProcessed: manifest.counts.notProcessed
+    }
+  });
   output({
     status: "deferred",
     runPath,
@@ -7958,6 +8019,19 @@ async function finishRun(runPath, manifest, config) {
     },
     ...manifest.counts
   };
+  enqueueCollectionFinalState({
+    runId: manifest.runId,
+    outcome: "success",
+    summary: `\u91C7\u96C6\u6210\u529F\uFF1A\u4E0A\u4F20 ${manifest.counts.uploaded} \u9879\u8D21\u732E\uFF0C\u5FFD\u7565 ${manifest.counts.ignored + manifest.counts.cachedIgnored} \u4E2A\u65E0\u6709\u6548\u8D21\u732E\u7684\u4F1A\u8BDD\uFF0C\u91C7\u96C6\u8FDB\u5EA6\u5DF2\u66F4\u65B0\u3002`,
+    details: {
+      periodKey: manifest.period.period_key,
+      uploaded: manifest.counts.uploaded,
+      unchanged: manifest.counts.unchanged,
+      ignored: manifest.counts.ignored + manifest.counts.cachedIgnored,
+      checkpointAdvanced
+    }
+  });
+  await flushPluginLogs();
   releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
   rmSync2(dirname4(runPath), { recursive: true, force: true });
   output(summary);
@@ -8875,6 +8949,24 @@ try {
       ...diagnostic.details ?? {}
     }
   });
+  if ([
+    "collect-start",
+    "daily-collect",
+    "collect-next",
+    "collect-review",
+    "collect-submit",
+    "collect-defer",
+    "collect-skip",
+    "project-description-submit"
+  ].includes(command)) {
+    enqueueCollectionFinalState({
+      ...commandRunId ? { runId: commandRunId } : {},
+      outcome: "failed",
+      summary: collectionFailureSummary(diagnostic.code, command),
+      reasonCode: diagnostic.code,
+      details: { command, errorCode: diagnostic.code }
+    });
+  }
   await flushPluginLogs();
   {
     const code = error instanceof HttpError ? error.code : error && typeof error === "object" && "code" in error ? String(error.code) : "PLUGIN_COMMAND_FAILED";

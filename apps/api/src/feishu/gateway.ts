@@ -904,16 +904,14 @@ export class FeishuGateway {
       throw error;
     }
 
-    if (await this.deliveries.isPartnerChannelEnabled(delivery)) {
-      await this.messageClient.updateInteractiveCard({
-        messageId: event.messageId,
-        card: renderStatusCard({
-          kind: "locked",
-          title: "飞书审核身份已连接",
-          message: `已完成 ${delivery.partnerEmail} 的审核身份绑定。后续项目权限和工作卡片会私发到当前飞书账号。`,
-        }),
-      });
-    }
+    await this.messageClient.updateInteractiveCard({
+      messageId: event.messageId,
+      card: renderStatusCard({
+        kind: "locked",
+        title: "飞书审核身份已连接",
+        message: `已完成 ${delivery.partnerEmail} 的审核身份绑定。后续项目权限和工作卡片会私发到当前飞书账号。`,
+      }),
+    });
     if (this.reviewDeliveryEnabled) {
       await this.deliveries.syncPartnerPendingApprovals(delivery);
     }
@@ -1051,17 +1049,15 @@ export class FeishuGateway {
         {},
       );
     });
-    if (await this.deliveries.isPartnerChannelEnabled(delivery)) {
-      await this.messageClient.updateInteractiveCard({
-        messageId: event.messageId,
-        card: renderStatusCard({
-          kind: "locked",
-          title: "插件连接恢复已确认",
-          message:
-            "新凭据已获授权。插件会在下次定时运行时自动恢复；也可以回到原 Session 说“继续采集”立即执行。",
-        }),
-      });
-    }
+    await this.messageClient.updateInteractiveCard({
+      messageId: event.messageId,
+      card: renderStatusCard({
+        kind: "locked",
+        title: "插件连接恢复已确认",
+        message:
+          "新凭据已获授权。插件会在下次定时运行时自动恢复；也可以回到原 Session 说“继续采集”立即执行。",
+      }),
+    });
   }
 
   private async reflectExpectedError(
@@ -1080,7 +1076,6 @@ export class FeishuGateway {
     });
     if (!delivery) return;
     if (kind === "binding") {
-      if (!(await this.deliveries.isPartnerChannelEnabled(delivery))) return;
       await this.messageClient.updateInteractiveCard({
         messageId: delivery.messageId,
         card: renderErrorCard({ message: error.message }),
@@ -1216,7 +1211,8 @@ export class FeishuGateway {
         pluginInstanceId: event.aggregate_id,
         ...(periodKey ? { periodKey } : {}),
       });
-      return !deliveryNeedsStatusRetry(result);
+      await this.completeScopeBinding(event, result);
+      return deliveryConfirmsScopeBinding(result);
     }
 
     if (

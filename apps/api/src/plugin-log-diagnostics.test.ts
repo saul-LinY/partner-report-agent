@@ -63,9 +63,10 @@ describe("plugin execution diagnosis", () => {
 
   it("separates events by command invocation", () => {
     const executions = groupPluginExecutions([
-      event(),
+      event({ run_id: null }),
       event({
         invocation_id: "33333333-3333-4333-8333-333333333333",
+        run_id: null,
         command: "collect-review",
       }),
     ]);
@@ -76,6 +77,51 @@ describe("plugin execution diagnosis", () => {
     expect(executions.map((item) => item.command)).toEqual(
       expect.arrayContaining(["collect-next", "collect-review"]),
     );
+  });
+
+  it("groups all plugin commands that belong to one collection run", () => {
+    const executions = groupPluginExecutions([
+      event(),
+      event({
+        invocation_id: "33333333-3333-4333-8333-333333333333",
+        command: "collect-review",
+        event_code: "collection.final.success",
+        event_type: "result",
+        message: "采集成功：上传 2 项贡献。",
+        occurred_at: "2026-08-25T08:00:03.000Z",
+      }),
+    ]);
+
+    expect(executions).toHaveLength(1);
+    expect(executions[0]).toMatchObject({
+      grouping: "run",
+      command: "collection",
+      finalSummary: "采集成功：上传 2 项贡献。",
+      diagnosis: { state: "completed", title: "本次采集成功" },
+    });
+  });
+
+  it("uses the plugin's final failure summary as the main diagnosis", () => {
+    const diagnosis = diagnosePluginExecution([
+      event({ run_id: null }),
+      event({
+        run_id: null,
+        sequence: 2,
+        event_code: "collection.final.failed",
+        event_type: "result",
+        level: "error",
+        message: "采集失败：插件无法读取本机 Codex 会话。",
+        details: { reasonCode: "CODEX_SESSION_LIST_FAILED" },
+      }),
+    ]);
+
+    expect(diagnosis).toMatchObject({
+      severity: "critical",
+      state: "failed",
+      title: "本次采集失败",
+      cause: "采集失败：插件无法读取本机 Codex 会话。",
+      evidenceCode: "CODEX_SESSION_LIST_FAILED",
+    });
   });
 
   it("keeps run fallback logs separate from command invocations", () => {

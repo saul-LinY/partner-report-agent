@@ -112,6 +112,29 @@ function diagnosePluginEvents(
         new Date(right.occurred_at).getTime() ||
       (left.sequence ?? 0) - (right.sequence ?? 0),
   );
+  const finalState = [...ordered]
+    .reverse()
+    .find((event) => event.event_code.startsWith("collection.final."));
+  if (finalState) {
+    const succeeded = finalState.event_code === "collection.final.success";
+    return {
+      severity: succeeded ? "normal" : "critical",
+      state: succeeded ? "completed" : "failed",
+      title: succeeded ? "本次采集成功" : "本次采集失败",
+      cause: finalState.message,
+      action: succeeded
+        ? "无需处理。"
+        : finalState.retryable
+          ? "修复原因后重新运行采集。"
+          : "根据失败原因完成处理后重新运行采集。",
+      failedStage: succeeded ? null : finalState.stage,
+      evidenceCode:
+        typeof finalState.details.reasonCode === "string"
+          ? finalState.details.reasonCode
+          : finalState.event_code,
+      retryable: succeeded ? false : finalState.retryable,
+    };
+  }
   const failure = [...ordered]
     .reverse()
     .find((event) => event.level === "error");
@@ -209,6 +232,10 @@ export function groupPluginExecutions(
   events: PluginExecutionEvent[],
   now = new Date(),
 ) {
+  const invocationRuns = new Map<string, string>();
+  for (const event of events)
+    if (event.invocation_id && event.run_id)
+      invocationRuns.set(event.invocation_id, event.run_id);
   const groups = new Map<
     string,
     {
@@ -217,16 +244,19 @@ export function groupPluginExecutions(
     }
   >();
   for (const event of events) {
-    const grouping: PluginExecutionGrouping = event.invocation_id
-      ? "invocation"
-      : event.run_id
-        ? "run"
+    const effectiveRunId =
+      event.run_id ??
+      (event.invocation_id ? invocationRuns.get(event.invocation_id) : null);
+    const grouping: PluginExecutionGrouping = effectiveRunId
+      ? "run"
+      : event.invocation_id
+        ? "invocation"
         : "legacy";
     const key =
-      grouping === "invocation"
-        ? `invocation:${event.invocation_id}`
-        : grouping === "run"
-          ? `run:${event.run_id}`
+      grouping === "run"
+        ? `run:${effectiveRunId}`
+        : grouping === "invocation"
+          ? `invocation:${event.invocation_id}`
           : "legacy";
     const group = groups.get(key) ?? { grouping, events: [] };
     group.events.push(event);
@@ -242,6 +272,9 @@ export function groupPluginExecutions(
       );
       const first = ordered[0]!;
       const last = ordered.at(-1)!;
+      const finalSummaryEvent = [...ordered]
+        .reverse()
+        .find((event) => event.event_code.startsWith("collection.final."));
       const explicitDuration = [...ordered]
         .reverse()
         .find(
@@ -291,6 +324,7 @@ export function groupPluginExecutions(
         errorCount: ordered.filter((event) => event.level === "error").length,
         warningCount: ordered.filter((event) => event.level === "warning")
           .length,
+        finalSummary: finalSummaryEvent?.message ?? null,
         diagnosis,
         events: ordered,
       };

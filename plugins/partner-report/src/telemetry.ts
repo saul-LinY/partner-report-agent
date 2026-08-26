@@ -168,6 +168,38 @@ export function enqueuePluginLog(input: PluginLogInput) {
   }
 }
 
+export type CollectionFinalStateInput = {
+  runId?: string;
+  outcome: "success" | "failed";
+  summary: string;
+  reasonCode?: string;
+  details?: Record<string, unknown>;
+};
+
+export function collectionFinalStateLogInput(
+  input: CollectionFinalStateInput,
+): PluginLogInput {
+  return {
+    ...(input.runId ? { runId: input.runId } : {}),
+    level: input.outcome === "success" ? "info" : "error",
+    stage: "collection",
+    eventCode: `collection.final.${input.outcome}`,
+    eventType: "result",
+    message: input.summary,
+    retryable: input.outcome === "failed",
+    details: {
+      finalState: input.outcome,
+      summary: input.summary,
+      ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
+      ...(input.details ?? {}),
+    },
+  };
+}
+
+export function enqueueCollectionFinalState(input: CollectionFinalStateInput) {
+  return enqueuePluginLog(collectionFinalStateLogInput(input));
+}
+
 export function setPluginLogRunId(runId: string | undefined) {
   activeRunId = runId;
 }

@@ -49,7 +49,6 @@ const teamUpdateSchema = z.object({
 const partnerUpdateSchema = z.object({
   displayName: z.string().trim().min(1).max(120).optional(),
   status: z.enum(["active", "suspended"]).optional(),
-  feishuDeliveryEnabled: z.boolean().optional(),
   preferences: z.record(z.unknown()).optional(),
 });
 
@@ -243,7 +242,7 @@ export async function adminRoutes(app: FastifyInstance) {
         any[]
       >`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
       sql<any[]>`
-        select p.id, p.display_name, p.email, p.status, p.feishu_delivery_enabled,
+        select p.id, p.display_name, p.email, p.status,
           p.preferences, p.user_id, p.created_at,
           latest_review.review_id, latest_review.period_key as review_period_key,
           latest_review.review_state, latest_review.pending_count,
@@ -434,7 +433,6 @@ export async function adminRoutes(app: FastifyInstance) {
         partnerId: partner.id,
         partnerName: partner.display_name,
         partnerEmail: partner.email,
-        feishuDeliveryEnabled: partner.feishu_delivery_enabled,
         connectionState,
         feishuConnectionState: feishuConnectionStatus({
           configured: Boolean(feishuAppId),
@@ -471,7 +469,6 @@ export async function adminRoutes(app: FastifyInstance) {
       display_name: partner.display_name,
       email: partner.email,
       status: partner.status,
-      feishu_delivery_enabled: partner.feishu_delivery_enabled,
       preferences: partner.preferences,
       user_id: partner.user_id,
       created_at: partner.created_at,
@@ -859,25 +856,12 @@ export async function adminRoutes(app: FastifyInstance) {
         update partners set
           display_name = coalesce(${input.displayName ?? null}, display_name),
           status = coalesce(${input.status ?? null}, status),
-          feishu_delivery_enabled = coalesce(
-            ${input.feishuDeliveryEnabled ?? null},
-            feishu_delivery_enabled
-          ),
           preferences = coalesce(${input.preferences ? JSON.stringify(input.preferences) : null}::jsonb, preferences),
           updated_at = now()
         where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
         returning *
       `;
       if (!rows[0]) throw new ApiError(404, "NOT_FOUND", "Partner 不存在。");
-      if (input.feishuDeliveryEnabled === false) {
-        await tx`
-          update feishu_deliveries set
-            status = 'suppressed', next_retry_at = null, updated_at = now()
-          where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-            and partner_id = ${id}
-            and status in ('pending', 'sending', 'retry_wait', 'failed', 'deferred')
-        `;
-      }
       return rows[0];
     });
     await audit(request, actor, "partner.updated", "partner", id, input);

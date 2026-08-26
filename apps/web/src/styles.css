@@ -1778,6 +1778,15 @@ select:focus {
   font-size: 11px;
 }
 
+.plugin-execution-copy .plugin-execution-conclusion {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.4;
+}
+
 .plugin-execution-detail {
   min-width: 0;
   background: #fff;
@@ -1846,6 +1855,13 @@ select:focus {
 
 .execution-diagnosis-icon {
   color: #23845d;
+}
+
+.execution-conclusion-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .execution-diagnosis-warning .execution-diagnosis-icon {
@@ -3097,61 +3113,6 @@ select:focus {
 .plugin-state-badges .plugin-tested-at,
 .feishu-state-badges .plugin-tested-at {
   margin-top: 1px;
-  white-space: nowrap;
-}
-.feishu-channel-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-  cursor: pointer;
-}
-.feishu-channel-toggle input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-.feishu-channel-toggle > span {
-  width: 28px;
-  height: 16px;
-  margin-top: 0 !important;
-  position: relative;
-  border: 1px solid #aeb9bd;
-  border-radius: 8px;
-  background: #d8dfe1;
-  transition:
-    background 140ms ease,
-    border-color 140ms ease;
-}
-.feishu-channel-toggle > span::after {
-  content: "";
-  width: 10px;
-  height: 10px;
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 22%);
-  transition: transform 140ms ease;
-}
-.feishu-channel-toggle input:checked + span {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-.feishu-channel-toggle input:checked + span::after {
-  transform: translateX(12px);
-}
-.feishu-channel-toggle input:focus-visible + span {
-  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  outline-offset: 2px;
-}
-.feishu-channel-toggle input:disabled + span {
-  opacity: 0.55;
-}
-.feishu-channel-toggle small {
-  color: var(--muted);
-  font-size: 10px;
   white-space: nowrap;
 }
 .plugin-status-row > div strong,

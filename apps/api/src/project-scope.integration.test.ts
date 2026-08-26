@@ -14,6 +14,7 @@ suite("project scope persistence", () => {
   const fixture = {
     tenantId: randomUUID(),
     teamId: randomUUID(),
+    userId: randomUUID(),
     partnerId: randomUUID(),
     pluginInstanceId: randomUUID(),
     periodId: randomUUID(),
@@ -37,6 +38,7 @@ suite("project scope persistence", () => {
   beforeAll(async () => {
     await sql.begin(async (tx) => {
       await tx`insert into tenants (id, name) values (${fixture.tenantId}, 'Scope Tenant')`;
+      await tx`insert into users (id, email, display_name, password_hash) values (${fixture.userId}, ${`scope-admin-${fixture.userId}@local.test`}, 'Scope Admin', 'test')`;
       await tx`insert into teams (id, tenant_id, name) values (${fixture.teamId}, ${fixture.tenantId}, 'Scope Team')`;
       await tx`insert into partners (id, tenant_id, team_id, email, display_name) values (${fixture.partnerId}, ${fixture.tenantId}, ${fixture.teamId}, ${`scope-${fixture.partnerId}@local.test`}, 'Scope Partner')`;
       await tx`
@@ -71,11 +73,13 @@ suite("project scope persistence", () => {
       await tx`delete from audit_events where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_entries where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_policies where tenant_id = ${fixture.tenantId}`;
+      await tx`delete from plugin_binding_codes where tenant_id = ${fixture.tenantId}`;
       await tx`delete from report_periods where tenant_id = ${fixture.tenantId}`;
       await tx`delete from plugin_instances where id = ${fixture.pluginInstanceId}`;
       await tx`delete from partners where id = ${fixture.partnerId}`;
       await tx`delete from teams where id = ${fixture.teamId}`;
       await tx`delete from tenants where id = ${fixture.tenantId}`;
+      await tx`delete from users where id = ${fixture.userId}`;
     });
   });
 
@@ -120,6 +124,42 @@ suite("project scope persistence", () => {
           version: 2,
         }),
       },
+    ]);
+    await sql`
+      update outbox_events set published_at = now()
+      where tenant_id = ${fixture.tenantId}
+        and event_type = 'project_scope.candidates.changed'
+    `;
+    await sql`
+      insert into plugin_binding_codes (
+        id, tenant_id, team_id, partner_id, code_hash, code_prefix,
+        status, plugin_instance_id, created_by
+      ) values (
+        ${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId},
+        ${fixture.partnerId}, ${"b".repeat(64)}, 'PR-RETRY', 'connecting',
+        ${fixture.pluginInstanceId}, ${fixture.userId}
+      )
+    `;
+    await registerProjectScopeCandidates(identity, {
+      periodKey: "scope-period",
+      initialDiscovery: true,
+      candidates: [
+        { scopeKey: firstKey, displayName: "first-project", sessionCount: 2 },
+        {
+          scopeKey: secondKey,
+          displayName: "single-session-project",
+          sessionCount: 1,
+        },
+      ],
+    });
+    const reminderEvents = await sql<Array<{ event_type: string }>>`
+      select event_type from outbox_events
+      where tenant_id = ${fixture.tenantId}
+        and event_type = 'project_scope.delivery.requested'
+        and published_at is null
+    `;
+    expect(reminderEvents).toEqual([
+      { event_type: "project_scope.delivery.requested" },
     ]);
     await expect(
       decideProjectScopes(actor, fixture.pluginInstanceId, {

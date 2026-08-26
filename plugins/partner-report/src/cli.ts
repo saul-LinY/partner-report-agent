@@ -115,6 +115,7 @@ import {
   type ScheduledTaskInstallation,
 } from "./scheduled-task.js";
 import {
+  enqueueCollectionFinalState,
   enqueuePluginLog,
   flushPluginLogs,
   pluginErrorDetails,
@@ -291,6 +292,7 @@ function output(value: unknown) {
       try {
         runId = readRun(event.runPath).manifest.runId;
         setPluginLogRunId(runId);
+        commandRunId = runId;
       } catch {
         runId = undefined;
       }
@@ -343,8 +345,46 @@ function output(value: unknown) {
         retryable: event.retryable,
       },
     });
+    const currentCommand = process.argv[2] ?? "plugin";
+    if (
+      ["collect-start", "daily-collect"].includes(currentCommand) &&
+      [
+        "project_scope_approval_required",
+        "project_scope_waiting_for_projects",
+      ].includes(value.status)
+    ) {
+      const pendingProjects = Array.isArray(event.pendingProjects)
+        ? event.pendingProjects.length
+        : 0;
+      enqueueCollectionFinalState({
+        outcome: "failed",
+        summary:
+          value.status === "project_scope_approval_required"
+            ? `采集未开始：${pendingProjects} 个项目仍在等待飞书权限审核。`
+            : "采集未开始：当前扫描范围内还没有可审核项目。",
+        reasonCode: value.status,
+        details: { pendingProjects, periodKey: event.periodKey },
+      });
+    }
   }
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function collectionFailureSummary(code: string, command: string) {
+  const signal = code.toUpperCase();
+  if (/AUTH|TOKEN|UNAUTHORIZED|FORBIDDEN/.test(signal))
+    return "采集失败：插件连接凭据无效，无法访问数据中台。";
+  if (/THREAD|SESSION|APP_SERVER|CODEX|LOCAL_AGENT/.test(signal))
+    return "采集失败：插件无法读取本机 Codex 会话。";
+  if (/PROJECT_SCOPE|PERMISSION/.test(signal))
+    return "采集失败：项目采集权限检查未通过。";
+  if (/EXTRACT|MODEL|VALIDATION|SCHEMA|OUTPUT/.test(signal))
+    return "采集失败：会话分析结果没有通过插件校验。";
+  if (/UPLOAD|SYNC|HTTP|NETWORK|TIMEOUT|ECONN|RATE_LIMIT/.test(signal))
+    return "采集失败：插件与数据中台通信或上传结果时发生异常。";
+  if (/LOCAL_STORAGE|ENOSPC|EACCES|FILE|DISK/.test(signal))
+    return "采集失败：插件无法读写本地采集状态。";
+  return `采集失败：${command} 返回错误 ${code}。`;
 }
 
 function sha256(value: string) {
@@ -1582,6 +1622,17 @@ function deferRun(
     manifest.queue.length - manifest.cursor,
   );
   saveRun(runPath, manifest);
+  enqueueCollectionFinalState({
+    runId: manifest.runId,
+    outcome: "failed",
+    summary: `采集未完成：运行已延后，剩余 ${manifest.counts.notProcessed} 个候选会话待处理。`,
+    reasonCode: reason,
+    details: {
+      periodKey: manifest.period.period_key,
+      deferred: manifest.counts.deferred,
+      notProcessed: manifest.counts.notProcessed,
+    },
+  });
   output({
     status: "deferred",
     runPath,
@@ -1633,6 +1684,19 @@ async function finishRun(
     },
     ...manifest.counts,
   };
+  enqueueCollectionFinalState({
+    runId: manifest.runId,
+    outcome: "success",
+    summary: `采集成功：上传 ${manifest.counts.uploaded} 项贡献，忽略 ${manifest.counts.ignored + manifest.counts.cachedIgnored} 个无有效贡献的会话，采集进度已更新。`,
+    details: {
+      periodKey: manifest.period.period_key,
+      uploaded: manifest.counts.uploaded,
+      unchanged: manifest.counts.unchanged,
+      ignored: manifest.counts.ignored + manifest.counts.cachedIgnored,
+      checkpointAdvanced,
+    },
+  });
+  await flushPluginLogs();
   releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
   rmSync(dirname(runPath), { recursive: true, force: true });
   output(summary);
@@ -2659,6 +2723,26 @@ try {
       ...(diagnostic.details ?? {}),
     },
   });
+  if (
+    [
+      "collect-start",
+      "daily-collect",
+      "collect-next",
+      "collect-review",
+      "collect-submit",
+      "collect-defer",
+      "collect-skip",
+      "project-description-submit",
+    ].includes(command)
+  ) {
+    enqueueCollectionFinalState({
+      ...(commandRunId ? { runId: commandRunId } : {}),
+      outcome: "failed",
+      summary: collectionFailureSummary(diagnostic.code, command),
+      reasonCode: diagnostic.code,
+      details: { command, errorCode: diagnostic.code },
+    });
+  }
   await flushPluginLogs();
   {
     const code =

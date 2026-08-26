@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildPendingPluginLog } from "./telemetry.js";
+import {
+  buildPendingPluginLog,
+  collectionFinalStateLogInput,
+} from "./telemetry.js";
 
 describe("plugin telemetry", () => {
   it("adds the invocation identity required for command grouping", () => {
@@ -49,5 +52,31 @@ describe("plugin telemetry", () => {
 
     expect(event.details).toEqual({ errorCode: "UPLOAD_FAILED" });
     expect(event.eventType).toBe("error");
+  });
+
+  it("builds an explicit failed collection conclusion", () => {
+    expect(
+      collectionFinalStateLogInput({
+        runId: "22222222-2222-4222-8222-222222222222",
+        outcome: "failed",
+        summary: "采集失败：插件无法读取本机 Codex 会话。",
+        reasonCode: "CODEX_SESSION_LIST_FAILED",
+        details: { command: "collect-start" },
+      }),
+    ).toMatchObject({
+      runId: "22222222-2222-4222-8222-222222222222",
+      level: "error",
+      stage: "collection",
+      eventCode: "collection.final.failed",
+      eventType: "result",
+      message: "采集失败：插件无法读取本机 Codex 会话。",
+      retryable: true,
+      details: {
+        finalState: "failed",
+        summary: "采集失败：插件无法读取本机 Codex 会话。",
+        reasonCode: "CODEX_SESSION_LIST_FAILED",
+        command: "collect-start",
+      },
+    });
   });
 });

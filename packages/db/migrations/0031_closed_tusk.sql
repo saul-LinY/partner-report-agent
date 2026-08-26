@@ -1,0 +1,1 @@
+ALTER TABLE "partners" DROP COLUMN "feishu_delivery_enabled";

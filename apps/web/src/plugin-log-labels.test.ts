@@ -16,7 +16,8 @@ describe("plugin log labels", () => {
   it("distinguishes fallback runs from ungrouped history", () => {
     expect(
       pluginExecutionLabel({ grouping: "run", command: "collection" }),
-    ).toBe("采集批次兼容记录");
+    ).toBe("定时采集");
+    expect(pluginExecutionKindLabel("run")).toBe("本次定时采集");
     expect(pluginExecutionKindLabel("legacy")).toBe("历史日志");
   });
 });

@@ -112,6 +112,7 @@ type PluginExecution = {
   eventCount: number;
   errorCount: number;
   warningCount: number;
+  finalSummary: string | null;
   diagnosis: ExecutionDiagnosis;
 };
 
@@ -548,6 +549,11 @@ export function PluginMonitoringPage() {
                           {stateLabel[execution.diagnosis.state]} ·{" "}
                           {execution.eventCount} 个事件
                         </small>
+                        {execution.finalSummary && (
+                          <small className="plugin-execution-conclusion">
+                            {execution.finalSummary}
+                          </small>
+                        )}
                       </span>
                       <ChevronRight size={15} />
                     </button>
@@ -622,6 +628,9 @@ export function PluginMonitoringPage() {
                         )}
                       </span>
                       <div>
+                        <span className="execution-conclusion-label">
+                          运行结论
+                        </span>
                         <strong>{selectedExecution.diagnosis.title}</strong>
                         <p>{selectedExecution.diagnosis.cause}</p>
                         <small>{selectedExecution.diagnosis.action}</small>

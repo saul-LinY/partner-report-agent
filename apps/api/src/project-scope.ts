@@ -194,7 +194,7 @@ export async function registerProjectScopeCandidates(
   const input = projectScopeCandidateBatchSchema.parse(rawInput);
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
-    await tx<PolicyRow[]>`
+    const policyRows = await tx<PolicyRow[]>`
       select version, initialized, initialized_at
       from project_scope_policies
       where plugin_instance_id = ${identity.pluginInstanceId}
@@ -317,7 +317,9 @@ export async function registerProjectScopeCandidates(
       `;
     }
 
-    if (newCandidates.length > 0 || unreviewedAllowed.length > 0) {
+    const scopeChanged =
+      newCandidates.length > 0 || unreviewedAllowed.length > 0;
+    if (scopeChanged) {
       const versions = await tx<Array<{ version: number }>>`
         update project_scope_policies set version = version + 1, updated_at = now()
         where plugin_instance_id = ${identity.pluginInstanceId}
@@ -336,6 +338,45 @@ export async function registerProjectScopeCandidates(
             periodKey: input.periodKey,
             version: versions[0]?.version,
           })}::jsonb
+        )
+      `;
+    }
+    if (!scopeChanged && identityRows[0]?.confirmed !== true) {
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        )
+        select
+          ${randomUUID()}, ${identity.tenantId},
+          'project_scope.delivery.requested', 'plugin_instance',
+          ${identity.pluginInstanceId},
+          ${JSON.stringify({
+            teamId: identity.teamId,
+            partnerId: identity.partnerId,
+            pluginInstanceId: identity.pluginInstanceId,
+            periodKey: input.periodKey,
+            version: policyRows[0]?.version,
+          })}::jsonb
+        where exists (
+          select 1 from project_scope_entries
+          where plugin_instance_id = ${identity.pluginInstanceId}
+            and tenant_id = ${identity.tenantId} and status = 'pending'
+        )
+        and exists (
+          select 1 from plugin_binding_codes
+          where tenant_id = ${identity.tenantId}
+            and plugin_instance_id = ${identity.pluginInstanceId}
+            and status = 'connecting'
+        )
+        and not exists (
+          select 1 from outbox_events
+          where tenant_id = ${identity.tenantId}
+            and aggregate_id = ${identity.pluginInstanceId}
+            and event_type in (
+              'project_scope.candidates.changed',
+              'project_scope.delivery.requested'
+            )
+            and published_at is null
         )
       `;
     }

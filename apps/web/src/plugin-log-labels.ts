@@ -23,13 +23,13 @@ export function pluginExecutionLabel(execution: {
   grouping: PluginExecutionGrouping;
   command: string;
 }) {
-  if (execution.grouping === "run") return "采集批次兼容记录";
+  if (execution.grouping === "run") return "定时采集";
   if (execution.grouping === "legacy") return "历史未分组日志";
   return pluginCommandLabel(execution.command);
 }
 
 export function pluginExecutionKindLabel(grouping: PluginExecutionGrouping) {
-  if (grouping === "run") return "采集批次兼容记录";
+  if (grouping === "run") return "本次定时采集";
   if (grouping === "legacy") return "历史日志";
   return "本次插件命令";
 }

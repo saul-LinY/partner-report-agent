@@ -213,38 +213,6 @@ describe("FeishuDeliveryService PostgreSQL path", () => {
           }),
         ]);
 
-        await tx`
-          update partners set feishu_delivery_enabled = false
-          where id = ${partnerId} and tenant_id = ${tenantId}
-        `;
-        await tx`
-          update reviews set version = 7
-          where id = ${reviewId} and tenant_id = ${tenantId}
-            and team_id = ${teamId} and partner_id = ${partnerId}
-        `;
-        await expect(service.deliverReview(scope)).resolves.toMatchObject({
-          outcome: "skipped",
-          deliveryId: null,
-          reason: "channel_disabled",
-        });
-        expect(updateInteractiveCard).toHaveBeenCalledTimes(3);
-
-        await tx`
-          update partners set feishu_delivery_enabled = true
-          where id = ${partnerId} and tenant_id = ${tenantId}
-        `;
-        await tx`
-          update reviews set version = 8
-          where id = ${reviewId} and tenant_id = ${tenantId}
-            and team_id = ${teamId} and partner_id = ${partnerId}
-        `;
-        await expect(service.deliverReview(scope)).resolves.toMatchObject({
-          outcome: "updated",
-          messageId,
-          domainVersion: 8,
-        });
-        expect(updateInteractiveCard).toHaveBeenCalledTimes(4);
-
         throw rollback;
       });
     } catch (error) {
