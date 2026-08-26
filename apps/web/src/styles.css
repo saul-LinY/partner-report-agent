@@ -1491,10 +1491,58 @@ select:focus {
   color: var(--ink);
 }
 
-.plugin-log-panel-title span,
-.plugin-log-section-title span {
+.plugin-log-panel-title > span,
+.plugin-log-section-title > span {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
+}
+
+.plugin-history-link {
+  min-height: 28px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.plugin-history-link:hover {
+  border-color: #9cb9af;
+  color: var(--accent);
+}
+
+.plugin-history-toolbar {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  gap: 7px;
+  align-items: center;
+  min-height: 50px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #f2f4f4;
+}
+
+.plugin-history-toolbar .icon-button {
+  width: 32px;
+  height: 32px;
+}
+
+.plugin-history-toolbar input {
+  min-width: 0;
+  width: 100%;
+  height: 32px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
 }
 
 .plugin-instance-row {

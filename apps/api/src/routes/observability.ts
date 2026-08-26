@@ -21,13 +21,31 @@ import {
 } from "../plugin-log-diagnostics.js";
 import { runSystemProbe, systemProbeKeys } from "../system-probes.js";
 
+export function isValidPluginLogDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
 const adminLogQuerySchema = z
   .object({
     pluginInstanceId: z.string().uuid(),
     executionId: z.string().trim().min(1).max(120).optional(),
     runId: z.string().uuid().optional(),
     level: z.enum(["debug", "info", "warning", "error"]).optional(),
-    limit: z.coerce.number().int().min(1).max(2_000).default(1_000),
+    date: z
+      .string()
+      .refine(isValidPluginLogDate, "日期必须是有效的 YYYY-MM-DD。")
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(5_000).default(2_000),
   })
   .strict();
 
@@ -172,16 +190,30 @@ export async function observabilityRoutes(app: FastifyInstance) {
   app.get("/v1/admin/plugin-logs", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const query = adminLogQuerySchema.parse(request.query);
-    const plugins = await sql<Array<{ id: string; partner_id: string }>>`
-      select id, partner_id from plugin_instances
-      where id = ${query.pluginInstanceId} and tenant_id = ${actor.tenantId}
-        and team_id = ${actor.teamId}
+    const plugins = await sql<
+      Array<{ id: string; partner_id: string; timezone: string }>
+    >`
+      select pi.id, pi.partner_id, t.timezone
+      from plugin_instances pi
+      join teams t on t.id = pi.team_id and t.tenant_id = pi.tenant_id
+      where pi.id = ${query.pluginInstanceId} and pi.tenant_id = ${actor.tenantId}
+        and pi.team_id = ${actor.teamId}
       limit 1
     `;
     const plugin = plugins[0];
     if (!plugin)
       throw new ApiError(404, "PLUGIN_NOT_FOUND", "Plugin Instance 不存在。");
 
+    const windows = query.date
+      ? await sql<Array<{ window_start: Date; window_end: Date }>>`
+          select
+            (${query.date}::date::timestamp at time zone ${plugin.timezone}) as window_start,
+            ((${query.date}::date + 1)::timestamp at time zone ${plugin.timezone}) as window_end
+        `
+      : await sql<Array<{ window_start: Date; window_end: Date }>>`
+          select now() - interval '24 hours' as window_start, now() as window_end
+        `;
+    const logWindow = windows[0]!;
     const recentEvents = await sql<any[]>`
       select id, invocation_id, run_id, sequence, command, event_type,
         level, stage, event_code, message, stack, retryable,
@@ -189,12 +221,14 @@ export async function observabilityRoutes(app: FastifyInstance) {
       from plugin_log_events
       where tenant_id = ${actor.tenantId}
         and plugin_instance_id = ${query.pluginInstanceId}
+        and occurred_at >= ${logWindow.window_start}
+        and occurred_at < ${logWindow.window_end}
       order by occurred_at desc, created_at desc
       limit ${query.limit}
     `;
     const grouped = groupPluginExecutions(
       recentEvents as PluginExecutionEvent[],
-    ).slice(0, 50);
+    );
     const selected = query.executionId
       ? grouped.find((execution) => execution.executionId === query.executionId)
       : query.runId
@@ -220,6 +254,13 @@ export async function observabilityRoutes(app: FastifyInstance) {
       : [];
     return {
       pluginInstanceId: plugin.id,
+      window: {
+        mode: query.date ? "day" : "recent",
+        date: query.date ?? null,
+        timezone: plugin.timezone,
+        startedAt: logWindow.window_start,
+        endedAt: logWindow.window_end,
+      },
       selectedExecutionId: selected?.executionId ?? null,
       events,
       executions,
@@ -251,6 +292,15 @@ export async function observabilityRoutes(app: FastifyInstance) {
     const plugin = pluginRows[0];
     if (!plugin)
       throw new ApiError(404, "PLUGIN_NOT_FOUND", "Plugin Instance 不存在。");
+    const invocationId = input.executionId.startsWith("invocation:")
+      ? input.executionId.slice("invocation:".length)
+      : "";
+    if (!z.string().uuid().safeParse(invocationId).success)
+      throw new ApiError(
+        409,
+        "PLUGIN_EXECUTION_NOT_ANALYZABLE",
+        "只有提供命令执行 ID 的单次命令日志才能进行模型分析。",
+      );
     const recentEvents = await sql<any[]>`
       select id, invocation_id, run_id, sequence, command, event_type,
         level, stage, event_code, message, stack, retryable,
@@ -258,6 +308,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
       from plugin_log_events
       where tenant_id = ${actor.tenantId}
         and plugin_instance_id = ${input.pluginInstanceId}
+        and invocation_id = ${invocationId}
       order by occurred_at desc, created_at desc limit 2000
     `;
     const execution = groupPluginExecutions(

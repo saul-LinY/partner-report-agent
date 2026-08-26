@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowLeft,
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   CircleDot,
   Clock3,
@@ -114,6 +117,13 @@ type PluginExecution = {
 
 type PluginLogs = {
   pluginInstanceId: string;
+  window: {
+    mode: "recent" | "day";
+    date: string | null;
+    timezone: string;
+    startedAt: string;
+    endedAt: string;
+  };
   selectedExecutionId: string | null;
   events: LogEvent[];
   executions: PluginExecution[];
@@ -181,11 +191,34 @@ function formatDuration(durationMs: number) {
   return `${Math.floor(durationMs / 60_000)} 分 ${Math.round((durationMs % 60_000) / 1000)} 秒`;
 }
 
+function dateKeyInTimezone(timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function shiftDateKey(value: string, days: number) {
+  const date = new Date(`${value}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export function PluginMonitoringPage() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [problemsOnly, setProblemsOnly] = useState(false);
+  const [logView, setLogView] = useState<"recent" | "history">("recent");
+  const [historyDate, setHistoryDate] = useState(() =>
+    dateKeyInTimezone("Asia/Shanghai"),
+  );
   const monitoring = useQuery({
     queryKey: ["admin-plugin-monitoring"],
     queryFn: () => api<PluginMonitoring>("/v1/admin/plugin-monitoring"),
@@ -200,17 +233,29 @@ export function PluginMonitoringPage() {
   }, [plugins, selectedId]);
 
   const selectedPlugin = plugins.find((plugin) => plugin.id === selectedId);
+  const timezone = monitoring.data?.schedule.timezone ?? "Asia/Shanghai";
+  const today = useMemo(
+    () => dateKeyInTimezone(timezone),
+    [monitoring.data?.checkedAt, timezone],
+  );
   const params = useMemo(() => {
     if (!selectedId) return "";
     const value = new URLSearchParams({ pluginInstanceId: selectedId });
+    if (logView === "history") value.set("date", historyDate);
     if (executionId) value.set("executionId", executionId);
     return value.toString();
-  }, [executionId, selectedId]);
+  }, [executionId, historyDate, logView, selectedId]);
   const logs = useQuery({
-    queryKey: ["admin-plugin-logs", selectedId, executionId],
+    queryKey: [
+      "admin-plugin-logs",
+      selectedId,
+      logView,
+      historyDate,
+      executionId,
+    ],
     queryFn: () => api<PluginLogs>(`/v1/admin/plugin-logs?${params}`),
     enabled: Boolean(selectedId),
-    refetchInterval: 10_000,
+    refetchInterval: logView === "recent" ? 10_000 : false,
   });
   const requestAnalysis = useMutation({
     mutationFn: (selectedExecutionId: string) =>
@@ -223,7 +268,7 @@ export function PluginMonitoringPage() {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["admin-plugin-logs", selectedId, executionId],
+        queryKey: ["admin-plugin-logs", selectedId],
       });
     },
   });
@@ -246,6 +291,11 @@ export function PluginMonitoringPage() {
     (event) =>
       !problemsOnly || event.level === "warning" || event.level === "error",
   );
+  const selectHistoryDate = (value: string) => {
+    setHistoryDate(value);
+    setExecutionId(null);
+    setProblemsOnly(false);
+  };
 
   if (monitoring.isLoading)
     return (
@@ -395,12 +445,78 @@ export function PluginMonitoringPage() {
             )}
 
             <div className="plugin-execution-browser">
-              <aside className="plugin-execution-list" aria-label="最近运行">
+              <aside
+                className="plugin-execution-list"
+                aria-label={logView === "recent" ? "最近运行" : "历史日志"}
+              >
                 <div className="plugin-log-section-title">
-                  <Clock3 size={17} />
-                  <strong>最近运行</strong>
+                  {logView === "recent" ? (
+                    <Clock3 size={17} />
+                  ) : (
+                    <CalendarDays size={17} />
+                  )}
+                  <strong>
+                    {logView === "recent" ? "最近 24 小时" : "历史日志"}
+                  </strong>
                   <span>{logs.data?.executions.length ?? 0}</span>
+                  {logView === "recent" ? (
+                    <button
+                      className="plugin-history-link"
+                      onClick={() => {
+                        setLogView("history");
+                        selectHistoryDate(today);
+                      }}
+                    >
+                      <CalendarDays size={14} />
+                      历史日志
+                    </button>
+                  ) : (
+                    <button
+                      className="plugin-history-link"
+                      onClick={() => {
+                        setLogView("recent");
+                        setExecutionId(null);
+                        setProblemsOnly(false);
+                      }}
+                    >
+                      <ArrowLeft size={14} />
+                      最近日志
+                    </button>
+                  )}
                 </div>
+                {logView === "history" && (
+                  <div className="plugin-history-toolbar">
+                    <button
+                      className="icon-button"
+                      title="前一天"
+                      onClick={() =>
+                        selectHistoryDate(shiftDateKey(historyDate, -1))
+                      }
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <input
+                      type="date"
+                      aria-label="历史日志日期"
+                      value={historyDate}
+                      max={today}
+                      onChange={(event) => {
+                        if (event.target.value)
+                          selectHistoryDate(event.target.value);
+                      }}
+                    />
+                    <button
+                      className="icon-button"
+                      title="后一天"
+                      disabled={historyDate >= today}
+                      onClick={() =>
+                        selectHistoryDate(shiftDateKey(historyDate, 1))
+                      }
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                )}
                 {logs.isLoading ? (
                   <div className="plugin-log-loading">
                     <RefreshCw size={16} className="spin" />
@@ -437,7 +553,13 @@ export function PluginMonitoringPage() {
                     </button>
                   ))
                 ) : (
-                  <EmptyState title="还没有收到运行日志" />
+                  <EmptyState
+                    title={
+                      logView === "recent"
+                        ? "最近 24 小时没有运行日志"
+                        : "这一天没有运行日志"
+                    }
+                  />
                 )}
               </aside>
 

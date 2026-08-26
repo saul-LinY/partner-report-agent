@@ -107,6 +107,87 @@ suite("tenant and role authorization", () => {
 
   const headers = { cookie: `pra_session=${token}` };
 
+  it("shows only the latest 24 hours by default and supports team-local history days", async () => {
+    const recentEventId = randomUUID();
+    const historyEventId = randomUUID();
+    const previousDayEventId = randomUUID();
+    const recentInvocationId = randomUUID();
+    const historyInvocationId = randomUUID();
+    const previousDayInvocationId = randomUUID();
+    try {
+      await sql`
+        insert into plugin_log_events (
+          id, tenant_id, team_id, partner_id, plugin_instance_id,
+          invocation_id, command, event_type, level, stage, event_code,
+          message, occurred_at
+        ) values
+        (
+          ${recentEventId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.pluginA}, ${recentInvocationId}, 'status', 'result', 'info',
+          'status', 'command.completed', 'Recent fixture event',
+          ${new Date(Date.now() - 60_000).toISOString()}
+        ),
+        (
+          ${historyEventId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.pluginA}, ${historyInvocationId}, 'status', 'result', 'info',
+          'status', 'command.completed', 'History fixture event',
+          '2020-08-03T16:00:00.000Z'
+        ),
+        (
+          ${previousDayEventId}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA},
+          ${fixture.pluginA}, ${previousDayInvocationId}, 'status', 'result', 'info',
+          'status', 'command.completed', 'Previous day fixture event',
+          '2020-08-03T15:59:59.000Z'
+        )
+      `;
+
+      const recent = await app.inject({
+        method: "GET",
+        url: `/v1/admin/plugin-logs?pluginInstanceId=${fixture.pluginA}`,
+        headers,
+      });
+      expect(recent.statusCode).toBe(200);
+      expect(recent.json().window).toMatchObject({
+        mode: "recent",
+        date: null,
+        timezone: "Asia/Shanghai",
+      });
+      expect(
+        recent.json().executions.map((item: any) => item.executionId),
+      ).toContain(`invocation:${recentInvocationId}`);
+      expect(
+        recent.json().executions.map((item: any) => item.executionId),
+      ).not.toContain(`invocation:${historyInvocationId}`);
+
+      const history = await app.inject({
+        method: "GET",
+        url: `/v1/admin/plugin-logs?pluginInstanceId=${fixture.pluginA}&date=2020-08-04`,
+        headers,
+      });
+      expect(history.statusCode).toBe(200);
+      expect(history.json().window).toMatchObject({
+        mode: "day",
+        date: "2020-08-04",
+        timezone: "Asia/Shanghai",
+      });
+      expect(
+        history.json().executions.map((item: any) => item.executionId),
+      ).toEqual([`invocation:${historyInvocationId}`]);
+
+      const invalid = await app.inject({
+        method: "GET",
+        url: `/v1/admin/plugin-logs?pluginInstanceId=${fixture.pluginA}&date=2020-02-31`,
+        headers,
+      });
+      expect(invalid.statusCode).toBe(400);
+    } finally {
+      await sql`
+        delete from plugin_log_events
+        where id in (${recentEventId}, ${historyEventId}, ${previousDayEventId})
+      `;
+    }
+  });
+
   it("claims an Admin-issued binding code into the correct isolated Partner", async () => {
     const claim = await app.inject({
       method: "POST",
