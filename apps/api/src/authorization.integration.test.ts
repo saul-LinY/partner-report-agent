@@ -26,6 +26,7 @@ suite("tenant and role authorization", () => {
     jobA: randomUUID(),
     retryJobA: randomUUID(),
     clearJobA: randomUUID(),
+    completedGenerationJobA: randomUUID(),
     tenantB: randomUUID(),
     teamB: randomUUID(),
     userB: randomUUID(),
@@ -60,6 +61,7 @@ suite("tenant and role authorization", () => {
       await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, plugin_instance_id, type, status, idempotency_key, input_payload, output_payload, completed_at) values (${fixture.jobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, 'RESCAN_SESSIONS', 'COMPLETED', ${`fixture:${fixture.jobA}`}, '{}'::jsonb, '{"completed":true,"batchIds":[]}'::jsonb, now())`;
       await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, plugin_instance_id, type, status, idempotency_key, input_payload, attempt_count, max_attempts, error_code, error_message) values (${fixture.retryJobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, ${fixture.pluginA}, 'RESCAN_SESSIONS', 'FAILED', ${`fixture:${fixture.retryJobA}`}, '{}'::jsonb, 3, 3, 'SCAN_FAILED', 'Fixture scan failed')`;
       await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, type, status, idempotency_key, input_payload, attempt_count, max_attempts, error_code, error_message) values (${fixture.clearJobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'GENERATE_TEAM_REPORT', 'RETRY_WAIT', ${`fixture:${fixture.clearJobA}`}, '{}'::jsonb, 1, 3, 'CENTRAL_GENERATION_FAILED', 'Fixture generation failed')`;
+      await tx`insert into agent_jobs (id, tenant_id, team_id, partner_id, type, status, idempotency_key, input_payload, completed_at) values (${fixture.completedGenerationJobA}, ${fixture.tenantA}, ${fixture.teamA}, ${fixture.partnerA}, 'AGGREGATE_WORK_ITEMS', 'COMPLETED', ${`fixture:${fixture.completedGenerationJobA}`}, '{}'::jsonb, now())`;
       await tx`insert into report_periods (id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, submission_deadline_at, timezone) values (${fixture.periodB}, ${fixture.tenantB}, ${fixture.teamB}, 'fixture-period', '2026-08-01T00:00:00Z', '2026-08-08T00:00:00Z', '2026-08-08T00:00:00Z', '2026-08-10T02:00:00Z', 'Asia/Shanghai')`;
       await tx`insert into reviews (id, tenant_id, team_id, partner_id, period_id) values (${fixture.reviewB}, ${fixture.tenantB}, ${fixture.teamB}, ${fixture.partnerB}, ${fixture.periodB})`;
       await tx`insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids) values (${fixture.projectB}, ${fixture.tenantB}, ${fixture.teamB}, 'Tenant B Project', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)`;
@@ -963,6 +965,21 @@ suite("tenant and role authorization", () => {
     });
     expect(repeatedClear.statusCode).toBe(409);
     expect(repeatedClear.json().code).toBe("JOB_NOT_CLEARABLE");
+  });
+
+  it("counts completed generation jobs in system monitoring", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/admin/system-monitoring",
+      headers,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().components).toContainEqual(
+      expect.objectContaining({
+        key: "generation",
+        detail: expect.stringContaining("过去 24 小时完成 1 个生成任务"),
+      }),
+    );
   });
 
   it("ingests one Session Contribution idempotently and replaces changed content", async () => {

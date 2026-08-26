@@ -431,7 +431,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
             min(created_at) filter (where status in ('PENDING', 'LEASED', 'RETRY_WAIT')) as oldest_active_at,
             count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'FAILED')::int as generation_failed,
             count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'RETRY_WAIT')::int as generation_retry_wait,
-            count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'SUCCEEDED' and completed_at >= now() - interval '24 hours')::int as generation_completed_24h
+            count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'COMPLETED' and completed_at >= now() - interval '24 hours')::int as generation_completed_24h
           from agent_jobs
           where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
             and type not like 'SYSTEM_HEALTH_%'
