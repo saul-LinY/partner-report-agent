@@ -161,6 +161,87 @@ describe.sequential("authenticatedRequest", () => {
     );
   });
 
+  it("recovers after server-side rotation before the local access token expires", async () => {
+    const pluginInstanceId = "rotated-server-credentials-instance";
+    saveConfig({
+      serverUrl: "https://partner-report.test",
+      pluginInstanceId,
+      deviceName: "Test Mac",
+      accessExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      excludedSessionIds: [],
+      excludedPaths: [],
+    });
+    saveSecret(pluginInstanceId, "access", "rotated-access-token");
+    saveSecret(pluginInstanceId, "refresh", "rotated-refresh-token");
+
+    const requests: Array<{ path: string; authorization: string | null }> = [];
+    const fetchMock = vi.fn(
+      async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = new URL(String(input));
+        const authorization = new Headers(init?.headers).get("authorization");
+        requests.push({ path: url.pathname, authorization });
+        if (
+          url.pathname === "/v1/plugin-bindings/me" &&
+          authorization === "Bearer rotated-access-token"
+        )
+          return Response.json(
+            {
+              code: "PLUGIN_BINDING_INVALID",
+              message: "Plugin 绑定已过期或被撤销。",
+            },
+            { status: 401 },
+          );
+        if (url.pathname === "/v1/plugin-bindings/refresh")
+          return Response.json(
+            {
+              code: "REFRESH_TOKEN_INVALID",
+              message: "Refresh Token 无效或已轮换。",
+            },
+            { status: 401 },
+          );
+        if (url.pathname === "/v1/plugin-bindings/automatic-recovery")
+          return Response.json({
+            accessToken: "recovered-access-token",
+            refreshToken: "recovered-refresh-token",
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+            pluginInstanceId,
+            verifiedAt: new Date().toISOString(),
+          });
+        return Response.json({ status: "connected" });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      authenticatedRequest<{ status: string }>("/v1/plugin-bindings/me"),
+    ).resolves.toEqual({ status: "connected" });
+
+    expect(requests).toEqual([
+      {
+        path: "/v1/plugin-bindings/me",
+        authorization: "Bearer rotated-access-token",
+      },
+      { path: "/v1/plugin-bindings/refresh", authorization: null },
+      {
+        path: "/v1/plugin-bindings/automatic-recovery",
+        authorization: null,
+      },
+      {
+        path: "/v1/plugin-bindings/me",
+        authorization: "Bearer recovered-access-token",
+      },
+    ]);
+    expect(loadSecret(pluginInstanceId, "access")).toBe(
+      "recovered-access-token",
+    );
+    expect(loadSecret(pluginInstanceId, "refresh")).toBe(
+      "recovered-refresh-token",
+    );
+  });
+
   it("stops before the protected request when automatic recovery is rejected", async () => {
     const pluginInstanceId = "revoked-instance";
     saveConfig({
