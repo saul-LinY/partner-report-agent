@@ -4204,7 +4204,7 @@ var aggregationGroupSchema = external_exports.object({
   dailyProgress: external_exports.array(
     external_exports.object({
       date: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      summary: external_exports.string().min(1).max(200)
+      summary: external_exports.string().min(1)
     }).strict()
   ).min(1)
 }).strict();

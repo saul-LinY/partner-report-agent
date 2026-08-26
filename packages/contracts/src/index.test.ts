@@ -357,7 +357,7 @@ describe("project card aggregation contract", () => {
           },
         ],
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       aggregationResultSchema.safeParse({
         ...result,
