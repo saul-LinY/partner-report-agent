@@ -6,16 +6,16 @@ var __export = (target, all) => {
 };
 
 // src/cli.ts
-import { createHash as createHash3, randomUUID as randomUUID4 } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
 import {
-  chmodSync as chmodSync6,
+  chmodSync as chmodSync5,
   existsSync as existsSync7,
-  mkdirSync as mkdirSync3,
+  mkdirSync as mkdirSync2,
   readFileSync as readFileSync7,
   readdirSync as readdirSync4,
   renameSync as renameSync5,
-  rmSync as rmSync3,
-  writeFileSync as writeFileSync6
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync5
 } from "node:fs";
 import { hostname, tmpdir as tmpdir2 } from "node:os";
 import { basename as basename3, dirname as dirname4, relative as relative3, resolve as resolve8 } from "node:path";
@@ -4816,7 +4816,7 @@ var SCHEDULED_COLLECTION_TASK = {
 var SCHEDULED_COLLECTION_TASK_POLICY = {
   automaticCheck: false,
   automaticRepair: false,
-  installationOwner: "plugin_connect",
+  installationOwner: "skill_connect",
   createIfMissing: true,
   preserveExistingTask: true,
   customPromptAllowed: true,
@@ -4895,8 +4895,8 @@ var INITIAL_PROJECT_SCOPE_LOOKBACK_DAYS = 7;
 var INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1e3;
 var COLLECTION_LEASE_MS = 5 * 60 * 1e3;
 var BEIJING_OFFSET_MS = 8 * 60 * 60 * 1e3;
-function initialProjectDiscoveryNeedsResume(hasPendingConnectivityChallenge, remoteScopeInitialized) {
-  return hasPendingConnectivityChallenge || !remoteScopeInitialized;
+function initialProjectDiscoveryNeedsResume(hasPendingConnectivityChallenge, remoteScopeInitialized, identityConfirmed) {
+  return hasPendingConnectivityChallenge || !remoteScopeInitialized || !identityConfirmed;
 }
 function statePath(directory) {
   return resolve2(directory, "collection-state.json");
@@ -6583,17 +6583,7 @@ function planProjectDescriptionSources(sources, remoteProjects) {
 }
 
 // src/scheduled-task.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import {
-  chmodSync as chmodSync4,
-  existsSync as existsSync5,
-  linkSync,
-  mkdirSync as mkdirSync2,
-  readFileSync as readFileSync5,
-  readdirSync as readdirSync3,
-  rmSync as rmSync2,
-  writeFileSync as writeFileSync4
-} from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync5, readdirSync as readdirSync3 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { resolve as resolve6 } from "node:path";
 var SCHEDULED_COLLECTION_TASK_ID = "partner-report-daily-collection";
@@ -6627,33 +6617,6 @@ function existingTaskId(automationsRoot) {
   }
   return null;
 }
-function tomlString(value) {
-  return JSON.stringify(value);
-}
-function renderTask(taskId, timestamp3) {
-  return [
-    "version = 1",
-    `id = ${tomlString(taskId)}`,
-    'kind = "cron"',
-    `name = ${tomlString(SCHEDULED_COLLECTION_TASK.name)}`,
-    `prompt = ${tomlString(SCHEDULED_COLLECTION_TASK.prompt)}`,
-    'status = "ACTIVE"',
-    `rrule = ${tomlString(SCHEDULED_COLLECTION_TASK.schedule.rrule)}`,
-    `model = ${tomlString(SCHEDULED_COLLECTION_TASK.model)}`,
-    `reasoning_effort = ${tomlString(SCHEDULED_COLLECTION_TASK.reasoningEffort)}`,
-    'execution_environment = "local"',
-    'target = { type = "projectless" }',
-    'cwds = ["~"]',
-    `created_at = ${timestamp3}`,
-    `updated_at = ${timestamp3}`,
-    ""
-  ].join("\n");
-}
-function taskIdForCreate(automationsRoot, uniqueId) {
-  const preferred = resolve6(automationsRoot, SCHEDULED_COLLECTION_TASK_ID);
-  if (!existsSync5(preferred)) return SCHEDULED_COLLECTION_TASK_ID;
-  return `${SCHEDULED_COLLECTION_TASK_ID}-${uniqueId().slice(0, 8)}`;
-}
 function installScheduledCollectionTask(options = {}) {
   try {
     const codexHome = resolve6(
@@ -6662,25 +6625,7 @@ function installScheduledCollectionTask(options = {}) {
     const automationsRoot = resolve6(codexHome, "automations");
     const existing = existingTaskId(automationsRoot);
     if (existing) return { status: "existing", taskId: existing };
-    mkdirSync2(automationsRoot, { recursive: true, mode: 448 });
-    const uniqueId = options.uniqueId ?? randomUUID2;
-    const taskId = taskIdForCreate(automationsRoot, uniqueId);
-    const taskDirectory = resolve6(automationsRoot, taskId);
-    mkdirSync2(taskDirectory, { mode: 448 });
-    const target = resolve6(taskDirectory, "automation.toml");
-    const temporary = resolve6(taskDirectory, `.automation-${uniqueId()}.tmp`);
-    try {
-      writeFileSync4(temporary, renderTask(taskId, (options.now ?? Date.now)()), {
-        encoding: "utf8",
-        mode: 384,
-        flag: "wx"
-      });
-      linkSync(temporary, target);
-      chmodSync4(target, 384);
-    } finally {
-      rmSync2(temporary, { force: true });
-    }
-    return { status: "created", taskId };
+    return { status: "required", taskId: SCHEDULED_COLLECTION_TASK_ID };
   } catch (error) {
     return {
       status: "failed",
@@ -6691,16 +6636,16 @@ function installScheduledCollectionTask(options = {}) {
 }
 
 // src/telemetry.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import {
-  chmodSync as chmodSync5,
+  chmodSync as chmodSync4,
   existsSync as existsSync6,
   readFileSync as readFileSync6,
   renameSync as renameSync4,
-  writeFileSync as writeFileSync5
+  writeFileSync as writeFileSync4
 } from "node:fs";
 import { resolve as resolve7 } from "node:path";
-var invocationId = randomUUID3();
+var invocationId = randomUUID2();
 var invocationCommand = process.argv[2]?.slice(0, 80) || "plugin";
 var invocationSequence = 0;
 var activeRunId;
@@ -6723,13 +6668,13 @@ function readOutbox() {
 function writeOutbox(events) {
   const path = outboxPath();
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync5(temporary, `${JSON.stringify(events, null, 2)}
+  writeFileSync4(temporary, `${JSON.stringify(events, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync5(temporary, 384);
+  chmodSync4(temporary, 384);
   renameSync4(temporary, path);
-  chmodSync5(path, 384);
+  chmodSync4(path, 384);
 }
 function safeDetails(details) {
   if (!details) return void 0;
@@ -6753,7 +6698,7 @@ function buildPendingPluginLog(input, defaults) {
   const details = safeDetails(input.details);
   const eventRunId = input.runId ?? defaults.runId;
   return {
-    eventId: input.eventId ?? randomUUID3(),
+    eventId: input.eventId ?? randomUUID2(),
     invocationId: input.invocationId ?? defaults.invocationId,
     sequence: input.sequence ?? defaults.sequence,
     command: (input.command ?? defaults.command).slice(0, 80),
@@ -7069,7 +7014,7 @@ function connectedOutput(partnerId, deviceName, connectivity, projectScope, sche
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     scheduledTaskInstallation,
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
-    nextStep: scheduledTaskInstallation?.status === "failed" ? "\u7ED1\u5B9A\u5DF2\u4FDD\u7559\uFF0C\u4F46 Codex Scheduled Task \u81EA\u52A8\u521B\u5EFA\u5931\u8D25\uFF1B\u4FEE\u590D\u672C\u5730\u5199\u5165\u6743\u9650\u540E\u8FD0\u884C\u8FDE\u63A5\u68C0\u67E5\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002" : "Codex Scheduled Task \u5DF2\u7531\u63D2\u4EF6\u81EA\u52A8\u786E\u4FDD\u5B58\u5728\uFF1B\u5DF2\u6709\u540C\u540D\u4EFB\u52A1\u4FDD\u6301\u4E0D\u53D8\u3002"
+    nextStep: scheduledTaskInstallation?.status === "failed" ? "\u7ED1\u5B9A\u5DF2\u4FDD\u7559\uFF0C\u4F46 Codex Scheduled Task \u68C0\u67E5\u5931\u8D25\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u91CD\u8BD5\u3002" : scheduledTaskInstallation?.status === "required" ? "\u7ED1\u5B9A\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u4F7F\u7528\u8FD4\u56DE\u7684 scheduledTask \u914D\u7F6E\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u521B\u5EFA\u4EFB\u52A1\u3002" : "\u68C0\u6D4B\u5230\u540C\u540D Codex Scheduled Task\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u786E\u8BA4\u5176\u53EF\u89C1\u3002"
   });
 }
 async function discoverProjectScopeAfterBinding() {
@@ -7131,7 +7076,7 @@ async function discoverProjectScopeAfterBinding() {
     discovery.candidates
   );
   saveLocalProjectScope(localScope);
-  return projectScopeReady(policy.currentPeriod.period_key, localScope);
+  return localScope.initialized && !projectScopeHasPending(localScope) ? projectScopeReady(policy.currentPeriod.period_key, localScope) : projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope);
 }
 async function connect() {
   const requestedServerUrl = option("server") ?? process.env.PARTNER_REPORT_SERVER_URL;
@@ -7210,7 +7155,8 @@ async function connectivityTest() {
   ]);
   const projectScope = initialProjectDiscoveryNeedsResume(
     Boolean(pending),
-    remoteScope.initialized
+    remoteScope.initialized,
+    remoteScope.identityConfirmed
   ) ? await discoverProjectScopeAfterBinding() : void 0;
   connectedOutput(
     policy.partnerId,
@@ -7269,22 +7215,40 @@ function projectScopeReady(periodKey, localScope) {
     deniedProjects: localScope.entries.filter(
       (entry) => entry.status === "denied"
     ).length,
-    message: "\u7ED1\u5B9A\u6388\u6743\u5DF2\u751F\u6548\uFF0C\u771F\u5B9E\u9879\u76EE\u4F1A\u81EA\u52A8\u7EB3\u5165\u91C7\u96C6\uFF1B\u4E3B\u52A8\u6392\u9664\u7684\u9879\u76EE\u9664\u5916\u3002"
+    message: "\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5BA1\u6838\u5DF2\u5B8C\u6210\uFF0C\u53EA\u91C7\u96C6\u5DF2\u5141\u8BB8\u7684\u9879\u76EE\u3002"
+  };
+}
+function projectScopeHasPending(localScope) {
+  return localScope.entries.some((entry) => entry.status === "pending");
+}
+function projectScopeApprovalRequired(periodKey, localScope) {
+  const pendingProjects = localScope.entries.filter(
+    (entry) => entry.status === "pending"
+  );
+  return {
+    status: pendingProjects.length > 0 ? "project_scope_approval_required" : "project_scope_waiting_for_projects",
+    periodKey,
+    policyVersion: localScope.version,
+    pendingProjects: pendingProjects.map((entry) => ({
+      name: entry.displayName,
+      sessionCount: entry.sessionCount
+    })),
+    message: pendingProjects.length > 0 ? "\u9879\u76EE\u6743\u9650\u5361\u5DF2\u8BF7\u6C42\u53D1\u9001\u5230\u98DE\u4E66\uFF1B\u7528\u6237\u5B8C\u6210\u5BA1\u6838\u524D\u4E0D\u4F1A\u8BFB\u53D6\u8FD9\u4E9B\u9879\u76EE\u7684 Session\u3002" : "\u5F53\u524D\u65F6\u95F4\u8303\u56F4\u5185\u672A\u53D1\u73B0\u53EF\u5BA1\u6838\u9879\u76EE\uFF1B\u540E\u7EED\u53D1\u73B0\u9879\u76EE\u65F6\u4F1A\u53D1\u9001\u98DE\u4E66\u6743\u9650\u5361\u3002"
   };
 }
 function createRun(manifest) {
   const root = resolve8(dataDirectory(), RUNS_DIRECTORY);
-  mkdirSync3(root, { recursive: true, mode: 448 });
-  chmodSync6(root, 448);
+  mkdirSync2(root, { recursive: true, mode: 448 });
+  chmodSync5(root, 448);
   const runDirectory = resolve8(root, `${RUN_PREFIX}${manifest.runId}`);
-  mkdirSync3(runDirectory, { mode: 448 });
-  chmodSync6(runDirectory, 448);
+  mkdirSync2(runDirectory, { mode: 448 });
+  chmodSync5(runDirectory, 448);
   const runPath = resolve8(runDirectory, "run.json");
-  writeFileSync6(runPath, `${JSON.stringify(manifest, null, 2)}
+  writeFileSync5(runPath, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync6(runPath, 384);
+  chmodSync5(runPath, 384);
   return runPath;
 }
 function assertRunPath(runPath) {
@@ -7324,14 +7288,14 @@ function takeResumableRun(pluginInstanceId, periodKey) {
         resumable = run;
       continue;
     }
-    rmSync3(dirname4(run.path), { recursive: true, force: true });
+    rmSync2(dirname4(run.path), { recursive: true, force: true });
   }
   return resumable;
 }
 function discardStoredRuns(pluginInstanceId) {
   for (const run of storedRuns(pluginInstanceId)) {
     releaseCollectionLease(pluginInstanceId, run.manifest.runId);
-    rmSync3(dirname4(run.path), { recursive: true, force: true });
+    rmSync2(dirname4(run.path), { recursive: true, force: true });
   }
 }
 function readRun(runPath) {
@@ -7385,13 +7349,13 @@ function saveRun(runPath, manifest) {
     dirname4(runPath),
     `.run.${process.pid}.${Date.now()}.tmp`
   );
-  writeFileSync6(temporary, `${JSON.stringify(manifest, null, 2)}
+  writeFileSync5(temporary, `${JSON.stringify(manifest, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync6(temporary, 384);
+  chmodSync5(temporary, 384);
   renameSync5(temporary, runPath);
-  chmodSync6(runPath, 384);
+  chmodSync5(runPath, 384);
 }
 function coverageState(manifest) {
   manifest.endOfRunScopeScan ??= { completed: false };
@@ -7463,11 +7427,11 @@ function writeJob(runPath, jobId, modelInput) {
   const runDirectory = dirname4(runPath);
   const inputPath = resolve8(runDirectory, `${jobId}-input.json`);
   const resultPath = resolve8(runDirectory, `${jobId}-result.json`);
-  writeFileSync6(inputPath, `${JSON.stringify(modelInput, null, 2)}
+  writeFileSync5(inputPath, `${JSON.stringify(modelInput, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync6(inputPath, 384);
+  chmodSync5(inputPath, 384);
   return { inputPath, resultPath };
 }
 async function postCollectionStatus(config, manifest, phase) {
@@ -7546,14 +7510,22 @@ async function postCollectionStatus(config, manifest, phase) {
 async function collectStart() {
   const config = loadConfig();
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  const [policy, fetchedRemoteScope] = await Promise.all([
-    fetchPolicy(),
-    fetchProjectScope()
-  ]);
+  const policy = await fetchPolicy();
   if (!policy.currentPeriod)
     throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
       code: "REPORT_PERIOD_MISSING"
     });
+  const fetchedRemoteScope = await authenticatedRequest(
+    "/v1/project-scope/candidates",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        periodKey: policy.currentPeriod.period_key,
+        initialDiscovery: false,
+        candidates: []
+      })
+    }
+  );
   const synchronizedScope = await synchronizeLocalProjectScope(
     fetchedRemoteScope,
     localInspection
@@ -7561,6 +7533,10 @@ async function collectStart() {
   let localScope = synchronizedScope.scope;
   if (synchronizedScope.bootstrapped)
     discardStoredRuns(config.pluginInstanceId);
+  if (!localScope.initialized && projectScopeHasPending(localScope))
+    return output(
+      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope)
+    );
   const resumable = synchronizedScope.bootstrapped ? null : takeResumableRun(
     config.pluginInstanceId,
     policy.currentPeriod.period_key
@@ -7585,7 +7561,7 @@ async function collectStart() {
       throw error;
     }
   }
-  const runId = randomUUID4();
+  const runId = randomUUID3();
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
   acquireCollectionLease(config.pluginInstanceId, runId);
   let localState;
@@ -7660,6 +7636,10 @@ async function collectStart() {
       releaseCollectionLease(config.pluginInstanceId, runId);
       throw error;
     }
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    return output(
+      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope)
+    );
   }
   const allThreadDiscovery = discoverProjectScopes(
     config.pluginInstanceId,
@@ -7700,7 +7680,7 @@ async function collectStart() {
     allThreadDiscovery.threadScopes,
     localScope.entries,
     new Date(runStartedAt),
-    effectivePeriod.starts_at
+    localState.lastSuccessfulRunStartedAt === null ? effectivePeriod.starts_at : void 0
   );
   let state;
   try {
@@ -7786,7 +7766,7 @@ async function collectStart() {
     runPath = createRun(manifest);
     await postCollectionStatus(config, manifest, "started");
   } catch (error) {
-    if (runPath) rmSync3(dirname4(runPath), { recursive: true, force: true });
+    if (runPath) rmSync2(dirname4(runPath), { recursive: true, force: true });
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
   }
@@ -7892,7 +7872,7 @@ async function finishRun(runPath, manifest, config) {
     ...manifest.counts
   };
   releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
-  rmSync3(dirname4(runPath), { recursive: true, force: true });
+  rmSync2(dirname4(runPath), { recursive: true, force: true });
   output(summary);
 }
 function completionReview(manifest) {
@@ -7986,7 +7966,7 @@ async function continueProjectDescriptionScan(runPath, manifest) {
   }
   const next = scan.queue[scan.cursor++];
   if (!next) return false;
-  const jobId = `project-description-${randomUUID4()}`;
+  const jobId = `project-description-${randomUUID3()}`;
   const paths = writeJob(runPath, jobId, next.modelInput);
   scan.current = { ...next, jobId, ...paths, failures: 0 };
   saveRun(runPath, manifest);
@@ -8136,8 +8116,7 @@ async function startEndOfRunScopeScan(runPath, manifest) {
     fixedWindowSummaries,
     allThreadDiscovery.threadScopes,
     mergedScope.entries,
-    /* @__PURE__ */ new Date(),
-    manifest.period.starts_at
+    /* @__PURE__ */ new Date()
   ).map((summary) => ({
     ...summary,
     collectionEndsAt: fixedWindowEnd
@@ -8266,7 +8245,7 @@ async function collectNext() {
         saveRun(absolute, manifest);
         continue;
       }
-      const jobId = randomUUID4();
+      const jobId = randomUUID3();
       const paths = writeJob(absolute, jobId, job.modelInput);
       manifest.current = {
         jobId,
@@ -8393,7 +8372,7 @@ async function collectSubmit() {
   }
   const repaired = repairImmutableResult(rawResult, current.expected);
   if (repaired.repaired)
-    writeFileSync6(
+    writeFileSync5(
       current.resultPath,
       `${JSON.stringify(repaired.result, null, 2)}
 `,
@@ -8450,7 +8429,7 @@ async function collectSubmit() {
     );
   }
   if (containsSensitive(result.contribution)) {
-    writeFileSync6(
+    writeFileSync5(
       current.resultPath,
       `${JSON.stringify({
         schemaVersion: "1.0",
@@ -8570,7 +8549,7 @@ async function status() {
     projectScopeLocalState: projectScope.state,
     projectScopeVersion: projectScope.scope.version,
     projectScopeInitialized: projectScope.state === "valid" && projectScope.scope.initialized,
-    projectScopeRequiresApproval: projectScope.state !== "valid",
+    projectScopeRequiresApproval: projectScope.state !== "valid" || !projectScope.scope.initialized || projectScopeHasPending(projectScope.scope),
     allowedProjectCount: projectScope.state === "valid" ? projectScope.scope.entries.filter((entry) => scopeIsActive(entry)).length : 0,
     pendingProjectCount: projectScope.scope.entries.filter(
       (entry) => entry.status === "pending"
@@ -8588,7 +8567,7 @@ async function projectScopeList() {
     localState: local.state,
     version: local.scope.version,
     initialized: local.scope.initialized,
-    requiresApproval: local.state !== "valid",
+    requiresApproval: local.state !== "valid" || !local.scope.initialized || projectScopeHasPending(local.scope),
     projects: local.scope.entries.map((entry) => ({
       scopeKey: entry.scopeKey,
       name: entry.displayName,
@@ -8615,7 +8594,7 @@ async function changeProjectScope(decision) {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error("\u672C\u5730\u9879\u76EE\u8303\u56F4\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u8FD0\u884C\u4E00\u6B21\u91C7\u96C6\u540C\u6B65\u7ED1\u5B9A\u6388\u6743\u3002"),
+      new Error("\u672C\u5730\u9879\u76EE\u8303\u56F4\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u540C\u6B65\u5E76\u5728\u98DE\u4E66\u5B8C\u6210\u9879\u76EE\u5BA1\u6838\u3002"),
       { code: "PROJECT_SCOPE_SYNC_REQUIRED" }
     );
   const remote = await fetchProjectScope();
@@ -8637,6 +8616,11 @@ async function changeProjectScope(decision) {
       "\u5B58\u5728\u540C\u540D\u9879\u76EE\uFF0C\u8BF7\u5148 project-scope-list\uFF0C\u518D\u7528 --scope-key \u6307\u5B9A\u3002"
     );
   if (selected.length === 0) throw new Error("\u6CA1\u6709\u627E\u5230\u5339\u914D\u7684\u9879\u76EE\u6743\u9650\u3002");
+  if (selected.some((entry) => entry.status === "pending"))
+    throw Object.assign(
+      new Error("\u5F85\u5BA1\u6279\u9879\u76EE\u53EA\u80FD\u7531\u7528\u6237\u5728\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u4E2D\u786E\u8BA4\u3002"),
+      { code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED" }
+    );
   selected = selected.slice(0, 500);
   const updated = await authenticatedRequest(
     "/v1/project-scope",

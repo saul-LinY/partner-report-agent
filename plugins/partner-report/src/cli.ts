@@ -567,8 +567,10 @@ function connectedOutput(
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
     nextStep:
       scheduledTaskInstallation?.status === "failed"
-        ? "绑定已保留，但 Codex Scheduled Task 自动创建失败；修复本地写入权限后运行连接检查会自动重试。"
-        : "Codex Scheduled Task 已由插件自动确保存在；已有同名任务保持不变。",
+        ? "绑定已保留，但 Codex Scheduled Task 检查失败；请通过 Codex 官方自动化工具重试。"
+        : scheduledTaskInstallation?.status === "required"
+          ? "绑定已保留；请使用返回的 scheduledTask 配置通过 Codex 官方自动化工具创建任务。"
+          : "检测到同名 Codex Scheduled Task；请通过 Codex 官方自动化工具确认其可见。",
   });
 }
 
@@ -639,7 +641,9 @@ async function discoverProjectScopeAfterBinding() {
     discovery.candidates,
   );
   saveLocalProjectScope(localScope);
-  return projectScopeReady(policy.currentPeriod.period_key, localScope);
+  return localScope.initialized && !projectScopeHasPending(localScope)
+    ? projectScopeReady(policy.currentPeriod.period_key, localScope)
+    : projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope);
 }
 
 async function connect() {
@@ -729,6 +733,7 @@ async function connectivityTest() {
   const projectScope = initialProjectDiscoveryNeedsResume(
     Boolean(pending),
     remoteScope.initialized,
+    remoteScope.identityConfirmed,
   )
     ? await discoverProjectScopeAfterBinding()
     : undefined;
@@ -828,7 +833,36 @@ function projectScopeReady(periodKey: string, localScope: LocalProjectScope) {
     deniedProjects: localScope.entries.filter(
       (entry) => entry.status === "denied",
     ).length,
-    message: "绑定授权已生效，真实项目会自动纳入采集；主动排除的项目除外。",
+    message: "飞书项目权限审核已完成，只采集已允许的项目。",
+  };
+}
+
+function projectScopeHasPending(localScope: LocalProjectScope) {
+  return localScope.entries.some((entry) => entry.status === "pending");
+}
+
+function projectScopeApprovalRequired(
+  periodKey: string,
+  localScope: LocalProjectScope,
+) {
+  const pendingProjects = localScope.entries.filter(
+    (entry) => entry.status === "pending",
+  );
+  return {
+    status:
+      pendingProjects.length > 0
+        ? "project_scope_approval_required"
+        : "project_scope_waiting_for_projects",
+    periodKey,
+    policyVersion: localScope.version,
+    pendingProjects: pendingProjects.map((entry) => ({
+      name: entry.displayName,
+      sessionCount: entry.sessionCount,
+    })),
+    message:
+      pendingProjects.length > 0
+        ? "项目权限卡已请求发送到飞书；用户完成审核前不会读取这些项目的 Session。"
+        : "当前时间范围内未发现可审核项目；后续发现项目时会发送飞书权限卡。",
   };
 }
 
@@ -1150,14 +1184,25 @@ async function postCollectionStatus(
 async function collectStart() {
   const config = loadConfig()!;
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  const [policy, fetchedRemoteScope] = await Promise.all([
-    fetchPolicy(),
-    fetchProjectScope(),
-  ]);
+  const policy = await fetchPolicy();
   if (!policy.currentPeriod)
     throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
       code: "REPORT_PERIOD_MISSING",
     });
+  // This metadata-only registration also migrates historical auto-allowed
+  // scopes back to pending before any resumable Run can read a Session.
+  const fetchedRemoteScope =
+    await authenticatedRequest<RemoteProjectScopePolicy>(
+      "/v1/project-scope/candidates",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          periodKey: policy.currentPeriod.period_key,
+          initialDiscovery: false,
+          candidates: [],
+        }),
+      },
+    );
   const synchronizedScope = await synchronizeLocalProjectScope(
     fetchedRemoteScope,
     localInspection,
@@ -1166,6 +1211,11 @@ async function collectStart() {
 
   if (synchronizedScope.bootstrapped)
     discardStoredRuns(config.pluginInstanceId);
+
+  if (!localScope.initialized && projectScopeHasPending(localScope))
+    return output(
+      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
+    );
 
   const resumable = synchronizedScope.bootstrapped
     ? null
@@ -1275,6 +1325,10 @@ async function collectStart() {
       releaseCollectionLease(config.pluginInstanceId, runId);
       throw error;
     }
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    return output(
+      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
+    );
   }
   const allThreadDiscovery = discoverProjectScopes(
     config.pluginInstanceId,
@@ -1316,7 +1370,9 @@ async function collectStart() {
     allThreadDiscovery.threadScopes,
     localScope.entries,
     new Date(runStartedAt),
-    effectivePeriod.starts_at,
+    localState.lastSuccessfulRunStartedAt === null
+      ? effectivePeriod.starts_at
+      : undefined,
   );
 
   let state: {
@@ -1817,7 +1873,6 @@ async function startEndOfRunScopeScan(
     allThreadDiscovery.threadScopes,
     mergedScope.entries,
     new Date(),
-    manifest.period.starts_at,
   ).map((summary) => ({
     ...summary,
     collectionEndsAt: fixedWindowEnd,
@@ -2298,7 +2353,10 @@ async function status() {
     projectScopeVersion: projectScope.scope.version,
     projectScopeInitialized:
       projectScope.state === "valid" && projectScope.scope.initialized,
-    projectScopeRequiresApproval: projectScope.state !== "valid",
+    projectScopeRequiresApproval:
+      projectScope.state !== "valid" ||
+      !projectScope.scope.initialized ||
+      projectScopeHasPending(projectScope.scope),
     allowedProjectCount:
       projectScope.state === "valid"
         ? projectScope.scope.entries.filter((entry) => scopeIsActive(entry))
@@ -2321,7 +2379,10 @@ async function projectScopeList() {
     localState: local.state,
     version: local.scope.version,
     initialized: local.scope.initialized,
-    requiresApproval: local.state !== "valid",
+    requiresApproval:
+      local.state !== "valid" ||
+      !local.scope.initialized ||
+      projectScopeHasPending(local.scope),
     projects: local.scope.entries.map((entry) => ({
       scopeKey: entry.scopeKey,
       name: entry.displayName,
@@ -2350,7 +2411,7 @@ async function changeProjectScope(decision: "allow" | "deny") {
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   if (localInspection.state !== "valid")
     throw Object.assign(
-      new Error("本地项目范围尚未建立，请先运行一次采集同步绑定授权。"),
+      new Error("本地项目范围尚未建立，请先同步并在飞书完成项目审核。"),
       { code: "PROJECT_SCOPE_SYNC_REQUIRED" },
     );
   const remote = await fetchProjectScope();
@@ -2372,6 +2433,11 @@ async function changeProjectScope(decision: "allow" | "deny") {
       "存在同名项目，请先 project-scope-list，再用 --scope-key 指定。",
     );
   if (selected.length === 0) throw new Error("没有找到匹配的项目权限。");
+  if (selected.some((entry) => entry.status === "pending"))
+    throw Object.assign(
+      new Error("待审批项目只能由用户在飞书项目权限卡中确认。"),
+      { code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED" },
+    );
   selected = selected.slice(0, 500);
   const updated = await authenticatedRequest<RemoteProjectScopePolicy>(
     "/v1/project-scope",

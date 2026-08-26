@@ -26362,17 +26362,16 @@ registerTool(
 registerTool(
   "project_scope_change",
   {
-    description: "\u5141\u8BB8\u6216\u62D2\u7EDD\u4E00\u4E2A\u9879\u76EE\uFF1B\u4EC5\u5728\u7528\u6237\u660E\u786E\u8981\u6C42\u65F6\u4FEE\u6539\u3002",
+    description: "\u4FEE\u6539\u4E00\u4E2A\u5DF2\u7ECF\u5B8C\u6210\u98DE\u4E66\u5BA1\u6838\u7684\u9879\u76EE\u6743\u9650\uFF1Bpending \u9879\u76EE\u5FC5\u987B\u5728\u98DE\u4E66\u5361\u4E2D\u5BA1\u6838\u3002",
     inputSchema: {
       decision: external_exports.enum(["allow", "deny"]),
       projectName: external_exports.string().min(1).optional(),
-      scopeKey: external_exports.string().min(1).optional(),
-      allPending: external_exports.boolean().default(false)
+      scopeKey: external_exports.string().min(1).optional()
     },
     annotations: networkWrite
   },
-  ({ decision, projectName, scopeKey, allPending }) => execute(() => {
-    const selector = allPending ? ["--all-pending"] : scopeKey ? ["--scope-key", scopeKey] : projectName ? ["--project", projectName] : [];
+  ({ decision, projectName, scopeKey }) => execute(() => {
+    const selector = scopeKey ? ["--scope-key", scopeKey] : projectName ? ["--project", projectName] : [];
     return invokeCli(`project-scope-${decision}`, selector);
   })
 );

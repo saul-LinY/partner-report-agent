@@ -35,7 +35,7 @@ describe("scheduled collection prompt", () => {
     expect(SCHEDULED_COLLECTION_TASK_POLICY).toEqual({
       automaticCheck: false,
       automaticRepair: false,
-      installationOwner: "plugin_connect",
+      installationOwner: "skill_connect",
       createIfMissing: true,
       preserveExistingTask: true,
       customPromptAllowed: true,

@@ -21,7 +21,7 @@ export const SCHEDULED_COLLECTION_TASK = {
 export const SCHEDULED_COLLECTION_TASK_POLICY = {
   automaticCheck: false,
   automaticRepair: false,
-  installationOwner: "plugin_connect",
+  installationOwner: "skill_connect",
   createIfMissing: true,
   preserveExistingTask: true,
   customPromptAllowed: true,

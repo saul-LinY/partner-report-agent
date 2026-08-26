@@ -41,9 +41,10 @@ afterEach(() => {
 
 describe("collection state", () => {
   it("resumes only incomplete initial project discovery", () => {
-    expect(initialProjectDiscoveryNeedsResume(true, true)).toBe(true);
-    expect(initialProjectDiscoveryNeedsResume(false, false)).toBe(true);
-    expect(initialProjectDiscoveryNeedsResume(false, true)).toBe(false);
+    expect(initialProjectDiscoveryNeedsResume(true, true, true)).toBe(true);
+    expect(initialProjectDiscoveryNeedsResume(false, false, true)).toBe(true);
+    expect(initialProjectDiscoveryNeedsResume(false, true, false)).toBe(true);
+    expect(initialProjectDiscoveryNeedsResume(false, true, true)).toBe(false);
   });
 
   it("starts the first collection at Monday 00:00 Beijing time", () => {

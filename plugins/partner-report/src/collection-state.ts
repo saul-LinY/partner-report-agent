@@ -18,8 +18,13 @@ const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1_000;
 export function initialProjectDiscoveryNeedsResume(
   hasPendingConnectivityChallenge: boolean,
   remoteScopeInitialized: boolean,
+  identityConfirmed: boolean,
 ) {
-  return hasPendingConnectivityChallenge || !remoteScopeInitialized;
+  return (
+    hasPendingConnectivityChallenge ||
+    !remoteScopeInitialized ||
+    !identityConfirmed
+  );
 }
 
 type ProcessedSessionState = {

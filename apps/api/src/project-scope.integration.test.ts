@@ -79,15 +79,16 @@ suite("project scope persistence", () => {
     });
   });
 
-  it("auto-allows every discovered project under binding consent", async () => {
+  it("requires Feishu review for initial and later discovered projects", async () => {
     const firstKey = "a".repeat(64);
+    const secondKey = "d".repeat(64);
     const first = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
       initialDiscovery: true,
       candidates: [
         { scopeKey: firstKey, displayName: "first-project", sessionCount: 2 },
         {
-          scopeKey: "d".repeat(64),
+          scopeKey: secondKey,
           displayName: "single-session-project",
           sessionCount: 1,
         },
@@ -95,10 +96,10 @@ suite("project scope persistence", () => {
     });
     expect(first).toMatchObject({
       version: 2,
-      initialized: true,
+      initialized: false,
       entries: [
-        { scopeKey: firstKey, status: "allowed" },
-        { scopeKey: "d".repeat(64), status: "allowed" },
+        { scopeKey: firstKey, status: "pending", effectiveFrom: null },
+        { scopeKey: secondKey, status: "pending", effectiveFrom: null },
       ],
     });
     const scopeEvents = await sql<
@@ -109,80 +110,116 @@ suite("project scope persistence", () => {
       where tenant_id = ${fixture.tenantId}
         and event_type = 'project_scope.candidates.changed'
     `;
-    expect(scopeEvents).toEqual([]);
-    expect(new Date(first.entries[0]!.effectiveFrom!).getTime()).toBeLessThan(
-      Date.now(),
-    );
+    expect(scopeEvents).toEqual([
+      {
+        event_type: "project_scope.candidates.changed",
+        aggregate_id: fixture.pluginInstanceId,
+        payload: expect.objectContaining({
+          partnerId: fixture.partnerId,
+          periodKey: "scope-period",
+          version: 2,
+        }),
+      },
+    ]);
+    await expect(
+      decideProjectScopes(actor, fixture.pluginInstanceId, {
+        baseVersion: first.version,
+        decisions: [{ scopeKey: firstKey, decision: "allow" }],
+      }),
+    ).rejects.toMatchObject({
+      code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED",
+    } satisfies Partial<ApiError>);
 
-    const legacySingleKey = "e".repeat(64);
+    const feishuOpenId = `ou_${randomUUID()}`;
     await sql`
-      insert into project_scope_entries (
-        id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
-        display_name, status, first_seen_period_key, session_count
+      insert into feishu_partner_bindings (
+        id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
       ) values (
         ${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId},
-        ${fixture.partnerId}, ${fixture.pluginInstanceId}, ${legacySingleKey},
-        'legacy-single-session', 'pending', 'scope-period', 1
+        ${fixture.partnerId}, 'scope-integration-app', ${feishuOpenId},
+        'active', now()
       )
     `;
-    const migrated = await registerProjectScopeCandidates(identity, {
-      periodKey: "scope-period",
-      candidates: [],
-    });
-    expect(migrated.version).toBe(first.version + 1);
-    expect(migrated.entries).toContainEqual(
-      expect.objectContaining({
-        scopeKey: legacySingleKey,
-        status: "allowed",
-      }),
+    const feishuActor: DomainActor = {
+      ...actor,
+      actorType: "feishu",
+      actorId: feishuOpenId,
+    };
+    const initialized = await decideProjectScopes(
+      feishuActor,
+      fixture.pluginInstanceId,
+      {
+        baseVersion: first.version,
+        decisions: [
+          { scopeKey: firstKey, decision: "allow" },
+          { scopeKey: secondKey, decision: "deny" },
+        ],
+      },
     );
+    expect(initialized).toMatchObject({
+      version: first.version + 1,
+      initialized: true,
+      entries: [
+        { scopeKey: firstKey, status: "allowed" },
+        { scopeKey: secondKey, status: "denied" },
+      ],
+    });
+    expect(
+      new Date(
+        initialized.entries.find((entry) => entry.scopeKey === firstKey)!
+          .effectiveFrom!,
+      ).getTime(),
+    ).toBeLessThanOrEqual(Date.now());
 
     const laterKey = "b".repeat(64);
-    const laterSingleKey = "f".repeat(64);
     const later = await registerProjectScopeCandidates(identity, {
       periodKey: "scope-period",
       candidates: [
         { scopeKey: laterKey, displayName: "later-project", sessionCount: 2 },
-        {
-          scopeKey: laterSingleKey,
-          displayName: "later-single-project",
-          sessionCount: 1,
-        },
       ],
     });
-    expect(later.entries).toContainEqual(
-      expect.objectContaining({
-        scopeKey: laterSingleKey,
-        status: "allowed",
-      }),
-    );
     const laterEntry = later.entries.find(
       (entry) => entry.scopeKey === laterKey,
     )!;
-    expect(laterEntry.status).toBe("allowed");
+    expect(later).toMatchObject({ initialized: true });
+    expect(laterEntry).toMatchObject({
+      status: "pending",
+      effectiveFrom: null,
+    });
 
     await expect(
       decideProjectScopes(actor, fixture.pluginInstanceId, {
-        baseVersion: migrated.version,
-        decisions: [{ scopeKey: laterKey, decision: "deny" }],
+        baseVersion: later.version,
+        decisions: [{ scopeKey: laterKey, decision: "allow" }],
       }),
     ).rejects.toMatchObject({
-      code: "VERSION_CONFLICT",
+      code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED",
     } satisfies Partial<ApiError>);
+    const laterApproved = await decideProjectScopes(
+      feishuActor,
+      fixture.pluginInstanceId,
+      {
+        baseVersion: later.version,
+        decisions: [{ scopeKey: laterKey, decision: "allow" }],
+      },
+    );
+    expect(laterApproved.entries).toContainEqual(
+      expect.objectContaining({ scopeKey: laterKey, status: "allowed" }),
+    );
 
     const reset = await beginProjectScopeBootstrap(identity, {
-      baseVersion: later.version,
+      baseVersion: laterApproved.version,
       reason: "local_scope_invalid",
     });
     expect(reset).toMatchObject({
-      version: later.version + 1,
+      version: laterApproved.version + 1,
       initialized: false,
       initializedAt: null,
       entries: [],
     });
     await expect(
       beginProjectScopeBootstrap(identity, {
-        baseVersion: later.version,
+        baseVersion: laterApproved.version,
         reason: "local_scope_missing",
       }),
     ).rejects.toMatchObject({
@@ -201,17 +238,99 @@ suite("project scope persistence", () => {
     });
     expect(rediscovered).toMatchObject({
       version: reset.version + 1,
-      initialized: true,
+      initialized: false,
       entries: [
         {
           scopeKey: "c".repeat(64),
-          status: "allowed",
+          status: "pending",
+          effectiveFrom: null,
         },
       ],
     });
-    expect(
-      new Date(rediscovered.entries[0]!.effectiveFrom!).getTime(),
-    ).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("repends historical auto-allowed scopes without a Feishu identity", async () => {
+    const partnerId = randomUUID();
+    const pluginInstanceId = randomUUID();
+    const scopeKey = "7".repeat(64);
+    const migrationIdentity = {
+      tenantId: fixture.tenantId,
+      teamId: fixture.teamId,
+      partnerId,
+      pluginInstanceId,
+    };
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (
+          ${partnerId}, ${fixture.tenantId}, ${fixture.teamId},
+          ${`migration-${partnerId}@local.test`}, 'Migration Partner'
+        )
+      `;
+      await tx`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at
+        ) values (
+          ${pluginInstanceId}, ${fixture.tenantId}, ${fixture.teamId},
+          ${partnerId}, 'Migration Device', '2.0.0', 'access', 'refresh',
+          ${new Date(Date.now() + 60_000).toISOString()}
+        )
+      `;
+      await tx`
+        insert into project_scope_policies (
+          plugin_instance_id, tenant_id, team_id, partner_id,
+          version, initialized, initialized_at
+        ) values (
+          ${pluginInstanceId}, ${fixture.tenantId}, ${fixture.teamId},
+          ${partnerId}, 8, true, now()
+        )
+      `;
+      await tx`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
+          display_name, status, effective_from, decided_at,
+          first_seen_period_key, session_count
+        ) values (
+          ${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId}, ${partnerId},
+          ${pluginInstanceId}, ${scopeKey}, 'historically-auto-allowed',
+          'allowed', now(), now(), 'scope-period', 2
+        )
+      `;
+    });
+    try {
+      const migrated = await registerProjectScopeCandidates(migrationIdentity, {
+        periodKey: "scope-period",
+        candidates: [],
+      });
+      expect(migrated).toMatchObject({
+        version: 9,
+        initialized: false,
+        initializedAt: null,
+        identityConfirmed: false,
+        entries: [
+          {
+            scopeKey,
+            status: "pending",
+            effectiveFrom: null,
+          },
+        ],
+      });
+      const events = await sql<Array<{ event_type: string }>>`
+        select event_type from outbox_events
+        where aggregate_id = ${pluginInstanceId}
+          and event_type = 'project_scope.candidates.changed'
+      `;
+      expect(events).toEqual([
+        { event_type: "project_scope.candidates.changed" },
+      ]);
+    } finally {
+      await sql`delete from outbox_events where aggregate_id = ${pluginInstanceId}`;
+      await sql`delete from project_scope_entries where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+    }
   });
 
   it("renames the unique central project for an existing allowed scope", async () => {

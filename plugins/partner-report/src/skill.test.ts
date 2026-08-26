@@ -74,24 +74,32 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("自动恢复成功前不得列举或读取 Session");
     expect(skill).toContain("Partner Report daily collection");
     expect(skill).toContain("Codex 官方自动化工具");
-    expect(skill).toContain("打开该任务做可见性确认");
+    expect(skill).toContain("插件不得直接写 Codex 内部自动化文件");
+    expect(skill).toContain("`scheduledTaskInstallation.status` 为 `required`");
     expect(skill).toContain("不得让用户手动配置");
-    expect(skill).toContain("`scheduledTaskInstallation`");
+    expect(skill).toContain("未命名任务");
     expect(skill).toContain("必须使用简体中文");
     expect(skill).toContain("通俗、精简、直接");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");
     expect(skill).toContain("最近 7 天有实际活动且未归档");
-    expect(skill).toContain("读取 Codex 状态数据库中的元数据");
+    expect(skill).toContain("通过 `thread/list` 扫描项目元数据");
     expect(skill).toContain("多个 worktree 归并为一个逻辑项目");
-    expect(skill).toContain("每个项目至少 1 个 Session 即登记");
-    expect(skill).toContain("用户输入绑定码即确认插件后续");
-    expect(skill).toContain("历史 pending 项目在同步时自动转为 allowed");
-    expect(skill).toContain("不发送审批卡、不轮询授权状态，也不等待用户输入");
+    expect(skill).toContain("每个项目至少 1 个 Session 即登记为 pending");
+    expect(skill).toContain("用户输入绑定码只允许插件");
+    expect(skill).toContain("必须通过飞书项目权限卡由用户逐项允许或拒绝");
+    expect(skill).toContain(
+      "历史上未经飞书确认却为 allowed 的项目必须恢复为 pending",
+    );
+    expect(skill).toContain("后续发现的项目只能从飞书允许时间起进入采集");
+    expect(skill).toContain(
+      "`project_scope_approval_required` 是本轮等待飞书审核的正常终态",
+    );
     expect(skill).toContain("每天北京时间 16:00");
     expect(skill).toContain("不得向用户展示带 `Z` 的 UTC 时间");
     expect(skill).toContain("`gpt-5.6-sol`");
     expect(skill).toContain("作为下一周期普通工作");
     expect(skill).toContain("项目工作卡片整体接受后");
+    expect(skill).toContain("项目工作卡片审核");
     expect(skill).toContain("终态审查");
     expect(skill).toContain("差集和 `unresolvedReadFailures` 都为空");
     expect(skill).not.toContain("continuation-task-config");

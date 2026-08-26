@@ -503,7 +503,7 @@ export function renderScopeCard(rawInput: ScopeCardInput): FeishuCard {
     notation(
       input.initial
         ? "提交前所有选择都不会生效；待审批项目不会读取 Session 内容。"
-        : "提交前所有选择都不会生效；允许后会补采本周期内容。",
+        : "提交前所有选择都不会生效；允许后只采集审批完成后的内容。",
       "scope_effective_time",
     ),
     scopeDecisionForm({
@@ -539,7 +539,7 @@ export function renderScopeCard(rawInput: ScopeCardInput): FeishuCard {
           title: "确认全部允许",
           text: input.initial
             ? "当前卡片中的全部项目将立即允许采集。"
-            : "当前卡片中的全部项目将立即允许采集，并补采本周期内容。",
+            : "当前卡片中的全部项目将允许采集，生效时间从审批完成时开始。",
         },
       }),
     ]),

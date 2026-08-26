@@ -204,7 +204,11 @@ describe("FeishuGateway review decisions", () => {
         { id: secondItemId, review_status: "pending" },
       ]);
       const reviews = await sql<
-        Array<{ version: number; approved_count: number; pending_count: number }>
+        Array<{
+          version: number;
+          approved_count: number;
+          pending_count: number;
+        }>
       >`
         select version, approved_count, pending_count from reviews where id = ${reviewId}
       `;
@@ -212,9 +216,9 @@ describe("FeishuGateway review decisions", () => {
         { version: 2, approved_count: 1, pending_count: 1 },
       ]);
       expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
-      expect(JSON.stringify(updateInteractiveCard.mock.calls[0]?.[0])).toContain(
-        "第二张工作卡片",
-      );
+      expect(
+        JSON.stringify(updateInteractiveCard.mock.calls[0]?.[0]),
+      ).toContain("第二张工作卡片");
       expect(sendInteractiveCard).not.toHaveBeenCalled();
     } finally {
       await sql`delete from feishu_inbox_events where event_id = ${eventId}`;
@@ -498,6 +502,125 @@ describe("FeishuGateway plugin recovery automation", () => {
 });
 
 describe("FeishuGateway project scope delivery", () => {
+  it("sends the initial project review card by Partner email and starts Feishu binding", async () => {
+    const tenantId = randomUUID();
+    const teamId = randomUUID();
+    const partnerId = randomUUID();
+    const pluginInstanceId = randomUUID();
+    const periodId = randomUUID();
+    const entryId = randomUUID();
+    const outboxId = randomUUID();
+    const appId = `cli_initial_scope_${randomUUID()}`;
+    const periodKey = `initial-scope-${periodId}`;
+    const email = `initial-scope-${partnerId}@example.com`;
+    const messageId = `om_${randomUUID()}`;
+    const sendInteractiveCard = vi.fn(async () => ({ messageId }));
+    const updateInteractiveCard = vi.fn(async () => undefined);
+
+    try {
+      await sql`insert into tenants (id, name) values (${tenantId}, 'Initial scope delivery')`;
+      await sql`
+        insert into teams (id, tenant_id, name)
+        values (${teamId}, ${tenantId}, 'Initial scope delivery')
+      `;
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${partnerId}, ${tenantId}, ${teamId}, ${email}, 'Initial Scope User')
+      `;
+      await sql`
+        insert into report_periods (
+          id, tenant_id, team_id, period_key, starts_at, ends_at,
+          cutoff_at, submission_deadline_at, timezone
+        ) values (
+          ${periodId}, ${tenantId}, ${teamId}, ${periodKey},
+          now() - interval '1 day', now() + interval '6 days',
+          now() + interval '5 days', now() + interval '6 days',
+          'Asia/Shanghai'
+        )
+      `;
+      await sql`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at
+        ) values (
+          ${pluginInstanceId}, ${tenantId}, ${teamId}, ${partnerId},
+          'Initial Scope MacBook', '2.0.0', 'access', 'refresh',
+          now() + interval '1 day'
+        )
+      `;
+      await sql`
+        insert into project_scope_policies (
+          plugin_instance_id, tenant_id, team_id, partner_id,
+          version, initialized
+        ) values (
+          ${pluginInstanceId}, ${tenantId}, ${teamId}, ${partnerId}, 2, false
+        )
+      `;
+      await sql`
+        insert into project_scope_entries (
+          id, tenant_id, team_id, partner_id, plugin_instance_id,
+          scope_key, display_name, status, first_seen_period_key, session_count
+        ) values (
+          ${entryId}, ${tenantId}, ${teamId}, ${partnerId},
+          ${pluginInstanceId}, ${"1".repeat(64)}, 'Initial Pending Project',
+          'pending', ${periodKey}, 3
+        )
+      `;
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${outboxId}, ${tenantId}, 'project_scope.candidates.changed',
+          'plugin_instance', ${pluginInstanceId},
+          ${JSON.stringify({ periodKey, version: 2 })}::jsonb
+        )
+      `;
+
+      const service = new FeishuDeliveryService({
+        appId,
+        messageClient: { sendInteractiveCard, updateInteractiveCard },
+      });
+      const gateway = new FeishuGateway(
+        { appId, appSecret: "initial-scope-secret" },
+        { updateInteractiveCard },
+        service,
+        { tenantIdFilter: tenantId, reviewDeliveryEnabled: true },
+      );
+
+      await expect(gateway.drainOutbox()).resolves.toBe(1);
+      expect(sendInteractiveCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          receiveId: email,
+          receiveIdType: "email",
+          card: expect.objectContaining({
+            header: expect.objectContaining({
+              title: { tag: "plain_text", content: "确认项目采集范围" },
+            }),
+          }),
+        }),
+      );
+      const bindings = await sql<
+        Array<{ status: string; open_id: string | null }>
+      >`
+        select status, open_id from feishu_partner_bindings
+        where tenant_id = ${tenantId} and partner_id = ${partnerId}
+          and app_id = ${appId}
+      `;
+      expect(bindings).toEqual([{ status: "pending", open_id: null }]);
+    } finally {
+      await sql`delete from outbox_events where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
+      await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
+      await sql`delete from project_scope_entries where id = ${entryId}`;
+      await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+      await sql`delete from report_periods where id = ${periodId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+      await sql`delete from teams where id = ${teamId}`;
+      await sql`delete from tenants where id = ${tenantId}`;
+    }
+  });
+
   it("sends Admin status and later-candidate review cards", async () => {
     const tenantId = randomUUID();
     const teamId = randomUUID();

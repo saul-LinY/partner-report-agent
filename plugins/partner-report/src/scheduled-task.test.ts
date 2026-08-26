@@ -1,10 +1,9 @@
 import {
-  chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,36 +19,24 @@ function testHome() {
 }
 
 describe("projectless scheduled task installation", () => {
-  it("creates the official task without a project", () => {
+  it("requests official creation without writing Codex files", () => {
     const codexHome = testHome();
     try {
-      const installed = installScheduledCollectionTask({
-        codexHome,
-        now: () => 1_787_289_116_663,
-        uniqueId: () => "fixed-id",
-      });
+      const installed = installScheduledCollectionTask({ codexHome });
       expect(installed).toEqual({
-        status: "created",
+        status: "required",
         taskId: SCHEDULED_COLLECTION_TASK_ID,
       });
-      const taskPath = resolve(
-        codexHome,
-        "automations",
-        SCHEDULED_COLLECTION_TASK_ID,
-        "automation.toml",
-      );
-      const source = readFileSync(taskPath, "utf8");
-      expect(source).toContain('kind = "cron"');
-      expect(source).toContain('target = { type = "projectless" }');
-      expect(source).toContain('cwds = ["~"]');
-      expect(source).not.toContain("project_id");
-      expect(source).not.toContain('target = { type = "project"');
-      expect(source).toContain(
-        'rrule = "RRULE:FREQ=DAILY;BYHOUR=16;BYMINUTE=0"',
-      );
-      expect(source).toContain('model = "gpt-5.6-sol"');
-      expect(source).toContain('reasoning_effort = "medium"');
-      expect(statSync(taskPath).mode & 0o777).toBe(0o600);
+      expect(
+        existsSync(
+          resolve(
+            codexHome,
+            "automations",
+            SCHEDULED_COLLECTION_TASK_ID,
+            "automation.toml",
+          ),
+        ),
+      ).toBe(false);
     } finally {
       rmSync(codexHome, { recursive: true, force: true });
     }
@@ -94,13 +81,10 @@ describe("projectless scheduled task installation", () => {
       'id = "partner-report-daily-collection"\nname = "其他任务"\n',
     );
     try {
-      const installed = installScheduledCollectionTask({
-        codexHome,
-        uniqueId: () => "12345678-rest",
-      });
+      const installed = installScheduledCollectionTask({ codexHome });
       expect(installed).toEqual({
-        status: "created",
-        taskId: "partner-report-daily-collection-12345678",
+        status: "required",
+        taskId: SCHEDULED_COLLECTION_TASK_ID,
       });
       expect(
         readFileSync(resolve(occupied, "automation.toml"), "utf8"),
@@ -110,18 +94,16 @@ describe("projectless scheduled task installation", () => {
     }
   });
 
-  it("returns a safe failure without throwing when Codex home is not writable", () => {
+  it("returns a safe failure when the automation root cannot be scanned", () => {
     const codexHome = testHome();
-    chmodSync(codexHome, 0o500);
+    writeFileSync(resolve(codexHome, "automations"), "not-a-directory");
     try {
       const installed = installScheduledCollectionTask({ codexHome });
-      if (process.getuid?.() === 0) return;
       expect(installed).toMatchObject({
         status: "failed",
         errorCode: "SCHEDULED_TASK_CREATE_FAILED",
       });
     } finally {
-      chmodSync(codexHome, 0o700);
       rmSync(codexHome, { recursive: true, force: true });
     }
   });

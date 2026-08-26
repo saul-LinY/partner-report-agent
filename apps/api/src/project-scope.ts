@@ -194,30 +194,40 @@ export async function registerProjectScopeCandidates(
   const input = projectScopeCandidateBatchSchema.parse(rawInput);
   await database.begin(async (tx) => {
     await ensurePolicy(tx, identity);
-    const periods = await tx<Array<{ starts_at: Date | string }>>`
-      select starts_at from report_periods
-      where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
-        and period_key = ${input.periodKey}
-      order by starts_at desc limit 1
-    `;
-    const effectiveFrom = periods[0]
-      ? new Date(periods[0].starts_at).toISOString()
-      : new Date().toISOString();
-    const policies = await tx<PolicyRow[]>`
+    await tx<PolicyRow[]>`
       select version, initialized, initialized_at
       from project_scope_policies
       where plugin_instance_id = ${identity.pluginInstanceId}
       for update
     `;
-    const pending = await tx<Array<{ scope_key: string }>>`
-      select scope_key from project_scope_entries
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and tenant_id = ${identity.tenantId} and status = 'pending'
-      for update
+    const identityRows = await tx<Array<{ confirmed: boolean }>>`
+      select exists (
+        select 1 from feishu_partner_bindings
+        where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
+          and partner_id = ${identity.partnerId} and status = 'active'
+          and open_id is not null
+      ) as confirmed
     `;
-    // Claiming the binding code is the user's standing consent. Every real
-    // project discovered by that bound plugin is readable by default; an
-    // explicit denied decision remains the only project-level exclusion.
+    const unreviewedAllowed =
+      identityRows[0]?.confirmed !== true
+        ? await tx<Array<{ scope_key: string }>>`
+            update project_scope_entries set
+              status = 'pending', effective_from = null, decided_at = null,
+              updated_at = now()
+            where plugin_instance_id = ${identity.pluginInstanceId}
+              and tenant_id = ${identity.tenantId} and status = 'allowed'
+            returning scope_key
+          `
+        : [];
+    if (unreviewedAllowed.length > 0) {
+      await tx`
+        update project_scope_policies set
+          initialized = false, initialized_at = null, updated_at = now()
+        where plugin_instance_id = ${identity.pluginInstanceId}
+      `;
+    }
+    // thread/list metadata is enough to identify candidate projects. Session
+    // contents remain unreadable until the Partner decides in Feishu.
     const eligibleCandidates = input.candidates;
     const existing =
       eligibleCandidates.length > 0
@@ -293,55 +303,42 @@ export async function registerProjectScopeCandidates(
       await tx`
         insert into project_scope_entries (
           id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key,
-          display_name, status, effective_from, decided_at,
-          first_seen_period_key, session_count
+          display_name, status, first_seen_period_key, session_count
         ) values (
           ${randomUUID()}, ${identity.tenantId}, ${identity.teamId},
           ${identity.partnerId}, ${identity.pluginInstanceId},
-          ${candidate.scopeKey}, ${candidate.displayName}, 'allowed',
-          ${effectiveFrom}, now(),
+          ${candidate.scopeKey}, ${candidate.displayName}, 'pending',
           ${input.periodKey}, ${candidate.sessionCount}
         )
         on conflict (plugin_instance_id, scope_key) do update set
           display_name = excluded.display_name,
-          status = case
-            when project_scope_entries.status = 'pending' then 'allowed'
-            else project_scope_entries.status
-          end,
-          effective_from = case
-            when project_scope_entries.status = 'pending'
-              then coalesce(project_scope_entries.effective_from, excluded.effective_from)
-            else project_scope_entries.effective_from
-          end,
-          decided_at = case
-            when project_scope_entries.status = 'pending' then now()
-            else project_scope_entries.decided_at
-          end,
           session_count = greatest(project_scope_entries.session_count, excluded.session_count),
           last_seen_at = now(), updated_at = now()
       `;
     }
 
-    if (pending.length > 0) {
-      await tx`
-        update project_scope_entries set
-          status = 'allowed', effective_from = coalesce(effective_from, ${effectiveFrom}),
-          decided_at = now(), updated_at = now()
+    if (newCandidates.length > 0 || unreviewedAllowed.length > 0) {
+      const versions = await tx<Array<{ version: number }>>`
+        update project_scope_policies set version = version + 1, updated_at = now()
         where plugin_instance_id = ${identity.pluginInstanceId}
-          and tenant_id = ${identity.tenantId} and status = 'pending'
+        returning version
+      `;
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${randomUUID()}, ${identity.tenantId}, 'project_scope.candidates.changed',
+          'plugin_instance', ${identity.pluginInstanceId},
+          ${JSON.stringify({
+            teamId: identity.teamId,
+            partnerId: identity.partnerId,
+            pluginInstanceId: identity.pluginInstanceId,
+            periodKey: input.periodKey,
+            version: versions[0]?.version,
+          })}::jsonb
+        )
       `;
     }
-    if (
-      newCandidates.length > 0 ||
-      pending.length > 0 ||
-      policies[0]?.initialized !== true
-    )
-      await tx`
-        update project_scope_policies set
-          version = version + 1, initialized = true,
-          initialized_at = coalesce(initialized_at, now()), updated_at = now()
-        where plugin_instance_id = ${identity.pluginInstanceId}
-      `;
   });
   return loadProjectScopePolicy(identity, database);
 }
@@ -451,9 +448,10 @@ export async function decideProjectScopes(
     const entries = await tx<
       Array<{
         scope_key: string;
+        status: "pending" | "allowed" | "denied";
       }>
     >`
-      select scope_key from project_scope_entries
+      select scope_key, status from project_scope_entries
       where plugin_instance_id = ${pluginInstanceId}
         and tenant_id = ${actor.tenantId} and scope_key in ${tx(keys)}
       for update
@@ -463,6 +461,15 @@ export async function decideProjectScopes(
         404,
         "PROJECT_SCOPE_NOT_FOUND",
         "部分项目权限不存在。",
+      );
+    if (
+      actor.actorType !== "feishu" &&
+      entries.some((entry) => entry.status === "pending")
+    )
+      throw new ApiError(
+        403,
+        "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED",
+        "待审批项目必须由用户在飞书权限卡中确认。",
       );
     for (const item of input.decisions) {
       const effectiveFrom = projectScopeEffectiveFrom({ now: new Date() });

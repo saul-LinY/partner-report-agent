@@ -393,24 +393,22 @@ registerTool(
 registerTool(
   "project_scope_change",
   {
-    description: "允许或拒绝一个项目；仅在用户明确要求时修改。",
+    description:
+      "修改一个已经完成飞书审核的项目权限；pending 项目必须在飞书卡中审核。",
     inputSchema: {
       decision: z.enum(["allow", "deny"]),
       projectName: z.string().min(1).optional(),
       scopeKey: z.string().min(1).optional(),
-      allPending: z.boolean().default(false),
     },
     annotations: networkWrite,
   },
-  ({ decision, projectName, scopeKey, allPending }) =>
+  ({ decision, projectName, scopeKey }) =>
     execute(() => {
-      const selector = allPending
-        ? ["--all-pending"]
-        : scopeKey
-          ? ["--scope-key", scopeKey]
-          : projectName
-            ? ["--project", projectName]
-            : [];
+      const selector = scopeKey
+        ? ["--scope-key", scopeKey]
+        : projectName
+          ? ["--project", projectName]
+          : [];
       return invokeCli(`project-scope-${decision}`, selector);
     }),
 );
