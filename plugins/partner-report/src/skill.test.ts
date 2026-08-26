@@ -69,6 +69,9 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain(
       "正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain",
     );
+    expect(skill).toContain("向中台为原 Plugin Instance 自动补发凭据");
+    expect(skill).toContain("不发送飞书卡、不等待用户确认");
+    expect(skill).toContain("自动恢复成功前不得列举或读取 Session");
     expect(skill).toContain("Partner Report daily collection");
     expect(skill).toContain("Codex 官方自动化工具");
     expect(skill).toContain("打开该任务做可见性确认");

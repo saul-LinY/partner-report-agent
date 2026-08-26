@@ -295,6 +295,107 @@ suite("tenant and role authorization", () => {
     expect(reused.json().code).toBe("BINDING_CODE_INVALID");
   });
 
+  it("automatically restores the active plugin and preserves its project scope", async () => {
+    const previousPluginToken = pluginToken;
+    const scopesBefore = await sql<
+      Array<{ id: string; status: string; policy_version: number }>
+    >`
+      select pse.id, pse.status, psp.version as policy_version
+      from project_scope_entries pse
+      join project_scope_policies psp
+        on psp.plugin_instance_id = pse.plugin_instance_id
+      where pse.plugin_instance_id = ${fixture.pluginA}
+      order by pse.id
+    `;
+
+    const recovered = await app.inject({
+      method: "POST",
+      url: "/v1/plugin-bindings/automatic-recovery",
+      payload: {
+        pluginInstanceId: fixture.pluginA,
+        deviceName: "Fixture Laptop",
+        pluginVersion: "2.0.0",
+      },
+    });
+    expect(recovered.statusCode, recovered.body).toBe(200);
+    expect(recovered.json()).toMatchObject({
+      pluginInstanceId: fixture.pluginA,
+      connectivityStatus: "verified",
+      accessToken: expect.any(String),
+      refreshToken: expect.any(String),
+      verifiedAt: expect.any(String),
+    });
+
+    const oldCredentials = await app.inject({
+      method: "GET",
+      url: "/v1/plugin-bindings/me",
+      headers: { authorization: `Bearer ${previousPluginToken}` },
+    });
+    expect(oldCredentials.statusCode).toBe(401);
+    pluginToken = recovered.json().accessToken;
+    const currentCredentials = await app.inject({
+      method: "GET",
+      url: "/v1/plugin-bindings/me",
+      headers: { authorization: `Bearer ${pluginToken}` },
+    });
+    expect(currentCredentials.statusCode).toBe(200);
+
+    const scopesAfter = await sql<
+      Array<{ id: string; status: string; policy_version: number }>
+    >`
+      select pse.id, pse.status, psp.version as policy_version
+      from project_scope_entries pse
+      join project_scope_policies psp
+        on psp.plugin_instance_id = pse.plugin_instance_id
+      where pse.plugin_instance_id = ${fixture.pluginA}
+      order by pse.id
+    `;
+    expect(scopesAfter).toEqual(scopesBefore);
+  });
+
+  it("does not automatically restore a revoked plugin instance", async () => {
+    const partnerId = randomUUID();
+    const pluginInstanceId = randomUUID();
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (
+          ${partnerId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${`revoked-recovery-${partnerId}@local.test`}, 'Revoked Recovery Partner'
+        )
+      `;
+      await tx`
+        insert into plugin_instances (
+          id, tenant_id, team_id, partner_id, device_name, version,
+          access_token_hash, refresh_token_hash, access_expires_at, status
+        ) values (
+          ${pluginInstanceId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
+          'Revoked Device', '2.0.0', ${"a".repeat(64)}, ${"b".repeat(64)},
+          now() - interval '1 hour', 'revoked'
+        )
+      `;
+    });
+    try {
+      const recovered = await app.inject({
+        method: "POST",
+        url: "/v1/plugin-bindings/automatic-recovery",
+        payload: {
+          pluginInstanceId,
+          deviceName: "Revoked Device",
+          pluginVersion: "2.0.0",
+        },
+      });
+      expect(recovered.statusCode).toBe(409);
+      expect(recovered.json().code).toBe(
+        "PLUGIN_AUTOMATIC_RECOVERY_NOT_AVAILABLE",
+      );
+    } finally {
+      await sql`delete from audit_events where actor_id = ${pluginInstanceId}`;
+      await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+    }
+  });
+
   it("recovers credentials on the same plugin instance and preserves project scope", async () => {
     const partnerId = randomUUID();
     const pluginInstanceId = randomUUID();

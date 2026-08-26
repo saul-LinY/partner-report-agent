@@ -1,6 +1,6 @@
 # Partner Report Agent
 
-Partner Report 在本机采集获准项目中的有效 Codex Session，并通过飞书完成项目采集授权、连接恢复和每周工作卡片审核。
+Partner Report 在本机采集获准项目中的有效 Codex Session，并通过飞书完成项目采集授权和每周工作卡片审核。插件凭据缺失或失效时，中台会为仍处于启用状态的原插件实例自动补发凭据，不需要人工确认。
 
 ## 使用流程
 

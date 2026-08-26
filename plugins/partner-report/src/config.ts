@@ -275,18 +275,8 @@ export function loadSecret(instanceId: string, kind: SecretKind) {
     if (value) return value;
   }
 
-  // Existing macOS installs used Keychain. Migrate each value once, then all
-  // scheduled runs use the stable file without touching Keychain again.
-  const legacyValue = readKeychainValue(keychainService(instanceId, kind));
-  if (legacyValue) {
-    saveFileSecret(instanceId, kind, legacyValue);
-    return legacyValue;
-  }
   throw Object.assign(new Error(`Plugin ${kind} Token 不存在，请重新连接。`), {
-    code:
-      process.platform === "darwin"
-        ? "CREDENTIAL_MIGRATION_REQUIRED"
-        : "PLUGIN_TOKEN_MISSING",
+    code: "PLUGIN_TOKEN_MISSING",
   });
 }
 
@@ -322,8 +312,15 @@ export function migrateLegacyInstallation() {
     saveFileSecret(config.pluginInstanceId, kind, value);
     migratedSecrets += 1;
   }
-  loadSecret(config.pluginInstanceId, "access");
-  loadSecret(config.pluginInstanceId, "refresh");
+  try {
+    loadSecret(config.pluginInstanceId, "access");
+    loadSecret(config.pluginInstanceId, "refresh");
+  } catch (error) {
+    throw Object.assign(
+      new Error("旧版 macOS 凭据迁移失败，请重新连接。", { cause: error }),
+      { code: "CREDENTIAL_MIGRATION_REQUIRED" },
+    );
+  }
   return { status: "credentials_ready", migratedSecrets };
 }
 

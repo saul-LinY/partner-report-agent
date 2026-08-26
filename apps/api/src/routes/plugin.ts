@@ -45,6 +45,10 @@ const recoveryStartSchema = deviceStartSchema.extend({
   deviceCode: z.string().min(20).max(512),
 });
 
+const automaticRecoverySchema = deviceStartSchema.extend({
+  pluginInstanceId: z.string().uuid(),
+});
+
 const deviceTokenSchema = z.object({ deviceCode: z.string().min(20) });
 const refreshSchema = z.object({ refreshToken: z.string().min(20) });
 const claimSchema = z.object({
@@ -511,6 +515,73 @@ export async function pluginRoutes(app: FastifyInstance) {
       refreshToken,
       expiresAt,
       pluginInstanceId: plugin.id,
+    };
+  });
+
+  app.post("/v1/plugin-bindings/automatic-recovery", async (request) => {
+    const input = automaticRecoverySchema.parse(request.body);
+    const accessToken = randomToken();
+    const refreshToken = randomToken();
+    const expiresAt = accessExpiry();
+    const verifiedAt = new Date();
+    const plugin = await sql.begin(async (tx) => {
+      const rows = await tx<
+        Array<{
+          id: string;
+          tenant_id: string;
+          team_id: string;
+          partner_id: string;
+        }>
+      >`
+        update plugin_instances set
+          version = ${input.pluginVersion},
+          access_token_hash = ${sha256(accessToken)},
+          refresh_token_hash = ${sha256(refreshToken)},
+          access_expires_at = ${expiresAt.toISOString()},
+          connectivity_status = 'verified',
+          connectivity_verified_at = ${verifiedAt.toISOString()},
+          last_connectivity_attempt_at = ${verifiedAt.toISOString()},
+          connectivity_challenge_hash = null,
+          connectivity_challenge_expires_at = null,
+          connectivity_challenge_consumed_at = null,
+          last_connectivity_error_code = null,
+          last_connectivity_error_at = null,
+          last_error_code = null,
+          retry_count = 0,
+          updated_at = now()
+        where id = ${input.pluginInstanceId}
+          and device_name = ${input.deviceName}
+          and status = 'active'
+        returning id, tenant_id, team_id, partner_id
+      `;
+      const recovered = rows[0];
+      if (!recovered) return null;
+      await tx`
+        insert into audit_events (
+          id, tenant_id, team_id, actor_type, actor_id, action,
+          target_type, target_id, request_id, metadata
+        ) values (
+          ${randomUUID()}, ${recovered.tenant_id}, ${recovered.team_id},
+          'plugin', ${recovered.id}, 'plugin.binding.automatically_recovered',
+          'plugin_instance', ${recovered.id}, ${request.id},
+          ${JSON.stringify({ pluginVersion: input.pluginVersion })}::jsonb
+        )
+      `;
+      return recovered;
+    });
+    if (!plugin)
+      throw new ApiError(
+        409,
+        "PLUGIN_AUTOMATIC_RECOVERY_NOT_AVAILABLE",
+        "当前插件实例未启用或设备信息不匹配，请重新绑定。",
+      );
+    return {
+      accessToken,
+      refreshToken,
+      expiresAt,
+      pluginInstanceId: plugin.id,
+      connectivityStatus: "verified",
+      verifiedAt,
     };
   });
 

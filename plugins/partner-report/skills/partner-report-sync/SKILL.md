@@ -27,7 +27,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 普通聊天调用和每次定时采集都不得检查、比较或修改现有定时任务。用户在 Scheduled 面板中的修改始终保留，与插件内置默认值不同不构成错误。
 
-`connect` 在绑定和连通性验证成功后由插件写入精确名称 `Partner Report daily collection` 的幂等任务配置。随后必须立即使用 Codex 官方自动化工具按 `scheduledTaskInstallation.taskId` 打开该任务做可见性确认；成功打开后才可以向用户报告定时任务已创建。已有同名任务完整保留用户配置，不得重复创建或覆盖。连接恢复也会重试缺失任务。`scheduledTaskInstallation` 为 `failed` 时表示绑定仍有效，但必须明确报告自动创建失败和安全错误码。
+`connect` 在绑定和连通性验证成功后由插件写入精确名称 `Partner Report daily collection` 的幂等任务配置。随后必须立即使用 Codex 官方自动化工具按 `scheduledTaskInstallation.taskId` 打开该任务做可见性确认；成功打开后才可以向用户报告定时任务已创建。已有同名任务完整保留用户配置，不得重复创建或覆盖。`scheduledTaskInstallation` 为 `failed` 时表示绑定仍有效，但必须明确报告自动创建失败和安全错误码。
 
 如果官方自动化工具无法按该任务 ID 打开任务，调用 `scheduled_task_config` 取得默认值，再通过官方自动化工具创建一次无项目的本地 cron 任务；不得让用户手动配置，也不得创建同名重复任务。绑定时创建和核验均为无感操作，不向用户请求额外确认。除此之外，只有以下情况才调用 `scheduled_task_config`：
 
@@ -42,13 +42,13 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 新绑定的 Token 保存在插件稳定数据目录中，权限为 `0600`。正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain。
 
-旧版安装升级后应在普通交互会话中调用一次 `migrate_credentials`。该工具只把旧 Keychain 凭据复制到稳定文件，不改变 Plugin Instance、项目权限或采集游标。迁移完成后定时任务不再访问 Keychain。`CREDENTIAL_MIGRATION_REQUIRED` 表示一次性迁移尚未完成，不代表 Token 失效；不得因此重新绑定。
+旧版安装如果连本地配置也仍在 macOS Keychain 中，应在普通交互会话中调用一次 `migrate_credentials`。这是唯一允许访问 Keychain 的路径，只把旧配置和凭据复制到稳定文件，不改变 Plugin Instance、项目权限或采集游标。`CREDENTIAL_MIGRATION_REQUIRED` 只表示这次显式迁移没有取得完整旧数据。
 
 持久状态优先使用 `PARTNER_REPORT_DATA`，否则使用用户目录下的 `.partner-report-data`。旧版 macOS App Group、旧 Keychain 和运行时插件目录只作为一次性迁移来源，迁移不修改 Codex 定时任务。`LOCAL_DATA_WRITE_PERMISSION_REQUIRED` 表示 MCP 进程无法写入稳定目录，本次不得读取或上传 Session。
 
 绑定后的连通性检查或首次项目发现失败时，保留绑定并调用 `connectivity_test`，不得重新领取绑定码。候选项目登记并自动允许后即可报告首次激活完成。
 
-`REFRESH_TOKEN_INVALID` 会创建飞书连接恢复卡并返回 `auth_recovery_required`。不得反复重试、删除本地状态或读取 Session。用户在飞书确认后，下一次定时运行会自动领取新凭据并继续。
+本地 `secrets.json` 缺失、Access Token 缺失或 Refresh Token 无效时，MCP 会先向中台为原 Plugin Instance 自动补发凭据，再重试原请求。恢复不发送飞书卡、不等待用户确认，不改变项目权限、排除项、Run 或采集游标。只有中台确认实例仍为 active 且设备信息匹配时才允许恢复；实例被撤销、停用、找不到或本地 `config.json` 也丢失时必须停止并要求重新绑定。自动恢复成功前不得列举或读取 Session，也不得上传或推进游标。
 
 中台地址迁移时调用 `server_url_set`，保留 Plugin Instance、Token、项目权限和采集状态。可信局域网 HTTP 仍须显式设置 `allowInsecureHttp: true`。
 
@@ -70,7 +70,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 调用 `collect_start`，普通定时或手动采集必须使用 `force: false`。只有用户明确要求恢复重算时才可使用 `force: true`。
 
-`auth_recovery_required` 是凭据恢复等待态，不是项目授权等待；本轮不得继续采集或轮询，用户确认后由下一次运行继续。除此之外，采集运行中不得等待用户授权。
+凭据恢复由 MCP 在第一个中台请求前自动完成，不是采集状态，也不允许产生审批等待态。恢复失败时本轮立即停止，且不得读取 Session、上传结果或推进游标。采集运行中不得等待任何用户授权。
 
 本地持久状态同时服务自动和手动运行：
 

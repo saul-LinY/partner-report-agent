@@ -71,6 +71,21 @@ describe("persistent plugin data", () => {
     }
   });
 
+  it("reports a missing file credential without using an implicit fallback", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "partner-report-secret-test-"));
+    const previous = process.env.PARTNER_REPORT_DATA;
+    process.env.PARTNER_REPORT_DATA = root;
+    try {
+      expect(() => loadSecret("missing-instance", "access")).toThrow(
+        expect.objectContaining({ code: "PLUGIN_TOKEN_MISSING" }),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.PARTNER_REPORT_DATA;
+      else process.env.PARTNER_REPORT_DATA = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("migrates durable state without copying transient locks", () => {
     const root = mkdtempSync(resolve(tmpdir(), "partner-report-config-test-"));
     const source = resolve(root, "old-plugin-data");

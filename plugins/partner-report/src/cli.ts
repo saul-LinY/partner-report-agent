@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -23,7 +23,6 @@ import {
   loadSecret,
   migrateLegacyInstallation,
   normalizeServerUrl,
-  removeSecret,
   removeSecrets,
   saveConfig,
   saveSecret,
@@ -142,13 +141,6 @@ type ClaimResponse = ConnectivityChallenge & {
   expiresAt: string;
   pluginInstanceId: string;
   partnerId: string;
-};
-
-type RecoveryTokenResponse = ConnectivityChallenge & {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: string;
-  pluginInstanceId: string;
 };
 
 type ThreadSummary = {
@@ -553,119 +545,6 @@ async function setServerUrl() {
     pluginInstanceId: config.pluginInstanceId,
     connectivity,
   });
-}
-
-function authRecoveryOutput(expiresAt: string) {
-  output({
-    status: "auth_recovery_required",
-    message: "连接恢复申请已发送到飞书。确认后，下次运行会自动继续。",
-    expiresAt,
-    checkpointAdvanced: false,
-    counts: {
-      discovered: 0,
-      read: 0,
-      uploaded: 0,
-      ignored: 0,
-      skipped: 0,
-      failedExtract: 0,
-      deferred: 0,
-      notProcessed: 0,
-    },
-  });
-}
-
-function clearAuthRecovery(config: PluginConfig) {
-  const { pendingAuthRecovery: _pending, ...stableConfig } = config;
-  removeSecret(config.pluginInstanceId, "recovery");
-  saveConfig(stableConfig);
-}
-
-async function startAuthRecovery() {
-  const config = loadConfig()!;
-  if (config.pendingAuthRecovery) {
-    authRecoveryOutput(config.pendingAuthRecovery.expiresAt);
-    return;
-  }
-  const deviceCode = randomBytes(32).toString("base64url");
-  const recovery = await publicRequest<{
-    status: "pending" | "approved";
-    expiresAt: string;
-  }>(config.serverUrl, "/v1/plugin-bindings/recovery-authorizations", {
-    method: "POST",
-    body: JSON.stringify({
-      pluginInstanceId: config.pluginInstanceId,
-      deviceName: config.deviceName,
-      pluginVersion: PLUGIN_VERSION,
-      deviceCode,
-    }),
-  });
-  saveSecret(config.pluginInstanceId, "recovery", deviceCode);
-  saveConfig({
-    ...config,
-    pendingAuthRecovery: {
-      requestedAt: new Date().toISOString(),
-      expiresAt: new Date(recovery.expiresAt).toISOString(),
-    },
-  });
-  authRecoveryOutput(new Date(recovery.expiresAt).toISOString());
-}
-
-async function resumeAuthRecovery(): Promise<"continue" | "waiting"> {
-  let config = loadConfig()!;
-  const pending = config.pendingAuthRecovery;
-  if (!pending) return "continue";
-  if (new Date(pending.expiresAt).getTime() <= Date.now()) {
-    clearAuthRecovery(config);
-    return "continue";
-  }
-  let deviceCode: string;
-  try {
-    deviceCode = loadSecret(config.pluginInstanceId, "recovery");
-  } catch {
-    clearAuthRecovery(config);
-    return "continue";
-  }
-  let tokens: RecoveryTokenResponse;
-  try {
-    tokens = await publicRequest<RecoveryTokenResponse>(
-      config.serverUrl,
-      "/v1/plugin-bindings/device-authorizations/token",
-      {
-        method: "POST",
-        body: JSON.stringify({ deviceCode }),
-      },
-    );
-  } catch (error) {
-    if (error instanceof HttpError && error.code === "AUTHORIZATION_PENDING") {
-      authRecoveryOutput(pending.expiresAt);
-      return "waiting";
-    }
-    if (
-      error instanceof HttpError &&
-      ["DEVICE_CODE_EXPIRED", "DEVICE_CODE_CONSUMED"].includes(error.code)
-    ) {
-      clearAuthRecovery(config);
-      return "continue";
-    }
-    throw error;
-  }
-  if (tokens.pluginInstanceId !== config.pluginInstanceId)
-    throw new Error("恢复响应的 Plugin Instance 不匹配。");
-  saveSecret(config.pluginInstanceId, "access", tokens.accessToken);
-  saveSecret(config.pluginInstanceId, "refresh", tokens.refreshToken);
-  removeSecret(config.pluginInstanceId, "recovery");
-  const { pendingAuthRecovery: _pending, ...stableConfig } = config;
-  saveConfig({
-    ...stableConfig,
-    accessExpiresAt: tokens.expiresAt,
-    connectivityStatus: "pending",
-    pendingConnectivityChallenge: {
-      value: tokens.challenge,
-      expiresAt: tokens.challengeExpiresAt,
-    },
-  });
-  await performConnectivityTest(tokens);
-  return "continue";
 }
 
 function connectedOutput(
@@ -2572,31 +2451,7 @@ function help() {
 }
 
 const command = process.argv[2] ?? "help";
-const recoveryAwareCommands = new Set([
-  "connectivity-test",
-  "server-url-set",
-  "collect-start",
-  "daily-collect",
-  "collect-next",
-  "collect-review",
-  "collect-submit",
-  "project-description-submit",
-  "status",
-  "project-scope-list",
-  "project-scope-sync",
-  "project-scope-allow",
-  "project-scope-deny",
-]);
-const recoveryResumeCommands = new Set(
-  [...recoveryAwareCommands].filter((value) => value !== "server-url-set"),
-);
-
 async function runCommand() {
-  if (
-    recoveryResumeCommands.has(command) &&
-    (await resumeAuthRecovery()) === "waiting"
-  )
-    return;
   if (command === "connect") await connect();
   else if (command === "connectivity-test") await connectivityTest();
   else if (command === "server-url-set") await setServerUrl();
@@ -2693,31 +2548,7 @@ try {
     },
   });
   await flushPluginLogs();
-  if (
-    recoveryAwareCommands.has(command) &&
-    error instanceof HttpError &&
-    error.code === "REFRESH_TOKEN_INVALID"
-  ) {
-    try {
-      await startAuthRecovery();
-    } catch (recoveryError) {
-      const recoveryCode =
-        recoveryError instanceof HttpError
-          ? recoveryError.code
-          : "AUTH_RECOVERY_START_FAILED";
-      process.stderr.write(
-        `${JSON.stringify({
-          status: "error",
-          code: recoveryCode,
-          message:
-            recoveryError instanceof Error
-              ? recoveryError.message
-              : String(recoveryError),
-        })}\n`,
-      );
-      process.exitCode = 1;
-    }
-  } else {
+  {
     const code =
       error instanceof HttpError
         ? error.code

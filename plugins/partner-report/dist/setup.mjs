@@ -181,13 +181,8 @@ function loadSecret(instanceId, kind) {
     const value = secrets[`${instanceId}:${kind}`];
     if (value) return value;
   }
-  const legacyValue = readKeychainValue(keychainService(instanceId, kind));
-  if (legacyValue) {
-    saveFileSecret(instanceId, kind, legacyValue);
-    return legacyValue;
-  }
   throw Object.assign(new Error(`Plugin ${kind} Token \u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u3002`), {
-    code: process.platform === "darwin" ? "CREDENTIAL_MIGRATION_REQUIRED" : "PLUGIN_TOKEN_MISSING"
+    code: "PLUGIN_TOKEN_MISSING"
   });
 }
 function migrateLegacyInstallation() {
@@ -216,8 +211,15 @@ function migrateLegacyInstallation() {
     saveFileSecret(config.pluginInstanceId, kind, value);
     migratedSecrets += 1;
   }
-  loadSecret(config.pluginInstanceId, "access");
-  loadSecret(config.pluginInstanceId, "refresh");
+  try {
+    loadSecret(config.pluginInstanceId, "access");
+    loadSecret(config.pluginInstanceId, "refresh");
+  } catch (error) {
+    throw Object.assign(
+      new Error("\u65E7\u7248 macOS \u51ED\u636E\u8FC1\u79FB\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u3002", { cause: error }),
+      { code: "CREDENTIAL_MIGRATION_REQUIRED" }
+    );
+  }
   return { status: "credentials_ready", migratedSecrets };
 }
 

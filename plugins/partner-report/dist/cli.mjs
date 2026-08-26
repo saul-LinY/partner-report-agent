@@ -6,7 +6,7 @@ var __export = (target, all) => {
 };
 
 // src/cli.ts
-import { createHash as createHash3, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID4 } from "node:crypto";
 import {
   chmodSync as chmodSync6,
   existsSync as existsSync7,
@@ -4598,13 +4598,8 @@ function loadSecret(instanceId, kind) {
     const value = secrets[`${instanceId}:${kind}`];
     if (value) return value;
   }
-  const legacyValue = readKeychainValue(keychainService(instanceId, kind));
-  if (legacyValue) {
-    saveFileSecret(instanceId, kind, legacyValue);
-    return legacyValue;
-  }
   throw Object.assign(new Error(`Plugin ${kind} Token \u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u3002`), {
-    code: process.platform === "darwin" ? "CREDENTIAL_MIGRATION_REQUIRED" : "PLUGIN_TOKEN_MISSING"
+    code: "PLUGIN_TOKEN_MISSING"
   });
 }
 function migrateLegacyInstallation() {
@@ -4633,8 +4628,15 @@ function migrateLegacyInstallation() {
     saveFileSecret(config.pluginInstanceId, kind, value);
     migratedSecrets += 1;
   }
-  loadSecret(config.pluginInstanceId, "access");
-  loadSecret(config.pluginInstanceId, "refresh");
+  try {
+    loadSecret(config.pluginInstanceId, "access");
+    loadSecret(config.pluginInstanceId, "refresh");
+  } catch (error) {
+    throw Object.assign(
+      new Error("\u65E7\u7248 macOS \u51ED\u636E\u8FC1\u79FB\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u3002", { cause: error }),
+      { code: "CREDENTIAL_MIGRATION_REQUIRED" }
+    );
+  }
   return { status: "credentials_ready", migratedSecrets };
 }
 function removeSecrets(instanceId) {
@@ -4644,14 +4646,6 @@ function removeSecrets(instanceId) {
   delete secrets[`${instanceId}:access`];
   delete secrets[`${instanceId}:refresh`];
   delete secrets[`${instanceId}:recovery`];
-  writeFileSync(path, `${JSON.stringify(secrets)}
-`, { mode: 384 });
-}
-function removeSecret(instanceId, kind) {
-  const path = fallbackSecretsPath();
-  if (!existsSync(path)) return;
-  const secrets = JSON.parse(readFileSync(path, "utf8"));
-  delete secrets[`${instanceId}:${kind}`];
   writeFileSync(path, `${JSON.stringify(secrets)}
 `, { mode: 384 });
 }
@@ -4704,6 +4698,48 @@ async function refresh(config) {
   return next;
 }
 var refreshes = /* @__PURE__ */ new Map();
+var recoveries = /* @__PURE__ */ new Map();
+function errorCode(error) {
+  return error && typeof error === "object" && "code" in error ? String(error.code) : null;
+}
+async function recover(config) {
+  const tokens = await rawRequest(config.serverUrl, "/v1/plugin-bindings/automatic-recovery", {
+    method: "POST",
+    body: JSON.stringify({
+      pluginInstanceId: config.pluginInstanceId,
+      deviceName: config.deviceName,
+      pluginVersion: PLUGIN_VERSION
+    })
+  });
+  if (tokens.pluginInstanceId !== config.pluginInstanceId)
+    throw new Error("\u81EA\u52A8\u6062\u590D\u54CD\u5E94\u7684 Plugin Instance \u4E0D\u5339\u914D\u3002");
+  saveSecret(config.pluginInstanceId, "access", tokens.accessToken);
+  saveSecret(config.pluginInstanceId, "refresh", tokens.refreshToken);
+  const {
+    pendingAuthRecovery: _pendingRecovery,
+    pendingConnectivityChallenge: _pendingChallenge,
+    ...stableConfig
+  } = config;
+  const next = {
+    ...stableConfig,
+    accessExpiresAt: tokens.expiresAt,
+    connectivityStatus: "verified",
+    connectivityVerifiedAt: tokens.verifiedAt
+  };
+  saveConfig(next);
+  return next;
+}
+function recoverOnce(config) {
+  const existing = recoveries.get(config.pluginInstanceId);
+  if (existing) return existing;
+  const pending = recover(config).finally(() => {
+    if (recoveries.get(config.pluginInstanceId) === pending) {
+      recoveries.delete(config.pluginInstanceId);
+    }
+  });
+  recoveries.set(config.pluginInstanceId, pending);
+  return pending;
+}
 function refreshOnce(config) {
   const existing = refreshes.get(config.pluginInstanceId);
   if (existing) return existing;
@@ -4715,26 +4751,48 @@ function refreshOnce(config) {
   refreshes.set(config.pluginInstanceId, pending);
   return pending;
 }
+async function refreshOrRecover(config) {
+  try {
+    return await refreshOnce(config);
+  } catch (error) {
+    if (errorCode(error) !== "PLUGIN_TOKEN_MISSING" && !(error instanceof HttpError && error.code === "REFRESH_TOKEN_INVALID"))
+      throw error;
+    return recoverOnce(config);
+  }
+}
+async function accessTokenOrRecover(config) {
+  try {
+    return {
+      config,
+      accessToken: loadSecret(config.pluginInstanceId, "access")
+    };
+  } catch (error) {
+    if (errorCode(error) !== "PLUGIN_TOKEN_MISSING") throw error;
+    const recovered = await recoverOnce(config);
+    return {
+      config: recovered,
+      accessToken: loadSecret(recovered.pluginInstanceId, "access")
+    };
+  }
+}
 async function authenticatedRequest(path, init = {}) {
   let config = loadConfig();
   if (new Date(config.accessExpiresAt).getTime() < Date.now() + 6e4)
-    config = await refreshOnce(config);
+    config = await refreshOrRecover(config);
+  let credentials = await accessTokenOrRecover(config);
+  config = credentials.config;
   try {
     return await rawRequest(
       config.serverUrl,
       path,
       init,
-      loadSecret(config.pluginInstanceId, "access")
+      credentials.accessToken
     );
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 401) throw error;
-    config = await refreshOnce(config);
-    return rawRequest(
-      config.serverUrl,
-      path,
-      init,
-      loadSecret(config.pluginInstanceId, "access")
-    );
+    config = await refreshOrRecover(config);
+    credentials = await accessTokenOrRecover(config);
+    return rawRequest(config.serverUrl, path, init, credentials.accessToken);
   }
 }
 
@@ -6999,109 +7057,6 @@ async function setServerUrl() {
     connectivity
   });
 }
-function authRecoveryOutput(expiresAt) {
-  output({
-    status: "auth_recovery_required",
-    message: "\u8FDE\u63A5\u6062\u590D\u7533\u8BF7\u5DF2\u53D1\u9001\u5230\u98DE\u4E66\u3002\u786E\u8BA4\u540E\uFF0C\u4E0B\u6B21\u8FD0\u884C\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002",
-    expiresAt,
-    checkpointAdvanced: false,
-    counts: {
-      discovered: 0,
-      read: 0,
-      uploaded: 0,
-      ignored: 0,
-      skipped: 0,
-      failedExtract: 0,
-      deferred: 0,
-      notProcessed: 0
-    }
-  });
-}
-function clearAuthRecovery(config) {
-  const { pendingAuthRecovery: _pending, ...stableConfig } = config;
-  removeSecret(config.pluginInstanceId, "recovery");
-  saveConfig(stableConfig);
-}
-async function startAuthRecovery() {
-  const config = loadConfig();
-  if (config.pendingAuthRecovery) {
-    authRecoveryOutput(config.pendingAuthRecovery.expiresAt);
-    return;
-  }
-  const deviceCode = randomBytes2(32).toString("base64url");
-  const recovery = await publicRequest(config.serverUrl, "/v1/plugin-bindings/recovery-authorizations", {
-    method: "POST",
-    body: JSON.stringify({
-      pluginInstanceId: config.pluginInstanceId,
-      deviceName: config.deviceName,
-      pluginVersion: PLUGIN_VERSION,
-      deviceCode
-    })
-  });
-  saveSecret(config.pluginInstanceId, "recovery", deviceCode);
-  saveConfig({
-    ...config,
-    pendingAuthRecovery: {
-      requestedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      expiresAt: new Date(recovery.expiresAt).toISOString()
-    }
-  });
-  authRecoveryOutput(new Date(recovery.expiresAt).toISOString());
-}
-async function resumeAuthRecovery() {
-  let config = loadConfig();
-  const pending = config.pendingAuthRecovery;
-  if (!pending) return "continue";
-  if (new Date(pending.expiresAt).getTime() <= Date.now()) {
-    clearAuthRecovery(config);
-    return "continue";
-  }
-  let deviceCode;
-  try {
-    deviceCode = loadSecret(config.pluginInstanceId, "recovery");
-  } catch {
-    clearAuthRecovery(config);
-    return "continue";
-  }
-  let tokens;
-  try {
-    tokens = await publicRequest(
-      config.serverUrl,
-      "/v1/plugin-bindings/device-authorizations/token",
-      {
-        method: "POST",
-        body: JSON.stringify({ deviceCode })
-      }
-    );
-  } catch (error) {
-    if (error instanceof HttpError && error.code === "AUTHORIZATION_PENDING") {
-      authRecoveryOutput(pending.expiresAt);
-      return "waiting";
-    }
-    if (error instanceof HttpError && ["DEVICE_CODE_EXPIRED", "DEVICE_CODE_CONSUMED"].includes(error.code)) {
-      clearAuthRecovery(config);
-      return "continue";
-    }
-    throw error;
-  }
-  if (tokens.pluginInstanceId !== config.pluginInstanceId)
-    throw new Error("\u6062\u590D\u54CD\u5E94\u7684 Plugin Instance \u4E0D\u5339\u914D\u3002");
-  saveSecret(config.pluginInstanceId, "access", tokens.accessToken);
-  saveSecret(config.pluginInstanceId, "refresh", tokens.refreshToken);
-  removeSecret(config.pluginInstanceId, "recovery");
-  const { pendingAuthRecovery: _pending, ...stableConfig } = config;
-  saveConfig({
-    ...stableConfig,
-    accessExpiresAt: tokens.expiresAt,
-    connectivityStatus: "pending",
-    pendingConnectivityChallenge: {
-      value: tokens.challenge,
-      expiresAt: tokens.challengeExpiresAt
-    }
-  });
-  await performConnectivityTest(tokens);
-  return "continue";
-}
 function connectedOutput(partnerId, deviceName, connectivity, projectScope, scheduledTaskInstallation) {
   const config = loadConfig();
   output({
@@ -8549,7 +8504,7 @@ function collectSkip() {
   const { absolute, manifest } = readRun(runPath);
   const current = manifest.current;
   if (!current) throw new Error("\u5F53\u524D Run \u6CA1\u6709\u5F85\u8DF3\u8FC7 Job\u3002");
-  const errorCode = option("error-code");
+  const errorCode2 = option("error-code");
   const causeCode = option("cause-code");
   recordJobOutcome(
     manifest,
@@ -8557,7 +8512,7 @@ function collectSkip() {
     legalCollectSkipOutcome({
       currentJobId: current.jobId,
       requestedJobId: option("job"),
-      errorCode,
+      errorCode: errorCode2,
       causeCode,
       failures: current.failures
     })
@@ -8567,7 +8522,7 @@ function collectSkip() {
     status: "skipped",
     runPath: absolute,
     jobStatus: manifest.outcomes.at(-1).status,
-    errorCode,
+    errorCode: errorCode2,
     ...causeCode ? { causeCode } : {},
     nextCommand: `collect-next --run ${absolute}`
   });
@@ -8756,27 +8711,7 @@ function help() {
   });
 }
 var command = process.argv[2] ?? "help";
-var recoveryAwareCommands = /* @__PURE__ */ new Set([
-  "connectivity-test",
-  "server-url-set",
-  "collect-start",
-  "daily-collect",
-  "collect-next",
-  "collect-review",
-  "collect-submit",
-  "project-description-submit",
-  "status",
-  "project-scope-list",
-  "project-scope-sync",
-  "project-scope-allow",
-  "project-scope-deny"
-]);
-var recoveryResumeCommands = new Set(
-  [...recoveryAwareCommands].filter((value) => value !== "server-url-set")
-);
 async function runCommand() {
-  if (recoveryResumeCommands.has(command) && await resumeAuthRecovery() === "waiting")
-    return;
   if (command === "connect") await connect();
   else if (command === "connectivity-test") await connectivityTest();
   else if (command === "server-url-set") await setServerUrl();
@@ -8867,22 +8802,7 @@ try {
     }
   });
   await flushPluginLogs();
-  if (recoveryAwareCommands.has(command) && error instanceof HttpError && error.code === "REFRESH_TOKEN_INVALID") {
-    try {
-      await startAuthRecovery();
-    } catch (recoveryError) {
-      const recoveryCode = recoveryError instanceof HttpError ? recoveryError.code : "AUTH_RECOVERY_START_FAILED";
-      process.stderr.write(
-        `${JSON.stringify({
-          status: "error",
-          code: recoveryCode,
-          message: recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
-        })}
-`
-      );
-      process.exitCode = 1;
-    }
-  } else {
+  {
     const code = error instanceof HttpError ? error.code : error && typeof error === "object" && "code" in error ? String(error.code) : "PLUGIN_COMMAND_FAILED";
     process.stderr.write(
       `${JSON.stringify({
