@@ -419,6 +419,22 @@ function safeTransportError(
   error: unknown,
 ): FeishuApiError {
   if (error instanceof FeishuApiError) return error;
+  if (error && typeof error === "object") {
+    const response = (error as Record<string, unknown>).response;
+    if (response && typeof response === "object") {
+      const data = (response as Record<string, unknown>).data;
+      if (data && typeof data === "object") {
+        const code = (data as Record<string, unknown>).code;
+        if (typeof code === "number") {
+          return new FeishuApiError({
+            operation,
+            reason: "api_rejected",
+            code,
+          });
+        }
+      }
+    }
+  }
   return new FeishuApiError({ operation, reason: "transport_failure" });
 }
 

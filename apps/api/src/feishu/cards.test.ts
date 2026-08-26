@@ -257,7 +257,7 @@ describe("Feishu JSON 2.0 cards", () => {
       tag: "input",
       name: "review_regeneration_instruction",
       required: true,
-      max_length: 1200,
+      max_length: 1000,
       input_type: "multiline_text",
     });
     expect(JSON.stringify(card)).toContain("已通过 1");

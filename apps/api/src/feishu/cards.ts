@@ -393,7 +393,7 @@ function reviewRegenerationForm(input: {
         element_id: "review_regen_input",
         name: REVIEW_REGENERATION_INSTRUCTION_FIELD,
         required: true,
-        max_length: 1_200,
+        max_length: 1_000,
         input_type: "multiline_text",
         width: "fill",
         label: plainText("修改意见"),

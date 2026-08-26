@@ -319,6 +319,38 @@ describe("FeishuMessageClient", () => {
     expect(error).not.toHaveProperty("cause");
   });
 
+  it("preserves a Feishu API code from an SDK HTTP rejection", async () => {
+    const client = new FeishuMessageClient(
+      transport({
+        createError: {
+          response: {
+            status: 400,
+            data: {
+              code: 230099,
+              msg: `invalid card with app_secret=${config.appSecret}`,
+            },
+          },
+        },
+      }),
+    );
+
+    let error: unknown;
+    try {
+      await client.sendInteractiveCard({
+        receiveIdType: "open_id",
+        receiveId: "ou_test",
+        card: {},
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(FeishuApiError);
+    expect(error).toMatchObject({ reason: "api_rejected", code: 230099 });
+    expect(String(error)).not.toContain(config.appSecret);
+    expect(error).not.toHaveProperty("cause");
+  });
+
   it("rejects non-object cards before calling the SDK", async () => {
     const sdk = transport();
     const client = new FeishuMessageClient(sdk);
