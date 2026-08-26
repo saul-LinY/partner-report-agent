@@ -26174,7 +26174,7 @@ var registerTool = server.registerTool.bind(server);
 registerTool(
   "connect",
   {
-    description: "\u7ED1\u5B9A Partner Report\uFF0C\u5E76\u5B8C\u6210\u8FDE\u901A\u6027\u9A8C\u8BC1\u548C\u9996\u6B21\u9879\u76EE\u53D1\u73B0\u3002",
+    description: "\u8FDE\u63A5 Partner Report\uFF0C\u626B\u63CF\u9996\u6B21\u9879\u76EE\uFF0C\u5E76\u4EC5\u5728\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u6210\u529F\u9001\u8FBE\u540E\u5B8C\u6210\u7ED1\u5B9A\u3002",
     inputSchema: {
       serverUrl: external_exports.string().url(),
       bindingCode: external_exports.string().min(1),

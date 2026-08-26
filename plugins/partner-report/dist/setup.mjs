@@ -8,6 +8,7 @@ import {
   spawn,
   spawnSync
 } from "node:child_process";
+import { homedir as homedir2 } from "node:os";
 import { createInterface } from "node:readline";
 
 // src/config.ts
@@ -316,8 +317,10 @@ var CodexAppServer = class {
   pending = /* @__PURE__ */ new Map();
   stderr = "";
   codexBin;
-  constructor(codexBin) {
+  workingDirectory;
+  constructor(codexBin, workingDirectory = homedir2()) {
     this.codexBin = codexBin ?? selectCodexBinary();
+    this.workingDirectory = workingDirectory;
   }
   async connect() {
     this.process = spawn(
@@ -330,7 +333,10 @@ var CodexAppServer = class {
         "--disable",
         "remote_plugin"
       ],
-      { stdio: ["pipe", "pipe", "pipe"] }
+      {
+        cwd: this.workingDirectory,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
     );
     const lines = createInterface({ input: this.process.stdout });
     lines.on("line", (line) => {

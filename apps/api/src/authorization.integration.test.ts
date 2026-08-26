@@ -124,8 +124,16 @@ suite("tenant and role authorization", () => {
       challenge: expect.any(String),
       challengeExpiresAt: expect.any(String),
       connectivityStatus: "pending",
+      bindingStatus: "connecting",
       capabilityVersion: "1.0",
     });
+    const bindingState = await sql<
+      Array<{ status: string; claimed_at: Date | null }>
+    >`
+      select status, claimed_at from plugin_binding_codes
+      where id = ${fixture.bindingA}
+    `;
+    expect(bindingState).toEqual([{ status: "connecting", claimed_at: null }]);
     const activeInstances = await sql<Array<{ id: string }>>`
       select id from plugin_instances
       where tenant_id = ${fixture.tenantA} and partner_id = ${fixture.partnerA}
@@ -289,12 +297,16 @@ suite("tenant and role authorization", () => {
       url: "/v1/plugin-bindings/claim",
       payload: {
         bindingCode,
-        deviceName: "Second Device",
+        deviceName: "Fixture Laptop",
         pluginVersion: "0.2.0",
       },
     });
-    expect(reused.statusCode).toBe(400);
-    expect(reused.json().code).toBe("BINDING_CODE_INVALID");
+    expect(reused.statusCode).toBe(200);
+    expect(reused.json()).toMatchObject({
+      pluginInstanceId: fixture.pluginA,
+      bindingStatus: "connecting",
+    });
+    pluginToken = reused.json().accessToken;
   });
 
   it("automatically restores the active plugin and preserves its project scope", async () => {

@@ -5298,6 +5298,7 @@ import {
   spawn,
   spawnSync
 } from "node:child_process";
+import { homedir as homedir2 } from "node:os";
 import { createInterface } from "node:readline";
 var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
@@ -5391,8 +5392,10 @@ var CodexAppServer = class {
   pending = /* @__PURE__ */ new Map();
   stderr = "";
   codexBin;
-  constructor(codexBin) {
+  workingDirectory;
+  constructor(codexBin, workingDirectory = homedir2()) {
     this.codexBin = codexBin ?? selectCodexBinary();
+    this.workingDirectory = workingDirectory;
   }
   async connect() {
     this.process = spawn(
@@ -5405,7 +5408,10 @@ var CodexAppServer = class {
         "--disable",
         "remote_plugin"
       ],
-      { stdio: ["pipe", "pipe", "pipe"] }
+      {
+        cwd: this.workingDirectory,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
     );
     const lines = createInterface({ input: this.process.stdout });
     lines.on("line", (line) => {
@@ -6009,7 +6015,7 @@ import {
   writeFileSync as writeFileSync3,
   readFileSync as readFileSync3
 } from "node:fs";
-import { homedir as homedir2, tmpdir } from "node:os";
+import { homedir as homedir3, tmpdir } from "node:os";
 import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
 function scopePath(directory = dataDirectory()) {
   return resolve4(directory, "project-scope.json");
@@ -6122,7 +6128,7 @@ function projectLocalIdentity(scopeSalt, localRoot) {
 }
 function defaultTemporaryRoots() {
   const codexHomes = new Set(
-    [process.env.CODEX_HOME, resolve4(homedir2(), ".codex")].filter(
+    [process.env.CODEX_HOME, resolve4(homedir3(), ".codex")].filter(
       (value) => Boolean(value)
     )
   );
@@ -6132,7 +6138,7 @@ function defaultTemporaryRoots() {
     "/private/tmp",
     "/var/tmp",
     "/private/var/tmp",
-    resolve4(homedir2(), "Documents", "Codex"),
+    resolve4(homedir3(), "Documents", "Codex"),
     ...[...codexHomes].flatMap((root) => [
       resolve4(root, "tmp"),
       resolve4(root, ".tmp"),
@@ -6584,7 +6590,7 @@ function planProjectDescriptionSources(sources, remoteProjects) {
 
 // src/scheduled-task.ts
 import { existsSync as existsSync5, readFileSync as readFileSync5, readdirSync as readdirSync3 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
+import { homedir as homedir4 } from "node:os";
 import { resolve as resolve6 } from "node:path";
 var SCHEDULED_COLLECTION_TASK_ID = "partner-report-daily-collection";
 function topLevelString(source, key) {
@@ -6620,7 +6626,7 @@ function existingTaskId(automationsRoot) {
 function installScheduledCollectionTask(options = {}) {
   try {
     const codexHome = resolve6(
-      options.codexHome ?? process.env.CODEX_HOME ?? resolve6(homedir3(), ".codex")
+      options.codexHome ?? process.env.CODEX_HOME ?? resolve6(homedir4(), ".codex")
     );
     const automationsRoot = resolve6(codexHome, "automations");
     const existing = existingTaskId(automationsRoot);
@@ -6769,6 +6775,54 @@ function pluginErrorDetails(error) {
     requestId: value && typeof value.requestId === "string" ? value.requestId : void 0,
     details: value && value.details && typeof value.details === "object" ? value.details : void 0
   };
+}
+
+// src/poll-wait.ts
+var MAX_BACKOFF_MS = 8e3;
+function defaultSleep(milliseconds, signal) {
+  return new Promise((resolve9) => {
+    if (signal?.aborted) return resolve9();
+    const timer = setTimeout(done, milliseconds);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve9();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+function pollBackoff(attempt) {
+  return Math.min(
+    1e3 * 2 ** Math.min(Math.max(attempt, 0), 3),
+    MAX_BACKOFF_MS
+  );
+}
+async function waitForCondition(options) {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? defaultSleep;
+  const segmentEndsAt = Math.min(
+    options.deadlineAt,
+    now() + Math.max(1e3, options.segmentDurationMs)
+  );
+  let attempt = Math.max(0, options.attempt ?? 0);
+  let lastErrorCode = null;
+  while (now() < segmentEndsAt) {
+    if (options.signal?.aborted) return { status: "cancelled", attempt };
+    try {
+      if (await options.check()) return { status: "confirmed", attempt };
+      lastErrorCode = null;
+    } catch (error) {
+      lastErrorCode = options.errorCode?.(error) ?? "POLL_STATUS_UNAVAILABLE";
+    }
+    const remaining = segmentEndsAt - now();
+    if (remaining <= 0) break;
+    await sleep(Math.min(pollBackoff(attempt), remaining), options.signal);
+    attempt += 1;
+  }
+  if (options.signal?.aborted) return { status: "cancelled", attempt };
+  if (now() >= options.deadlineAt)
+    return { status: "timed_out", attempt, lastErrorCode };
+  return { status: "pending", attempt, lastErrorCode };
 }
 
 // src/cli.ts
@@ -7002,19 +7056,44 @@ async function setServerUrl() {
     connectivity
   });
 }
-function connectedOutput(partnerId, deviceName, connectivity, projectScope, scheduledTaskInstallation) {
+async function bindingCompletionState(waitForDelivery) {
+  let latest = null;
+  let deliveryWaitStatus = "not_required";
+  if (waitForDelivery) {
+    const wait = await waitForCondition({
+      check: async () => {
+        latest = await fetchPolicy();
+        return latest.bindingCompleted;
+      },
+      deadlineAt: Date.now() + 2e4,
+      segmentDurationMs: 2e4,
+      errorCode: (error) => pluginErrorDetails(error).code
+    });
+    deliveryWaitStatus = wait.status;
+  }
+  latest ??= await fetchPolicy();
+  return {
+    connectionStatus: "connected",
+    bindingStatus: latest.bindingStatus,
+    bindingCompleted: latest.bindingCompleted,
+    deliveryWaitStatus
+  };
+}
+function connectedOutput(partnerId, deviceName, connectivity, binding, projectScope, scheduledTaskInstallation) {
   const config = loadConfig();
   output({
     status: projectScope?.status ?? "connected",
     pluginInstanceId: config.pluginInstanceId,
     partnerId,
     deviceName,
+    ...binding,
     connectivity,
     ...projectScope ?? {},
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     scheduledTaskInstallation,
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
-    nextStep: scheduledTaskInstallation?.status === "failed" ? "\u7ED1\u5B9A\u5DF2\u4FDD\u7559\uFF0C\u4F46 Codex Scheduled Task \u68C0\u67E5\u5931\u8D25\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u91CD\u8BD5\u3002" : scheduledTaskInstallation?.status === "required" ? "\u7ED1\u5B9A\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u4F7F\u7528\u8FD4\u56DE\u7684 scheduledTask \u914D\u7F6E\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u521B\u5EFA\u4EFB\u52A1\u3002" : "\u68C0\u6D4B\u5230\u540C\u540D Codex Scheduled Task\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u786E\u8BA4\u5176\u53EF\u89C1\u3002"
+    bindingNextStep: binding.bindingCompleted ? "\u7ED1\u5B9A\u94FE\u8DEF\u5DF2\u5B8C\u6210\uFF0C\u7ED1\u5B9A\u7801\u5DF2\u6838\u9500\u3002" : "\u4E2D\u53F0\u8FDE\u63A5\u5DF2\u5EFA\u7ACB\uFF0C\u4F46\u7ED1\u5B9A\u5C1A\u672A\u5B8C\u6210\uFF1B\u7ED1\u5B9A\u7801\u4E0D\u4F1A\u5728\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u6210\u529F\u9001\u8FBE\u524D\u6838\u9500\u3002",
+    nextStep: scheduledTaskInstallation?.status === "failed" ? "\u8FDE\u63A5\u51ED\u636E\u5DF2\u4FDD\u7559\uFF0C\u4F46 Codex Scheduled Task \u68C0\u67E5\u5931\u8D25\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u91CD\u8BD5\u3002" : scheduledTaskInstallation?.status === "required" ? "\u8FDE\u63A5\u51ED\u636E\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u4F7F\u7528\u8FD4\u56DE\u7684 scheduledTask \u914D\u7F6E\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u521B\u5EFA\u4EFB\u52A1\u3002" : "\u68C0\u6D4B\u5230\u540C\u540D Codex Scheduled Task\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u786E\u8BA4\u5176\u53EF\u89C1\u3002"
   });
 }
 async function discoverProjectScopeAfterBinding() {
@@ -7130,10 +7209,14 @@ async function connect() {
   const connectivity = await performConnectivityTest(tokens);
   const scheduledTaskInstallation = installScheduledCollectionTask();
   const projectScope = await discoverProjectScopeAfterBinding();
+  const binding = await bindingCompletionState(
+    projectScope.status === "project_scope_approval_required"
+  );
   connectedOutput(
     tokens.partnerId,
     deviceName,
     connectivity,
+    binding,
     projectScope,
     scheduledTaskInstallation
   );
@@ -7158,10 +7241,14 @@ async function connectivityTest() {
     remoteScope.initialized,
     remoteScope.identityConfirmed
   ) ? await discoverProjectScopeAfterBinding() : void 0;
+  const binding = await bindingCompletionState(
+    projectScope?.status === "project_scope_approval_required"
+  );
   connectedOutput(
     policy.partnerId,
     config.deviceName,
     connectivity,
+    binding,
     projectScope,
     scheduledTaskInstallation
   );
@@ -8537,6 +8624,9 @@ async function status() {
     status: "connected",
     pluginVersion: PLUGIN_VERSION,
     deviceName: config.deviceName,
+    connectionStatus: "connected",
+    bindingStatus: policy.bindingStatus,
+    bindingCompleted: policy.bindingCompleted,
     connectivityStatus: config.connectivityStatus ?? "pending",
     periodKey: policy.currentPeriod?.period_key ?? null,
     acceptedSessionCount: state.sessions.length,

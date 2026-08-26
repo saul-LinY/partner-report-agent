@@ -708,7 +708,8 @@ export async function adminRoutes(app: FastifyInstance) {
       const bindingCodes = await tx<{ id: string }[]>`
         update plugin_binding_codes set status = 'revoked', updated_at = now()
         where partner_id = ${id} and tenant_id = ${actor.tenantId}
-          and team_id = ${actor.teamId} and status = 'active'
+          and team_id = ${actor.teamId}
+          and status in ('active', 'connecting')
         returning id
       `;
       if (partner.user_id) {
@@ -756,7 +757,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const rows = await sql<{ id: string }[]>`
       update plugin_binding_codes set status = 'revoked', updated_at = now()
       where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and status = 'active' returning id
+        and status in ('active', 'connecting') returning id
     `;
     if (!rows[0])
       throw new ApiError(

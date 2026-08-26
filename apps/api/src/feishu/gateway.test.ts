@@ -710,8 +710,10 @@ describe("FeishuGateway project scope delivery", () => {
   it("sends the initial project review card by Partner email and starts Feishu binding", async () => {
     const tenantId = randomUUID();
     const teamId = randomUUID();
+    const userId = randomUUID();
     const partnerId = randomUUID();
     const pluginInstanceId = randomUUID();
+    const bindingCodeId = randomUUID();
     const periodId = randomUUID();
     const entryId = randomUUID();
     const outboxId = randomUUID();
@@ -719,11 +721,18 @@ describe("FeishuGateway project scope delivery", () => {
     const periodKey = `initial-scope-${periodId}`;
     const email = `initial-scope-${partnerId}@example.com`;
     const messageId = `om_${randomUUID()}`;
-    const sendInteractiveCard = vi.fn(async () => ({ messageId }));
+    const sendInteractiveCard = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary Feishu failure"))
+      .mockResolvedValueOnce({ messageId });
     const updateInteractiveCard = vi.fn(async () => undefined);
 
     try {
       await sql`insert into tenants (id, name) values (${tenantId}, 'Initial scope delivery')`;
+      await sql`
+        insert into users (id, email, display_name, password_hash)
+        values (${userId}, ${`initial-scope-admin-${userId}@example.com`}, 'Initial Scope Admin', 'test')
+      `;
       await sql`
         insert into teams (id, tenant_id, name)
         values (${teamId}, ${tenantId}, 'Initial scope delivery')
@@ -751,6 +760,16 @@ describe("FeishuGateway project scope delivery", () => {
           ${pluginInstanceId}, ${tenantId}, ${teamId}, ${partnerId},
           'Initial Scope MacBook', '2.0.0', 'access', 'refresh',
           now() + interval '1 day'
+        )
+      `;
+      await sql`
+        insert into plugin_binding_codes (
+          id, tenant_id, team_id, partner_id, code_hash, code_prefix, label,
+          status, plugin_instance_id, created_by
+        ) values (
+          ${bindingCodeId}, ${tenantId}, ${teamId}, ${partnerId},
+          ${"f".repeat(64)}, 'PR-TEST', 'Initial scope binding',
+          'connecting', ${pluginInstanceId}, ${userId}
         )
       `;
       await sql`
@@ -792,8 +811,19 @@ describe("FeishuGateway project scope delivery", () => {
         { tenantIdFilter: tenantId, reviewDeliveryEnabled: true },
       );
 
+      await expect(gateway.drainOutbox()).resolves.toBe(0);
+      await expect(
+        sql<Array<{ status: string }>>`
+          select status from plugin_binding_codes where id = ${bindingCodeId}
+        `,
+      ).resolves.toEqual([{ status: "connecting" }]);
+      await sql`
+        update feishu_deliveries set next_retry_at = now() - interval '1 second'
+        where tenant_id = ${tenantId} and aggregate_id = ${`${pluginInstanceId}:${periodKey}`}
+      `;
+
       await expect(gateway.drainOutbox()).resolves.toBe(1);
-      expect(sendInteractiveCard).toHaveBeenCalledWith(
+      expect(sendInteractiveCard).toHaveBeenLastCalledWith(
         expect.objectContaining({
           receiveId: email,
           receiveIdType: "email",
@@ -812,10 +842,22 @@ describe("FeishuGateway project scope delivery", () => {
           and app_id = ${appId}
       `;
       expect(bindings).toEqual([{ status: "pending", open_id: null }]);
+      const bindingCodes = await sql<
+        Array<{ status: string; claimed_at: Date | null }>
+      >`
+        select status, claimed_at from plugin_binding_codes
+        where id = ${bindingCodeId}
+      `;
+      expect(bindingCodes[0]).toMatchObject({
+        status: "claimed",
+        claimed_at: expect.any(String),
+      });
     } finally {
       await sql`delete from outbox_events where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
       await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
+      await sql`delete from audit_events where tenant_id = ${tenantId}`;
+      await sql`delete from plugin_binding_codes where id = ${bindingCodeId}`;
       await sql`delete from project_scope_entries where id = ${entryId}`;
       await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
       await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
@@ -823,6 +865,7 @@ describe("FeishuGateway project scope delivery", () => {
       await sql`delete from partners where id = ${partnerId}`;
       await sql`delete from teams where id = ${teamId}`;
       await sql`delete from tenants where id = ${tenantId}`;
+      await sql`delete from users where id = ${userId}`;
     }
   });
 

@@ -111,7 +111,8 @@ export async function pluginRoutes(app: FastifyInstance) {
     const binding = await sql.begin(async (tx) => {
       const rows = await tx<any[]>`
         select * from plugin_binding_codes
-        where code_hash = ${sha256(normalizedCode)} and status = 'active'
+        where code_hash = ${sha256(normalizedCode)}
+          and status in ('active', 'connecting')
         for update
       `;
       const row = rows[0];
@@ -192,14 +193,16 @@ export async function pluginRoutes(app: FastifyInstance) {
         `;
       }
       await tx`
-        update plugin_binding_codes set status = 'claimed', plugin_instance_id = ${pluginInstanceId},
-          claimed_at = now(), last_used_at = now(), updated_at = now()
+        update plugin_binding_codes set status = 'connecting',
+          plugin_instance_id = ${pluginInstanceId}, claimed_at = null,
+          last_used_at = now(), updated_at = now()
         where id = ${row.id}
       `;
       if (reusableInstanceId) {
         await tx`
           update plugin_binding_codes set status = 'revoked', updated_at = now()
-          where plugin_instance_id = ${reusableInstanceId} and status = 'active'
+          where plugin_instance_id = ${reusableInstanceId}
+            and status in ('active', 'connecting')
             and id <> ${row.id}
         `;
       }
@@ -209,7 +212,7 @@ export async function pluginRoutes(app: FastifyInstance) {
           target_type, target_id, request_id, metadata
         ) values (
           ${randomUUID()}, ${row.tenant_id}, ${row.team_id}, 'plugin', ${pluginInstanceId},
-          ${reusableInstanceId ? "plugin.binding.recovered" : "plugin.binding.claimed"},
+          ${reusableInstanceId ? "plugin.binding.recovery_started" : "plugin.binding.connection_started"},
           'plugin_binding_code', ${row.id}, ${request.id},
           ${JSON.stringify({ deviceName: input.deviceName, pluginVersion: input.pluginVersion })}::jsonb
         )
@@ -227,6 +230,7 @@ export async function pluginRoutes(app: FastifyInstance) {
       challenge: connectivity.challenge,
       challengeExpiresAt: connectivity.challengeExpiresAt,
       connectivityStatus: "pending",
+      bindingStatus: "connecting",
       capabilityVersion: CONNECTIVITY_CAPABILITY_VERSION,
     };
   });
@@ -587,7 +591,7 @@ export async function pluginRoutes(app: FastifyInstance) {
 
   app.get("/v1/plugin-bindings/me", async (request) => {
     const actor = await requirePluginActor(request);
-    const [teamRows, projectRows, periodRows] = await Promise.all([
+    const [teamRows, projectRows, periodRows, bindingRows] = await Promise.all([
       sql<
         any[]
       >`select * from teams where id = ${actor.teamId} and tenant_id = ${actor.tenantId}`,
@@ -602,10 +606,19 @@ export async function pluginRoutes(app: FastifyInstance) {
           and starts_at <= now() and ends_at >= now()
         order by starts_at desc limit 1
       `,
+      sql<Array<{ status: string }>>`
+        select status from plugin_binding_codes
+        where plugin_instance_id = ${actor.pluginInstanceId}
+          and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and partner_id = ${actor.partnerId}
+        order by updated_at desc limit 1
+      `,
     ]);
     return {
       pluginInstanceId: actor.pluginInstanceId,
       partnerId: actor.partnerId,
+      bindingStatus: bindingRows[0]?.status ?? "untracked",
+      bindingCompleted: bindingRows[0]?.status === "claimed",
       team: teamRows[0],
       projects: projectRows,
       currentPeriod: periodRows[0],

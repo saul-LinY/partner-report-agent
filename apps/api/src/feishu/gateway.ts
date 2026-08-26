@@ -208,6 +208,10 @@ function deliveryNeedsStatusRetry(result: FeishuDeliveryResult): boolean {
   return result.outcome === "deferred";
 }
 
+function deliveryConfirmsScopeBinding(result: FeishuDeliveryResult): boolean {
+  return Boolean(result.messageId) && result.outcome !== "deferred";
+}
+
 export class FeishuGateway {
   private readonly database: Database;
   private readonly logger: FeishuGatewayLogger;
@@ -240,6 +244,40 @@ export class FeishuGateway {
 
   setKickHandler(handler: () => void) {
     this.kickHandler = handler;
+  }
+
+  private async completeScopeBinding(
+    event: OutboxRow,
+    result: FeishuDeliveryResult,
+  ) {
+    if (!deliveryConfirmsScopeBinding(result)) return;
+    await this.database.begin(async (tx) => {
+      const completed = await tx<Array<{ id: string; team_id: string }>>`
+        update plugin_binding_codes set
+          status = 'claimed', claimed_at = coalesce(claimed_at, now()),
+          last_used_at = now(), updated_at = now()
+        where tenant_id = ${event.tenant_id}
+          and plugin_instance_id = ${event.aggregate_id}
+          and status = 'connecting'
+        returning id, team_id
+      `;
+      for (const binding of completed) {
+        await tx`
+          insert into audit_events (
+            id, tenant_id, team_id, actor_type, actor_id, action,
+            target_type, target_id, request_id, metadata
+          ) values (
+            ${randomUUID()}, ${event.tenant_id}, ${binding.team_id},
+            'plugin', ${event.aggregate_id}, 'plugin.binding.completed',
+            'plugin_binding_code', ${binding.id}, ${event.id},
+            ${JSON.stringify({
+              projectScopeDeliveryId: result.deliveryId,
+              projectScopeMessageIdPresent: true,
+            })}::jsonb
+          )
+        `;
+      }
+    });
   }
 
   async acceptCardAction(rawEvent: unknown): Promise<FeishuCallbackResponse> {
@@ -1072,8 +1110,7 @@ export class FeishuGateway {
     }
 
     const card: FeishuCard =
-      error.code.includes("LOCKED") ||
-      error.code === "REVIEW_NOT_EDITABLE"
+      error.code.includes("LOCKED") || error.code === "REVIEW_NOT_EDITABLE"
         ? renderLockedCard({ message: error.message })
         : contentChanged
           ? renderStaleCard({ message: error.message })
@@ -1155,6 +1192,8 @@ export class FeishuGateway {
         pluginInstanceId: event.aggregate_id,
         periodKey: view.periodLabel,
       });
+      if (event.event_type === "project_scope.candidates.changed")
+        await this.completeScopeBinding(event, result);
       return !deliveryNeedsStatusRetry(result);
     }
 

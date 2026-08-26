@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { homedir } from "node:os";
 import {
   CODEX_THREAD_LIST_TIMEOUT_MS,
   CODEX_THREAD_READ_TIMEOUT_MS,
@@ -14,6 +15,14 @@ afterEach(() => {
 });
 
 describe("CodexAppServer.listThreads", () => {
+  it("uses a stable working directory instead of the plugin cache cwd", () => {
+    const server = new CodexAppServer("codex");
+
+    expect(
+      (server as unknown as { workingDirectory: string }).workingDirectory,
+    ).toBe(homedir());
+  });
+
   it("reads only recent state database metadata and stops at the activity cutoff", async () => {
     const server = new CodexAppServer("codex");
     const request = vi
@@ -292,5 +301,4 @@ describe("CodexAppServer.readThread", () => {
       message: "Codex Session 分页历史无效。",
     });
   });
-
 });

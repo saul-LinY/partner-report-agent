@@ -285,11 +285,13 @@ function Operations({ data }: { data: Overview }) {
               const codes = data.bindingCodes.filter(
                 (code) =>
                   code.partner_id === connection.partnerId &&
-                  ["active", "claimed"].includes(code.status) &&
+                  ["active", "connecting", "claimed"].includes(code.status) &&
                   code.code_value,
               );
               const activeBindingCode =
-                codes.find((code) => code.status === "active") ?? null;
+                codes.find((code) =>
+                  ["active", "connecting"].includes(code.status),
+                ) ?? null;
               const bindingCode = activeBindingCode ?? codes[0] ?? null;
               const recoverableInstanceId =
                 connection.connectionState === "expired"

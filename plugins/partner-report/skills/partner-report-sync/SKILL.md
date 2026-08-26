@@ -38,6 +38,10 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 ## 连接与凭据
 
+“中台连接成功”和“绑定成功”是两个不同状态。插件取得并验证中台凭据只表示连接成功；只有插件完成首次项目扫描、中台成功把扫描到的项目权限卡发送到飞书，并返回 `bindingCompleted: true`，才可以向用户报告绑定成功。`bindingCompleted: false` 时必须明确报告绑定仍在进行或失败，绑定码尚未核销；不得根据本地配置、Token、`connectivityStatus: verified`、`status: connected` 或项目候选已登记推断绑定成功。
+
+绑定码在上述完整链路成功前保持可恢复状态。扫描、Codex app-server、候选登记或飞书投递任一步失败时，不得报告绑定码已使用；修复后应使用同一绑定码或已保存的连接凭据继续，不要求用户重新生成绑定码。飞书权限卡仅“请求发送”不等于已经送达，必须以 `bindingCompleted` 为准。
+
 向用户索取数据中台 API URL 和 Admin 生成的绑定码，然后调用 `connect`。远程地址必须使用 HTTPS；本机回环地址允许 HTTP。只有用户明确确认同一可信测试局域网时，才可把 `allowInsecureHttp` 设为 `true`。
 
 新绑定的 Token 保存在插件稳定数据目录中，权限为 `0600`。正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain。

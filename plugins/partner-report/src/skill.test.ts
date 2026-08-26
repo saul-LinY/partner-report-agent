@@ -52,6 +52,9 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("collect_defer");
     expect(skill).toContain("project_description_submit");
     expect(skill).toContain("project_scope_sync");
+    expect(skill).toContain("只有插件完成首次项目扫描");
+    expect(skill).toContain("`bindingCompleted: true`");
+    expect(skill).toContain("飞书权限卡仅“请求发送”不等于已经送达");
     expect(skill).toContain("exclusion_set");
     expect(skill).toContain("jobInput");
     expect(skill).toContain("不得自行写结果文件");

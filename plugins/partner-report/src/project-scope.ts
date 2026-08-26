@@ -27,6 +27,8 @@ export type RemoteProjectScopeEntry = {
 export type RemoteProjectScopePolicy = {
   pluginInstanceId: string;
   identityConfirmed: boolean;
+  bindingStatus?: string;
+  bindingCompleted?: boolean;
   version: number;
   initialized: boolean;
   initializedAt: string | null;

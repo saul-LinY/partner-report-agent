@@ -3,6 +3,7 @@ import {
   spawnSync,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { PLUGIN_VERSION } from "./config.js";
 
@@ -83,11 +84,13 @@ function probeCodexBinary(candidate: string) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
 }
 
-export function selectCodexBinary(options: {
-  explicit?: string;
-  candidates?: string[];
-  probe?: CodexBinaryProbe;
-} = {}) {
+export function selectCodexBinary(
+  options: {
+    explicit?: string;
+    candidates?: string[];
+    probe?: CodexBinaryProbe;
+  } = {},
+) {
   const explicit = options.explicit ?? process.env.CODEX_BIN;
   const candidates = explicit
     ? [explicit]
@@ -150,9 +153,11 @@ export class CodexAppServer {
   private stderr = "";
 
   private readonly codexBin: string;
+  private readonly workingDirectory: string;
 
-  constructor(codexBin?: string) {
+  constructor(codexBin?: string, workingDirectory = homedir()) {
     this.codexBin = codexBin ?? selectCodexBinary();
+    this.workingDirectory = workingDirectory;
   }
 
   async connect() {
@@ -166,7 +171,10 @@ export class CodexAppServer {
         "--disable",
         "remote_plugin",
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      {
+        cwd: this.workingDirectory,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
     );
     const lines = createInterface({ input: this.process.stdout });
     lines.on("line", (line) => {

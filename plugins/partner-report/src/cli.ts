@@ -120,10 +120,13 @@ import {
   pluginErrorDetails,
   setPluginLogRunId,
 } from "./telemetry.js";
+import { waitForCondition } from "./poll-wait.js";
 
 type Policy = {
   pluginInstanceId: string;
   partnerId: string;
+  bindingStatus: string;
+  bindingCompleted: boolean;
   team: { minimum_plugin_version?: string };
   projects: ProjectPolicy[];
   currentPeriod: (CollectionPeriod & { id: string }) | null;
@@ -141,6 +144,7 @@ type ClaimResponse = ConnectivityChallenge & {
   expiresAt: string;
   pluginInstanceId: string;
   partnerId: string;
+  bindingStatus: string;
 };
 
 type ThreadSummary = {
@@ -547,10 +551,37 @@ async function setServerUrl() {
   });
 }
 
+async function bindingCompletionState(waitForDelivery: boolean) {
+  let latest: Policy | null = null;
+  let deliveryWaitStatus:
+    "not_required" | "confirmed" | "pending" | "timed_out" | "cancelled" =
+    "not_required";
+  if (waitForDelivery) {
+    const wait = await waitForCondition({
+      check: async () => {
+        latest = await fetchPolicy();
+        return latest.bindingCompleted;
+      },
+      deadlineAt: Date.now() + 20_000,
+      segmentDurationMs: 20_000,
+      errorCode: (error) => pluginErrorDetails(error).code,
+    });
+    deliveryWaitStatus = wait.status;
+  }
+  latest ??= await fetchPolicy();
+  return {
+    connectionStatus: "connected",
+    bindingStatus: latest.bindingStatus,
+    bindingCompleted: latest.bindingCompleted,
+    deliveryWaitStatus,
+  };
+}
+
 function connectedOutput(
   partnerId: string,
   deviceName: string,
   connectivity: Record<string, unknown>,
+  binding: Awaited<ReturnType<typeof bindingCompletionState>>,
   projectScope?: Record<string, unknown>,
   scheduledTaskInstallation?: ScheduledTaskInstallation,
 ) {
@@ -560,16 +591,20 @@ function connectedOutput(
     pluginInstanceId: config.pluginInstanceId,
     partnerId,
     deviceName,
+    ...binding,
     connectivity,
     ...(projectScope ?? {}),
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     scheduledTaskInstallation,
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
+    bindingNextStep: binding.bindingCompleted
+      ? "绑定链路已完成，绑定码已核销。"
+      : "中台连接已建立，但绑定尚未完成；绑定码不会在飞书项目权限卡成功送达前核销。",
     nextStep:
       scheduledTaskInstallation?.status === "failed"
-        ? "绑定已保留，但 Codex Scheduled Task 检查失败；请通过 Codex 官方自动化工具重试。"
+        ? "连接凭据已保留，但 Codex Scheduled Task 检查失败；请通过 Codex 官方自动化工具重试。"
         : scheduledTaskInstallation?.status === "required"
-          ? "绑定已保留；请使用返回的 scheduledTask 配置通过 Codex 官方自动化工具创建任务。"
+          ? "连接凭据已保留；请使用返回的 scheduledTask 配置通过 Codex 官方自动化工具创建任务。"
           : "检测到同名 Codex Scheduled Task；请通过 Codex 官方自动化工具确认其可见。",
   });
 }
@@ -704,10 +739,14 @@ async function connect() {
   const connectivity = await performConnectivityTest(tokens);
   const scheduledTaskInstallation = installScheduledCollectionTask();
   const projectScope = await discoverProjectScopeAfterBinding();
+  const binding = await bindingCompletionState(
+    projectScope.status === "project_scope_approval_required",
+  );
   connectedOutput(
     tokens.partnerId,
     deviceName,
     connectivity,
+    binding,
     projectScope,
     scheduledTaskInstallation,
   );
@@ -737,10 +776,14 @@ async function connectivityTest() {
   )
     ? await discoverProjectScopeAfterBinding()
     : undefined;
+  const binding = await bindingCompletionState(
+    projectScope?.status === "project_scope_approval_required",
+  );
   connectedOutput(
     policy.partnerId,
     config.deviceName,
     connectivity,
+    binding,
     projectScope,
     scheduledTaskInstallation,
   );
@@ -2340,6 +2383,9 @@ async function status() {
     status: "connected",
     pluginVersion: PLUGIN_VERSION,
     deviceName: config.deviceName,
+    connectionStatus: "connected",
+    bindingStatus: policy.bindingStatus,
+    bindingCompleted: policy.bindingCompleted,
     connectivityStatus: config.connectivityStatus ?? "pending",
     periodKey: policy.currentPeriod?.period_key ?? null,
     acceptedSessionCount: state.sessions.length,

@@ -181,7 +181,8 @@ const registerTool = server.registerTool.bind(server) as (
 registerTool(
   "connect",
   {
-    description: "绑定 Partner Report，并完成连通性验证和首次项目发现。",
+    description:
+      "连接 Partner Report，扫描首次项目，并仅在飞书项目权限卡成功送达后完成绑定。",
     inputSchema: {
       serverUrl: z.string().url(),
       bindingCode: z.string().min(1),
