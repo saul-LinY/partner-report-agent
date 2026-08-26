@@ -1,0 +1,1 @@
+ALTER TABLE "partners" ADD COLUMN "feishu_delivery_enabled" boolean DEFAULT true NOT NULL;

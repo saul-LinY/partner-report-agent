@@ -902,6 +902,92 @@ suite("tenant and role authorization", () => {
     }
   });
 
+  it("lets an Admin disable one Partner's Feishu channel without reviving suppressed deliveries", async () => {
+    const partnerId = randomUUID();
+    const retryDeliveryId = randomUUID();
+    const sentDeliveryId = randomUUID();
+    try {
+      await sql`
+        insert into partners (id, tenant_id, team_id, email, display_name)
+        values (
+          ${partnerId}, ${fixture.tenantA}, ${fixture.teamA},
+          ${`channel-${partnerId}@local.test`}, 'Channel Fixture'
+        )
+      `;
+      await sql`
+        insert into feishu_deliveries (
+          id, tenant_id, team_id, partner_id, kind, aggregate_type,
+          aggregate_id, receive_id, receive_id_type, status,
+          next_retry_at, idempotency_key
+        ) values
+        (
+          ${retryDeliveryId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
+          'review', 'review', ${randomUUID()}, 'ou-channel-fixture', 'open_id',
+          'retry_wait', now(), ${`channel-retry:${retryDeliveryId}`}
+        ),
+        (
+          ${sentDeliveryId}, ${fixture.tenantA}, ${fixture.teamA}, ${partnerId},
+          'review', 'review', ${randomUUID()}, 'ou-channel-fixture', 'open_id',
+          'sent', null, ${`channel-sent:${sentDeliveryId}`}
+        )
+      `;
+
+      const disabled = await app.inject({
+        method: "PATCH",
+        url: `/v1/admin/partners/${partnerId}`,
+        headers,
+        payload: { feishuDeliveryEnabled: false },
+      });
+      expect(disabled.statusCode).toBe(200);
+      expect(disabled.json().feishu_delivery_enabled).toBe(false);
+
+      const deliveries = await sql<
+        Array<{ id: string; status: string; next_retry_at: Date | null }>
+      >`
+        select id, status, next_retry_at from feishu_deliveries
+        where id in (${retryDeliveryId}, ${sentDeliveryId})
+        order by id
+      `;
+      expect(deliveries).toEqual(
+        expect.arrayContaining([
+          { id: retryDeliveryId, status: "suppressed", next_retry_at: null },
+          { id: sentDeliveryId, status: "sent", next_retry_at: null },
+        ]),
+      );
+
+      const overview = await app.inject({
+        method: "GET",
+        url: "/v1/admin/overview",
+        headers,
+      });
+      expect(overview.statusCode).toBe(200);
+      expect(
+        overview
+          .json()
+          .connections.find(
+            (connection: any) => connection.partnerId === partnerId,
+          ),
+      ).toMatchObject({ feishuDeliveryEnabled: false });
+
+      const enabled = await app.inject({
+        method: "PATCH",
+        url: `/v1/admin/partners/${partnerId}`,
+        headers,
+        payload: { feishuDeliveryEnabled: true },
+      });
+      expect(enabled.statusCode).toBe(200);
+      expect(enabled.json().feishu_delivery_enabled).toBe(true);
+      const suppressed = await sql<Array<{ status: string }>>`
+        select status from feishu_deliveries where id = ${retryDeliveryId}
+      `;
+      expect(suppressed[0]?.status).toBe("suppressed");
+    } finally {
+      await sql`delete from audit_events where target_id = ${partnerId}`;
+      await sql`delete from feishu_deliveries where partner_id = ${partnerId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+    }
+  });
+
   it("returns project cards through the first-review workspace", async () => {
     const response = await app.inject({
       method: "GET",

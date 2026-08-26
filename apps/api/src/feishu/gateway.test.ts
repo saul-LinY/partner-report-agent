@@ -449,6 +449,7 @@ describe("FeishuGateway binding callback", () => {
     const bindingId = randomUUID();
     const deliveryId = randomUUID();
     const eventId = randomUUID();
+    const disabledEventId = randomUUID();
     const appId = `cli_gateway_test_${randomUUID()}`;
     const openId = `ou_${randomUUID()}`;
     const messageId = `om_${randomUUID()}`;
@@ -569,8 +570,20 @@ describe("FeishuGateway binding callback", () => {
       });
       await expect(gateway.drainInbox()).resolves.toBe(0);
       expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+
+      await sql`
+        update partners set feishu_delivery_enabled = false
+        where id = ${partnerId} and tenant_id = ${tenantId}
+      `;
+      await expect(
+        gateway.acceptCardAction({ ...callback, event_id: disabledEventId }),
+      ).resolves.toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
     } finally {
-      await sql`delete from feishu_inbox_events where event_id = ${eventId}`;
+      await sql`delete from feishu_inbox_events where event_id in (${eventId}, ${disabledEventId})`;
       await sql`delete from audit_events where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
       await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;

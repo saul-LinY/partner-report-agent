@@ -37,6 +37,7 @@ export type FeishuDeliveryResult = {
     | "retry_not_due"
     | "already_bound"
     | "already_current"
+    | "channel_disabled"
     | "delivery_in_progress"
     | "delivery_failed";
 };
@@ -99,10 +100,7 @@ export type FeishuActionDelivery = FeishuDeliveryScope & {
   deliveryId: string;
   kind: FeishuDeliveryKind;
   aggregateType:
-    | "partner"
-    | "device_authorization"
-    | "project_scope"
-    | "review";
+    "partner" | "device_authorization" | "project_scope" | "review";
   aggregateId: string;
   messageId: string;
   receiveId: string;
@@ -131,6 +129,7 @@ type PartnerRow = {
   user_id: string | null;
   email: string;
   display_name: string;
+  feishu_delivery_enabled: boolean;
 };
 
 type BindingRow = {
@@ -163,12 +162,7 @@ type MessageClient = Pick<
 >;
 
 const identifierSchema = z.string().trim().min(1).max(256);
-const deliveryKindSchema = z.enum([
-  "binding",
-  "recovery",
-  "scope",
-  "review",
-]);
+const deliveryKindSchema = z.enum(["binding", "recovery", "scope", "review"]);
 
 function safePayload(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -818,10 +812,7 @@ export class FeishuDeliveryService {
         partner_id: string;
         kind: FeishuDeliveryKind;
         aggregate_type:
-          | "partner"
-          | "device_authorization"
-          | "project_scope"
-          | "review";
+          "partner" | "device_authorization" | "project_scope" | "review";
         aggregate_id: string;
         message_id: string;
         receive_id: string;
@@ -915,11 +906,23 @@ export class FeishuDeliveryService {
     };
   }
 
+  async isPartnerChannelEnabled(scope: FeishuDeliveryScope): Promise<boolean> {
+    const rows = await this.database<Array<{ enabled: boolean }>>`
+      select feishu_delivery_enabled as enabled
+      from partners
+      where id = ${scope.partnerId} and tenant_id = ${scope.tenantId}
+        and team_id = ${scope.teamId} and status = 'active'
+      limit 1
+    `;
+    return rows[0]?.enabled === true;
+  }
+
   private async loadScopedPartner(
     scope: FeishuDeliveryScope,
   ): Promise<PartnerRow | null> {
     const partners = await this.database<PartnerRow[]>`
-      select id, tenant_id, team_id, user_id, email, display_name
+      select id, tenant_id, team_id, user_id, email, display_name,
+        feishu_delivery_enabled
       from partners
       where id = ${scope.partnerId} and tenant_id = ${scope.tenantId}
         and team_id = ${scope.teamId} and status = 'active'
@@ -979,6 +982,12 @@ export class FeishuDeliveryService {
         outcome: "skipped",
         deliveryId: null,
         reason: "not_reviewable",
+      };
+    if (!partner.feishu_delivery_enabled)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "channel_disabled",
       };
     const bindings = await this.database<BindingRow[]>`
       select id, status, open_id from feishu_partner_bindings
@@ -1062,7 +1071,8 @@ export class FeishuDeliveryService {
     domainVersion?: number,
   ): Promise<FeishuDeliveryResult> {
     const partners = await this.database<PartnerRow[]>`
-      select p.id, p.tenant_id, p.team_id, p.user_id, p.email, p.display_name
+      select p.id, p.tenant_id, p.team_id, p.user_id, p.email, p.display_name,
+        p.feishu_delivery_enabled
       from partners p
       where p.id = ${scope.partnerId} and p.tenant_id = ${scope.tenantId}
         and p.team_id = ${scope.teamId} and p.status = 'active'
@@ -1074,6 +1084,12 @@ export class FeishuDeliveryService {
         outcome: "skipped",
         deliveryId: null,
         reason: "not_reviewable",
+      };
+    if (!partner.feishu_delivery_enabled)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "channel_disabled",
       };
     const deliveries = await this.database<DeliveryRow[]>`
       select d.* from feishu_deliveries d
@@ -1151,6 +1167,7 @@ export class FeishuDeliveryService {
           when feishu_deliveries.receive_id <> excluded.receive_id
             or feishu_deliveries.receive_id_type <> excluded.receive_id_type
             then excluded.status
+          when feishu_deliveries.status = 'suppressed' then excluded.status
           when excluded.status = 'deferred' then 'deferred'
           else feishu_deliveries.status
         end,
@@ -1293,6 +1310,14 @@ export class FeishuDeliveryService {
     card: FeishuCard,
     domainVersion = delivery.domain_version,
   ): Promise<FeishuDeliveryResult> {
+    if (
+      !(await this.isPartnerChannelEnabled({
+        tenantId: delivery.tenant_id,
+        teamId: delivery.team_id,
+        partnerId: delivery.partner_id,
+      }))
+    )
+      return this.suppressClaimedDelivery(delivery);
     try {
       const sent = await this.messageClient.sendInteractiveCard({
         receiveIdType:
@@ -1352,6 +1377,14 @@ export class FeishuDeliveryService {
     card: FeishuCard,
     domainVersion: number,
   ): Promise<FeishuDeliveryResult> {
+    if (
+      !(await this.isPartnerChannelEnabled({
+        tenantId: delivery.tenant_id,
+        teamId: delivery.team_id,
+        partnerId: delivery.partner_id,
+      }))
+    )
+      return this.suppressClaimedDelivery(delivery);
     try {
       await this.messageClient.updateInteractiveCard({
         messageId: delivery.message_id!,
@@ -1433,6 +1466,24 @@ export class FeishuDeliveryService {
       ...(delivery.message_id ? { messageId: delivery.message_id } : {}),
       nextRetryAt,
       reason: "delivery_failed",
+    };
+  }
+
+  private async suppressClaimedDelivery(
+    delivery: DeliveryRow,
+  ): Promise<FeishuDeliveryResult> {
+    await this.database`
+      update feishu_deliveries set
+        status = 'suppressed', next_retry_at = null, updated_at = now()
+      where id = ${delivery.id} and tenant_id = ${delivery.tenant_id}
+        and team_id = ${delivery.team_id} and partner_id = ${delivery.partner_id}
+        and status = 'sending' and attempt_count = ${delivery.attempt_count}
+    `;
+    return {
+      outcome: "skipped",
+      deliveryId: delivery.id,
+      ...(delivery.message_id ? { messageId: delivery.message_id } : {}),
+      reason: "channel_disabled",
     };
   }
 }

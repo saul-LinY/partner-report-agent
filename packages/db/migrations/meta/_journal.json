@@ -211,6 +211,13 @@
       "when": 1787649349632,
       "tag": "0029_striped_ultimatum",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1787737067570,
+      "tag": "0030_partner_feishu_delivery_channel",
+      "breakpoints": true
     }
   ]
 }

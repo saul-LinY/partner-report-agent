@@ -93,6 +93,9 @@ export const partners = pgTable(
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
     status: text("status").notNull().default("active"),
+    feishuDeliveryEnabled: boolean("feishu_delivery_enabled")
+      .notNull()
+      .default(true),
     preferences: jsonb("preferences").notNull().default({}),
     ...timestamps(),
   },

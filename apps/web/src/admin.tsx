@@ -35,6 +35,7 @@ type PartnerConnection = {
   pluginInstanceId: string | null;
   connectionState: string;
   feishuConnectionState: string;
+  feishuDeliveryEnabled: boolean;
   feishuConnectedAt: string | null;
   feishuLastAttemptAt: string | null;
   feishuLastErrorCode: string | null;
@@ -204,6 +205,14 @@ function Operations({ data }: { data: Overview }) {
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+  const updateFeishuChannel = useMutation({
+    mutationFn: (input: { partnerId: string; enabled: boolean }) =>
+      api(`/v1/admin/partners/${input.partnerId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ feishuDeliveryEnabled: input.enabled }),
+      }),
+    onSuccess: refresh,
+  });
   const connected = data.connections.filter((item) =>
     ["active", "connected"].includes(item.connectionState),
   ).length;
@@ -274,6 +283,9 @@ function Operations({ data }: { data: Overview }) {
             新增人员
           </Button>
         </div>
+        {updateFeishuChannel.error && (
+          <ErrorBanner error={updateFeishuChannel.error} />
+        )}
         {data.connections.length === 0 ? (
           <EmptyState title="还没有人员" />
         ) : (
@@ -297,6 +309,12 @@ function Operations({ data }: { data: Overview }) {
                 connection.connectionState === "expired"
                   ? null
                   : connection.pluginInstanceId;
+              const pendingChannelValue =
+                updateFeishuChannel.isPending &&
+                updateFeishuChannel.variables?.partnerId ===
+                  connection.partnerId
+                  ? updateFeishuChannel.variables.enabled
+                  : connection.feishuDeliveryEnabled;
               return (
                 <div className="plugin-status-row" key={connection.partnerId}>
                   <span
@@ -364,6 +382,25 @@ function Operations({ data }: { data: Overview }) {
                     <span className="plugin-tested-at">
                       {feishuStatusDetail(connection)}
                     </span>
+                    <label className="feishu-channel-toggle">
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        aria-label={`${connection.partnerName} 的飞书消息通道`}
+                        checked={pendingChannelValue}
+                        disabled={updateFeishuChannel.isPending || !partner}
+                        onChange={(event) =>
+                          updateFeishuChannel.mutate({
+                            partnerId: connection.partnerId,
+                            enabled: event.target.checked,
+                          })
+                        }
+                      />
+                      <span aria-hidden="true" />
+                      <small>
+                        {pendingChannelValue ? "消息开启" : "消息关闭"}
+                      </small>
+                    </label>
                   </div>
                   <div
                     className="review-progress-cell"
