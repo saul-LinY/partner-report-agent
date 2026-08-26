@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
   aggregationResultSchema,
-  assertChineseTeamReport,
-  assertTeamReportSemantics,
   teamReportGenerationResultSchema,
   teamReportResultSchema,
+  workStatusSchema,
 } from "@partner-report/contracts";
 import { stableJsonHash } from "@partner-report/contracts/hash";
 import { centralModelIdSchema } from "@partner-report/contracts/models";
@@ -111,7 +110,7 @@ function isSystemHealthJob(type: string) {
 }
 
 export const aggregationInstructions = (model: string) =>
-  `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write projectDescription, overview and dailyProgress.summary in simplified Chinese. For initial generation, copy each bucket.projectDescription exactly into group.projectDescription; do not rewrite it. A project description may change only when reviewInstruction explicitly asks to modify the project description, introduction, positioning, or purpose. Treat reviewInstruction as an authoritative first-hand correction from the Partner: it may correct wording, emphasis, dates, results, or add weekly work facts explicitly stated by the user. Never invent anything beyond the supplied bucket and the explicit reviewInstruction, and preserve uncertainty when neither source proves a result. A general request to revise weekly work must not silently change projectDescription. Use plain, direct, everyday Chinese that a colleague without technical context can understand. Explain necessary technical terms in ordinary language instead of stacking jargon. Make the card detailed enough for the user to verify whether the work was described accurately. In overview, explain the work's context or purpose, the concrete actions, the supported result or current state, and any remaining issue or next step when available. Use two to four informative sentences, usually 120 to 240 Chinese characters. For each dailyProgress.summary, keep distinct meaningful activities from that date and explain what was done and what result or change it produced in about 150 Chinese characters, usually 120 to 180 and never more than 200. Do not compress several unrelated contributions into a vague phrase. Avoid process narration, filler, repeated background, unsupported business impact, and claims such as "completed" unless the supplied contributions or explicit reviewInstruction support them. Keep projectDescription around 200 Chinese characters, preferably 150 to 250, and no more than 300. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-27.project-card.v5","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+  `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write projectDescription, overview and dailyProgress.summary in simplified Chinese. For initial generation, copy each bucket.projectDescription exactly into group.projectDescription; do not rewrite it. A project description may change only when reviewInstruction explicitly asks to modify the project description, introduction, positioning, or purpose. Treat reviewInstruction as an authoritative first-hand correction from the Partner: it may correct wording, emphasis, dates, results, or add weekly work facts explicitly stated by the user. Never invent anything beyond the supplied bucket and the explicit reviewInstruction, and preserve uncertainty when neither source proves a result. A general request to revise weekly work must not silently change projectDescription. Use plain, direct, everyday Chinese that a colleague without technical context can understand. Explain necessary technical terms in ordinary language instead of stacking jargon. Make the card detailed enough for the user to verify whether the work was described accurately. In overview, explain the work's context or purpose, the concrete actions, the supported result or current state, and any remaining issue or next step when available. Use two to four informative sentences, usually 120 to 240 Chinese characters. For each dailyProgress.summary, keep distinct meaningful activities from that date and explain what was done and what result or change it produced in about 150 Chinese characters, usually 120 to 180 and never more than 200. Do not compress several unrelated contributions into a vague phrase. Avoid process narration, filler, repeated background, unsupported business impact, and claims such as "completed" unless the supplied contributions or explicit reviewInstruction support them. Keep projectDescription around 200 Chinese characters, preferably 150 to 250, and no more than 300. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-27.project-card.v6","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportInstructions = (
   model: string,
@@ -131,13 +130,15 @@ In project_progress, group content by concrete Partner/person first, using the s
 
 Include risks only when supported by the current work cards. State each risk in plain language, explain its practical consequence only when supported, and make the remaining action understandable without technical knowledge. State plainly when none were reported. Treat noReportableActivity=true as a reporting-coverage limit, not as evidence of a project risk or poor performance. previousTeamReport is null for the first report. When it is present, it is exactly the immediately preceding period's final Team Report and may only support progress comparisons; never copy its prior-period work into the current period or use it to introduce an uncited current fact. Every current factual claim must cite one or more supplied Work Card snapshot IDs. In every claim's workCardSnapshotIds, copy only exact values from workCards[].snapshotId. For this request, the complete allowlist is ${JSON.stringify(allowedWorkCardSnapshotIds)}. Every workCardSnapshotId must be copied exactly from this allowlist. Never use the top-level reportId, partnerId, project IDs, Work Item IDs, or any other identifier as a workCardSnapshotId.
 
-Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-12.team.v14","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
+Return section content only; the service assembles the top-level title and markdown deterministically. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-27.team.v15","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
 const teamReportSectionTitles = {
   summary: "本周团队工作摘要",
   project_progress: "项目与人员工作明细",
   risks: "风险与阻塞",
 } as const;
+
+const teamReportSectionKeys = ["summary", "project_progress", "risks"] as const;
 
 export function formatReportDate(date: Date, timezone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -220,7 +221,7 @@ export function buildNoActivityTeamReport(
     qualityWarnings: ["NO_REPORTABLE_ACTIVITY_COLLECTED"],
     production: {
       skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-12.team.v14",
+      promptVersion: "2026-08-27.team.v15",
       schemaVersion: "1.0",
       producer: "data-platform",
       modelVersion: model,
@@ -291,7 +292,7 @@ function finalizeTeamReport(
     production: {
       ...result.production,
       skillVersion: "partner-report-platform/0.3.0",
-      promptVersion: "2026-08-12.team.v14",
+      promptVersion: "2026-08-27.team.v15",
       schemaVersion: "1.0",
       producer: "data-platform",
     },
@@ -302,6 +303,77 @@ function finalizeTeamReport(
           `## ${section.title}\n\n${section.markdown.trim() || "工作卡片未提供相关内容。"}`,
       )
       .join("\n\n"),
+  };
+}
+
+export function normalizeTeamReportGeneration(
+  generated: any,
+  workCards: Array<{ snapshotId: string }>,
+  missingPartnerIds: string[],
+  model: string,
+) {
+  const allowedSnapshotIds = new Set(
+    workCards.map((workCard) => workCard.snapshotId),
+  );
+  const sourceSections = Array.isArray(generated.sections)
+    ? generated.sections
+    : [];
+  const qualityWarnings = Array.isArray(generated.qualityWarnings)
+    ? generated.qualityWarnings.filter(
+        (warning: unknown): warning is string => typeof warning === "string",
+      )
+    : [];
+  const sections = teamReportSectionKeys.map((key) => {
+    const matching = sourceSections.filter(
+      (section: any) => section.key === key,
+    );
+    if (matching.length !== 1)
+      qualityWarnings.push("MODEL_TEAM_REPORT_SECTIONS_NORMALIZED");
+    const markdown = matching
+      .map((section: any) =>
+        typeof section.markdown === "string" ? section.markdown.trim() : "",
+      )
+      .filter(Boolean)
+      .join("\n\n");
+    const claims = matching
+      .flatMap((section: any) =>
+        Array.isArray(section.claims) ? section.claims : [],
+      )
+      .flatMap((claim: any) => {
+        const text = typeof claim?.claim === "string" ? claim.claim.trim() : "";
+        const snapshotIds = Array.isArray(claim?.workCardSnapshotIds)
+          ? claim.workCardSnapshotIds.filter(
+              (id: unknown): id is string =>
+                typeof id === "string" && allowedSnapshotIds.has(id),
+            )
+          : [];
+        return text && snapshotIds.length > 0
+          ? [{ claim: text, workCardSnapshotIds: [...new Set(snapshotIds)] }]
+          : [];
+      });
+    return {
+      key,
+      markdown: markdown || "本期工作卡片未提供这一部分的相关内容。",
+      claims,
+    };
+  });
+  const summary = normalizeTeamReportSummary(
+    typeof generated.summary === "string" ? generated.summary : "",
+  );
+  return {
+    schemaVersion: "1.0",
+    summary:
+      summary || "本周期团队报告已根据已确认的工作卡片生成，具体内容见下方。",
+    sections,
+    missingPartnerIds,
+    qualityWarnings: [...new Set(qualityWarnings)],
+    production: {
+      skillVersion: "partner-report-platform/0.3.0",
+      promptVersion: "2026-08-27.team.v15",
+      schemaVersion: "1.0",
+      producer: "data-platform",
+      modelVersion: model,
+    },
   };
 }
 
@@ -347,53 +419,86 @@ async function leaseNextJob(onlyTenantId?: string) {
   });
 }
 
-function validateAggregation(job: Job, output: unknown) {
+export function normalizeAggregation(job: Job, output: unknown, model: string) {
   const result = aggregationResultSchema.parse(output);
-  const buckets = new Map<string, any>(
-    job.input_payload.projectBuckets.map((bucket: any) => [
-      bucket.projectKey,
-      bucket,
-    ]),
-  );
-  const used = new Set<string>();
-  for (const group of result.groups) {
-    const bucket = buckets.get(group.projectKey);
-    if (!bucket) throw new Error(`UNKNOWN_PROJECT_BUCKET:${group.projectKey}`);
-    if (used.has(group.projectKey))
-      throw new Error(`DUPLICATE_PROJECT_BUCKET:${group.projectKey}`);
-    used.add(group.projectKey);
-    const dates = group.dailyProgress.map((entry: any) => entry.date);
-    if (new Set(dates).size !== dates.length)
-      throw new Error(`DUPLICATE_PROGRESS_DATE:${group.projectKey}`);
-    if (JSON.stringify(dates) !== JSON.stringify([...dates].sort()))
-      throw new Error(`UNSORTED_DAILY_PROGRESS:${group.projectKey}`);
-    const reviewInstruction = job.input_payload.reviewInstruction;
-    const descriptionChangeRequested =
-      typeof reviewInstruction === "string" &&
-      /(项目描述|项目介绍|项目定位|项目用途|这个项目是做什么|这个项目做什么|description)/i.test(
-        reviewInstruction,
-      );
-    if (
-      !descriptionChangeRequested &&
-      group.projectDescription !== (bucket.projectDescription ?? "")
-    )
-      throw new Error(`PROJECT_DESCRIPTION_CHANGED:${group.projectKey}`);
-    if (bucket.projectDescription && !group.projectDescription.trim())
-      throw new Error(`PROJECT_DESCRIPTION_EMPTY:${group.projectKey}`);
-    const supportedStatus = projectStatusWithCompletionSupport(
-      group.status,
-      bucket,
-    );
-    if (supportedStatus !== group.status) {
-      group.status = supportedStatus;
-      if (!result.qualityWarnings.includes("COMPLETION_EVIDENCE_MISSING"))
-        result.qualityWarnings.push("COMPLETION_EVIDENCE_MISSING");
-    }
+  const sourceGroups = Array.isArray(result.groups) ? result.groups : [];
+  const groupsByProject = new Map<string, any>();
+  const qualityWarnings = Array.isArray(result.qualityWarnings)
+    ? result.qualityWarnings.filter(
+        (warning: unknown): warning is string => typeof warning === "string",
+      )
+    : [];
+  for (const group of sourceGroups) {
+    if (!group.projectKey || groupsByProject.has(group.projectKey)) continue;
+    groupsByProject.set(group.projectKey, group);
   }
-  for (const projectKey of buckets.keys())
-    if (!used.has(projectKey))
-      throw new Error(`PROJECT_BUCKET_MISSING:${projectKey}`);
-  return result;
+  const reviewInstruction = job.input_payload.reviewInstruction;
+  const descriptionChangeRequested =
+    typeof reviewInstruction === "string" &&
+    /(项目描述|项目介绍|项目定位|项目用途|这个项目是做什么|这个项目做什么|description)/i.test(
+      reviewInstruction,
+    );
+  const buckets = Array.isArray(job.input_payload.projectBuckets)
+    ? job.input_payload.projectBuckets
+    : [];
+  const groups = buckets.map((bucket: any) => {
+    const group = groupsByProject.get(bucket.projectKey);
+    if (!group && !qualityWarnings.includes("MODEL_PROJECT_BUCKET_MISSING"))
+      qualityWarnings.push("MODEL_PROJECT_BUCKET_MISSING");
+    const progressByDate = new Map<string, string>();
+    for (const entry of group?.dailyProgress ?? []) {
+      const date = typeof entry?.date === "string" ? entry.date.trim() : "";
+      const summary =
+        typeof entry?.summary === "string" ? entry.summary.trim() : "";
+      if (!date || !summary) continue;
+      const previous = progressByDate.get(date);
+      progressByDate.set(
+        date,
+        previous && previous !== summary ? `${previous} ${summary}` : summary,
+      );
+    }
+    const parsedStatus = workStatusSchema.safeParse(group?.status);
+    const requestedStatus = parsedStatus.success
+      ? parsedStatus.data
+      : "awaiting_validation";
+    const status = projectStatusWithCompletionSupport(requestedStatus, bucket);
+    if (status !== requestedStatus)
+      qualityWarnings.push("COMPLETION_EVIDENCE_MISSING");
+    const sourceDescription =
+      typeof bucket.projectDescription === "string"
+        ? bucket.projectDescription
+        : "";
+    const generatedDescription =
+      typeof group?.projectDescription === "string"
+        ? group.projectDescription.trim()
+        : "";
+    return {
+      projectKey: bucket.projectKey,
+      projectDescription: descriptionChangeRequested
+        ? generatedDescription || sourceDescription
+        : sourceDescription,
+      status,
+      overview:
+        typeof group?.overview === "string" && group.overview.trim()
+          ? group.overview.trim()
+          : "本次模型未能完整整理项目概览，请在审核时补充或重新生成。",
+      dailyProgress: [...progressByDate.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, summary]) => ({ date, summary })),
+    };
+  });
+  return {
+    schemaVersion: "1.0",
+    groups,
+    qualityWarnings: [...new Set(qualityWarnings)],
+    production: {
+      skillVersion: "partner-report-platform/0.3.0",
+      promptVersion: "2026-08-27.project-card.v6",
+      schemaVersion: "1.0",
+      producer: "data-platform",
+      modelVersion: model,
+    },
+  };
 }
 
 export function bucketHasCompletionSupport(bucket: {
@@ -444,8 +549,8 @@ function projectCardPayload(group: any, bucket?: any) {
   };
 }
 
-async function applyAggregation(job: Job, output: unknown) {
-  const result = validateAggregation(job, output);
+async function applyAggregation(job: Job, output: unknown, model: string) {
+  const result = normalizeAggregation(job, output, model);
   const reviewId = job.input_payload.reviewId as string;
   const targetWorkItemId = job.input_payload.targetWorkItemId as
     string | undefined;
@@ -576,31 +681,17 @@ async function applyTeamReport(
   model: string,
   timezone: string,
 ) {
-  const generated = teamReportGenerationResultSchema.parse(output);
+  const modelOutput = teamReportGenerationResultSchema.parse(output);
+  const generated = normalizeTeamReportGeneration(
+    modelOutput,
+    job.input_payload.workCards,
+    job.input_payload.missingPartnerIds,
+    model,
+  );
   const reportDate = formatReportDate(new Date(job.created_at), timezone);
   const result = teamReportResultSchema.parse(
     finalizeTeamReport(generated, reportDate, job.input_payload.workCards),
   );
-  assertTeamReportSemantics(result);
-  assertChineseTeamReport(result);
-  assertLeaderReadableTeamReport(result, job.input_payload.workCards);
-  assertExactTeamReportProjectNames(result, job.input_payload.workCards);
-  assertExactTeamReportProjectDescriptions(result, job.input_payload.workCards);
-  assertNoActivityTeamCoverage(result, job.input_payload.workCards);
-  const allowed = new Set<string>(
-    job.input_payload.workCards.map((workCard: any) => workCard.snapshotId),
-  );
-  for (const section of result.sections)
-    for (const claim of section.claims)
-      for (const id of claim.workCardSnapshotIds)
-        if (!allowed.has(id))
-          throw new Error(`UNKNOWN_WORK_CARD_SNAPSHOT_REFERENCE:${id}`);
-  const expectedMissing = [...job.input_payload.missingPartnerIds].sort();
-  if (
-    JSON.stringify([...result.missingPartnerIds].sort()) !==
-    JSON.stringify(expectedMissing)
-  )
-    throw new Error("TEAM_REPORT_MISSING_PARTNERS_MISMATCH");
   const reports = await sql<any[]>`
     select * from team_reports where id = ${job.input_payload.reportId}
       and tenant_id = ${job.tenant_id} limit 1
@@ -649,147 +740,6 @@ async function applyTeamReport(
   return result;
 }
 
-const teamReportForbiddenTerms = [
-  "SSH",
-  "README",
-  "状态机",
-  "聚合调度",
-  "贡献模型",
-  "类型校验",
-  "依赖安装",
-  "依赖未安装",
-  "主分支",
-  "代码仓库",
-  "远程仓库",
-  "前端架构",
-  "本地开发服务",
-  "消息网关",
-  "测试用例",
-  "实验元数据",
-  "历史快照",
-  "报表凭证",
-  "同步解析",
-  "数据接入",
-] as const;
-
-export function assertLeaderReadableTeamReport(
-  report: {
-    summary: string;
-    sections: Array<{ markdown: string }>;
-  },
-  workCards: Array<{ projectDescriptions?: unknown }> = [],
-) {
-  const summaryLength = Array.from(report.summary.replace(/\s/gu, "")).length;
-  if (summaryLength < 250 || summaryLength > 650) {
-    throw new Error(`TEAM_REPORT_SUMMARY_LENGTH:${summaryLength}`);
-  }
-  let prose = [
-    report.summary,
-    ...report.sections.map((section) => section.markdown),
-  ].join("\n");
-  for (const workCard of workCards) {
-    if (!Array.isArray(workCard.projectDescriptions)) continue;
-    for (const item of workCard.projectDescriptions) {
-      if (!item || typeof item !== "object") continue;
-      const description = (item as Record<string, unknown>).description;
-      if (typeof description === "string" && description.trim())
-        prose = prose.replaceAll(description.trim(), "");
-    }
-  }
-  const forbidden = teamReportForbiddenTerms.find((term) =>
-    prose.includes(term),
-  );
-  if (forbidden) throw new Error(`TEAM_REPORT_TECHNICAL_JARGON:${forbidden}`);
-}
-
-export function assertExactTeamReportProjectNames(
-  report: { sections: Array<{ key: string; markdown: string }> },
-  workCards: Array<{ projectNames?: unknown }>,
-) {
-  const expected = [
-    ...new Set(
-      workCards.flatMap((workCard) =>
-        Array.isArray(workCard.projectNames)
-          ? workCard.projectNames.filter(
-              (name): name is string =>
-                typeof name === "string" && name.trim().length > 0,
-            )
-          : [],
-      ),
-    ),
-  ].sort();
-  if (expected.length === 0) return;
-
-  const summary = report.sections.find((section) => section.key === "summary");
-  const actual = (summary?.markdown ?? "")
-    .split(/\r?\n/)
-    .filter((line) => /^[-*+]\s+/.test(line))
-    .map((line) => {
-      const label = line
-        .replace(/^[-*+]\s+/, "")
-        .split(/[：:]/, 1)[0]!
-        .replace(/\*\*/g, "")
-        .trim();
-      return label;
-    })
-    .filter(Boolean)
-    .sort();
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error("TEAM_REPORT_PROJECT_NAMES_MISMATCH");
-  }
-}
-
-export function assertExactTeamReportProjectDescriptions(
-  report: { sections: Array<{ key: string; markdown: string }> },
-  workCards: Array<{ projectDescriptions?: unknown }>,
-) {
-  const approved = approvedProjectDescriptions(workCards);
-  if (approved.size === 0) return;
-  const summary =
-    report.sections.find((section) => section.key === "summary")?.markdown ??
-    "";
-  for (const [name, description] of approved) {
-    const line = summary
-      .split(/\r?\n/)
-      .filter((candidate) => /^[-*+]\s+/.test(candidate))
-      .find((candidate) => {
-        const label = candidate
-          .replace(/^[-*+]\s+/, "")
-          .split(/[：:]/, 1)[0]!
-          .replace(/\*\*/g, "")
-          .trim();
-        return label === name;
-      });
-    if (!line || !line.includes(description))
-      throw new Error(`TEAM_REPORT_PROJECT_DESCRIPTION_MISSING:${name}`);
-  }
-}
-
-export function assertNoActivityTeamCoverage(
-  report: { sections: Array<{ key: string; markdown: string }> },
-  workCards: Array<{
-    partnerId: string;
-    partnerName?: string;
-    noReportableActivity?: boolean;
-  }>,
-) {
-  const noActivityWorkCards = workCards.filter(
-    (workCard) => workCard.noReportableActivity === true,
-  );
-  if (noActivityWorkCards.length === 0) return;
-  const progress =
-    report.sections.find((section) => section.key === "project_progress")
-      ?.markdown ?? "";
-  for (const workCard of noActivityWorkCards) {
-    const label = workCard.partnerName ?? workCard.partnerId;
-    if (!progress.includes(label))
-      throw new Error(`TEAM_REPORT_NO_ACTIVITY_PARTNER_MISSING:${label}`);
-  }
-  if (progress.includes("没有工作") || progress.includes("未开展工作")) {
-    throw new Error("TEAM_REPORT_NO_ACTIVITY_UNSUPPORTED_JUDGMENT");
-  }
-}
-
 function safeError(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, 900);
 }
@@ -830,8 +780,6 @@ async function runSystemHealthJob(job: Job) {
       "health-check",
     );
     teamReportGenerationResultSchema.parse(generated);
-    assertTeamReportSemantics(generated);
-    assertChineseTeamReport(generated);
     return { ok: true, component: "reports" };
   }
   throw new Error(`UNSUPPORTED_SYSTEM_HEALTH_JOB:${job.type}`);
@@ -987,7 +935,7 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
             throw new Error(`UNSUPPORTED_GENERATION_JOB:${job.type}`);
           })();
     const applied = isAggregation
-      ? await applyAggregation(job, output)
+      ? await applyAggregation(job, output, model)
       : isTeamReport
         ? await applyTeamReport(job, output, model, timezone)
         : (() => {

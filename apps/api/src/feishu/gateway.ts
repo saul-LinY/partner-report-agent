@@ -11,6 +11,7 @@ import {
   REVIEW_REGENERATION_INSTRUCTION_FIELD,
   renderErrorCard,
   renderLockedCard,
+  renderProcessingCard,
   renderStaleCard,
   renderStatusCard,
   SCOPE_FORM_FIELD_PREFIX,
@@ -104,18 +105,30 @@ type DeliveryRetryRow = FeishuDeliveryScope & {
   aggregateId: string;
 };
 
-export type FeishuCallbackResponse = {
-  toast: {
-    type: "success" | "error";
-    content: string;
-  };
-};
+export type FeishuCallbackResponse =
+  | {
+      toast: {
+        type: "success" | "error";
+        content: string;
+      };
+    }
+  | FeishuCard;
 
 function callbackResponse(
   type: "success" | "error",
   content: string,
 ): FeishuCallbackResponse {
   return { toast: { type, content } };
+}
+
+function reviewProcessingCard(action: FeishuActionValue["action"]): FeishuCard {
+  const regenerating = action === "review_regenerate";
+  return renderProcessingCard({
+    title: regenerating ? "正在重新生成" : "审核处理中",
+    message: regenerating
+      ? "修改意见已收到，系统正在重新生成工作卡片。完成后这张卡片会自动更新。"
+      : "审核操作已收到，系统正在处理。完成后这张卡片会自动更新。",
+  });
 }
 
 function expectedDeliveryKind(
@@ -338,6 +351,9 @@ export class FeishuGateway {
     `;
 
     this.kickHandler?.();
+    if (inserted[0] && actionValue.data.action.startsWith("review_")) {
+      return reviewProcessingCard(actionValue.data.action);
+    }
     return callbackResponse(
       "success",
       inserted[0] ? "已收到，正在处理。" : "该操作已经收到，请勿重复点击。",
@@ -364,7 +380,19 @@ export class FeishuGateway {
               await this.markInboxFailed(event.id, reflectionError);
             }
           } else {
-            await this.markInboxFailed(event.id, error);
+            try {
+              const reflected = await this.reflectUnexpectedReviewFailure(
+                event,
+                error,
+              );
+              if (reflected) {
+                await this.markInboxTerminalFailure(event.id, error);
+              } else {
+                await this.markInboxFailed(event.id, error);
+              }
+            } catch (reflectionError) {
+              await this.markInboxFailed(event.id, reflectionError);
+            }
           }
         }
         processed += 1;
@@ -394,6 +422,7 @@ export class FeishuGateway {
               ${this.reviewDeliveryEnabled}
               and event_type in (
                 'work_items.draft.created',
+                'work_items.regeneration.failed',
                 'work_item.review.changed',
                 'work_items.snapshot.approved',
                 'work_items.all_dismissed',
@@ -755,10 +784,19 @@ export class FeishuGateway {
           }),
         });
       } else {
-        await this.deliveries.deliverReview({
+        const refreshed = await this.deliveries.deliverReview({
           ...scope,
           reviewId: event.value.aggregateId,
         });
+        if (deliveryNeedsStatusRetry(refreshed)) {
+          throw new Error("FEISHU_REVIEW_STATUS_DEFERRED");
+        }
+        if (
+          refreshed.outcome === "skipped" &&
+          refreshed.reason === "already_current"
+        ) {
+          await this.restoreReviewCardAfterFailure(event, delivery, "");
+        }
       }
       return;
     }
@@ -790,6 +828,12 @@ export class FeishuGateway {
       });
       if (deliveryNeedsStatusRetry(refreshed)) {
         throw new Error("FEISHU_REGENERATION_STATUS_DEFERRED");
+      }
+      if (
+        refreshed.outcome === "skipped" &&
+        refreshed.reason === "already_current"
+      ) {
+        await this.restoreReviewCardAfterFailure(event, delivery, "");
       }
       return;
     }
@@ -1095,18 +1139,34 @@ export class FeishuGateway {
 
     const contentChanged = error.code === "VERSION_CONFLICT";
     if (contentChanged) {
-      const result =
-        kind === "review"
-          ? await this.deliveries.deliverReview({
-              ...delivery,
-              reviewId: event.value.aggregateId,
-            })
-          : await this.deliveries.deliverScope({
-              ...delivery,
-              ...parseScopeAggregateId(event.value.aggregateId),
-            });
-      if (result.outcome !== "skipped" || result.reason === "already_current")
-        return;
+      if (kind === "review") {
+        const restored = await this.restoreReviewCardAfterFailure(
+          event,
+          delivery,
+          error.message,
+        );
+        if (restored) return;
+      } else {
+        const result = await this.deliveries.deliverScope({
+          ...delivery,
+          ...parseScopeAggregateId(event.value.aggregateId),
+        });
+        if (result.outcome !== "skipped" || result.reason === "already_current")
+          return;
+      }
+    }
+
+    if (
+      kind === "review" &&
+      !error.code.includes("LOCKED") &&
+      error.code !== "REVIEW_NOT_EDITABLE"
+    ) {
+      const restored = await this.restoreReviewCardAfterFailure(
+        event,
+        delivery,
+        error.message,
+      );
+      if (restored) return;
     }
 
     const card: FeishuCard =
@@ -1130,6 +1190,51 @@ export class FeishuGateway {
     if (deliveryNeedsStatusRetry(result)) {
       throw new Error("FEISHU_STATUS_PATCH_DEFERRED");
     }
+  }
+
+  private async reflectUnexpectedReviewFailure(
+    row: InboxRow,
+    error: unknown,
+  ): Promise<boolean> {
+    const event = storedCardActionSchema.parse(row.sanitized_payload);
+    if (!event.value.action.startsWith("review_")) return false;
+    const delivery = await this.deliveries.loadDeliveryForAction({
+      deliveryId: event.value.deliveryId,
+      messageId: event.messageId,
+      appId: event.appId,
+      operatorOpenId: event.operatorOpenId,
+      expectedKind: "review",
+      aggregateId: event.value.aggregateId,
+    });
+    if (!delivery) return false;
+    return this.restoreReviewCardAfterFailure(
+      event,
+      delivery,
+      safeFailure(error).message,
+    );
+  }
+
+  private async restoreReviewCardAfterFailure(
+    event: StoredCardAction,
+    delivery: FeishuActionDelivery,
+    message: string,
+  ): Promise<boolean> {
+    const view = await this.deliveries.loadReviewDeliveryView(
+      delivery,
+      event.value.aggregateId,
+    );
+    if (!view) return false;
+    const actionStillPending =
+      "itemId" in event.value && view.item.id === event.value.itemId;
+    await this.messageClient.updateInteractiveCard({
+      messageId: delivery.messageId,
+      card: this.deliveries.renderReviewDeliveryCard(
+        view,
+        delivery.deliveryId,
+        actionStillPending ? message : undefined,
+      ),
+    });
+    return true;
   }
 
   private async processOutboxEvent(event: OutboxRow): Promise<boolean> {
@@ -1229,10 +1334,16 @@ export class FeishuGateway {
         event.aggregate_id,
       );
       if (!scope) return true;
-      const result = await this.deliveries.deliverReview({
-        ...scope,
-        reviewId: event.aggregate_id,
-      });
+      const result =
+        event.event_type === "work_items.regeneration.failed"
+          ? await this.deliveries.refreshReviewStatus({
+              ...scope,
+              reviewId: event.aggregate_id,
+            })
+          : await this.deliveries.deliverReview({
+              ...scope,
+              reviewId: event.aggregate_id,
+            });
       return !deliveryNeedsStatusRetry(result);
     }
 
@@ -1431,6 +1542,24 @@ export class FeishuGateway {
     this.logger.error(
       { inboxId: id, errorCode: failure.code },
       "Feishu inbox event failed",
+    );
+  }
+
+  private async markInboxTerminalFailure(
+    id: string,
+    error: unknown,
+  ): Promise<void> {
+    const failure = safeFailure(error);
+    await this.database`
+      update feishu_inbox_events set
+        status = 'processed', processed_at = now(),
+        error_code = ${failure.code}, error_message = ${failure.message},
+        updated_at = now()
+      where id = ${id}
+    `;
+    this.logger.error(
+      { inboxId: id, errorCode: failure.code },
+      "Feishu review action failed and was returned for user retry",
     );
   }
 }

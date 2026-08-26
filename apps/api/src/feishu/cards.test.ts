@@ -6,6 +6,7 @@ import {
   renderBindingCard,
   renderErrorCard,
   renderLockedCard,
+  renderProcessingCard,
   renderRecoveryCard,
   renderReviewCard,
   renderScopeCard,
@@ -316,11 +317,42 @@ describe("Feishu JSON 2.0 cards", () => {
     });
 
     expect(JSON.stringify(card)).toContain("上次重新生成未完成");
+    expect(card.header.title.content).toBe("处理失败，请重试");
     expect(callbackValues(card).map((value) => value.action)).toEqual([
       "review_regenerate",
       "review_exclude",
       "review_approve",
     ]);
+  });
+
+  it("keeps review actions available after an action failure", () => {
+    const card = renderReviewCard({
+      deliveryId: ids.deliveryId,
+      aggregateId: ids.aggregateId,
+      baseVersion: 1,
+      progress: { current: 1, total: 1, approved: 0, excluded: 0 },
+      actionError: "中台暂时未能完成该操作。",
+      item: {
+        id: ids.itemId,
+        title: "单项审核",
+        status: "待审核",
+        overview: "保留当前可审核内容。",
+      },
+    });
+
+    expect(card.header.title.content).toBe("处理失败，请重试");
+    expect(callbackValues(card).map((value) => value.action)).toEqual([
+      "review_regenerate",
+      "review_exclude",
+      "review_approve",
+    ]);
+  });
+
+  it("renders processing cards without interactive actions", () => {
+    const card = renderProcessingCard({ title: "审核处理中" });
+
+    expect(card.header.title.content).toBe("审核处理中");
+    expect(callbackValues(card)).toEqual([]);
   });
 
   it("rejects extra identity fields in inputs and action payloads", () => {

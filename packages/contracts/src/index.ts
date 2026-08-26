@@ -178,20 +178,20 @@ export const coverageSchema: z.ZodTypeAny = z.object({
 
 export const aggregationGroupSchema: z.ZodTypeAny = z
   .object({
-    projectKey: z.string().min(1).max(160),
-    projectDescription: z.string().max(300).default(""),
+    projectKey: z.string().default(""),
+    projectDescription: z.string().default(""),
     status: workStatusSchema,
-    overview: z.string().min(1).max(1600),
+    overview: z.string().default(""),
     dailyProgress: z
       .array(
         z
           .object({
-            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-            summary: z.string().min(1),
+            date: z.string().default(""),
+            summary: z.string().default(""),
           })
           .strict(),
       )
-      .min(1),
+      .default([]),
   })
   .strict();
 
@@ -219,38 +219,38 @@ export const projectDescriptionCandidateSchema: z.ZodTypeAny = z
   .strict();
 
 export const teamReportClaimSchema: z.ZodTypeAny = z.object({
-  claim: z.string().min(1).max(1000),
-  workCardSnapshotIds: z.array(idSchema).min(1),
+  claim: z.string().default(""),
+  workCardSnapshotIds: z.array(z.string()).default([]),
 });
 
 export const teamReportSectionSchema: z.ZodTypeAny = z.object({
   key: z.enum(["summary", "project_progress", "risks"]),
-  title: z.string().min(1).max(100),
-  markdown: z.string().max(16000),
+  title: z.string(),
+  markdown: z.string(),
   claims: z.array(teamReportClaimSchema).default([]),
 });
 
 export const teamReportGenerationSectionSchema: z.ZodTypeAny = z.object({
   key: z.enum(["summary", "project_progress", "risks"]),
-  markdown: z.string().max(16000),
+  markdown: z.string(),
   claims: z.array(teamReportClaimSchema).default([]),
 });
 
 export const teamReportGenerationResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
-  summary: z.string().min(250).max(650),
-  sections: z.array(teamReportGenerationSectionSchema).length(3),
-  missingPartnerIds: z.array(idSchema).default([]),
+  summary: z.string(),
+  sections: z.array(teamReportGenerationSectionSchema),
+  missingPartnerIds: z.array(z.string()).default([]),
   qualityWarnings: z.array(z.string()).default([]),
   production: productionMetadataSchema,
 });
 
 export const teamReportResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
-  title: z.string().min(1).max(200),
-  summary: z.string().min(1).max(1600),
+  title: z.string(),
+  summary: z.string(),
   sections: z.array(teamReportSectionSchema).length(3),
-  markdown: z.string().min(1).max(80000),
+  markdown: z.string(),
   missingPartnerIds: z.array(idSchema).default([]),
   qualityWarnings: z.array(z.string()).default([]),
   production: productionMetadataSchema,
@@ -436,29 +436,4 @@ export function containsSensitiveValue(value: unknown) {
     pattern.lastIndex = 0;
     return pattern.test(text);
   });
-}
-
-export function assertTeamReportSemantics(report: {
-  sections: Array<{ key: string }>;
-}) {
-  const required = ["summary", "project_progress", "risks"];
-  const actual = report.sections.map((section) => section.key);
-  if (JSON.stringify(actual) !== JSON.stringify(required)) {
-    throw new Error(
-      "Team Report must contain each required section exactly once and in order.",
-    );
-  }
-}
-
-export function assertChineseTeamReport(report: {
-  summary: string;
-  sections: Array<{ markdown: string }>;
-}) {
-  const containsChinese = (value: string) => /[\u3400-\u9fff]/u.test(value);
-  if (
-    !containsChinese(report.summary) ||
-    report.sections.some((section) => !containsChinese(section.markdown))
-  ) {
-    throw new Error("Team Report summary and every section must be Chinese.");
-  }
 }

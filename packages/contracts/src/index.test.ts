@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertChineseTeamReport,
-  assertTeamReportSemantics,
   aggregationResultSchema,
   containsSensitiveValue,
   connectivityTestSchema,
@@ -12,6 +10,7 @@ import {
   sessionContributionIngestSchema,
   sessionContributionSchema,
   sessionExtractionResultSchema,
+  teamReportGenerationResultSchema,
 } from "./index.js";
 
 describe("collection coverage contract", () => {
@@ -369,45 +368,34 @@ describe("project card aggregation contract", () => {
   });
 });
 
-describe("team report semantic guards", () => {
-  it("requires every Team Report section exactly once", () => {
-    expect(() =>
-      assertTeamReportSemantics({
+describe("team report model output contract", () => {
+  it("does not reject content-quality deviations", () => {
+    expect(
+      teamReportGenerationResultSchema.safeParse({
+        schemaVersion: "1.0",
+        summary: "简短摘要。",
         sections: [
-          { key: "summary" },
-          { key: "project_progress" },
-          { key: "risks" },
+          {
+            key: "summary",
+            markdown: "项目摘要。",
+            claims: [{ workCardSnapshotIds: [] }],
+          },
+          {
+            key: "project_progress",
+            markdown: "人员进展。",
+            claims: [],
+          },
         ],
-      }),
-    ).not.toThrow();
-    expect(() =>
-      assertTeamReportSemantics({
-        sections: [
-          { key: "project_progress" },
-          { key: "summary" },
-          { key: "risks" },
-        ],
-      }),
-    ).toThrow(/in order/i);
-  });
-
-  it("requires Chinese Team Report prose", () => {
-    expect(() =>
-      assertChineseTeamReport({
-        summary: "本周完成团队目标。",
-        sections: [
-          { markdown: "Headroom_MVP 项目已完成。" },
-          { markdown: "林勇完成了接口接入。" },
-          { markdown: "本周没有已报告的风险。" },
-        ],
-      }),
-    ).not.toThrow();
-    expect(() =>
-      assertChineseTeamReport({
-        summary: "Weekly progress is complete.",
-        sections: [{ markdown: "All tasks shipped." }],
-      }),
-    ).toThrow(/must be Chinese/i);
+        missingPartnerIds: [],
+        qualityWarnings: [],
+        production: {
+          skillVersion: "partner-report-platform/0.3.0",
+          promptVersion: "2026-08-27.team.v15",
+          schemaVersion: "1.0",
+          producer: "data-platform",
+        },
+      }).success,
+    ).toBe(true);
   });
 });
 

@@ -108,6 +108,7 @@ describe("FeishuGateway review decisions", () => {
     const bindingId = randomUUID();
     const deliveryId = randomUUID();
     const eventId = randomUUID();
+    const staleEventId = randomUUID();
     const appId = `cli_review_decision_test_${randomUUID()}`;
     const openId = `ou_${randomUUID()}`;
     const messageId = `om_${randomUUID()}`;
@@ -209,9 +210,12 @@ describe("FeishuGateway review decisions", () => {
         context: { open_message_id: messageId },
       };
 
-      await expect(gateway.acceptCardAction(callback)).resolves.toEqual({
-        toast: { type: "success", content: "已收到，正在处理。" },
+      const processingCard = await gateway.acceptCardAction(callback);
+      expect(processingCard).toMatchObject({
+        header: { title: { content: "审核处理中" } },
       });
+      expect(JSON.stringify(processingCard)).not.toContain("review_approve");
+      expect(JSON.stringify(processingCard)).not.toContain("review_exclude");
       await expect(gateway.drainInbox()).resolves.toBe(1);
 
       const items = await sql<Array<{ id: string; review_status: string }>>`
@@ -238,9 +242,22 @@ describe("FeishuGateway review decisions", () => {
       expect(
         JSON.stringify(updateInteractiveCard.mock.calls[0]?.[0]),
       ).toContain("第二张工作卡片");
+
+      const staleProcessingCard = await gateway.acceptCardAction({
+        ...callback,
+        event_id: staleEventId,
+      });
+      expect(staleProcessingCard).toMatchObject({
+        header: { title: { content: "审核处理中" } },
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(2);
+      expect(
+        JSON.stringify(updateInteractiveCard.mock.calls[1]?.[0]),
+      ).toContain("第二张工作卡片");
       expect(sendInteractiveCard).not.toHaveBeenCalled();
     } finally {
-      await sql`delete from feishu_inbox_events where event_id = ${eventId}`;
+      await sql`delete from feishu_inbox_events where event_id in (${eventId}, ${staleEventId})`;
       await sql`delete from audit_events where tenant_id = ${tenantId}`;
       await sql`delete from outbox_events where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
@@ -265,6 +282,7 @@ describe("FeishuGateway review decisions", () => {
     const bindingId = randomUUID();
     const deliveryId = randomUUID();
     const eventId = randomUUID();
+    const failureOutboxId = randomUUID();
     const appId = `cli_review_regeneration_test_${randomUUID()}`;
     const openId = `ou_${randomUUID()}`;
     const messageId = `om_${randomUUID()}`;
@@ -373,29 +391,29 @@ describe("FeishuGateway review decisions", () => {
         { tenantIdFilter: tenantId },
       );
 
-      await expect(
-        gateway.acceptCardAction({
-          event_id: eventId,
-          event_type: "card.action.trigger",
-          app_id: appId,
-          operator: { open_id: openId },
-          action: {
-            value: {
-              deliveryId,
-              aggregateId: reviewId,
-              itemId: workItemId,
-              baseVersion: 1,
-              action: "review_regenerate",
-            },
-            form_value: {
-              review_regeneration_instruction: instruction,
-            },
+      const processingCard = await gateway.acceptCardAction({
+        event_id: eventId,
+        event_type: "card.action.trigger",
+        app_id: appId,
+        operator: { open_id: openId },
+        action: {
+          value: {
+            deliveryId,
+            aggregateId: reviewId,
+            itemId: workItemId,
+            baseVersion: 1,
+            action: "review_regenerate",
           },
-          context: { open_message_id: messageId },
-        }),
-      ).resolves.toEqual({
-        toast: { type: "success", content: "已收到，正在处理。" },
+          form_value: {
+            review_regeneration_instruction: instruction,
+          },
+        },
+        context: { open_message_id: messageId },
       });
+      expect(processingCard).toMatchObject({
+        header: { title: { content: "正在重新生成" } },
+      });
+      expect(JSON.stringify(processingCard)).not.toContain("review_regenerate");
       await expect(gateway.drainInbox()).resolves.toBe(1);
 
       const jobs = await sql<
@@ -422,6 +440,30 @@ describe("FeishuGateway review decisions", () => {
         JSON.stringify(updateInteractiveCard.mock.calls[0]?.[0]),
       ).toContain("正在重新生成工作卡片");
       expect(sendInteractiveCard).not.toHaveBeenCalled();
+
+      await sql`delete from outbox_events where tenant_id = ${tenantId}`;
+      await sql`
+        update agent_jobs set status = 'FAILED', error_code = 'MODEL_FAILED',
+          error_message = '模型服务暂时不可用', lease_until = null,
+          updated_at = now()
+        where tenant_id = ${tenantId} and type = 'AGGREGATE_WORK_ITEMS'
+      `;
+      await sql`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${failureOutboxId}, ${tenantId}, 'work_items.regeneration.failed',
+          'review', ${reviewId}, ${JSON.stringify({ workItemId })}::jsonb
+        )
+      `;
+      await expect(gateway.drainOutbox()).resolves.toBe(1);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(2);
+      const failureCard = JSON.stringify(
+        updateInteractiveCard.mock.calls[1]?.[0],
+      );
+      expect(failureCard).toContain("处理失败，请重试");
+      expect(failureCard).toContain("review_regenerate");
+      expect(failureCard).toContain("review_approve");
     } finally {
       await sql`delete from feishu_inbox_events where event_id = ${eventId}`;
       await sql`delete from audit_events where tenant_id = ${tenantId}`;
@@ -697,7 +739,7 @@ describe("FeishuGateway plugin recovery automation", () => {
       await sql`delete from outbox_events where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
       await sql`delete from plugin_device_authorizations where id = ${authorizationId}`;
-      await sql`delete from feishu_partner_bindings where id = ${bindingId}`;
+      await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
       await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
       await sql`delete from partners where id = ${partnerId}`;
       await sql`delete from teams where id = ${teamId}`;
@@ -1114,7 +1156,7 @@ describe("FeishuGateway project scope delivery", () => {
       await sql`delete from audit_events where tenant_id = ${tenantId}`;
       await sql`delete from outbox_events where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;
-      await sql`delete from feishu_partner_bindings where id = ${bindingId}`;
+      await sql`delete from feishu_partner_bindings where tenant_id = ${tenantId}`;
       await sql`delete from project_scope_entries where id in (${entryId}, ${pendingEntryId}, ${secondPendingEntryId})`;
       await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
       await sql`delete from plugin_instances where id = ${pluginInstanceId}`;

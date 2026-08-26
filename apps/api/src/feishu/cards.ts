@@ -139,12 +139,13 @@ export const reviewCardInputSchema = z
       })
       .strict(),
     regenerationError: z.string().trim().min(1).max(1_600).optional(),
+    actionError: z.string().trim().min(1).max(1_600).optional(),
   })
   .strict();
 
 export const statusCardInputSchema = z
   .object({
-    kind: z.enum(["stale", "error", "locked"]),
+    kind: z.enum(["processing", "stale", "error", "locked"]),
     title: z.string().trim().min(1).max(200).optional(),
     message: displayTextSchema.optional(),
   })
@@ -710,6 +711,14 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
           ),
         ]
       : []),
+    ...(input.actionError
+      ? [
+          markdown(
+            `**处理失败，请重试**\n${safeMarkdownText(input.actionError, 1_200)}`,
+            "review_action_error",
+          ),
+        ]
+      : []),
     reviewRegenerationForm({
       value: {
         ...baseValue,
@@ -746,15 +755,23 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
   );
 
   return createCard({
-    title: "项目工作卡片审核",
+    title:
+      input.regenerationError || input.actionError
+        ? "处理失败，请重试"
+        : "项目工作卡片审核",
     subtitle: input.periodLabel ?? progressText,
     summary: `待审核：${input.item.title}`,
-    template: "blue",
+    template: input.regenerationError || input.actionError ? "red" : "blue",
     elements,
   });
 }
 
 const statusDefaults = {
+  processing: {
+    title: "审核处理中",
+    message: "操作已收到，系统正在处理。完成后这张卡片会自动更新。",
+    template: "blue" as const,
+  },
   stale: {
     title: "卡片内容已更新",
     message: "这张审核卡片已过期。最新状态已同步，请在更新后的卡片中继续操作。",
@@ -802,4 +819,10 @@ export function renderErrorCard(input: StatusDetailsInput = {}): FeishuCard {
 
 export function renderLockedCard(input: StatusDetailsInput = {}): FeishuCard {
   return renderStatusCard({ ...input, kind: "locked" });
+}
+
+export function renderProcessingCard(
+  input: StatusDetailsInput = {},
+): FeishuCard {
+  return renderStatusCard({ ...input, kind: "processing" });
 }

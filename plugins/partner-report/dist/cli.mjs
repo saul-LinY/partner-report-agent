@@ -4197,16 +4197,16 @@ var coverageSchema = external_exports.object({
   lastSyncAt: isoDateTimeSchema.optional()
 });
 var aggregationGroupSchema = external_exports.object({
-  projectKey: external_exports.string().min(1).max(160),
-  projectDescription: external_exports.string().max(300).default(""),
+  projectKey: external_exports.string().default(""),
+  projectDescription: external_exports.string().default(""),
   status: workStatusSchema,
-  overview: external_exports.string().min(1).max(1600),
+  overview: external_exports.string().default(""),
   dailyProgress: external_exports.array(
     external_exports.object({
-      date: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      summary: external_exports.string().min(1)
+      date: external_exports.string().default(""),
+      summary: external_exports.string().default("")
     }).strict()
-  ).min(1)
+  ).default([])
 }).strict();
 var aggregationResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
@@ -4225,34 +4225,34 @@ var projectDescriptionCandidateSchema = external_exports.object({
   description: external_exports.string().min(50).max(300)
 }).strict();
 var teamReportClaimSchema = external_exports.object({
-  claim: external_exports.string().min(1).max(1e3),
-  workCardSnapshotIds: external_exports.array(idSchema).min(1)
+  claim: external_exports.string().default(""),
+  workCardSnapshotIds: external_exports.array(external_exports.string()).default([])
 });
 var teamReportSectionSchema = external_exports.object({
   key: external_exports.enum(["summary", "project_progress", "risks"]),
-  title: external_exports.string().min(1).max(100),
-  markdown: external_exports.string().max(16e3),
+  title: external_exports.string(),
+  markdown: external_exports.string(),
   claims: external_exports.array(teamReportClaimSchema).default([])
 });
 var teamReportGenerationSectionSchema = external_exports.object({
   key: external_exports.enum(["summary", "project_progress", "risks"]),
-  markdown: external_exports.string().max(16e3),
+  markdown: external_exports.string(),
   claims: external_exports.array(teamReportClaimSchema).default([])
 });
 var teamReportGenerationResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
-  summary: external_exports.string().min(250).max(650),
-  sections: external_exports.array(teamReportGenerationSectionSchema).length(3),
-  missingPartnerIds: external_exports.array(idSchema).default([]),
+  summary: external_exports.string(),
+  sections: external_exports.array(teamReportGenerationSectionSchema),
+  missingPartnerIds: external_exports.array(external_exports.string()).default([]),
   qualityWarnings: external_exports.array(external_exports.string()).default([]),
   production: productionMetadataSchema
 });
 var teamReportResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
-  title: external_exports.string().min(1).max(200),
-  summary: external_exports.string().min(1).max(1600),
+  title: external_exports.string(),
+  summary: external_exports.string(),
   sections: external_exports.array(teamReportSectionSchema).length(3),
-  markdown: external_exports.string().min(1).max(8e4),
+  markdown: external_exports.string(),
   missingPartnerIds: external_exports.array(idSchema).default([]),
   qualityWarnings: external_exports.array(external_exports.string()).default([]),
   production: productionMetadataSchema

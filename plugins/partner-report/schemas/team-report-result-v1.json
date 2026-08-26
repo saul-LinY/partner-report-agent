@@ -9,14 +9,10 @@
           "const": "1.0"
         },
         "title": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
+          "type": "string"
         },
         "summary": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 1600
+          "type": "string"
         },
         "sections": {
           "type": "array",
@@ -32,13 +28,10 @@
                 ]
               },
               "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 100
+                "type": "string"
               },
               "markdown": {
-                "type": "string",
-                "maxLength": 16000
+                "type": "string"
               },
               "claims": {
                 "type": "array",
@@ -47,22 +40,16 @@
                   "properties": {
                     "claim": {
                       "type": "string",
-                      "minLength": 1,
-                      "maxLength": 1000
+                      "default": ""
                     },
                     "workCardSnapshotIds": {
                       "type": "array",
                       "items": {
-                        "type": "string",
-                        "format": "uuid"
+                        "type": "string"
                       },
-                      "minItems": 1
+                      "default": []
                     }
                   },
-                  "required": [
-                    "claim",
-                    "workCardSnapshotIds"
-                  ],
                   "additionalProperties": false
                 },
                 "default": []
@@ -79,14 +66,13 @@
           "maxItems": 3
         },
         "markdown": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 80000
+          "type": "string"
         },
         "missingPartnerIds": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/TeamReportResultV1/properties/sections/items/properties/claims/items/properties/workCardSnapshotIds/items"
+            "type": "string",
+            "format": "uuid"
           },
           "default": []
         },

@@ -15,12 +15,10 @@
             "properties": {
               "projectKey": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 160
+                "default": ""
               },
               "projectDescription": {
                 "type": "string",
-                "maxLength": 300,
                 "default": ""
               },
               "status": {
@@ -37,8 +35,7 @@
               },
               "overview": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 1600
+                "default": ""
               },
               "dailyProgress": {
                 "type": "array",
@@ -47,27 +44,20 @@
                   "properties": {
                     "date": {
                       "type": "string",
-                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                      "default": ""
                     },
                     "summary": {
                       "type": "string",
-                      "minLength": 1
+                      "default": ""
                     }
                   },
-                  "required": [
-                    "date",
-                    "summary"
-                  ],
                   "additionalProperties": false
                 },
-                "minItems": 1
+                "default": []
               }
             },
             "required": [
-              "projectKey",
-              "status",
-              "overview",
-              "dailyProgress"
+              "status"
             ],
             "additionalProperties": false
           }

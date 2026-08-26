@@ -492,6 +492,7 @@ export class FeishuDeliveryService {
   renderReviewDeliveryCard(
     view: ReviewDeliveryView,
     deliveryId: string,
+    actionError?: string,
   ): FeishuCard {
     if (view.regenerationPending) {
       return renderStatusCard({
@@ -511,6 +512,7 @@ export class FeishuDeliveryService {
       ...(view.regenerationError
         ? { regenerationError: view.regenerationError }
         : {}),
+      ...(actionError ? { actionError } : {}),
     });
   }
 
@@ -690,6 +692,22 @@ export class FeishuDeliveryService {
       input,
       input.reviewId,
       input.card,
+    );
+  }
+
+  async refreshReviewStatus(input: FeishuDeliveryScope & { reviewId: string }) {
+    const view = await this.loadReviewDeliveryView(input, input.reviewId);
+    if (!view)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "not_reviewable",
+      } satisfies FeishuDeliveryResult;
+    return this.patchAggregateStatus(
+      "review",
+      input,
+      input.reviewId,
+      (deliveryId) => this.renderReviewDeliveryCard(view, deliveryId),
     );
   }
 
@@ -1047,7 +1065,7 @@ export class FeishuDeliveryService {
     kind: "recovery" | "scope" | "review",
     scope: FeishuDeliveryScope,
     aggregateId: string,
-    card: FeishuCard,
+    card: FeishuCard | ((deliveryId: string) => FeishuCard),
     domainVersion?: number,
   ): Promise<FeishuDeliveryResult> {
     const partners = await this.database<PartnerRow[]>`
@@ -1087,9 +1105,10 @@ export class FeishuDeliveryService {
       };
     const claimed = await this.claimDelivery(delivery.id, partner, true);
     if (!claimed) return this.unclaimedResult(delivery.id, scope);
+    const renderedCard = typeof card === "function" ? card(claimed.id) : card;
     return this.patchClaimedDelivery(
       claimed,
-      card,
+      renderedCard,
       domainVersion ?? claimed.domain_version ?? 1,
     );
   }
