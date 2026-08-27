@@ -1381,7 +1381,19 @@ suite("tenant and role authorization", () => {
       page: 1,
       pageSize: 10,
       total: 1,
+      projects: [
+        {
+          id: discoveredProjects[0].id,
+          name: "automatic-project",
+        },
+      ],
+      hasUnassigned: false,
     });
+    expect(factPreviewBody.projects).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: fixture.projectA }),
+      ]),
+    );
     expect(factPreviewBody.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -20,12 +20,13 @@ type FactPage = {
   page: number;
   pageSize: number;
   total: number;
+  projects: Array<{ id: string; name: string }>;
+  hasUnassigned: boolean;
 };
 
 type Overview = {
   partners: Array<{ id: string; display_name: string }>;
   periods: Array<{ id: string; period_key: string }>;
-  projects: Array<{ id: string; name: string }>;
 };
 
 export const FACTS_PAGE_SIZE = 10;
@@ -128,8 +129,10 @@ export function FactPreviewPage() {
             }
           >
             <option value="">全部项目</option>
-            <option value="unassigned">独立工作</option>
-            {data?.projects?.map((project) => (
+            {facts.data?.hasUnassigned && (
+              <option value="unassigned">独立工作</option>
+            )}
+            {facts.data?.projects?.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
               </option>
@@ -159,7 +162,7 @@ export function FactPreviewPage() {
         <section className="fact-list" aria-label="Fact 列表">
           {facts.data?.items.map((row) => {
             const fact = row.payload;
-            const project = data?.projects?.find(
+            const project = facts.data.projects?.find(
               (item) => item.id === fact.projectId,
             );
             const projectName =

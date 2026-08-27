@@ -314,32 +314,66 @@ export async function factRoutes(app: FastifyInstance) {
       })
       .parse(request.query);
     const offset = (query.page - 1) * query.pageSize;
-    const rows = await sql<any[]>`
-      select sf.id, sf.partner_id, p.display_name as partner_name,
-        sf.period_id, rp.period_key, sf.session_id, sf.external_fact_id,
-        sf.source_hash, sf.source_occurred_at,
-        sf.payload, sf.created_at, sf.updated_at,
-        count(*) over()::int as total
-      from session_facts sf
-      join partners p on p.id = sf.partner_id and p.tenant_id = sf.tenant_id
-      left join report_periods rp on rp.id = sf.period_id
-      where sf.tenant_id = ${actor.tenantId} and sf.team_id = ${actor.teamId}
-        and sf.current = true
-        and sf.excluded = false
-        and (${query.partnerId ?? null}::uuid is null or sf.partner_id = ${query.partnerId ?? null})
-        and (${query.periodId ?? null}::uuid is null or sf.period_id = ${query.periodId ?? null})
-        and (
-          ${query.projectId ?? null}::text is null
-          or (${query.projectId ?? null} = 'unassigned' and sf.payload->>'projectId' is null)
-          or sf.payload->>'projectId' = ${query.projectId ?? null}
-        )
-        and (
-          ${query.sessionDate ?? null}::date is null
-          or (sf.source_occurred_at at time zone 'Asia/Shanghai')::date = ${query.sessionDate ?? null}::date
-        )
-      order by sf.source_occurred_at desc nulls last, sf.created_at desc
-      limit ${query.pageSize} offset ${offset}
-    `;
+    const [rows, projectRows, unassignedRows] = await Promise.all([
+      sql<any[]>`
+        select sf.id, sf.partner_id, p.display_name as partner_name,
+          sf.period_id, rp.period_key, sf.session_id, sf.external_fact_id,
+          sf.source_hash, sf.source_occurred_at,
+          sf.payload, sf.created_at, sf.updated_at,
+          count(*) over()::int as total
+        from session_facts sf
+        join partners p on p.id = sf.partner_id and p.tenant_id = sf.tenant_id
+        left join report_periods rp on rp.id = sf.period_id
+        where sf.tenant_id = ${actor.tenantId} and sf.team_id = ${actor.teamId}
+          and sf.current = true
+          and sf.excluded = false
+          and (${query.partnerId ?? null}::uuid is null or sf.partner_id = ${query.partnerId ?? null})
+          and (${query.periodId ?? null}::uuid is null or sf.period_id = ${query.periodId ?? null})
+          and (
+            ${query.projectId ?? null}::text is null
+            or (${query.projectId ?? null} = 'unassigned' and sf.payload->>'projectId' is null)
+            or sf.payload->>'projectId' = ${query.projectId ?? null}
+          )
+          and (
+            ${query.sessionDate ?? null}::date is null
+            or (sf.source_occurred_at at time zone 'Asia/Shanghai')::date = ${query.sessionDate ?? null}::date
+          )
+        order by sf.source_occurred_at desc nulls last, sf.created_at desc
+        limit ${query.pageSize} offset ${offset}
+      `,
+      sql<Array<{ id: string; name: string }>>`
+        select id, name
+        from (
+          select distinct on (sf.payload->>'projectId')
+            sf.payload->>'projectId' as id,
+            coalesce(
+              nullif(sf.payload->'project'->>'name', ''),
+              project.name,
+              '未知项目'
+            ) as name
+          from session_facts sf
+          left join projects project
+            on project.id::text = sf.payload->>'projectId'
+            and project.tenant_id = sf.tenant_id
+            and project.team_id = sf.team_id
+          where sf.tenant_id = ${actor.tenantId} and sf.team_id = ${actor.teamId}
+            and sf.current = true
+            and sf.excluded = false
+            and sf.payload->>'projectId' is not null
+          order by sf.payload->>'projectId', sf.updated_at desc
+        ) uploaded_projects
+        order by name
+      `,
+      sql<Array<{ has_unassigned: boolean }>>`
+        select exists (
+          select 1 from session_facts sf
+          where sf.tenant_id = ${actor.tenantId} and sf.team_id = ${actor.teamId}
+            and sf.current = true
+            and sf.excluded = false
+            and sf.payload->>'projectId' is null
+        ) as has_unassigned
+      `,
+    ]);
     return {
       items: rows.map(({ total: _total, ...row }) => ({
         ...row,
@@ -356,6 +390,8 @@ export async function factRoutes(app: FastifyInstance) {
       page: query.page,
       pageSize: query.pageSize,
       total: rows[0]?.total ?? 0,
+      projects: projectRows,
+      hasUnassigned: unassignedRows[0]?.has_unassigned ?? false,
     };
   });
 }
