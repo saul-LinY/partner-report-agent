@@ -13,6 +13,7 @@ const pluginBase = {
   latestEventAt: "2026-08-23T08:10:00.000Z",
   latestEventCode: "command.completed",
   latestErrorAt: null,
+  monitoringRecoveredAt: null,
   lastErrorCode: null,
   runnerState: "idle",
   retryCount: 0,
@@ -72,6 +73,32 @@ describe("plugin monitoring status", () => {
         now,
       ),
     ).toMatchObject({ severity: "normal", code: "healthy" });
+  });
+
+  it("keeps acknowledged failures hidden for the rest of the day", () => {
+    expect(
+      projectPluginMonitoringStatus(
+        {
+          ...pluginBase,
+          latestErrorAt: "2026-08-24T08:30:00.000Z",
+          monitoringRecoveredAt: "2026-08-24T09:20:00.000Z",
+        },
+        now,
+      ),
+    ).toMatchObject({ severity: "normal", code: "healthy", label: "已恢复" });
+  });
+
+  it("reports a new failure after recovery", () => {
+    expect(
+      projectPluginMonitoringStatus(
+        {
+          ...pluginBase,
+          latestErrorAt: "2026-08-24T09:25:00.000Z",
+          monitoringRecoveredAt: "2026-08-24T09:20:00.000Z",
+        },
+        now,
+      ),
+    ).toMatchObject({ severity: "critical", code: "failed" });
   });
 });
 

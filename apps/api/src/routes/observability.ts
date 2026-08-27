@@ -83,6 +83,10 @@ const systemProbeParamsSchema = z
   .object({ component: z.enum(systemProbeKeys) })
   .strict();
 
+const pluginMonitoringParamsSchema = z
+  .object({ pluginInstanceId: z.string().uuid() })
+  .strict();
+
 const secretPatterns: Array<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._~-]{8,}\b/gi, "Bearer <REDACTED>"],
   [/\bsk-[A-Za-z0-9_-]{8,}\b/g, "<REDACTED_API_KEY>"],
@@ -389,6 +393,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
         pi.id, pi.partner_id, pi.device_name, pi.version, pi.created_at,
         pi.last_heartbeat_at, pi.last_sync_at, pi.runner_state,
         pi.pending_local_jobs, pi.retry_count, pi.last_error_code,
+        pi.monitoring_recovered_at,
         pi.last_collection_started_at, pi.last_collection_completed_at,
         p.display_name as partner_name,
         latest_event.occurred_at as latest_event_at,
@@ -452,6 +457,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
           latestEventAt: row.latest_event_at,
           latestEventCode: row.latest_state_code ?? row.latest_event_code,
           latestErrorAt: row.latest_error_at,
+          monitoringRecoveredAt: row.monitoring_recovered_at,
           lastErrorCode: row.last_error_code,
           runnerState: row.runner_state,
           retryCount: row.retry_count,
@@ -484,6 +490,54 @@ export async function observabilityRoutes(app: FastifyInstance) {
       plugins,
     };
   });
+
+  app.post(
+    "/v1/admin/plugin-monitoring/:pluginInstanceId/recover",
+    async (request) => {
+      const actor = await requireWebActor(request, "admin");
+      const { pluginInstanceId } = pluginMonitoringParamsSchema.parse(
+        request.params,
+      );
+      const rows = await sql<
+        Array<{
+          id: string;
+          last_error_code: string | null;
+          retry_count: number;
+          monitoring_recovered_at: Date;
+        }>
+      >`
+        update plugin_instances set
+          monitoring_recovered_at = now(),
+          runner_state = case when runner_state = 'error' then 'idle' else runner_state end,
+          retry_count = 0,
+          last_error_code = null,
+          updated_at = now()
+        where id = ${pluginInstanceId}
+          and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and status = 'active'
+        returning id, last_error_code, retry_count, monitoring_recovered_at
+      `;
+      const recovered = rows[0];
+      if (!recovered)
+        throw new ApiError(
+          404,
+          "PLUGIN_INSTANCE_NOT_FOUND",
+          "插件实例不存在或已经失效。",
+        );
+      await audit(
+        request,
+        actor,
+        "plugin.monitoring.recovered",
+        "plugin_instance",
+        pluginInstanceId,
+      );
+      return {
+        ok: true,
+        pluginInstanceId: recovered.id,
+        recoveredAt: recovered.monitoring_recovered_at,
+      };
+    },
+  );
 
   app.get("/v1/admin/system-logs", async (request) => {
     const actor = await requireWebActor(request, "admin");

@@ -454,6 +454,9 @@ export const pluginInstances = pgTable(
     pendingLocalJobs: integer("pending_local_jobs").notNull().default(0),
     retryCount: integer("retry_count").notNull().default(0),
     lastErrorCode: text("last_error_code"),
+    monitoringRecoveredAt: timestamp("monitoring_recovered_at", {
+      withTimezone: true,
+    }),
     lastCollectionStartedAt: timestamp("last_collection_started_at", {
       withTimezone: true,
     }),

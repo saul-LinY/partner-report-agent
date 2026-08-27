@@ -24,6 +24,7 @@ type PluginMonitoringInput = {
   latestEventAt: Date | string | null;
   latestEventCode: string | null;
   latestErrorAt: Date | string | null;
+  monitoringRecoveredAt: Date | string | null;
   lastErrorCode: string | null;
   runnerState: string | null;
   retryCount: number;
@@ -85,6 +86,7 @@ export function projectPluginMonitoringStatus(
   const startedAt = timestamp(input.lastCollectionStartedAt);
   const completedAt = timestamp(input.lastCollectionCompletedAt);
   const errorAt = timestamp(input.latestErrorAt);
+  const recoveredAt = timestamp(input.monitoringRecoveredAt);
   const lastActivityAt = Math.max(
     timestamp(input.lastHeartbeatAt),
     timestamp(input.latestEventAt),
@@ -94,7 +96,7 @@ export function projectPluginMonitoringStatus(
     Boolean(input.lastErrorCode) ||
     input.runnerState === "error" ||
     input.retryCount > 0 ||
-    (errorAt > 0 && errorAt > completedAt);
+    (errorAt > 0 && errorAt > Math.max(completedAt, recoveredAt));
 
   if (currentFailure) {
     return pluginResult(
@@ -108,7 +110,7 @@ export function projectPluginMonitoringStatus(
     );
   }
 
-  const runOpen = startedAt > completedAt;
+  const runOpen = startedAt > Math.max(completedAt, recoveredAt);
   if (runOpen) {
     if (input.latestEventCode && waitingEventCodes.has(input.latestEventCode)) {
       return pluginResult(
@@ -149,6 +151,19 @@ export function projectPluginMonitoringStatus(
       "今日已完成",
       "插件今天已经按计划完成采集。",
       "无需处理。",
+    );
+  }
+
+  const recoveredDay = recoveredAt
+    ? localParts(new Date(recoveredAt), PLUGIN_SCHEDULE.timezone).day
+    : null;
+  if (recoveredDay === localNow.day) {
+    return pluginResult(
+      "normal",
+      "healthy",
+      "已恢复",
+      "管理员已确认并恢复当前监控状态。",
+      "无需处理；后续出现新的故障时会再次提醒。",
     );
   }
 

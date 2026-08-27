@@ -1,0 +1,1 @@
+ALTER TABLE "plugin_instances" ADD COLUMN "monitoring_recovered_at" timestamp with time zone;

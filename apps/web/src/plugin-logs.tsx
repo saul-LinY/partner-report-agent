@@ -12,6 +12,7 @@ import {
   ListFilter,
   LoaderCircle,
   RefreshCw,
+  RotateCcw,
   Server,
   Sparkles,
   TerminalSquare,
@@ -273,6 +274,17 @@ export function PluginMonitoringPage() {
       });
     },
   });
+  const recoverPlugin = useMutation({
+    mutationFn: (pluginInstanceId: string) =>
+      api(`/v1/admin/plugin-monitoring/${pluginInstanceId}/recover`, {
+        method: "POST",
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["admin-plugin-monitoring"],
+      });
+    },
+  });
 
   useEffect(() => {
     if (!logs.data) return;
@@ -330,7 +342,12 @@ export function PluginMonitoringPage() {
         </button>
       </header>
       <ErrorBanner
-        error={monitoring.error ?? logs.error ?? requestAnalysis.error}
+        error={
+          monitoring.error ??
+          logs.error ??
+          requestAnalysis.error ??
+          recoverPlugin.error
+        }
       />
 
       <div className="monitor-summary" aria-label="插件状态汇总">
@@ -363,29 +380,52 @@ export function PluginMonitoringPage() {
               <span>{plugins.length}</span>
             </div>
             {plugins.map((plugin) => (
-              <button
+              <div
                 key={plugin.id}
                 className={`plugin-instance-row ${selectedId === plugin.id ? "active" : ""}`}
-                onClick={() => {
-                  setSelectedId(plugin.id);
-                  setExecutionId(null);
-                  setProblemsOnly(false);
-                }}
               >
-                <span
-                  className={`plugin-instance-state ${plugin.status.severity}`}
+                <button
+                  type="button"
+                  className="plugin-instance-select"
+                  onClick={() => {
+                    setSelectedId(plugin.id);
+                    setExecutionId(null);
+                    setProblemsOnly(false);
+                  }}
                 >
-                  <CircleDot size={15} />
-                </span>
-                <span className="plugin-instance-copy">
-                  <strong>{plugin.partnerName}</strong>
-                  <span>{plugin.deviceName}</span>
-                  <small>
-                    {plugin.status.label} · v{plugin.version}
-                  </small>
-                </span>
-                <ChevronRight size={16} />
-              </button>
+                  <span
+                    className={`plugin-instance-state ${plugin.status.severity}`}
+                  >
+                    <CircleDot size={15} />
+                  </span>
+                  <span className="plugin-instance-copy">
+                    <strong>{plugin.partnerName}</strong>
+                    <span>{plugin.deviceName}</span>
+                    <small>
+                      {plugin.status.label} · v{plugin.version}
+                    </small>
+                  </span>
+                  <ChevronRight size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="plugin-instance-recover"
+                  title={`恢复 ${plugin.partnerName} 的监控状态`}
+                  disabled={recoverPlugin.isPending}
+                  onClick={() => recoverPlugin.mutate(plugin.id)}
+                >
+                  <RotateCcw
+                    size={13}
+                    className={
+                      recoverPlugin.isPending &&
+                      recoverPlugin.variables === plugin.id
+                        ? "spin"
+                        : ""
+                    }
+                  />
+                  <span>恢复</span>
+                </button>
+              </div>
             ))}
           </aside>
 
