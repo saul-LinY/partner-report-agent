@@ -24,6 +24,11 @@ type ThreadListOptions = {
 export const CODEX_THREAD_READ_TIMEOUT_MS = 60_000;
 export const CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 export const MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
+export const DEFAULT_CODEX_BINARY_CANDIDATES = [
+  "/Applications/Codex.app/Contents/Resources/codex",
+  "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "codex",
+] as const;
 
 export type CodexThreadReadFailureCode =
   | "CODEX_THREAD_READ_FAILED"
@@ -105,11 +110,7 @@ export function selectCodexBinary(
   const explicit = options.explicit ?? process.env.CODEX_BIN;
   const candidates = explicit
     ? [explicit]
-    : (options.candidates ?? [
-        "/Applications/ChatGPT.app/Contents/Resources/codex",
-        "/Applications/Codex.app/Contents/Resources/codex",
-        "codex",
-      ]);
+    : (options.candidates ?? DEFAULT_CODEX_BINARY_CANDIDATES);
   const probe = options.probe ?? probeCodexBinary;
   const inspected: string[] = [];
   for (const candidate of [...new Set(candidates)]) {

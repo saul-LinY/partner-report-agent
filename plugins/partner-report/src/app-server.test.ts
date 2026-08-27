@@ -4,6 +4,7 @@ import {
   CODEX_THREAD_LIST_TIMEOUT_MS,
   CODEX_THREAD_READ_TIMEOUT_MS,
   CODEX_THREAD_TURNS_PAGE_LIMIT,
+  DEFAULT_CODEX_BINARY_CANDIDATES,
   MINIMUM_CODEX_APP_SERVER_VERSION,
   CodexAppServer,
   codexBinarySource,
@@ -168,6 +169,14 @@ describe("CodexAppServer.listThreads", () => {
 });
 
 describe("selectCodexBinary", () => {
+  it("prefers the Codex app bundle over the ChatGPT app bundle", () => {
+    expect(DEFAULT_CODEX_BINARY_CANDIDATES).toEqual([
+      "/Applications/Codex.app/Contents/Resources/codex",
+      "/Applications/ChatGPT.app/Contents/Resources/codex",
+      "codex",
+    ]);
+  });
+
   it("reports the selected desktop bundle without exposing its path", () => {
     expect(
       codexBinarySource("/Applications/Codex.app/Contents/Resources/codex"),

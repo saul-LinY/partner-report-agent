@@ -5464,6 +5464,11 @@ var CODEX_THREAD_LIST_TIMEOUT_MS = 3e5;
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
+var DEFAULT_CODEX_BINARY_CANDIDATES = [
+  "/Applications/Codex.app/Contents/Resources/codex",
+  "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "codex"
+];
 function threadReadError(code, message, cause) {
   const error = new Error(message, { cause });
   error.code = code;
@@ -5514,11 +5519,7 @@ function codexBinarySource(candidate) {
 }
 function selectCodexBinary(options = {}) {
   const explicit = options.explicit ?? process.env.CODEX_BIN;
-  const candidates = explicit ? [explicit] : options.candidates ?? [
-    "/Applications/ChatGPT.app/Contents/Resources/codex",
-    "/Applications/Codex.app/Contents/Resources/codex",
-    "codex"
-  ];
+  const candidates = explicit ? [explicit] : options.candidates ?? DEFAULT_CODEX_BINARY_CANDIDATES;
   const probe = options.probe ?? probeCodexBinary;
   const inspected = [];
   for (const candidate of [...new Set(candidates)]) {
