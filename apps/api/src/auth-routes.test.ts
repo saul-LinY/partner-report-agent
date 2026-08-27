@@ -71,7 +71,7 @@ describe("Google auth HTTP security", () => {
     expect(admin.statusCode).toBe(401);
   });
 
-  it("does not expose development login outside development mode", async () => {
+  it("does not expose a development login bypass", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/auth/dev-login",

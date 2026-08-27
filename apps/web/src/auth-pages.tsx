@@ -4,7 +4,6 @@ import {
   ArrowRight,
   KeyRound,
   Link2,
-  LogIn,
   LoaderCircle,
   ShieldCheck,
 } from "lucide-react";
@@ -17,7 +16,6 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
     import.meta.env.VITE_GOOGLE_LOGIN_ENABLED !== "false";
   const localLoginEnabled =
     import.meta.env.VITE_LOCAL_LOGIN_ENABLED !== "false";
-  const developmentLoginEnabled = import.meta.env.DEV;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const requestedNext = new URLSearchParams(window.location.search).get("next");
@@ -34,13 +32,6 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
         method: "POST",
         body: JSON.stringify({ email, password }),
       }),
-    onSuccess: () => {
-      window.history.replaceState(null, "", next);
-      onSuccess();
-    },
-  });
-  const developmentLogin = useMutation({
-    mutationFn: () => api("/v1/auth/dev-login", { method: "POST" }),
     onSuccess: () => {
       window.history.replaceState(null, "", next);
       onSuccess();
@@ -101,23 +92,6 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             ) : null}
             <GoogleLoginButton next={next} />
           </>
-        ) : null}
-        {developmentLoginEnabled ? (
-          <div className="auth-development-login">
-            <div className="auth-divider">
-              <span>开发环境</span>
-            </div>
-            <ErrorBanner error={developmentLogin.error} />
-            <Button
-              type="button"
-              variant="secondary"
-              loading={developmentLogin.isPending}
-              icon={<LogIn size={17} />}
-              onClick={() => developmentLogin.mutate()}
-            >
-              免登录进入
-            </Button>
-          </div>
         ) : null}
         <div className="auth-security">
           <ShieldCheck size={16} />

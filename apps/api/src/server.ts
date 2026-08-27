@@ -7,7 +7,6 @@ import formbody from "@fastify/formbody";
 import { ZodError } from "zod";
 import { closeDatabase } from "@partner-report/db";
 import { ApiError } from "./api-error.js";
-import { isDevelopmentLoginEnabled } from "./common.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes, type AuthRouteOptions } from "./routes/auth.js";
 import { factRoutes } from "./routes/facts.js";
@@ -26,12 +25,7 @@ export async function buildApp(
   options: { logger?: boolean; auth?: AuthRouteOptions } = {},
 ) {
   const webOrigin = process.env.WEB_ORIGIN ?? "http://172.20.10.14:4311";
-  const allowedWebOrigins = new Set([
-    webOrigin,
-    ...(isDevelopmentLoginEnabled()
-      ? ["http://localhost:4311", "http://127.0.0.1:4311"]
-      : []),
-  ]);
+  const allowedWebOrigins = new Set([webOrigin]);
   const app = Fastify({
     logger:
       options.logger === false

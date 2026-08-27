@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",
-    "dev": "NODE_ENV=development PARTNER_REPORT_DEV_LOGIN=true node --env-file-if-exists=../../.env --watch --import tsx src/server.ts",
+    "dev": "NODE_ENV=development node --env-file-if-exists=../../.env --watch --import tsx src/server.ts",
     "start": "node --env-file-if-exists=../../.env --import tsx src/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

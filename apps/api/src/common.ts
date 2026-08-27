@@ -34,14 +34,6 @@ export type PluginActor = DomainActor & {
   version: string;
 };
 
-export function isDevelopmentLoginEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-) {
-  return (
-    env.NODE_ENV === "development" && env.PARTNER_REPORT_DEV_LOGIN === "true"
-  );
-}
-
 export function sha256(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }

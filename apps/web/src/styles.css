@@ -2662,12 +2662,6 @@ select:focus {
   align-items: center;
   justify-content: center;
 }
-.auth-development-login {
-  display: grid;
-}
-.auth-development-login .auth-divider {
-  margin-bottom: 14px;
-}
 .auth-security {
   margin-top: 24px;
   display: flex;
