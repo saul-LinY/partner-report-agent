@@ -5301,8 +5301,164 @@ import {
 import { homedir as homedir2 } from "node:os";
 import { createInterface } from "node:readline";
 
+// src/telemetry.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import {
+  chmodSync as chmodSync3,
+  existsSync as existsSync3,
+  readFileSync as readFileSync3,
+  renameSync as renameSync3,
+  writeFileSync as writeFileSync3
+} from "node:fs";
+import { resolve as resolve3 } from "node:path";
+var invocationId = randomUUID2();
+var invocationCommand = process.argv[2]?.slice(0, 80) || "plugin";
+var invocationSequence = 0;
+var activeRunId;
+var OUTBOX_FILE = "plugin-log-outbox.json";
+var MAX_PENDING_EVENTS = 2e3;
+var BATCH_SIZE = 50;
+function outboxPath() {
+  return resolve3(dataDirectory(), OUTBOX_FILE);
+}
+function readOutbox() {
+  const path = outboxPath();
+  if (!existsSync3(path)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync3(path, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function writeOutbox(events) {
+  const path = outboxPath();
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync3(temporary, `${JSON.stringify(events, null, 2)}
+`, {
+    mode: 384
+  });
+  chmodSync3(temporary, 384);
+  renameSync3(temporary, path);
+  chmodSync3(path, 384);
+}
+function safeDetails(details) {
+  if (!details) return void 0;
+  return Object.fromEntries(
+    Object.entries(details).filter(
+      ([key]) => !/path|session|transcript|prompt|token|secret|authorization|credential/i.test(
+        key
+      )
+    )
+  );
+}
+function tryWriteOutbox(events) {
+  try {
+    writeOutbox(events);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function buildPendingPluginLog(input, defaults) {
+  const details = safeDetails(input.details);
+  const eventRunId = input.runId ?? defaults.runId;
+  return {
+    eventId: input.eventId ?? randomUUID2(),
+    invocationId: input.invocationId ?? defaults.invocationId,
+    sequence: input.sequence ?? defaults.sequence,
+    command: (input.command ?? defaults.command).slice(0, 80),
+    eventType: input.eventType ?? (input.level === "error" ? "error" : input.eventCode === "command.started" || input.eventCode === "command.completed" ? "lifecycle" : "progress"),
+    level: input.level,
+    stage: input.stage.slice(0, 80),
+    eventCode: input.eventCode.slice(0, 120),
+    message: input.message.slice(0, 4e3),
+    occurredAt: input.occurredAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+    retryable: input.retryable ?? false,
+    ...eventRunId ? { runId: eventRunId } : {},
+    ...input.stack ? { stack: input.stack.slice(0, 16e3) } : {},
+    ...input.attempt !== void 0 ? { attempt: input.attempt } : {},
+    ...input.durationMs !== void 0 ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {},
+    ...input.requestId ? { requestId: input.requestId } : {},
+    ...details ? { details } : {}
+  };
+}
+function enqueuePluginLog(input) {
+  try {
+    if (!loadConfig(false)) return null;
+    const event = buildPendingPluginLog(input, {
+      invocationId,
+      sequence: input.sequence ?? ++invocationSequence,
+      command: invocationCommand,
+      runId: activeRunId
+    });
+    const events = [...readOutbox(), event].slice(-MAX_PENDING_EVENTS);
+    return tryWriteOutbox(events) ? event : null;
+  } catch {
+    return null;
+  }
+}
+function collectionFinalStateLogInput(input) {
+  return {
+    ...input.runId ? { runId: input.runId } : {},
+    level: input.outcome === "success" ? "info" : "error",
+    stage: "collection",
+    eventCode: `collection.final.${input.outcome}`,
+    eventType: "result",
+    message: input.summary,
+    retryable: input.outcome === "failed",
+    details: {
+      finalState: input.outcome,
+      summary: input.summary,
+      ...input.reasonCode ? { reasonCode: input.reasonCode } : {},
+      ...input.details ?? {}
+    }
+  };
+}
+function enqueueCollectionFinalState(input) {
+  return enqueuePluginLog(collectionFinalStateLogInput(input));
+}
+function setPluginLogRunId(runId) {
+  activeRunId = runId;
+}
+async function flushPluginLogs() {
+  if (!loadConfig(false)) return { sent: 0, pending: 0 };
+  let events;
+  try {
+    events = readOutbox();
+  } catch {
+    return { sent: 0, pending: 0 };
+  }
+  let sent = 0;
+  while (events.length > 0) {
+    const batch = events.slice(0, BATCH_SIZE);
+    try {
+      await authenticatedRequest("/v1/plugin-instances/me/log-events", {
+        method: "POST",
+        body: JSON.stringify({ events: batch })
+      });
+    } catch {
+      return { sent, pending: events.length };
+    }
+    const delivered = new Set(batch.map((event) => event.eventId));
+    events = readOutbox().filter((event) => !delivered.has(event.eventId));
+    if (!tryWriteOutbox(events)) return { sent, pending: events.length };
+    sent += batch.length;
+  }
+  return { sent, pending: 0 };
+}
+function pluginErrorDetails(error) {
+  const value = error;
+  return {
+    code: value && value.code !== void 0 ? String(value.code) : "PLUGIN_COMMAND_FAILED",
+    status: value && typeof value.status === "number" ? value.status : void 0,
+    requestId: value && typeof value.requestId === "string" ? value.requestId : void 0,
+    details: value && value.details && typeof value.details === "object" ? value.details : void 0
+  };
+}
+
 // src/timeouts.ts
-var CODEX_THREAD_LIST_TIMEOUT_MS = 5e5;
+var CODEX_THREAD_LIST_TIMEOUT_MS = 3e5;
 
 // src/app-server.ts
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
@@ -5348,6 +5504,13 @@ function probeCodexBinary(candidate) {
   });
   if (result.status !== 0) return null;
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
+}
+function codexBinarySource(candidate) {
+  if (candidate === "/Applications/Codex.app/Contents/Resources/codex")
+    return "codex_app_bundle";
+  if (candidate === "/Applications/ChatGPT.app/Contents/Resources/codex")
+    return "chatgpt_app_bundle";
+  return "command";
 }
 function selectCodexBinary(options = {}) {
   const explicit = options.explicit ?? process.env.CODEX_BIN;
@@ -5396,12 +5559,29 @@ var CodexAppServer = class {
   pending = /* @__PURE__ */ new Map();
   stderr = "";
   codexBin;
+  binarySource;
+  codexVersion = null;
   workingDirectory;
   constructor(codexBin, workingDirectory = homedir2()) {
     this.codexBin = codexBin ?? selectCodexBinary();
+    this.binarySource = codexBinarySource(this.codexBin);
     this.workingDirectory = workingDirectory;
   }
   async connect() {
+    const startedAt = Date.now();
+    this.codexVersion = probeCodexBinary(this.codexBin);
+    enqueuePluginLog({
+      level: "info",
+      stage: "codex_app_server",
+      eventCode: "app_server.starting",
+      eventType: "lifecycle",
+      message: "\u6B63\u5728\u542F\u52A8 Codex app-server\u3002",
+      details: {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio"
+      }
+    });
     this.process = spawn(
       this.codexBin,
       [
@@ -5462,6 +5642,19 @@ var CodexAppServer = class {
       }
     });
     this.notify("initialized", {});
+    enqueuePluginLog({
+      level: "info",
+      stage: "codex_app_server",
+      eventCode: "app_server.initialized",
+      eventType: "lifecycle",
+      message: "Codex app-server \u521D\u59CB\u5316\u5B8C\u6210\u3002",
+      durationMs: Date.now() - startedAt,
+      details: {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio"
+      }
+    });
   }
   request(method, params, timeoutMs = 3e4) {
     if (!this.process) throw new Error("Codex app-server \u5C1A\u672A\u8FDE\u63A5\u3002");
@@ -5491,6 +5684,28 @@ var CodexAppServer = class {
     do {
       page += 1;
       let result;
+      const pageStartedAt = Date.now();
+      const requestDetails = {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio",
+        page,
+        pageSize: 100,
+        sortKey: "updated_at",
+        sortDirection: "desc",
+        sourceKindCount: 3,
+        archived: false,
+        useStateDbOnly: true,
+        timeoutSeconds: CODEX_THREAD_LIST_TIMEOUT_MS / 1e3
+      };
+      enqueuePluginLog({
+        level: "info",
+        stage: "codex_thread_list",
+        eventCode: "thread_list.page.started",
+        eventType: "progress",
+        message: `\u5F00\u59CB\u8BFB\u53D6 Codex \u4EFB\u52A1\u5217\u8868\u7B2C ${page} \u9875\u3002`,
+        details: requestDetails
+      });
       try {
         result = await this.request(
           "thread/list",
@@ -5512,11 +5727,29 @@ var CodexAppServer = class {
           `thread/list \u7B2C ${page} \u9875\u5931\u8D25\uFF1A${message}${stderr ? `\uFF1BCodex app-server: ${stderr}` : ""}`
         );
         Object.assign(wrapped, {
-          code: error && typeof error === "object" && "code" in error ? String(error.code) : "CODEX_SESSION_LIST_FAILED"
+          code: error && typeof error === "object" && "code" in error ? String(error.code) : "CODEX_SESSION_LIST_FAILED",
+          details: {
+            ...requestDetails,
+            durationMs: Date.now() - pageStartedAt,
+            appServerStderrPresent: Boolean(stderr)
+          }
         });
         throw wrapped;
       }
       const data = Array.isArray(result.data) ? result.data.filter(isRecord) : [];
+      enqueuePluginLog({
+        level: "info",
+        stage: "codex_thread_list",
+        eventCode: "thread_list.page.completed",
+        eventType: "progress",
+        message: `Codex \u4EFB\u52A1\u5217\u8868\u7B2C ${page} \u9875\u8BFB\u53D6\u5B8C\u6210\u3002`,
+        durationMs: Date.now() - pageStartedAt,
+        details: {
+          ...requestDetails,
+          resultCount: data.length,
+          hasNextPage: Boolean(result.nextCursor)
+        }
+      });
       const activity = data.map((thread) => ({
         thread,
         updatedAt: threadUpdatedAt(thread)
@@ -5611,8 +5844,8 @@ var CodexAppServer = class {
 
 // src/scan.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync3 } from "node:fs";
-import { basename, dirname as dirname2, isAbsolute, relative, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync4 } from "node:fs";
+import { basename, dirname as dirname2, isAbsolute, relative, resolve as resolve4 } from "node:path";
 var secretPatterns = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/g,
   /\bBearer\s+[A-Za-z0-9._~-]{16,}\b/gi,
@@ -5757,13 +5990,13 @@ function isPluginAdministrationSession(turns) {
   return onlyDirectSkillInvocations || mentionsPartnerReport && prompts.every((prompt) => administration.test(prompt));
 }
 function withinPath(candidate, root) {
-  const path = relative(resolve3(root), resolve3(candidate));
+  const path = relative(resolve4(root), resolve4(candidate));
   return path === "" || !path.startsWith("..") && !isAbsolute(path);
 }
 function nearestGitRoot(cwd) {
-  let current = resolve3(cwd);
+  let current = resolve4(cwd);
   for (; ; ) {
-    if (existsSync3(resolve3(current, ".git"))) return current;
+    if (existsSync4(resolve4(current, ".git"))) return current;
     const parent = dirname2(current);
     if (parent === current) return null;
     current = parent;
@@ -5778,7 +6011,7 @@ function mappedProject(cwd, projects, stableScope) {
       rootFingerprint: sha256("unassigned")
     };
   }
-  const absoluteCwd = resolve3(cwd);
+  const absoluteCwd = resolve4(cwd);
   if (stableScope) {
     const discoveredRoot2 = nearestGitRoot(absoluteCwd) ?? absoluteCwd;
     const rootFingerprint2 = sha256(discoveredRoot2);
@@ -5804,7 +6037,7 @@ function mappedProject(cwd, projects, stableScope) {
     };
   }
   const configuredMatches = projects.flatMap(
-    (project) => (project.allowed_paths ?? []).filter((root) => withinPath(absoluteCwd, root)).map((root) => ({ project, root: resolve3(root) }))
+    (project) => (project.allowed_paths ?? []).filter((root) => withinPath(absoluteCwd, root)).map((root) => ({ project, root: resolve4(root) }))
   ).sort((left, right) => right.root.length - left.root.length);
   const configured = configuredMatches[0];
   if (configured) {
@@ -6010,35 +6243,35 @@ function firstNonChineseContributionField(contribution) {
 // src/project-scope.ts
 import { createHmac, randomBytes } from "node:crypto";
 import {
-  chmodSync as chmodSync3,
-  existsSync as existsSync4,
+  chmodSync as chmodSync4,
+  existsSync as existsSync5,
   lstatSync,
   statSync as statSync2,
   realpathSync,
-  renameSync as renameSync3,
-  writeFileSync as writeFileSync3,
-  readFileSync as readFileSync3
+  renameSync as renameSync4,
+  writeFileSync as writeFileSync4,
+  readFileSync as readFileSync4
 } from "node:fs";
 import { homedir as homedir3, tmpdir } from "node:os";
-import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve5 } from "node:path";
 function scopePath(directory = dataDirectory()) {
-  return resolve4(directory, "project-scope.json");
+  return resolve5(directory, "project-scope.json");
 }
 function canonicalPath(path) {
-  const absolute = resolve4(path);
+  const absolute = resolve5(path);
   try {
     return realpathSync.native(absolute);
   } catch {
     let existingParent = absolute;
     const missingSegments = [];
-    while (!existsSync4(existingParent)) {
+    while (!existsSync5(existingParent)) {
       const parent = dirname3(existingParent);
       if (parent === existingParent) return absolute;
       missingSegments.unshift(basename2(existingParent));
       existingParent = parent;
     }
     try {
-      return resolve4(realpathSync.native(existingParent), ...missingSegments);
+      return resolve5(realpathSync.native(existingParent), ...missingSegments);
     } catch {
       return absolute;
     }
@@ -6052,10 +6285,10 @@ function linkedWorktreeCommonRoot(markerPath) {
   try {
     if (!lstatSync(markerPath).isFile()) return null;
     const match = /^gitdir:\s*(.+)\s*$/im.exec(
-      readFileSync3(markerPath, "utf8")
+      readFileSync4(markerPath, "utf8")
     );
     if (!match?.[1]) return null;
-    const gitDirectory = canonicalPath(resolve4(dirname3(markerPath), match[1]));
+    const gitDirectory = canonicalPath(resolve5(dirname3(markerPath), match[1]));
     const worktreesDirectory = dirname3(dirname3(gitDirectory));
     if (basename2(worktreesDirectory) !== ".git") return null;
     return dirname3(worktreesDirectory);
@@ -6067,10 +6300,10 @@ function outermostGitRoot(cwd) {
   let current = canonicalPath(cwd);
   let outermost = null;
   for (; ; ) {
-    const marker = resolve4(current, ".git");
-    if (existsSync4(marker)) {
+    const marker = resolve5(current, ".git");
+    if (existsSync5(marker)) {
       const linkedRoot = linkedWorktreeCommonRoot(marker);
-      const validDirectory = lstatSync(marker).isDirectory() && (existsSync4(resolve4(marker, "HEAD")) || existsSync4(resolve4(marker, "config")));
+      const validDirectory = lstatSync(marker).isDirectory() && (existsSync5(resolve5(marker, "HEAD")) || existsSync5(resolve5(marker, "config")));
       if (linkedRoot || validDirectory) outermost = linkedRoot ?? current;
     }
     const parent = dirname3(current);
@@ -6095,7 +6328,7 @@ function normalizedGitRemote(value) {
 }
 function gitRemoteIdentity(root) {
   try {
-    const config = readFileSync3(resolve4(root, ".git", "config"), "utf8");
+    const config = readFileSync4(resolve5(root, ".git", "config"), "utf8");
     let remoteName = null;
     const remotes = /* @__PURE__ */ new Map();
     for (const line of config.split(/\r?\n/)) {
@@ -6132,7 +6365,7 @@ function projectLocalIdentity(scopeSalt, localRoot) {
 }
 function defaultTemporaryRoots() {
   const codexHomes = new Set(
-    [process.env.CODEX_HOME, resolve4(homedir3(), ".codex")].filter(
+    [process.env.CODEX_HOME, resolve5(homedir3(), ".codex")].filter(
       (value) => Boolean(value)
     )
   );
@@ -6142,11 +6375,11 @@ function defaultTemporaryRoots() {
     "/private/tmp",
     "/var/tmp",
     "/private/var/tmp",
-    resolve4(homedir3(), "Documents", "Codex"),
+    resolve5(homedir3(), "Documents", "Codex"),
     ...[...codexHomes].flatMap((root) => [
-      resolve4(root, "tmp"),
-      resolve4(root, ".tmp"),
-      resolve4(root, "worktrees")
+      resolve5(root, "tmp"),
+      resolve5(root, ".tmp"),
+      resolve5(root, "worktrees")
     ])
   ].map(canonicalPath);
 }
@@ -6228,10 +6461,10 @@ function isLocalProjectScope(value, pluginInstanceId) {
 }
 function inspectLocalProjectScope(pluginInstanceId, directory = dataDirectory()) {
   const path = scopePath(directory);
-  if (!existsSync4(path))
+  if (!existsSync5(path))
     return { state: "missing", scope: newLocalScope(pluginInstanceId) };
   try {
-    const parsed = JSON.parse(readFileSync3(path, "utf8"));
+    const parsed = JSON.parse(readFileSync4(path, "utf8"));
     if (isLocalProjectScope(parsed, pluginInstanceId))
       return { state: "valid", scope: parsed };
   } catch {
@@ -6241,13 +6474,13 @@ function inspectLocalProjectScope(pluginInstanceId, directory = dataDirectory())
 function saveLocalProjectScope(scope, directory = dataDirectory()) {
   const path = scopePath(directory);
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync3(temporary, `${JSON.stringify(scope, null, 2)}
+  writeFileSync4(temporary, `${JSON.stringify(scope, null, 2)}
 `, {
     mode: 384
   });
-  chmodSync3(temporary, 384);
-  renameSync3(temporary, path);
-  chmodSync3(path, 384);
+  chmodSync4(temporary, 384);
+  renameSync4(temporary, path);
+  chmodSync4(path, 384);
 }
 function mergeRemoteProjectScope(local, remote) {
   if (local.pluginInstanceId !== remote.pluginInstanceId)
@@ -6410,8 +6643,8 @@ function authorizedProjectThreads(summaries, threadScopes, entries, now = /* @__
 
 // src/project-description.ts
 import { createHash as createHash2 } from "node:crypto";
-import { lstatSync as lstatSync2, readFileSync as readFileSync4, readdirSync as readdirSync2 } from "node:fs";
-import { resolve as resolve5 } from "node:path";
+import { lstatSync as lstatSync2, readFileSync as readFileSync5, readdirSync as readdirSync2 } from "node:fs";
+import { resolve as resolve6 } from "node:path";
 var MAX_FILE_BYTES = 24e3;
 var MAX_SOURCE_CHARACTERS = 48e3;
 var PROJECT_DESCRIPTION_PROMPT_VERSION = "2026-08-27.project-description.v2";
@@ -6457,7 +6690,7 @@ function manifestText(path, name) {
     const stat = lstatSync2(path);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES)
       return null;
-    const raw = readFileSync4(path, "utf8");
+    const raw = readFileSync5(path, "utf8");
     if (name.toLowerCase() === "package.json") {
       const parsed = JSON.parse(raw);
       return JSON.stringify({
@@ -6473,7 +6706,7 @@ function manifestText(path, name) {
   }
 }
 function buildProjectDescriptionSource(input) {
-  const root = resolve5(input.localRoot);
+  const root = resolve6(input.localRoot);
   let entries;
   try {
     if (!lstatSync2(root).isDirectory()) return null;
@@ -6487,7 +6720,7 @@ function buildProjectDescriptionSource(input) {
   const files = entries.filter(
     (entry) => entry.isFile() && !entry.isSymbolicLink() && descriptionFiles.some((pattern) => pattern.test(entry.name))
   ).sort((left, right) => left.name.localeCompare(right.name)).slice(0, 12).flatMap((entry) => {
-    const content = manifestText(resolve5(root, entry.name), entry.name);
+    const content = manifestText(resolve6(root, entry.name), entry.name);
     return content ? [{ name: entry.name, content }] : [];
   });
   const boundedFiles = [];
@@ -6561,9 +6794,9 @@ function planProjectDescriptionSources(sources, remoteProjects) {
 }
 
 // src/scheduled-task.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5, readdirSync as readdirSync3 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync6, readdirSync as readdirSync3 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { resolve as resolve6 } from "node:path";
+import { resolve as resolve7 } from "node:path";
 var SCHEDULED_COLLECTION_TASK_ID = "partner-report-daily-collection";
 function topLevelString(source, key) {
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -6578,14 +6811,14 @@ function topLevelString(source, key) {
   }
 }
 function existingTaskId(automationsRoot) {
-  if (!existsSync5(automationsRoot)) return null;
+  if (!existsSync6(automationsRoot)) return null;
   for (const entry of readdirSync3(automationsRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const taskPath = resolve6(automationsRoot, entry.name, "automation.toml");
-    if (!existsSync5(taskPath)) continue;
+    const taskPath = resolve7(automationsRoot, entry.name, "automation.toml");
+    if (!existsSync6(taskPath)) continue;
     let source;
     try {
-      source = readFileSync5(taskPath, "utf8");
+      source = readFileSync6(taskPath, "utf8");
     } catch {
       continue;
     }
@@ -6597,10 +6830,10 @@ function existingTaskId(automationsRoot) {
 }
 function installScheduledCollectionTask(options = {}) {
   try {
-    const codexHome = resolve6(
-      options.codexHome ?? process.env.CODEX_HOME ?? resolve6(homedir4(), ".codex")
+    const codexHome = resolve7(
+      options.codexHome ?? process.env.CODEX_HOME ?? resolve7(homedir4(), ".codex")
     );
-    const automationsRoot = resolve6(codexHome, "automations");
+    const automationsRoot = resolve7(codexHome, "automations");
     const existing = existingTaskId(automationsRoot);
     if (existing) return { status: "existing", taskId: existing };
     return { status: "required", taskId: SCHEDULED_COLLECTION_TASK_ID };
@@ -6611,162 +6844,6 @@ function installScheduledCollectionTask(options = {}) {
       message: error instanceof Error ? error.message : "Codex Scheduled Task \u521B\u5EFA\u5931\u8D25\u3002"
     };
   }
-}
-
-// src/telemetry.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import {
-  chmodSync as chmodSync4,
-  existsSync as existsSync6,
-  readFileSync as readFileSync6,
-  renameSync as renameSync4,
-  writeFileSync as writeFileSync4
-} from "node:fs";
-import { resolve as resolve7 } from "node:path";
-var invocationId = randomUUID2();
-var invocationCommand = process.argv[2]?.slice(0, 80) || "plugin";
-var invocationSequence = 0;
-var activeRunId;
-var OUTBOX_FILE = "plugin-log-outbox.json";
-var MAX_PENDING_EVENTS = 2e3;
-var BATCH_SIZE = 50;
-function outboxPath() {
-  return resolve7(dataDirectory(), OUTBOX_FILE);
-}
-function readOutbox() {
-  const path = outboxPath();
-  if (!existsSync6(path)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync6(path, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-function writeOutbox(events) {
-  const path = outboxPath();
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync4(temporary, `${JSON.stringify(events, null, 2)}
-`, {
-    mode: 384
-  });
-  chmodSync4(temporary, 384);
-  renameSync4(temporary, path);
-  chmodSync4(path, 384);
-}
-function safeDetails(details) {
-  if (!details) return void 0;
-  return Object.fromEntries(
-    Object.entries(details).filter(
-      ([key]) => !/path|session|transcript|prompt|token|secret|authorization|credential/i.test(
-        key
-      )
-    )
-  );
-}
-function tryWriteOutbox(events) {
-  try {
-    writeOutbox(events);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function buildPendingPluginLog(input, defaults) {
-  const details = safeDetails(input.details);
-  const eventRunId = input.runId ?? defaults.runId;
-  return {
-    eventId: input.eventId ?? randomUUID2(),
-    invocationId: input.invocationId ?? defaults.invocationId,
-    sequence: input.sequence ?? defaults.sequence,
-    command: (input.command ?? defaults.command).slice(0, 80),
-    eventType: input.eventType ?? (input.level === "error" ? "error" : input.eventCode === "command.started" || input.eventCode === "command.completed" ? "lifecycle" : "progress"),
-    level: input.level,
-    stage: input.stage.slice(0, 80),
-    eventCode: input.eventCode.slice(0, 120),
-    message: input.message.slice(0, 4e3),
-    occurredAt: input.occurredAt ?? (/* @__PURE__ */ new Date()).toISOString(),
-    retryable: input.retryable ?? false,
-    ...eventRunId ? { runId: eventRunId } : {},
-    ...input.stack ? { stack: input.stack.slice(0, 16e3) } : {},
-    ...input.attempt !== void 0 ? { attempt: input.attempt } : {},
-    ...input.durationMs !== void 0 ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {},
-    ...input.requestId ? { requestId: input.requestId } : {},
-    ...details ? { details } : {}
-  };
-}
-function enqueuePluginLog(input) {
-  try {
-    if (!loadConfig(false)) return null;
-    const event = buildPendingPluginLog(input, {
-      invocationId,
-      sequence: input.sequence ?? ++invocationSequence,
-      command: invocationCommand,
-      runId: activeRunId
-    });
-    const events = [...readOutbox(), event].slice(-MAX_PENDING_EVENTS);
-    return tryWriteOutbox(events) ? event : null;
-  } catch {
-    return null;
-  }
-}
-function collectionFinalStateLogInput(input) {
-  return {
-    ...input.runId ? { runId: input.runId } : {},
-    level: input.outcome === "success" ? "info" : "error",
-    stage: "collection",
-    eventCode: `collection.final.${input.outcome}`,
-    eventType: "result",
-    message: input.summary,
-    retryable: input.outcome === "failed",
-    details: {
-      finalState: input.outcome,
-      summary: input.summary,
-      ...input.reasonCode ? { reasonCode: input.reasonCode } : {},
-      ...input.details ?? {}
-    }
-  };
-}
-function enqueueCollectionFinalState(input) {
-  return enqueuePluginLog(collectionFinalStateLogInput(input));
-}
-function setPluginLogRunId(runId) {
-  activeRunId = runId;
-}
-async function flushPluginLogs() {
-  if (!loadConfig(false)) return { sent: 0, pending: 0 };
-  let events;
-  try {
-    events = readOutbox();
-  } catch {
-    return { sent: 0, pending: 0 };
-  }
-  let sent = 0;
-  while (events.length > 0) {
-    const batch = events.slice(0, BATCH_SIZE);
-    try {
-      await authenticatedRequest("/v1/plugin-instances/me/log-events", {
-        method: "POST",
-        body: JSON.stringify({ events: batch })
-      });
-    } catch {
-      return { sent, pending: events.length };
-    }
-    const delivered = new Set(batch.map((event) => event.eventId));
-    events = readOutbox().filter((event) => !delivered.has(event.eventId));
-    if (!tryWriteOutbox(events)) return { sent, pending: events.length };
-    sent += batch.length;
-  }
-  return { sent, pending: 0 };
-}
-function pluginErrorDetails(error) {
-  const value = error;
-  return {
-    code: value && value.code !== void 0 ? String(value.code) : "PLUGIN_COMMAND_FAILED",
-    status: value && typeof value.status === "number" ? value.status : void 0,
-    requestId: value && typeof value.requestId === "string" ? value.requestId : void 0,
-    details: value && value.details && typeof value.details === "object" ? value.details : void 0
-  };
 }
 
 // src/poll-wait.ts

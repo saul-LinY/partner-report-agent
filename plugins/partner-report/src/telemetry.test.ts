@@ -39,6 +39,8 @@ describe("plugin telemetry", () => {
         message: "failed",
         details: {
           errorCode: "UPLOAD_FAILED",
+          binarySource: "codex_app_bundle",
+          codexVersion: "codex-cli 0.149.1",
           token: "secret",
           sessionPath: "/private/session",
         },
@@ -50,7 +52,11 @@ describe("plugin telemetry", () => {
       },
     );
 
-    expect(event.details).toEqual({ errorCode: "UPLOAD_FAILED" });
+    expect(event.details).toEqual({
+      errorCode: "UPLOAD_FAILED",
+      binarySource: "codex_app_bundle",
+      codexVersion: "codex-cli 0.149.1",
+    });
     expect(event.eventType).toBe("error");
   });
 

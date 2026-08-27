@@ -6,6 +6,7 @@ import {
   CODEX_THREAD_TURNS_PAGE_LIMIT,
   MINIMUM_CODEX_APP_SERVER_VERSION,
   CodexAppServer,
+  codexBinarySource,
   selectCodexBinary,
 } from "./app-server.js";
 import {
@@ -19,8 +20,8 @@ afterEach(() => {
 });
 
 describe("Partner Report timeout budgets", () => {
-  it("keeps the outer CLI timeout above the 500-second thread list timeout", () => {
-    expect(CODEX_THREAD_LIST_TIMEOUT_MS).toBe(500_000);
+  it("keeps the outer CLI timeout above the 300-second thread list timeout", () => {
+    expect(CODEX_THREAD_LIST_TIMEOUT_MS).toBe(300_000);
     expect(PARTNER_REPORT_CLI_TIMEOUT_MS).toBeGreaterThan(
       CODEX_THREAD_LIST_TIMEOUT_MS,
     );
@@ -122,9 +123,20 @@ describe("CodexAppServer.listThreads", () => {
 
     await expect(
       server.listThreads({ updatedSince: "2026-08-10T00:00:00.000Z" }),
-    ).rejects.toThrow(
-      "thread/list 第 2 页失败：timed out；Codex app-server: rollout lock busy",
-    );
+    ).rejects.toMatchObject({
+      message:
+        "thread/list 第 2 页失败：timed out；Codex app-server: rollout lock busy",
+      code: "CODEX_SESSION_LIST_FAILED",
+      details: {
+        binarySource: "command",
+        codexVersion: null,
+        transport: "stdio",
+        page: 2,
+        pageSize: 100,
+        timeoutSeconds: 300,
+        appServerStderrPresent: true,
+      },
+    });
   });
 
   it("rejects an invalid activity cutoff before contacting app-server", async () => {
@@ -156,6 +168,16 @@ describe("CodexAppServer.listThreads", () => {
 });
 
 describe("selectCodexBinary", () => {
+  it("reports the selected desktop bundle without exposing its path", () => {
+    expect(
+      codexBinarySource("/Applications/Codex.app/Contents/Resources/codex"),
+    ).toBe("codex_app_bundle");
+    expect(
+      codexBinarySource("/Applications/ChatGPT.app/Contents/Resources/codex"),
+    ).toBe("chatgpt_app_bundle");
+    expect(codexBinarySource("codex")).toBe("command");
+  });
+
   it("prefers the compatible desktop binary over an outdated PATH binary", () => {
     const versions = new Map([
       ["desktop-codex", "codex-cli 0.149.0-alpha.4.1"],

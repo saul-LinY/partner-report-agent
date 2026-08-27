@@ -6,6 +6,7 @@ import {
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { PLUGIN_VERSION } from "./config.js";
+import { enqueuePluginLog } from "./telemetry.js";
 import { CODEX_THREAD_LIST_TIMEOUT_MS } from "./timeouts.js";
 
 export { CODEX_THREAD_LIST_TIMEOUT_MS } from "./timeouts.js";
@@ -86,6 +87,14 @@ function probeCodexBinary(candidate: string) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
 }
 
+export function codexBinarySource(candidate: string) {
+  if (candidate === "/Applications/Codex.app/Contents/Resources/codex")
+    return "codex_app_bundle";
+  if (candidate === "/Applications/ChatGPT.app/Contents/Resources/codex")
+    return "chatgpt_app_bundle";
+  return "command";
+}
+
 export function selectCodexBinary(
   options: {
     explicit?: string;
@@ -155,14 +164,31 @@ export class CodexAppServer {
   private stderr = "";
 
   private readonly codexBin: string;
+  private readonly binarySource: string;
+  private codexVersion: string | null = null;
   private readonly workingDirectory: string;
 
   constructor(codexBin?: string, workingDirectory = homedir()) {
     this.codexBin = codexBin ?? selectCodexBinary();
+    this.binarySource = codexBinarySource(this.codexBin);
     this.workingDirectory = workingDirectory;
   }
 
   async connect() {
+    const startedAt = Date.now();
+    this.codexVersion = probeCodexBinary(this.codexBin);
+    enqueuePluginLog({
+      level: "info",
+      stage: "codex_app_server",
+      eventCode: "app_server.starting",
+      eventType: "lifecycle",
+      message: "正在启动 Codex app-server。",
+      details: {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio",
+      },
+    });
     this.process = spawn(
       this.codexBin,
       [
@@ -223,6 +249,19 @@ export class CodexAppServer {
       },
     });
     this.notify("initialized", {});
+    enqueuePluginLog({
+      level: "info",
+      stage: "codex_app_server",
+      eventCode: "app_server.initialized",
+      eventType: "lifecycle",
+      message: "Codex app-server 初始化完成。",
+      durationMs: Date.now() - startedAt,
+      details: {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio",
+      },
+    });
   }
 
   request(method: string, params: Record<string, unknown>, timeoutMs = 30_000) {
@@ -256,6 +295,28 @@ export class CodexAppServer {
     do {
       page += 1;
       let result: any;
+      const pageStartedAt = Date.now();
+      const requestDetails = {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio",
+        page,
+        pageSize: 100,
+        sortKey: "updated_at",
+        sortDirection: "desc",
+        sourceKindCount: 3,
+        archived: false,
+        useStateDbOnly: true,
+        timeoutSeconds: CODEX_THREAD_LIST_TIMEOUT_MS / 1_000,
+      };
+      enqueuePluginLog({
+        level: "info",
+        stage: "codex_thread_list",
+        eventCode: "thread_list.page.started",
+        eventType: "progress",
+        message: `开始读取 Codex 任务列表第 ${page} 页。`,
+        details: requestDetails,
+      });
       try {
         result = await this.request(
           "thread/list",
@@ -281,12 +342,30 @@ export class CodexAppServer {
             error && typeof error === "object" && "code" in error
               ? String(error.code)
               : "CODEX_SESSION_LIST_FAILED",
+          details: {
+            ...requestDetails,
+            durationMs: Date.now() - pageStartedAt,
+            appServerStderrPresent: Boolean(stderr),
+          },
         });
         throw wrapped;
       }
       const data: Record<string, unknown>[] = Array.isArray(result.data)
         ? result.data.filter(isRecord)
         : [];
+      enqueuePluginLog({
+        level: "info",
+        stage: "codex_thread_list",
+        eventCode: "thread_list.page.completed",
+        eventType: "progress",
+        message: `Codex 任务列表第 ${page} 页读取完成。`,
+        durationMs: Date.now() - pageStartedAt,
+        details: {
+          ...requestDetails,
+          resultCount: data.length,
+          hasNextPage: Boolean(result.nextCursor),
+        },
+      });
       const activity = data.map((thread) => ({
         thread,
         updatedAt: threadUpdatedAt(thread),

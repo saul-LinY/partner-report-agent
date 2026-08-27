@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/setup.ts
-import { resolve as resolve2 } from "node:path";
+import { resolve as resolve3 } from "node:path";
 
 // src/app-server.ts
 import {
@@ -224,8 +224,105 @@ function migrateLegacyInstallation() {
   return { status: "credentials_ready", migratedSecrets };
 }
 
+// src/telemetry.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import {
+  chmodSync as chmodSync2,
+  existsSync as existsSync2,
+  readFileSync as readFileSync2,
+  renameSync as renameSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { resolve as resolve2 } from "node:path";
+var invocationId = randomUUID2();
+var invocationCommand = process.argv[2]?.slice(0, 80) || "plugin";
+var invocationSequence = 0;
+var activeRunId;
+var OUTBOX_FILE = "plugin-log-outbox.json";
+var MAX_PENDING_EVENTS = 2e3;
+function outboxPath() {
+  return resolve2(dataDirectory(), OUTBOX_FILE);
+}
+function readOutbox() {
+  const path = outboxPath();
+  if (!existsSync2(path)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync2(path, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function writeOutbox(events) {
+  const path = outboxPath();
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync2(temporary, `${JSON.stringify(events, null, 2)}
+`, {
+    mode: 384
+  });
+  chmodSync2(temporary, 384);
+  renameSync2(temporary, path);
+  chmodSync2(path, 384);
+}
+function safeDetails(details) {
+  if (!details) return void 0;
+  return Object.fromEntries(
+    Object.entries(details).filter(
+      ([key]) => !/path|session|transcript|prompt|token|secret|authorization|credential/i.test(
+        key
+      )
+    )
+  );
+}
+function tryWriteOutbox(events) {
+  try {
+    writeOutbox(events);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function buildPendingPluginLog(input, defaults) {
+  const details = safeDetails(input.details);
+  const eventRunId = input.runId ?? defaults.runId;
+  return {
+    eventId: input.eventId ?? randomUUID2(),
+    invocationId: input.invocationId ?? defaults.invocationId,
+    sequence: input.sequence ?? defaults.sequence,
+    command: (input.command ?? defaults.command).slice(0, 80),
+    eventType: input.eventType ?? (input.level === "error" ? "error" : input.eventCode === "command.started" || input.eventCode === "command.completed" ? "lifecycle" : "progress"),
+    level: input.level,
+    stage: input.stage.slice(0, 80),
+    eventCode: input.eventCode.slice(0, 120),
+    message: input.message.slice(0, 4e3),
+    occurredAt: input.occurredAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+    retryable: input.retryable ?? false,
+    ...eventRunId ? { runId: eventRunId } : {},
+    ...input.stack ? { stack: input.stack.slice(0, 16e3) } : {},
+    ...input.attempt !== void 0 ? { attempt: input.attempt } : {},
+    ...input.durationMs !== void 0 ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {},
+    ...input.requestId ? { requestId: input.requestId } : {},
+    ...details ? { details } : {}
+  };
+}
+function enqueuePluginLog(input) {
+  try {
+    if (!loadConfig(false)) return null;
+    const event = buildPendingPluginLog(input, {
+      invocationId,
+      sequence: input.sequence ?? ++invocationSequence,
+      command: invocationCommand,
+      runId: activeRunId
+    });
+    const events = [...readOutbox(), event].slice(-MAX_PENDING_EVENTS);
+    return tryWriteOutbox(events) ? event : null;
+  } catch {
+    return null;
+  }
+}
+
 // src/timeouts.ts
-var CODEX_THREAD_LIST_TIMEOUT_MS = 5e5;
+var CODEX_THREAD_LIST_TIMEOUT_MS = 3e5;
 var PARTNER_REPORT_MCP_TOOL_TIMEOUT_SEC = 700;
 
 // src/app-server.ts
@@ -272,6 +369,13 @@ function probeCodexBinary(candidate) {
   });
   if (result.status !== 0) return null;
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
+}
+function codexBinarySource(candidate) {
+  if (candidate === "/Applications/Codex.app/Contents/Resources/codex")
+    return "codex_app_bundle";
+  if (candidate === "/Applications/ChatGPT.app/Contents/Resources/codex")
+    return "chatgpt_app_bundle";
+  return "command";
 }
 function selectCodexBinary(options = {}) {
   const explicit = options.explicit ?? process.env.CODEX_BIN;
@@ -320,12 +424,29 @@ var CodexAppServer = class {
   pending = /* @__PURE__ */ new Map();
   stderr = "";
   codexBin;
+  binarySource;
+  codexVersion = null;
   workingDirectory;
   constructor(codexBin, workingDirectory = homedir2()) {
     this.codexBin = codexBin ?? selectCodexBinary();
+    this.binarySource = codexBinarySource(this.codexBin);
     this.workingDirectory = workingDirectory;
   }
   async connect() {
+    const startedAt = Date.now();
+    this.codexVersion = probeCodexBinary(this.codexBin);
+    enqueuePluginLog({
+      level: "info",
+      stage: "codex_app_server",
+      eventCode: "app_server.starting",
+      eventType: "lifecycle",
+      message: "\u6B63\u5728\u542F\u52A8 Codex app-server\u3002",
+      details: {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio"
+      }
+    });
     this.process = spawn(
       this.codexBin,
       [
@@ -386,16 +507,29 @@ var CodexAppServer = class {
       }
     });
     this.notify("initialized", {});
+    enqueuePluginLog({
+      level: "info",
+      stage: "codex_app_server",
+      eventCode: "app_server.initialized",
+      eventType: "lifecycle",
+      message: "Codex app-server \u521D\u59CB\u5316\u5B8C\u6210\u3002",
+      durationMs: Date.now() - startedAt,
+      details: {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio"
+      }
+    });
   }
   request(method, params, timeoutMs = 3e4) {
     if (!this.process) throw new Error("Codex app-server \u5C1A\u672A\u8FDE\u63A5\u3002");
     const id = this.nextId++;
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(createTimeoutError(method, timeoutMs));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve3, reject, timer });
+      this.pending.set(id, { resolve: resolve4, reject, timer });
       this.process.stdin.write(`${JSON.stringify({ method, id, params })}
 `);
     });
@@ -415,6 +549,28 @@ var CodexAppServer = class {
     do {
       page += 1;
       let result;
+      const pageStartedAt = Date.now();
+      const requestDetails = {
+        binarySource: this.binarySource,
+        codexVersion: this.codexVersion,
+        transport: "stdio",
+        page,
+        pageSize: 100,
+        sortKey: "updated_at",
+        sortDirection: "desc",
+        sourceKindCount: 3,
+        archived: false,
+        useStateDbOnly: true,
+        timeoutSeconds: CODEX_THREAD_LIST_TIMEOUT_MS / 1e3
+      };
+      enqueuePluginLog({
+        level: "info",
+        stage: "codex_thread_list",
+        eventCode: "thread_list.page.started",
+        eventType: "progress",
+        message: `\u5F00\u59CB\u8BFB\u53D6 Codex \u4EFB\u52A1\u5217\u8868\u7B2C ${page} \u9875\u3002`,
+        details: requestDetails
+      });
       try {
         result = await this.request(
           "thread/list",
@@ -436,11 +592,29 @@ var CodexAppServer = class {
           `thread/list \u7B2C ${page} \u9875\u5931\u8D25\uFF1A${message}${stderr ? `\uFF1BCodex app-server: ${stderr}` : ""}`
         );
         Object.assign(wrapped, {
-          code: error && typeof error === "object" && "code" in error ? String(error.code) : "CODEX_SESSION_LIST_FAILED"
+          code: error && typeof error === "object" && "code" in error ? String(error.code) : "CODEX_SESSION_LIST_FAILED",
+          details: {
+            ...requestDetails,
+            durationMs: Date.now() - pageStartedAt,
+            appServerStderrPresent: Boolean(stderr)
+          }
         });
         throw wrapped;
       }
       const data = Array.isArray(result.data) ? result.data.filter(isRecord) : [];
+      enqueuePluginLog({
+        level: "info",
+        stage: "codex_thread_list",
+        eventCode: "thread_list.page.completed",
+        eventType: "progress",
+        message: `Codex \u4EFB\u52A1\u5217\u8868\u7B2C ${page} \u9875\u8BFB\u53D6\u5B8C\u6210\u3002`,
+        durationMs: Date.now() - pageStartedAt,
+        details: {
+          ...requestDetails,
+          resultCount: data.length,
+          hasNextPage: Boolean(result.nextCursor)
+        }
+      });
       const activity = data.map((thread) => ({
         thread,
         updatedAt: threadUpdatedAt(thread)
@@ -572,7 +746,7 @@ try {
   await server.connect();
   const config = await configurePartnerReportMcp(
     server,
-    configFile ? resolve2(configFile) : void 0
+    configFile ? resolve3(configFile) : void 0
   );
   const credentials = migrateLegacyInstallation();
   process.stdout.write(
