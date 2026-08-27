@@ -6,6 +6,9 @@ import {
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { PLUGIN_VERSION } from "./config.js";
+import { CODEX_THREAD_LIST_TIMEOUT_MS } from "./timeouts.js";
+
+export { CODEX_THREAD_LIST_TIMEOUT_MS } from "./timeouts.js";
 
 type Pending = {
   resolve: (value: any) => void;
@@ -17,7 +20,6 @@ type ThreadListOptions = {
   updatedSince?: string | number;
 };
 
-export const CODEX_THREAD_LIST_TIMEOUT_MS = 120_000;
 export const CODEX_THREAD_READ_TIMEOUT_MS = 60_000;
 export const CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 export const MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";

@@ -13,6 +13,7 @@ import {
   withoutInternalPaths,
   type CliOutput,
 } from "./mcp-output.js";
+import { PARTNER_REPORT_CLI_TIMEOUT_MS } from "./timeouts.js";
 
 const execFileAsync = promisify(execFile);
 const cliPath =
@@ -36,7 +37,7 @@ async function invokeCli(command: string, args: string[] = []) {
         encoding: "utf8",
         env: process.env,
         maxBuffer: 8 * 1024 * 1024,
-        timeout: 180_000,
+        timeout: PARTNER_REPORT_CLI_TIMEOUT_MS,
       },
     );
     return parseCliOutput(stdout);

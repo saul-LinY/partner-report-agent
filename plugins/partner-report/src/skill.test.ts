@@ -29,6 +29,7 @@ describe("partner report skill packaging", () => {
         args: ["./dist/mcp.mjs"],
         cwd: ".",
         default_tools_approval_mode: "approve",
+        tool_timeout_sec: 700,
       }),
     );
   });

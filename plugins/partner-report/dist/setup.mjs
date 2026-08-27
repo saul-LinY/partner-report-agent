@@ -224,8 +224,11 @@ function migrateLegacyInstallation() {
   return { status: "credentials_ready", migratedSecrets };
 }
 
+// src/timeouts.ts
+var CODEX_THREAD_LIST_TIMEOUT_MS = 5e5;
+var PARTNER_REPORT_MCP_TOOL_TIMEOUT_SEC = 700;
+
 // src/app-server.ts
-var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
@@ -540,6 +543,11 @@ var PARTNER_REPORT_MCP_CONFIG_EDITS = [
   {
     keyPath: 'plugins."partner-report".mcp_servers."partner-report".default_tools_approval_mode',
     value: "approve",
+    mergeStrategy: "replace"
+  },
+  {
+    keyPath: 'plugins."partner-report".mcp_servers."partner-report".tool_timeout_sec',
+    value: PARTNER_REPORT_MCP_TOOL_TIMEOUT_SEC,
     mergeStrategy: "replace"
   }
 ];

@@ -26047,6 +26047,9 @@ function exposeJobInput(result) {
   return { ...withoutInternalPaths(result), jobInput };
 }
 
+// src/timeouts.ts
+var PARTNER_REPORT_CLI_TIMEOUT_MS = 62e4;
+
 // src/mcp.ts
 var execFileAsync = promisify(execFile);
 var cliPath = process.env.PARTNER_REPORT_CLI_PATH ?? resolve(import.meta.dirname, "cli.mjs");
@@ -26066,7 +26069,7 @@ async function invokeCli(command, args = []) {
         encoding: "utf8",
         env: process.env,
         maxBuffer: 8 * 1024 * 1024,
-        timeout: 18e4
+        timeout: PARTNER_REPORT_CLI_TIMEOUT_MS
       }
     );
     return parseCliOutput(stdout);

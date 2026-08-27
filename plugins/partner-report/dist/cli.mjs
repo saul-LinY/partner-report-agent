@@ -5300,7 +5300,11 @@ import {
 } from "node:child_process";
 import { homedir as homedir2 } from "node:os";
 import { createInterface } from "node:readline";
-var CODEX_THREAD_LIST_TIMEOUT_MS = 12e4;
+
+// src/timeouts.ts
+var CODEX_THREAD_LIST_TIMEOUT_MS = 5e5;
+
+// src/app-server.ts
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";

@@ -8,10 +8,26 @@ import {
   CodexAppServer,
   selectCodexBinary,
 } from "./app-server.js";
+import {
+  PARTNER_REPORT_CLI_TIMEOUT_MS,
+  PARTNER_REPORT_MCP_TOOL_TIMEOUT_SEC,
+} from "./timeouts.js";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("Partner Report timeout budgets", () => {
+  it("keeps the outer CLI timeout above the 500-second thread list timeout", () => {
+    expect(CODEX_THREAD_LIST_TIMEOUT_MS).toBe(500_000);
+    expect(PARTNER_REPORT_CLI_TIMEOUT_MS).toBeGreaterThan(
+      CODEX_THREAD_LIST_TIMEOUT_MS,
+    );
+    expect(PARTNER_REPORT_MCP_TOOL_TIMEOUT_SEC * 1_000).toBeGreaterThan(
+      PARTNER_REPORT_CLI_TIMEOUT_MS,
+    );
+  });
 });
 
 describe("CodexAppServer.listThreads", () => {

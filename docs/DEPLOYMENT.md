@@ -79,6 +79,7 @@ npm run plugin:install
 [plugins."partner-report".mcp_servers."partner-report"]
 enabled = true
 default_tools_approval_mode = "approve"
+tool_timeout_sec = 700
 ```
 
 它不修改全局权限模式。升级时插件名和 MCP Server 名保持不变，因此原授权继续有效；脚本仍会复核配置，并把旧 Keychain Token 一次性迁移到稳定 `0600` 文件。完成后重启 Codex 桌面端，在新会话中先手动验证一次。需要读取本机 Session 的定时任务运行时，电脑必须开机且桌面端保持运行。在新会话中说：

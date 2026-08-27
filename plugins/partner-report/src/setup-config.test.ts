@@ -5,7 +5,7 @@ import {
 } from "./setup-config.js";
 
 describe("Partner Report Codex setup", () => {
-  it("changes only the plugin-scoped MCP approval settings", async () => {
+  it("changes only the plugin-scoped MCP runtime settings", async () => {
     const request = vi.fn().mockResolvedValue({ status: "ok" });
     await configurePartnerReportMcp({ request });
 
@@ -20,6 +20,12 @@ describe("Partner Report Codex setup", () => {
         keyPath:
           'plugins."partner-report".mcp_servers."partner-report".default_tools_approval_mode',
         value: "approve",
+        mergeStrategy: "replace",
+      },
+      {
+        keyPath:
+          'plugins."partner-report".mcp_servers."partner-report".tool_timeout_sec',
+        value: 700,
         mergeStrategy: "replace",
       },
     ]);
