@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { homedir } from "node:os";
 import {
   CODEX_THREAD_LIST_TIMEOUT_MS,
+  CODEX_THREAD_LIST_PAGE_LIMIT,
   CODEX_THREAD_READ_TIMEOUT_MS,
   CODEX_THREAD_TURNS_PAGE_LIMIT,
   DEFAULT_CODEX_BINARY_CANDIDATES,
@@ -90,7 +91,7 @@ describe("CodexAppServer.listThreads", () => {
       1,
       "thread/list",
       {
-        limit: 100,
+        limit: CODEX_THREAD_LIST_PAGE_LIMIT,
         sortKey: "updated_at",
         sortDirection: "desc",
         sourceKinds: ["cli", "vscode", "appServer"],
@@ -104,7 +105,7 @@ describe("CodexAppServer.listThreads", () => {
       "thread/list",
       {
         cursor: "page-2",
-        limit: 100,
+        limit: CODEX_THREAD_LIST_PAGE_LIMIT,
         sortKey: "updated_at",
         sortDirection: "desc",
         sourceKinds: ["cli", "vscode", "appServer"],
@@ -133,7 +134,7 @@ describe("CodexAppServer.listThreads", () => {
         codexVersion: null,
         transport: "stdio",
         page: 2,
-        pageSize: 100,
+        pageSize: CODEX_THREAD_LIST_PAGE_LIMIT,
         timeoutSeconds: 300,
         appServerStderrPresent: true,
       },

@@ -327,6 +327,7 @@ var PARTNER_REPORT_MCP_TOOL_TIMEOUT_SEC = 700;
 
 // src/app-server.ts
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
+var CODEX_THREAD_LIST_PAGE_LIMIT = 50;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 var DEFAULT_CODEX_BINARY_CANDIDATES = [
@@ -556,7 +557,7 @@ var CodexAppServer = class {
         codexVersion: this.codexVersion,
         transport: "stdio",
         page,
-        pageSize: 100,
+        pageSize: CODEX_THREAD_LIST_PAGE_LIMIT,
         sortKey: "updated_at",
         sortDirection: "desc",
         sourceKindCount: 3,
@@ -577,7 +578,7 @@ var CodexAppServer = class {
           "thread/list",
           {
             ...cursor ? { cursor } : {},
-            limit: 100,
+            limit: CODEX_THREAD_LIST_PAGE_LIMIT,
             sortKey: "updated_at",
             sortDirection: "desc",
             sourceKinds: ["cli", "vscode", "appServer"],

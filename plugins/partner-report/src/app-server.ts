@@ -22,6 +22,7 @@ type ThreadListOptions = {
 };
 
 export const CODEX_THREAD_READ_TIMEOUT_MS = 60_000;
+export const CODEX_THREAD_LIST_PAGE_LIMIT = 50;
 export const CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 export const MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 export const DEFAULT_CODEX_BINARY_CANDIDATES = [
@@ -302,7 +303,7 @@ export class CodexAppServer {
         codexVersion: this.codexVersion,
         transport: "stdio",
         page,
-        pageSize: 100,
+        pageSize: CODEX_THREAD_LIST_PAGE_LIMIT,
         sortKey: "updated_at",
         sortDirection: "desc",
         sourceKindCount: 3,
@@ -323,7 +324,7 @@ export class CodexAppServer {
           "thread/list",
           {
             ...(cursor ? { cursor } : {}),
-            limit: 100,
+            limit: CODEX_THREAD_LIST_PAGE_LIMIT,
             sortKey: "updated_at",
             sortDirection: "desc",
             sourceKinds: ["cli", "vscode", "appServer"],
