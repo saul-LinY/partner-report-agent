@@ -6913,7 +6913,8 @@ var require_dist = __commonJS({
 
 // src/mcp.ts
 import { execFile } from "node:child_process";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -26050,8 +26051,30 @@ function exposeJobInput(result) {
 // src/timeouts.ts
 var PARTNER_REPORT_CLI_TIMEOUT_MS = 62e4;
 
+// src/host-project-discovery.ts
+var CODEX_HOST_THREAD_LIST_LIMIT = 50;
+var CODEX_HOST_PINNED_THREAD_LIMIT = 200;
+var CODEX_HOST_THREAD_ID_MAX_LENGTH = 256;
+var CODEX_HOST_CWD_MAX_LENGTH = 8192;
+var CODEX_HOST_TIMESTAMP_MAX_LENGTH = 80;
+var CODEX_HOST_THREAD_SOURCE_MAX_LENGTH = 120;
+
 // src/mcp.ts
 var execFileAsync = promisify(execFile);
+var hostTimestampSchema = external_exports.union([
+  external_exports.string().trim().min(1).max(CODEX_HOST_TIMESTAMP_MAX_LENGTH),
+  external_exports.number().finite()
+]);
+var hostThreadMetadataSchema = external_exports.object({
+  id: external_exports.string().trim().min(1).max(CODEX_HOST_THREAD_ID_MAX_LENGTH),
+  cwd: external_exports.string().max(CODEX_HOST_CWD_MAX_LENGTH).nullable(),
+  createdAt: hostTimestampSchema.nullable().optional(),
+  updatedAt: hostTimestampSchema.nullable(),
+  archived: external_exports.boolean().default(false),
+  ephemeral: external_exports.boolean().default(false),
+  threadSource: external_exports.string().trim().max(CODEX_HOST_THREAD_SOURCE_MAX_LENGTH).nullable().optional(),
+  systemGenerated: external_exports.boolean().default(false)
+}).strict();
 var cliPath = process.env.PARTNER_REPORT_CLI_PATH ?? resolve(import.meta.dirname, "cli.mjs");
 function parseCliOutput(raw) {
   const value = JSON.parse(raw.trim());
@@ -26088,6 +26111,20 @@ async function invokeCli(command, args = []) {
       }
     }
     throw error2;
+  }
+}
+async function invokeCliWithPrivateJson(command, value) {
+  const directory = mkdtempSync(
+    resolve(tmpdir(), "partner-report-project-discovery-")
+  );
+  const inputPath = resolve(directory, "input.json");
+  try {
+    writeFileSync(inputPath, `${JSON.stringify(value)}
+`, { mode: 384 });
+    chmodSync(inputPath, 384);
+    return await invokeCli(command, ["--input", inputPath]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 async function currentJob(runPath, jobId) {
@@ -26177,7 +26214,7 @@ var registerTool = server.registerTool.bind(server);
 registerTool(
   "connect",
   {
-    description: "\u8FDE\u63A5 Partner Report\uFF0C\u626B\u63CF\u9996\u6B21\u9879\u76EE\uFF0C\u5E76\u4EC5\u5728\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u6210\u529F\u9001\u8FBE\u540E\u5B8C\u6210\u7ED1\u5B9A\u3002",
+    description: "\u8FDE\u63A5 Partner Report\uFF0C\u5E76\u53D1\u8D77\u7531 Codex App \u5B98\u65B9\u4EFB\u52A1\u5217\u8868\u9A71\u52A8\u7684\u9996\u6B21\u9879\u76EE\u53D1\u73B0\u3002",
     inputSchema: {
       serverUrl: external_exports.string().url(),
       bindingCode: external_exports.string().min(1),
@@ -26204,6 +26241,23 @@ registerTool(
     annotations: networkWrite
   },
   () => execute(() => invokeCli("connectivity-test"))
+);
+registerTool(
+  "project_discovery_submit",
+  {
+    description: "\u63D0\u4EA4 Codex App \u5B98\u65B9\u4EFB\u52A1\u5217\u8868\u5DE5\u5177\u8FD4\u56DE\u7684\u4E00\u9875\u6700\u5C0F\u5143\u6570\u636E\uFF0C\u5B8C\u6210\u9996\u6B21\u9879\u76EE\u53D1\u73B0\u548C\u7ED1\u5B9A\u3002\u4E0D\u5F97\u63D0\u4EA4 Session \u6B63\u6587\u3002",
+    inputSchema: {
+      threads: external_exports.array(hostThreadMetadataSchema).max(CODEX_HOST_THREAD_LIST_LIMIT),
+      pinnedThreads: external_exports.array(hostThreadMetadataSchema).max(CODEX_HOST_PINNED_THREAD_LIMIT).default([])
+    },
+    annotations: networkWrite
+  },
+  ({ threads, pinnedThreads }) => execute(
+    () => invokeCliWithPrivateJson("project-discovery-submit", {
+      threads,
+      pinnedThreads
+    })
+  )
 );
 registerTool(
   "server_url_set",

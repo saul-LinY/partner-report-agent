@@ -79,6 +79,12 @@ import {
   type CodexThreadReadFailureCode,
 } from "./app-server.js";
 import {
+  CODEX_HOST_THREAD_LIST_LIMIT,
+  hostProjectDiscoveryMayBePartial,
+  parseHostProjectDiscoveryInput,
+  uniqueHostProjectDiscoveryThreads,
+} from "./host-project-discovery.js";
+import {
   anonymousSessionKey,
   buildSessionJob,
   containsSensitive,
@@ -629,8 +635,40 @@ function connectedOutput(
   });
 }
 
-async function discoverProjectScopeAfterBinding() {
+function hostProjectDiscoveryRequired(
+  currentPeriod: Policy["currentPeriod"],
+  scanEndsAt = new Date().toISOString(),
+) {
+  if (!currentPeriod)
+    throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
+      code: "REPORT_PERIOD_MISSING",
+    });
+  return {
+    status: "project_discovery_required",
+    periodKey: currentPeriod.period_key,
+    scanStartsAt: initialProjectScopeStartAt(scanEndsAt),
+    scanEndsAt,
+    hostTool: {
+      name: "list_threads",
+      arguments: { limit: CODEX_HOST_THREAD_LIST_LIMIT },
+      includePinnedThreads: true,
+    },
+    submitTool: { name: "project_discovery_submit" },
+    projectDiscoveryNextStep:
+      "调用 Codex App 官方 list_threads(limit: 50)，再把 threads 和 pinnedThreads 的最小元数据提交给 project_discovery_submit。",
+  };
+}
+
+async function submitHostProjectDiscovery() {
   const config = loadConfig()!;
+  const inputPath = option("input");
+  if (!inputPath)
+    throw Object.assign(new Error("首次项目发现缺少宿主任务列表输入。"), {
+      code: "PROJECT_DISCOVERY_INPUT_REQUIRED",
+    });
+  const input = parseHostProjectDiscoveryInput(
+    JSON.parse(readFileSync(inputPath, "utf8")),
+  );
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope(),
@@ -644,27 +682,10 @@ async function discoverProjectScopeAfterBinding() {
 
   const runStartedAt = new Date().toISOString();
   const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
-  const server = new CodexAppServer();
-  let listed: any[];
-  try {
-    await server.connect();
-    listed = await server.listThreads({ updatedSince: scanStartsAt });
-  } finally {
-    server.close();
-  }
-  const summaries = listed
+  const summaries = uniqueHostProjectDiscoveryThreads(input)
     .map(summaryFromThread)
     .filter((value): value is ThreadSummary => Boolean(value));
-  const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
-  const currentSessionId = process.env.CODEX_THREAD_ID;
-  const metadataEligible = summaries.filter(
-    (summary) =>
-      summary.id !== currentSessionId &&
-      !summary.archived &&
-      !excludedSessionIds.has(summary.id) &&
-      !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
-      !isPluginSystemThread(summary as unknown as Record<string, unknown>),
-  );
+  const metadataEligible = metadataEligibleThreads(summaries, config);
   const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
     threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt),
   );
@@ -696,9 +717,32 @@ async function discoverProjectScopeAfterBinding() {
     discovery.candidates,
   );
   saveLocalProjectScope(localScope);
-  return localScope.initialized && !projectScopeHasPending(localScope)
-    ? projectScopeReady(policy.currentPeriod.period_key, localScope)
-    : projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope);
+  const projectScope =
+    localScope.initialized && !projectScopeHasPending(localScope)
+      ? projectScopeReady(policy.currentPeriod.period_key, localScope)
+      : projectScopeApprovalRequired(
+          policy.currentPeriod.period_key,
+          localScope,
+        );
+  const binding = await bindingCompletionState(
+    projectScope.status === "project_scope_approval_required",
+  );
+  connectedOutput(
+    policy.partnerId,
+    config.deviceName,
+    { status: config.connectivityStatus ?? "verified" },
+    binding,
+    {
+      ...projectScope,
+      projectDiscoverySource: "codex_app_list_threads",
+      listedThreads: input.threads.length,
+      listedPinnedThreads: input.pinnedThreads.length,
+      listingMayBePartial: hostProjectDiscoveryMayBePartial(input),
+      scanStartsAt,
+      scanEndsAt: runStartedAt,
+    },
+    installScheduledCollectionTask(),
+  );
 }
 
 async function connect() {
@@ -758,10 +802,18 @@ async function connect() {
   saveCollectionState(collectionState);
   const connectivity = await performConnectivityTest(tokens);
   const scheduledTaskInstallation = installScheduledCollectionTask();
-  const projectScope = await discoverProjectScopeAfterBinding();
-  const binding = await bindingCompletionState(
-    projectScope.status === "project_scope_approval_required",
-  );
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  const projectScope = initialProjectDiscoveryNeedsResume(
+    false,
+    remoteScope.initialized,
+    remoteScope.identityConfirmed,
+  )
+    ? hostProjectDiscoveryRequired(policy.currentPeriod)
+    : undefined;
+  const binding = await bindingCompletionState(false);
   connectedOutput(
     tokens.partnerId,
     deviceName,
@@ -794,11 +846,9 @@ async function connectivityTest() {
     remoteScope.initialized,
     remoteScope.identityConfirmed,
   )
-    ? await discoverProjectScopeAfterBinding()
+    ? hostProjectDiscoveryRequired(policy.currentPeriod)
     : undefined;
-  const binding = await bindingCompletionState(
-    projectScope?.status === "project_scope_approval_required",
-  );
+  const binding = await bindingCompletionState(false);
   connectedOutput(
     policy.partnerId,
     config.deviceName,
@@ -2512,6 +2562,7 @@ function help() {
     commands: [
       "connect --server <url> --binding-code <code> [--device-name <name>] [--allow-insecure-http]",
       "connectivity-test",
+      "project-discovery-submit --input <path>",
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
       "migrate-credentials",
@@ -2536,6 +2587,8 @@ const command = process.argv[2] ?? "help";
 async function runCommand() {
   if (command === "connect") await connect();
   else if (command === "connectivity-test") await connectivityTest();
+  else if (command === "project-discovery-submit")
+    await submitHostProjectDiscovery();
   else if (command === "server-url-set") await setServerUrl();
   else if (command === "scheduled-task-config") scheduledTaskConfig();
   else if (command === "migrate-credentials")

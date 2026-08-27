@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -14,8 +15,38 @@ import {
   type CliOutput,
 } from "./mcp-output.js";
 import { PARTNER_REPORT_CLI_TIMEOUT_MS } from "./timeouts.js";
+import {
+  CODEX_HOST_CWD_MAX_LENGTH,
+  CODEX_HOST_PINNED_THREAD_LIMIT,
+  CODEX_HOST_THREAD_LIST_LIMIT,
+  CODEX_HOST_THREAD_ID_MAX_LENGTH,
+  CODEX_HOST_THREAD_SOURCE_MAX_LENGTH,
+  CODEX_HOST_TIMESTAMP_MAX_LENGTH,
+  type HostProjectDiscoveryInput,
+} from "./host-project-discovery.js";
 
 const execFileAsync = promisify(execFile);
+const hostTimestampSchema = z.union([
+  z.string().trim().min(1).max(CODEX_HOST_TIMESTAMP_MAX_LENGTH),
+  z.number().finite(),
+]);
+const hostThreadMetadataSchema = z
+  .object({
+    id: z.string().trim().min(1).max(CODEX_HOST_THREAD_ID_MAX_LENGTH),
+    cwd: z.string().max(CODEX_HOST_CWD_MAX_LENGTH).nullable(),
+    createdAt: hostTimestampSchema.nullable().optional(),
+    updatedAt: hostTimestampSchema.nullable(),
+    archived: z.boolean().default(false),
+    ephemeral: z.boolean().default(false),
+    threadSource: z
+      .string()
+      .trim()
+      .max(CODEX_HOST_THREAD_SOURCE_MAX_LENGTH)
+      .nullable()
+      .optional(),
+    systemGenerated: z.boolean().default(false),
+  })
+  .strict();
 const cliPath =
   process.env.PARTNER_REPORT_CLI_PATH ??
   resolve(import.meta.dirname, "cli.mjs");
@@ -60,6 +91,23 @@ async function invokeCli(command: string, args: string[] = []) {
       }
     }
     throw error;
+  }
+}
+
+async function invokeCliWithPrivateJson(
+  command: string,
+  value: HostProjectDiscoveryInput,
+) {
+  const directory = mkdtempSync(
+    resolve(tmpdir(), "partner-report-project-discovery-"),
+  );
+  const inputPath = resolve(directory, "input.json");
+  try {
+    writeFileSync(inputPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    chmodSync(inputPath, 0o600);
+    return await invokeCli(command, ["--input", inputPath]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 
@@ -183,7 +231,7 @@ registerTool(
   "connect",
   {
     description:
-      "连接 Partner Report，扫描首次项目，并仅在飞书项目权限卡成功送达后完成绑定。",
+      "连接 Partner Report，并发起由 Codex App 官方任务列表驱动的首次项目发现。",
     inputSchema: {
       serverUrl: z.string().url(),
       bindingCode: z.string().min(1),
@@ -212,6 +260,31 @@ registerTool(
     annotations: networkWrite,
   },
   () => execute(() => invokeCli("connectivity-test")),
+);
+
+registerTool(
+  "project_discovery_submit",
+  {
+    description:
+      "提交 Codex App 官方任务列表工具返回的一页最小元数据，完成首次项目发现和绑定。不得提交 Session 正文。",
+    inputSchema: {
+      threads: z
+        .array(hostThreadMetadataSchema)
+        .max(CODEX_HOST_THREAD_LIST_LIMIT),
+      pinnedThreads: z
+        .array(hostThreadMetadataSchema)
+        .max(CODEX_HOST_PINNED_THREAD_LIMIT)
+        .default([]),
+    },
+    annotations: networkWrite,
+  },
+  ({ threads, pinnedThreads }) =>
+    execute(() =>
+      invokeCliWithPrivateJson("project-discovery-submit", {
+        threads,
+        pinnedThreads,
+      }),
+    ),
 );
 
 registerTool(

@@ -4145,10 +4145,10 @@ var sessionContributionIngestSchema = external_exports.preprocess(
   (value) => {
     if (!value || typeof value !== "object" || Array.isArray(value))
       return value;
-    const record = value;
-    if (!("status" in record)) return value;
-    if (!workStatusSchema.safeParse(record.status).success) return value;
-    const { status: _legacyStatus, ...contribution } = record;
+    const record2 = value;
+    if (!("status" in record2)) return value;
+    if (!workStatusSchema.safeParse(record2.status).success) return value;
+    const { status: _legacyStatus, ...contribution } = record2;
     return contribution;
   },
   sessionContributionSchema
@@ -5031,8 +5031,8 @@ function markWeekBackfillCompleted(state, weekStartsAt) {
 }
 function threadIsInScanWindow(updatedAt, scanStartsAt, scanEndsAt) {
   if (updatedAt == null) return true;
-  const timestamp3 = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
-  return Number.isFinite(timestamp3) && timestamp3 >= new Date(scanStartsAt).getTime() && timestamp3 <= new Date(scanEndsAt).getTime();
+  const timestamp4 = typeof updatedAt === "number" && updatedAt < 1e10 ? updatedAt * 1e3 : new Date(updatedAt).getTime();
+  return Number.isFinite(timestamp4) && timestamp4 >= new Date(scanStartsAt).getTime() && timestamp4 <= new Date(scanEndsAt).getTime();
 }
 function threadCouldContainWindowAnswer(updatedAt, scanStartsAt) {
   if (updatedAt == null) return true;
@@ -5134,7 +5134,7 @@ function acquireCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ n
     }
     unlinkSync2(path);
   }
-  const timestamp3 = now.toISOString();
+  const timestamp4 = now.toISOString();
   try {
     writeLease(
       path,
@@ -5142,8 +5142,8 @@ function acquireCollectionLease(pluginInstanceId, runId, now = /* @__PURE__ */ n
         schemaVersion: "1.0",
         pluginInstanceId,
         runId,
-        acquiredAt: timestamp3,
-        heartbeatAt: timestamp3
+        acquiredAt: timestamp4,
+        heartbeatAt: timestamp4
       },
       true
     );
@@ -5223,12 +5223,12 @@ function repairImmutableResult(result, expected) {
   if (!result || typeof result !== "object" || Array.isArray(result) || result.decision !== "include" || !expected || typeof expected !== "object" || Array.isArray(expected)) {
     return { result, repaired: false };
   }
-  const record = result;
-  const originalContribution = record.contribution && typeof record.contribution === "object" && !Array.isArray(record.contribution) ? record.contribution : {};
+  const record2 = result;
+  const originalContribution = record2.contribution && typeof record2.contribution === "object" && !Array.isArray(record2.contribution) ? record2.contribution : {};
   const contribution = { ...originalContribution };
   for (const key of immutableContributionKeys)
     contribution[key] = expected[key];
-  const repairedResult = { ...record, contribution };
+  const repairedResult = { ...record2, contribution };
   return {
     result: repairedResult,
     repaired: !isDeepStrictEqual(repairedResult, result)
@@ -5844,6 +5844,101 @@ var CodexAppServer = class {
   }
 };
 
+// src/host-project-discovery.ts
+var CODEX_HOST_THREAD_LIST_LIMIT = 50;
+var CODEX_HOST_PINNED_THREAD_LIMIT = 200;
+var CODEX_HOST_THREAD_ID_MAX_LENGTH = 256;
+var CODEX_HOST_CWD_MAX_LENGTH = 8192;
+var CODEX_HOST_TIMESTAMP_MAX_LENGTH = 80;
+var CODEX_HOST_THREAD_SOURCE_MAX_LENGTH = 120;
+function record(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1\u5143\u6570\u636E\u683C\u5F0F\u65E0\u6548\u3002");
+  return value;
+}
+function onlyKeys(value, allowed) {
+  if (Object.keys(value).some((key) => !allowed.has(key)))
+    throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1\u5143\u6570\u636E\u5305\u542B\u672A\u5141\u8BB8\u5B57\u6BB5\u3002");
+}
+function timestamp2(value, optional = false) {
+  if (value === void 0 && optional) return void 0;
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0 && value.trim().length <= CODEX_HOST_TIMESTAMP_MAX_LENGTH)
+    return value.trim();
+  throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1\u65F6\u95F4\u683C\u5F0F\u65E0\u6548\u3002");
+}
+function optionalBoolean(value) {
+  if (value === void 0) return false;
+  if (typeof value !== "boolean")
+    throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1\u5E03\u5C14\u5B57\u6BB5\u683C\u5F0F\u65E0\u6548\u3002");
+  return value;
+}
+function parseHostThreadMetadata(value) {
+  const item = record(value);
+  onlyKeys(
+    item,
+    /* @__PURE__ */ new Set([
+      "id",
+      "cwd",
+      "createdAt",
+      "updatedAt",
+      "archived",
+      "ephemeral",
+      "threadSource",
+      "systemGenerated"
+    ])
+  );
+  const id = typeof item.id === "string" ? item.id.trim() : "";
+  if (!id || id.length > CODEX_HOST_THREAD_ID_MAX_LENGTH)
+    throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1 ID \u683C\u5F0F\u65E0\u6548\u3002");
+  const cwd = item.cwd;
+  if (cwd !== null && (typeof cwd !== "string" || cwd.length > CODEX_HOST_CWD_MAX_LENGTH))
+    throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1\u76EE\u5F55\u683C\u5F0F\u65E0\u6548\u3002");
+  const threadSource = item.threadSource;
+  if (threadSource !== void 0 && threadSource !== null && (typeof threadSource !== "string" || threadSource.trim().length > CODEX_HOST_THREAD_SOURCE_MAX_LENGTH))
+    throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1\u6765\u6E90\u683C\u5F0F\u65E0\u6548\u3002");
+  const createdAt = timestamp2(item.createdAt, true);
+  return {
+    id,
+    cwd,
+    ...createdAt === void 0 ? {} : { createdAt },
+    updatedAt: timestamp2(item.updatedAt) ?? null,
+    archived: optionalBoolean(item.archived),
+    ephemeral: optionalBoolean(item.ephemeral),
+    ...threadSource === void 0 ? {} : {
+      threadSource: typeof threadSource === "string" ? threadSource.trim() : threadSource
+    },
+    systemGenerated: optionalBoolean(item.systemGenerated)
+  };
+}
+function threadList(value, maximum) {
+  if (!Array.isArray(value) || value.length > maximum)
+    throw new Error("Codex \u5BBF\u4E3B\u4EFB\u52A1\u5217\u8868\u6570\u91CF\u65E0\u6548\u3002");
+  return value.map(parseHostThreadMetadata);
+}
+function parseHostProjectDiscoveryInput(value) {
+  const input = record(value);
+  onlyKeys(input, /* @__PURE__ */ new Set(["threads", "pinnedThreads"]));
+  return {
+    threads: threadList(input.threads, CODEX_HOST_THREAD_LIST_LIMIT),
+    pinnedThreads: threadList(
+      input.pinnedThreads ?? [],
+      CODEX_HOST_PINNED_THREAD_LIMIT
+    )
+  };
+}
+function uniqueHostProjectDiscoveryThreads(input) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const thread of [...input.threads, ...input.pinnedThreads]) {
+    if (!byId.has(thread.id)) byId.set(thread.id, thread);
+  }
+  return [...byId.values()];
+}
+function hostProjectDiscoveryMayBePartial(input) {
+  return input.threads.length === CODEX_HOST_THREAD_LIST_LIMIT;
+}
+
 // src/scan.ts
 import { createHash } from "node:crypto";
 import { existsSync as existsSync4 } from "node:fs";
@@ -5880,13 +5975,13 @@ function safeText(value, maxLength) {
   const text = redactSensitive(value).text;
   return maxLength === void 0 ? text : text.slice(0, maxLength);
 }
-function timestamp2(value) {
+function timestamp3(value) {
   if (typeof value === "string") return new Date(value).getTime();
   if (typeof value !== "number") return Number.NaN;
   return value > 1e10 ? value : value * 1e3;
 }
 function toIso(value) {
-  const time = timestamp2(value);
+  const time = timestamp3(value);
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 function textContent(content) {
@@ -7178,8 +7273,35 @@ function connectedOutput(partnerId, deviceName, connectivity, binding, projectSc
     nextStep: scheduledTaskInstallation?.status === "failed" ? "\u8FDE\u63A5\u51ED\u636E\u5DF2\u4FDD\u7559\uFF0C\u4F46 Codex Scheduled Task \u68C0\u67E5\u5931\u8D25\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u91CD\u8BD5\u3002" : scheduledTaskInstallation?.status === "required" ? "\u8FDE\u63A5\u51ED\u636E\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u4F7F\u7528\u8FD4\u56DE\u7684 scheduledTask \u914D\u7F6E\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u521B\u5EFA\u4EFB\u52A1\u3002" : "\u68C0\u6D4B\u5230\u540C\u540D Codex Scheduled Task\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u786E\u8BA4\u5176\u53EF\u89C1\u3002"
   });
 }
-async function discoverProjectScopeAfterBinding() {
+function hostProjectDiscoveryRequired(currentPeriod, scanEndsAt = (/* @__PURE__ */ new Date()).toISOString()) {
+  if (!currentPeriod)
+    throw Object.assign(new Error("\u5F53\u524D Team \u6CA1\u6709\u5F00\u653E\u7684 Report Period\u3002"), {
+      code: "REPORT_PERIOD_MISSING"
+    });
+  return {
+    status: "project_discovery_required",
+    periodKey: currentPeriod.period_key,
+    scanStartsAt: initialProjectScopeStartAt(scanEndsAt),
+    scanEndsAt,
+    hostTool: {
+      name: "list_threads",
+      arguments: { limit: CODEX_HOST_THREAD_LIST_LIMIT },
+      includePinnedThreads: true
+    },
+    submitTool: { name: "project_discovery_submit" },
+    projectDiscoveryNextStep: "\u8C03\u7528 Codex App \u5B98\u65B9 list_threads(limit: 50)\uFF0C\u518D\u628A threads \u548C pinnedThreads \u7684\u6700\u5C0F\u5143\u6570\u636E\u63D0\u4EA4\u7ED9 project_discovery_submit\u3002"
+  };
+}
+async function submitHostProjectDiscovery() {
   const config = loadConfig();
+  const inputPath = option("input");
+  if (!inputPath)
+    throw Object.assign(new Error("\u9996\u6B21\u9879\u76EE\u53D1\u73B0\u7F3A\u5C11\u5BBF\u4E3B\u4EFB\u52A1\u5217\u8868\u8F93\u5165\u3002"), {
+      code: "PROJECT_DISCOVERY_INPUT_REQUIRED"
+    });
+  const input = parseHostProjectDiscoveryInput(
+    JSON.parse(readFileSync7(inputPath, "utf8"))
+  );
   const [policy, remoteScope] = await Promise.all([
     fetchPolicy(),
     fetchProjectScope()
@@ -7192,20 +7314,8 @@ async function discoverProjectScopeAfterBinding() {
   const synchronizedLocalScope = synchronized.scope;
   const runStartedAt = (/* @__PURE__ */ new Date()).toISOString();
   const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
-  const server = new CodexAppServer();
-  let listed;
-  try {
-    await server.connect();
-    listed = await server.listThreads({ updatedSince: scanStartsAt });
-  } finally {
-    server.close();
-  }
-  const summaries = listed.map(summaryFromThread).filter((value) => Boolean(value));
-  const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
-  const currentSessionId = process.env.CODEX_THREAD_ID;
-  const metadataEligible = summaries.filter(
-    (summary) => summary.id !== currentSessionId && !summary.archived && !excludedSessionIds.has(summary.id) && !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) && !isPluginSystemThread(summary)
-  );
+  const summaries = uniqueHostProjectDiscoveryThreads(input).map(summaryFromThread).filter((value) => Boolean(value));
+  const metadataEligible = metadataEligibleThreads(summaries, config);
   const permissionDiscoverySummaries = metadataEligible.filter(
     (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt)
   );
@@ -7237,7 +7347,29 @@ async function discoverProjectScopeAfterBinding() {
     discovery.candidates
   );
   saveLocalProjectScope(localScope);
-  return localScope.initialized && !projectScopeHasPending(localScope) ? projectScopeReady(policy.currentPeriod.period_key, localScope) : projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope);
+  const projectScope = localScope.initialized && !projectScopeHasPending(localScope) ? projectScopeReady(policy.currentPeriod.period_key, localScope) : projectScopeApprovalRequired(
+    policy.currentPeriod.period_key,
+    localScope
+  );
+  const binding = await bindingCompletionState(
+    projectScope.status === "project_scope_approval_required"
+  );
+  connectedOutput(
+    policy.partnerId,
+    config.deviceName,
+    { status: config.connectivityStatus ?? "verified" },
+    binding,
+    {
+      ...projectScope,
+      projectDiscoverySource: "codex_app_list_threads",
+      listedThreads: input.threads.length,
+      listedPinnedThreads: input.pinnedThreads.length,
+      listingMayBePartial: hostProjectDiscoveryMayBePartial(input),
+      scanStartsAt,
+      scanEndsAt: runStartedAt
+    },
+    installScheduledCollectionTask()
+  );
 }
 async function connect() {
   const requestedServerUrl = option("server") ?? process.env.PARTNER_REPORT_SERVER_URL;
@@ -7290,10 +7422,16 @@ async function connect() {
   saveCollectionState(collectionState);
   const connectivity = await performConnectivityTest(tokens);
   const scheduledTaskInstallation = installScheduledCollectionTask();
-  const projectScope = await discoverProjectScopeAfterBinding();
-  const binding = await bindingCompletionState(
-    projectScope.status === "project_scope_approval_required"
-  );
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope()
+  ]);
+  const projectScope = initialProjectDiscoveryNeedsResume(
+    false,
+    remoteScope.initialized,
+    remoteScope.identityConfirmed
+  ) ? hostProjectDiscoveryRequired(policy.currentPeriod) : void 0;
+  const binding = await bindingCompletionState(false);
   connectedOutput(
     tokens.partnerId,
     deviceName,
@@ -7322,10 +7460,8 @@ async function connectivityTest() {
     Boolean(pending),
     remoteScope.initialized,
     remoteScope.identityConfirmed
-  ) ? await discoverProjectScopeAfterBinding() : void 0;
-  const binding = await bindingCompletionState(
-    projectScope?.status === "project_scope_approval_required"
-  );
+  ) ? hostProjectDiscoveryRequired(policy.currentPeriod) : void 0;
+  const binding = await bindingCompletionState(false);
   connectedOutput(
     policy.partnerId,
     config.deviceName,
@@ -8799,6 +8935,7 @@ function help() {
     commands: [
       "connect --server <url> --binding-code <code> [--device-name <name>] [--allow-insecure-http]",
       "connectivity-test",
+      "project-discovery-submit --input <path>",
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
       "migrate-credentials",
@@ -8822,6 +8959,8 @@ var command = process.argv[2] ?? "help";
 async function runCommand() {
   if (command === "connect") await connect();
   else if (command === "connectivity-test") await connectivityTest();
+  else if (command === "project-discovery-submit")
+    await submitHostProjectDiscovery();
   else if (command === "server-url-set") await setServerUrl();
   else if (command === "scheduled-task-config") scheduledTaskConfig();
   else if (command === "migrate-credentials")

@@ -41,7 +41,7 @@ describe("partner report skill packaging", () => {
     );
 
     expect(skill).toContain("只使用插件自带的 `partner-report` MCP 工具");
-    expect(skill).toContain("不得改用 shell 或 CLI");
+    expect(skill).toContain("不得改用其他工具、shell 或 CLI");
     expect(skill).not.toContain('node "<PLUGIN_PATH>/dist/cli.mjs"');
     expect(skill).toContain("不得修改 Codex 的全局权限模式");
     expect(skill).toContain("工具结果包含 `nextTool` 时");
@@ -51,10 +51,11 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("collect_submit");
     expect(skill).toContain("collect_review");
     expect(skill).toContain("collect_defer");
+    expect(skill).toContain("project_discovery_submit");
     expect(skill).toContain("project_description_submit");
     expect(skill).toContain("project_scope_list");
     expect(skill).toContain("不提供修改或同步权限");
-    expect(skill).toContain("只有插件完成首次项目扫描");
+    expect(skill).toContain("插件完成真实项目归并");
     expect(skill).toContain("`bindingCompleted: true`");
     expect(skill).toContain("飞书权限卡仅“请求发送”不等于已经送达");
     expect(skill).toContain("exclusion_set");
@@ -87,10 +88,18 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("通俗、精简、直接");
     expect(skill).toContain("本地文件是采集前的强制隐私门禁");
     expect(skill).toContain("最近 7 天有实际活动且未归档");
-    expect(skill).toContain("通过 `thread/list` 扫描项目元数据");
+    expect(skill).toContain("Codex App 官方 `list_threads(limit: 50)`");
+    expect(skill).toContain('{ "limit": 50 }');
+    expect(skill).toContain("`threads` 和 `pinnedThreads`");
+    expect(skill).toContain("不得传 title、summary");
+    expect(skill).toContain(
+      "不得改用 shell、插件 CLI 或自行启动 `codex app-server`",
+    );
     expect(skill).toContain("多个 worktree 归并为一个逻辑项目");
-    expect(skill).toContain("每个项目至少 1 个 Session 即登记为 pending");
-    expect(skill).toContain("用户输入绑定码只允许插件");
+    expect(skill).toContain("每个真实项目至少 1 个 Session 即登记为 pending");
+    expect(skill).toContain("用户输入绑定码只允许首次项目发现");
+    expect(skill).toContain("`~/Documents/Codex/YYYY-MM-DD/<任务名>`");
+    expect(skill).toContain("不得为追求完整统计继续翻页");
     expect(skill).toContain("必须通过飞书项目权限卡由用户逐项允许或拒绝");
     expect(skill).toContain(
       "历史上未经飞书确认却为 allowed 的项目必须恢复为 pending",

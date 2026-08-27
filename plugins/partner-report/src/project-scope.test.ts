@@ -378,12 +378,24 @@ describe("project scope privacy boundary", () => {
   });
 
   it("filters the standard Codex Documents workspace by default", () => {
+    const temporarySession = {
+      id: "codex-workspace",
+      cwd: resolve(
+        homedir(),
+        "Documents",
+        "Codex",
+        "2026-08-25",
+        "https-x-com-claudeai-status-2090518650251804742",
+      ),
+    };
+    expect(classifyProjectEnvironment(temporarySession)).toEqual({
+      kind: "temporary",
+      localRoot: null,
+    });
     expect(
-      classifyProjectEnvironment({
-        id: "codex-workspace",
-        cwd: resolve(homedir(), "Documents", "Codex", "2026-08-07", "run"),
-      }),
-    ).toEqual({ kind: "temporary", localRoot: null });
+      discoverProjectScopes(pluginInstanceId, localScope(), [temporarySession])
+        .candidates,
+    ).toEqual([]);
   });
 
   it("keeps a single-Session Git project as a permission candidate", () => {
