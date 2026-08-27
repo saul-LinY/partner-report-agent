@@ -94,7 +94,6 @@ import {
   authorizedProjectThreads,
   discoverProjectScopes,
   inspectLocalProjectScope,
-  inspectLocalProjectScopeChanges,
   localProjectScopeHasIdentityCollisions,
   localProjectScopeRequiresBootstrap,
   mergeDiscoveredRoots,
@@ -437,7 +436,6 @@ async function synchronizeLocalProjectScope(
   inspection = inspectLocalProjectScope(remote.pluginInstanceId),
 ) {
   let synchronizedRemote = remote;
-  let changedCount = 0;
   let bootstrapped = false;
   const identityCollision =
     inspection.state === "valid" &&
@@ -462,23 +460,6 @@ async function synchronizeLocalProjectScope(
       },
     );
     bootstrapped = true;
-  } else if (inspection.state === "valid") {
-    const changes = inspectLocalProjectScopeChanges(inspection.scope, remote);
-    if (changes.kind === "conflict")
-      throw Object.assign(new Error(changes.reason), {
-        code: "PROJECT_SCOPE_LOCAL_CONFLICT",
-        currentVersion: remote.version,
-      });
-    if (changes.kind === "changes") {
-      synchronizedRemote = await fetchProjectScope({
-        method: "PATCH",
-        body: JSON.stringify({
-          baseVersion: remote.version,
-          decisions: changes.decisions,
-        }),
-      });
-      changedCount = changes.decisions.length;
-    }
   }
   const scope = mergeRemoteProjectScope(inspection.scope, synchronizedRemote);
   saveLocalProjectScope(scope);
@@ -486,7 +467,6 @@ async function synchronizeLocalProjectScope(
     inspection,
     remote: synchronizedRemote,
     scope,
-    changedCount,
     bootstrapped,
   };
 }
@@ -2505,77 +2485,6 @@ async function projectScopeList() {
   });
 }
 
-async function synchronizeProjectScopeCommand() {
-  const remote = await fetchProjectScope();
-  const synchronized = await synchronizeLocalProjectScope(remote);
-  output({
-    status: "project_scope_synced",
-    version: synchronized.remote.version,
-    changedCount: synchronized.changedCount,
-    localState: synchronized.inspection.state,
-  });
-}
-
-async function changeProjectScope(decision: "allow" | "deny") {
-  const config = loadConfig()!;
-  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  if (localInspection.state !== "valid")
-    throw Object.assign(
-      new Error("本地项目范围尚未建立，请先同步并在飞书完成项目审核。"),
-      { code: "PROJECT_SCOPE_SYNC_REQUIRED" },
-    );
-  const remote = await fetchProjectScope();
-  const scopeKey = option("scope-key")?.trim();
-  const projectName = option("project")?.trim().toLocaleLowerCase("zh-CN");
-  let selected = remote.entries.filter((entry) => {
-    if (flag("all-pending")) return entry.status === "pending";
-    if (scopeKey) return entry.scopeKey === scopeKey;
-    if (projectName)
-      return entry.displayName.toLocaleLowerCase("zh-CN") === projectName;
-    return false;
-  });
-  if (!scopeKey && !projectName && !flag("all-pending"))
-    throw new Error(
-      "需要 --project <项目名>、--scope-key <key> 或 --all-pending。",
-    );
-  if (projectName && selected.length > 1)
-    throw new Error(
-      "存在同名项目，请先 project-scope-list，再用 --scope-key 指定。",
-    );
-  if (selected.length === 0) throw new Error("没有找到匹配的项目权限。");
-  if (selected.some((entry) => entry.status === "pending"))
-    throw Object.assign(
-      new Error("待审批项目只能由用户在飞书项目权限卡中确认。"),
-      { code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED" },
-    );
-  selected = selected.slice(0, 500);
-  const updated = await authenticatedRequest<RemoteProjectScopePolicy>(
-    "/v1/project-scope",
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        baseVersion: remote.version,
-        decisions: selected.map((entry) => ({
-          scopeKey: entry.scopeKey,
-          decision,
-        })),
-      }),
-    },
-  );
-  saveLocalProjectScope(
-    mergeRemoteProjectScope(localInspection.scope, updated),
-  );
-  output({
-    status: "project_scope_updated",
-    decision,
-    version: updated.version,
-    projects: selected.map((entry) => ({
-      scopeKey: entry.scopeKey,
-      name: entry.displayName,
-    })),
-  });
-}
-
 function configureExclusion(kind: "session" | "path", remove = false) {
   const config = loadConfig()!;
   const raw = option(kind === "session" ? "session-id" : "path");
@@ -2615,9 +2524,6 @@ function help() {
       "collect-defer --run <path> --reason <TIME_BUDGET_EXHAUSTED|RUN_INTERRUPTED|TEMPORARILY_UNAVAILABLE>",
       "status",
       "project-scope-list",
-      "project-scope-sync",
-      "project-scope-allow --project <name>|--scope-key <key>|--all-pending",
-      "project-scope-deny --project <name>|--scope-key <key>|--all-pending",
       "exclude-session --session-id <id>",
       "include-session --session-id <id>",
       "exclude-path --path <absolute-path>",
@@ -2645,10 +2551,6 @@ async function runCommand() {
   else if (command === "collect-defer") collectDefer();
   else if (command === "status") await status();
   else if (command === "project-scope-list") await projectScopeList();
-  else if (command === "project-scope-sync")
-    await synchronizeProjectScopeCommand();
-  else if (command === "project-scope-allow") await changeProjectScope("allow");
-  else if (command === "project-scope-deny") await changeProjectScope("deny");
   else if (command === "exclude-session") configureExclusion("session");
   else if (command === "include-session") configureExclusion("session", true);
   else if (command === "exclude-path") configureExclusion("path");

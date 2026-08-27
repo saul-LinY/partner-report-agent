@@ -6,6 +6,7 @@ import {
   beginProjectScopeBootstrap,
   decideProjectScopes,
   registerProjectScopeCandidates,
+  reopenProjectScopeReview,
 } from "./project-scope.js";
 
 const suite = process.env.RUN_DB_TESTS === "1" ? describe : describe.skip;
@@ -247,19 +248,80 @@ suite("project scope persistence", () => {
       expect.objectContaining({ scopeKey: laterKey, status: "allowed" }),
     );
 
+    const adminActor: DomainActor = {
+      ...actor,
+      actorType: "web",
+      actorId: fixture.userId,
+      userId: fixture.userId,
+      partnerId: null,
+    };
+    const reopened = await reopenProjectScopeReview(
+      adminActor,
+      fixture.pluginInstanceId,
+      { baseVersion: laterApproved.version },
+    );
+    expect(reopened).toMatchObject({
+      version: laterApproved.version + 1,
+      initialized: false,
+      initializedAt: null,
+    });
+    expect(reopened.entries).toHaveLength(3);
+    expect(reopened.entries.every((entry) => entry.status === "pending")).toBe(
+      true,
+    );
+    expect(
+      reopened.entries.every((entry) => entry.effectiveFrom === null),
+    ).toBe(true);
+    const reapprovalEvents = await sql<Array<{ payload: any }>>`
+      select payload from outbox_events
+      where tenant_id = ${fixture.tenantId}
+        and aggregate_id = ${fixture.pluginInstanceId}
+        and event_type = 'project_scope.candidates.changed'
+        and payload->>'reason' = 'admin_reapproval'
+    `;
+    expect(reapprovalEvents).toEqual([
+      {
+        payload: expect.objectContaining({
+          partnerId: fixture.partnerId,
+          periodKey: "scope-period",
+          version: reopened.version,
+          reason: "admin_reapproval",
+        }),
+      },
+    ]);
+    await expect(
+      reopenProjectScopeReview(adminActor, fixture.pluginInstanceId, {
+        baseVersion: reopened.version,
+      }),
+    ).rejects.toMatchObject({
+      code: "PROJECT_SCOPE_REVIEW_IN_PROGRESS",
+    } satisfies Partial<ApiError>);
+
+    const reapproved = await decideProjectScopes(
+      feishuActor,
+      fixture.pluginInstanceId,
+      {
+        baseVersion: reopened.version,
+        decisions: reopened.entries.map((entry) => ({
+          scopeKey: entry.scopeKey,
+          decision: "allow" as const,
+        })),
+      },
+    );
+
     const reset = await beginProjectScopeBootstrap(identity, {
-      baseVersion: laterApproved.version,
+      baseVersion: reapproved.version,
       reason: "local_scope_invalid",
     });
     expect(reset).toMatchObject({
-      version: laterApproved.version + 1,
+      version: reapproved.version + 1,
       initialized: false,
       initializedAt: null,
       entries: [],
     });
     await expect(
       beginProjectScopeBootstrap(identity, {
-        baseVersion: laterApproved.version,
+        baseVersion: reapproved.version,
         reason: "local_scope_missing",
       }),
     ).rejects.toMatchObject({

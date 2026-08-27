@@ -20,6 +20,10 @@ import {
   type PluginExecutionEvent,
 } from "../plugin-log-diagnostics.js";
 import { runSystemProbe, systemProbeKeys } from "../system-probes.js";
+import {
+  projectSystemLogExecutions,
+  type SystemLogSource,
+} from "../system-logs.js";
 
 export function isValidPluginLogDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -55,6 +59,25 @@ const pluginLogAnalysisSchema = z
     executionId: z.string().trim().min(1).max(120),
   })
   .strict();
+
+const systemLogQuerySchema = z
+  .object({
+    executionId: z.string().trim().min(1).max(120).optional(),
+    date: z
+      .string()
+      .refine(isValidPluginLogDate, "日期必须是有效的 YYYY-MM-DD。")
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(2_000).default(500),
+  })
+  .strict();
+
+const systemLogAnalysisSchema = z
+  .object({ executionId: z.string().trim().min(1).max(120) })
+  .strict();
+
+const systemExecutionIdSchema = z
+  .string()
+  .regex(/^(inbox|job|delivery|outbox|report):[0-9a-f-]{36}$/i);
 
 const systemProbeParamsSchema = z
   .object({ component: z.enum(systemProbeKeys) })
@@ -462,6 +485,267 @@ export async function observabilityRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get("/v1/admin/system-logs", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const query = systemLogQuerySchema.parse(request.query);
+    const teams = await sql<Array<{ timezone: string }>>`
+      select timezone from teams
+      where id = ${actor.teamId} and tenant_id = ${actor.tenantId}
+      limit 1
+    `;
+    const timezone = teams[0]?.timezone ?? "Asia/Shanghai";
+    const windows = query.date
+      ? await sql<Array<{ window_start: Date; window_end: Date }>>`
+          select
+            (${query.date}::date::timestamp at time zone ${timezone}) as window_start,
+            ((${query.date}::date + 1)::timestamp at time zone ${timezone}) as window_end
+        `
+      : await sql<Array<{ window_start: Date; window_end: Date }>>`
+          select now() - interval '24 hours' as window_start, now() as window_end
+        `;
+    const window = windows[0]!;
+    const [jobs, deliveries, inbox, outbox, reports] = await Promise.all([
+      sql<any[]>`
+        select aj.*, p.display_name as partner_name
+        from agent_jobs aj
+        left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
+        where aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
+          and aj.type not like 'SYSTEM_HEALTH_%'
+          and aj.type not in ('ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS')
+          and (
+            (aj.created_at >= ${window.window_start} and aj.created_at < ${window.window_end})
+            or (aj.updated_at >= ${window.window_start} and aj.updated_at < ${window.window_end})
+            or (aj.completed_at >= ${window.window_start} and aj.completed_at < ${window.window_end})
+          )
+        order by aj.updated_at desc limit ${query.limit}
+      `,
+      sql<any[]>`
+        select fd.*, p.display_name as partner_name
+        from feishu_deliveries fd
+        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
+        where fd.tenant_id = ${actor.tenantId} and fd.team_id = ${actor.teamId}
+          and (
+            (fd.created_at >= ${window.window_start} and fd.created_at < ${window.window_end})
+            or (fd.updated_at >= ${window.window_start} and fd.updated_at < ${window.window_end})
+            or (fd.sent_at >= ${window.window_start} and fd.sent_at < ${window.window_end})
+          )
+        order by fd.updated_at desc limit ${query.limit}
+      `,
+      sql<any[]>`
+        select fie.*, p.display_name as partner_name
+        from feishu_inbox_events fie
+        join feishu_deliveries fd
+          on fd.id::text = fie.sanitized_payload->'value'->>'deliveryId'
+          or fd.message_id = fie.sanitized_payload->>'messageId'
+        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
+        where fd.tenant_id = ${actor.tenantId} and fd.team_id = ${actor.teamId}
+          and (
+            (fie.received_at >= ${window.window_start} and fie.received_at < ${window.window_end})
+            or (fie.updated_at >= ${window.window_start} and fie.updated_at < ${window.window_end})
+            or (fie.processed_at >= ${window.window_start} and fie.processed_at < ${window.window_end})
+          )
+        order by fie.updated_at desc limit ${query.limit}
+      `,
+      sql<any[]>`
+        select * from outbox_events
+        where tenant_id = ${actor.tenantId}
+          and (
+            payload->>'teamId' = ${actor.teamId}
+            or (aggregate_type = 'plugin_instance' and exists (
+              select 1 from plugin_instances pi
+              where pi.id::text = outbox_events.aggregate_id
+                and pi.tenant_id = ${actor.tenantId} and pi.team_id = ${actor.teamId}
+            ))
+            or (aggregate_type = 'review' and exists (
+              select 1 from reviews r
+              where r.id::text = outbox_events.aggregate_id
+                and r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
+            ))
+            or (aggregate_type in ('report', 'team_report') and exists (
+              select 1 from team_reports tr
+              where tr.id::text = outbox_events.aggregate_id
+                and tr.tenant_id = ${actor.tenantId} and tr.team_id = ${actor.teamId}
+            ))
+          )
+          and (
+            (created_at >= ${window.window_start} and created_at < ${window.window_end})
+            or (published_at >= ${window.window_start} and published_at < ${window.window_end})
+          )
+        order by created_at desc limit ${query.limit}
+      `,
+      sql<any[]>`
+        select tr.*, rp.period_key
+        from team_reports tr
+        join report_periods rp on rp.id = tr.period_id
+          and rp.tenant_id = tr.tenant_id and rp.team_id = tr.team_id
+        where tr.tenant_id = ${actor.tenantId} and tr.team_id = ${actor.teamId}
+          and (
+            (tr.created_at >= ${window.window_start} and tr.created_at < ${window.window_end})
+            or (tr.updated_at >= ${window.window_start} and tr.updated_at < ${window.window_end})
+            or (tr.generated_at >= ${window.window_start} and tr.generated_at < ${window.window_end})
+            or (tr.locked_at >= ${window.window_start} and tr.locked_at < ${window.window_end})
+          )
+        order by tr.updated_at desc limit ${query.limit}
+      `,
+    ]);
+    const projected = projectSystemLogExecutions({
+      jobs,
+      deliveries,
+      inbox,
+      outbox,
+      reports,
+    });
+    const selected = query.executionId
+      ? projected.find((item) => item.executionId === query.executionId)
+      : projected[0];
+    const analysis = selected
+      ? await sql<any[]>`
+          select id, status, output_payload, error_code, error_message,
+            created_at, updated_at, completed_at
+          from agent_jobs
+          where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+            and type = 'ANALYZE_SYSTEM_LOGS'
+            and input_payload->>'executionId' = ${selected.executionId}
+          order by created_at desc limit 1
+        `
+      : [];
+    return {
+      window: {
+        mode: query.date ? "day" : "recent",
+        date: query.date ?? null,
+        timezone,
+        startedAt: window.window_start,
+        endedAt: window.window_end,
+      },
+      selectedExecutionId: selected?.executionId ?? null,
+      executions: projected.map(
+        ({ events: _events, ...execution }) => execution,
+      ),
+      events: selected?.events ?? [],
+      modelAnalysis: analysis[0] ?? null,
+    };
+  });
+
+  app.post("/v1/admin/system-logs/analyze", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const input = systemLogAnalysisSchema.parse(request.body);
+    const executionId = systemExecutionIdSchema.parse(input.executionId);
+    const [source, sourceId] = executionId.split(":") as [
+      SystemLogSource,
+      string,
+    ];
+    z.string().uuid().parse(sourceId);
+    const emptyRows: Parameters<typeof projectSystemLogExecutions>[0] = {
+      jobs: [],
+      deliveries: [],
+      inbox: [],
+      outbox: [],
+      reports: [],
+    };
+    if (source === "job")
+      emptyRows.jobs = await sql<any[]>`
+        select aj.*, p.display_name as partner_name from agent_jobs aj
+        left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
+        where aj.id = ${sourceId} and aj.tenant_id = ${actor.tenantId}
+          and aj.team_id = ${actor.teamId} limit 1
+      `;
+    else if (source === "delivery")
+      emptyRows.deliveries = await sql<any[]>`
+        select fd.*, p.display_name as partner_name from feishu_deliveries fd
+        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
+        where fd.id = ${sourceId} and fd.tenant_id = ${actor.tenantId}
+          and fd.team_id = ${actor.teamId} limit 1
+      `;
+    else if (source === "inbox")
+      emptyRows.inbox = await sql<any[]>`
+        select fie.*, p.display_name as partner_name from feishu_inbox_events fie
+        join feishu_deliveries fd
+          on fd.id::text = fie.sanitized_payload->'value'->>'deliveryId'
+          or fd.message_id = fie.sanitized_payload->>'messageId'
+        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
+        where fie.id = ${sourceId} and fd.tenant_id = ${actor.tenantId}
+          and fd.team_id = ${actor.teamId} limit 1
+      `;
+    else if (source === "outbox")
+      emptyRows.outbox = await sql<any[]>`
+        select * from outbox_events where id = ${sourceId}
+          and tenant_id = ${actor.tenantId}
+          and (
+            payload->>'teamId' = ${actor.teamId}
+            or (aggregate_type = 'plugin_instance' and exists (
+              select 1 from plugin_instances pi
+              where pi.id::text = outbox_events.aggregate_id
+                and pi.tenant_id = ${actor.tenantId} and pi.team_id = ${actor.teamId}
+            ))
+            or (aggregate_type = 'review' and exists (
+              select 1 from reviews r
+              where r.id::text = outbox_events.aggregate_id
+                and r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
+            ))
+            or (aggregate_type in ('report', 'team_report') and exists (
+              select 1 from team_reports tr
+              where tr.id::text = outbox_events.aggregate_id
+                and tr.tenant_id = ${actor.tenantId} and tr.team_id = ${actor.teamId}
+            ))
+          )
+        limit 1
+      `;
+    else
+      emptyRows.reports = await sql<any[]>`
+        select tr.*, rp.period_key from team_reports tr
+        join report_periods rp on rp.id = tr.period_id
+          and rp.tenant_id = tr.tenant_id and rp.team_id = tr.team_id
+        where tr.id = ${sourceId} and tr.tenant_id = ${actor.tenantId}
+          and tr.team_id = ${actor.teamId} limit 1
+      `;
+    const execution = projectSystemLogExecutions(emptyRows)[0];
+    if (!execution)
+      throw new ApiError(
+        404,
+        "SYSTEM_EXECUTION_NOT_FOUND",
+        "找不到这次中台运行记录。",
+      );
+    const idempotencyKey = `system-log-analysis:${execution.executionId}:${execution.lastEventAt}`;
+    const rows = await sql<Array<{ id: string; status: string }>>`
+      insert into agent_jobs (
+        id, tenant_id, team_id, type, status, idempotency_key,
+        input_payload, max_attempts
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId},
+        'ANALYZE_SYSTEM_LOGS', 'PENDING', ${idempotencyKey},
+        ${JSON.stringify({
+          executionId: execution.executionId,
+          source: execution.source,
+          title: execution.title,
+          subject: execution.subject,
+          events: execution.events.map((event) => ({
+            level: event.level,
+            stage: event.stage,
+            eventCode: event.eventCode,
+            title: sanitizePluginLogText(event.title),
+            message: sanitizePluginLogText(event.message),
+            occurredAt: event.occurredAt,
+            details: event.details,
+          })),
+        })}::jsonb,
+        2
+      ) on conflict (tenant_id, idempotency_key) do update set
+        status = 'PENDING', attempt_count = 0, output_payload = null,
+        error_code = null, error_message = null, completed_at = null,
+        lease_until = null, updated_at = now()
+      returning id, status
+    `;
+    await audit(
+      request,
+      actor,
+      "system.logs.analysis_requested",
+      "system_execution",
+      execution.executionId,
+      { jobId: rows[0]?.id, source: execution.source },
+    );
+    return { ok: true, job: rows[0] };
+  });
+
   app.get("/v1/admin/system-monitoring", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const now = new Date();
@@ -486,7 +770,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
           from agent_jobs
           where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
             and type not like 'SYSTEM_HEALTH_%'
-            and type <> 'ANALYZE_PLUGIN_LOGS'
+            and type not in ('ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS')
         `,
       sql<any[]>`
           select
@@ -515,7 +799,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
           left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
           where aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
             and aj.type not like 'SYSTEM_HEALTH_%'
-            and aj.type <> 'ANALYZE_PLUGIN_LOGS'
+            and aj.type not in ('ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS')
             and (
               aj.status in ('FAILED', 'RETRY_WAIT')
               or (aj.status = 'LEASED' and aj.lease_until < now())

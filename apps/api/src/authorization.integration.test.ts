@@ -974,6 +974,81 @@ suite("tenant and role authorization", () => {
     expect(crossTenant.statusCode).toBe(404);
   });
 
+  it("lets an Admin reopen completed permissions only through Feishu review", async () => {
+    await sql.begin(async (tx) => {
+      await tx`
+        update project_scope_entries set status = 'denied', effective_from = null
+        where id = ${fixture.projectScopePendingA}
+      `;
+      await tx`
+        update project_scope_policies set version = 4, initialized = true,
+          initialized_at = now()
+        where plugin_instance_id = ${fixture.pluginA}
+      `;
+    });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/admin/plugin-instances/${fixture.pluginA}/project-scopes/reapproval`,
+        headers,
+        payload: { baseVersion: 4 },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        status: "reapproval_requested",
+        version: 5,
+        pending: 2,
+      });
+      const scopes = await sql<
+        Array<{ status: string; effective_from: Date | null }>
+      >`
+        select status, effective_from from project_scope_entries
+        where plugin_instance_id = ${fixture.pluginA}
+        order by display_name
+      `;
+      expect(scopes).toEqual([
+        { status: "pending", effective_from: null },
+        { status: "pending", effective_from: null },
+      ]);
+
+      const pluginWrite = await app.inject({
+        method: "PATCH",
+        url: "/v1/project-scope",
+        headers: { authorization: `Bearer ${pluginToken}` },
+        payload: {
+          baseVersion: 5,
+          decisions: [{ scopeKey: "a".repeat(64), decision: "allow" }],
+        },
+      });
+      expect(pluginWrite.statusCode).toBe(404);
+    } finally {
+      await sql.begin(async (tx) => {
+        await tx`
+          update project_scope_entries set
+            status = case
+              when id = ${fixture.projectScopeAllowedA} then 'allowed'
+              else 'pending'
+            end,
+            effective_from = case
+              when id = ${fixture.projectScopeAllowedA} then now()
+              else null
+            end
+          where id in (${fixture.projectScopeAllowedA}, ${fixture.projectScopePendingA})
+        `;
+        await tx`
+          update project_scope_policies set version = 3, initialized = true,
+            initialized_at = now()
+          where plugin_instance_id = ${fixture.pluginA}
+        `;
+        await tx`
+          delete from outbox_events
+          where aggregate_id = ${fixture.pluginA}
+            and payload->>'reason' = 'admin_reapproval'
+        `;
+      });
+    }
+  });
+
   it("does not mutate another tenant's Admin resources", async () => {
     const response = await app.inject({
       method: "PATCH",
@@ -1073,6 +1148,68 @@ suite("tenant and role authorization", () => {
         detail: expect.stringContaining("过去 24 小时完成 1 个生成任务"),
       }),
     );
+  });
+
+  it("shows isolated central logs and queues model analysis for one execution", async () => {
+    const recent = await app.inject({
+      method: "GET",
+      url: "/v1/admin/system-logs",
+      headers,
+    });
+    expect(recent.statusCode).toBe(200);
+    expect(recent.json().window).toMatchObject({
+      mode: "recent",
+      date: null,
+      timezone: "Asia/Shanghai",
+    });
+    const executionIds = recent
+      .json()
+      .executions.map((item: any) => item.executionId);
+    expect(executionIds).toContain(`job:${fixture.retryJobA}`);
+    expect(executionIds).not.toContain(`job:${fixture.jobB}`);
+
+    const analyze = await app.inject({
+      method: "POST",
+      url: "/v1/admin/system-logs/analyze",
+      headers,
+      payload: { executionId: `job:${fixture.retryJobA}` },
+    });
+    expect(analyze.statusCode).toBe(200);
+    expect(analyze.json()).toMatchObject({
+      ok: true,
+      job: { status: "PENDING" },
+    });
+    const analysisRows = await sql<
+      Array<{ type: string; input_payload: { executionId: string } }>
+    >`
+      select type, input_payload from agent_jobs
+      where tenant_id = ${fixture.tenantA} and team_id = ${fixture.teamA}
+        and type = 'ANALYZE_SYSTEM_LOGS'
+        and input_payload->>'executionId' = ${`job:${fixture.retryJobA}`}
+    `;
+    expect(analysisRows).toEqual([
+      {
+        type: "ANALYZE_SYSTEM_LOGS",
+        input_payload: expect.objectContaining({
+          executionId: `job:${fixture.retryJobA}`,
+        }),
+      },
+    ]);
+
+    const crossTenant = await app.inject({
+      method: "POST",
+      url: "/v1/admin/system-logs/analyze",
+      headers,
+      payload: { executionId: `job:${fixture.jobB}` },
+    });
+    expect(crossTenant.statusCode).toBe(404);
+
+    const invalid = await app.inject({
+      method: "GET",
+      url: "/v1/admin/system-logs?date=2026-02-31",
+      headers,
+    });
+    expect(invalid.statusCode).toBe(400);
   });
 
   it("ingests one Session Contribution idempotently and replaces changed content", async () => {

@@ -1,16 +1,23 @@
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowLeft,
   Bot,
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Clock3,
   Database,
   FileCheck2,
+  ListFilter,
+  LoaderCircle,
   MessageSquare,
   RefreshCw,
   ServerCog,
+  Sparkles,
+  TerminalSquare,
   TestTube2,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -66,6 +73,61 @@ type SystemProbeResult = {
   checkedAt: string;
 };
 
+type SystemLogSource = "inbox" | "job" | "delivery" | "outbox" | "report";
+type SystemLogEvent = {
+  id: string;
+  executionId: string;
+  source: SystemLogSource;
+  level: "info" | "warning" | "error";
+  stage: string;
+  eventCode: string;
+  title: string;
+  message: string;
+  occurredAt: string;
+  details: Record<string, unknown>;
+};
+type SystemLogExecution = {
+  executionId: string;
+  source: SystemLogSource;
+  sourceId: string;
+  title: string;
+  subject: string;
+  status: string;
+  severity: "normal" | "warning" | "critical";
+  startedAt: string;
+  lastEventAt: string;
+  durationMs: number;
+  eventCount: number;
+  summary: string;
+  errorCode: string | null;
+};
+type SystemLogs = {
+  window: {
+    mode: "recent" | "day";
+    date: string | null;
+    timezone: string;
+    startedAt: string;
+    endedAt: string;
+  };
+  selectedExecutionId: string | null;
+  executions: SystemLogExecution[];
+  events: SystemLogEvent[];
+  modelAnalysis: {
+    id: string;
+    status: "PENDING" | "LEASED" | "RETRY_WAIT" | "COMPLETED" | "FAILED";
+    output_payload: {
+      summary: string;
+      failedStep: string;
+      rootCause: string;
+      evidence: string[];
+      recommendedActions: string[];
+      confidence: "high" | "medium" | "low";
+    } | null;
+    error_code: string | null;
+    error_message: string | null;
+  } | null;
+};
+
 const severityTone = {
   normal: "success",
   warning: "warning",
@@ -114,6 +176,435 @@ function formatDuration(durationMs: number) {
   return `${(durationMs / 1_000).toFixed(1)} 秒`;
 }
 
+function dateKeyInTimezone(timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function shiftDateKey(value: string, days: number) {
+  const date = new Date(`${value}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+const systemSourceLabel: Record<SystemLogSource, string> = {
+  inbox: "接收",
+  job: "生成",
+  delivery: "发送",
+  outbox: "事件",
+  report: "报告",
+};
+
+const systemStatusLabel: Record<string, string> = {
+  PENDING: "等待处理",
+  LEASED: "处理中",
+  RETRY_WAIT: "等待重试",
+  COMPLETED: "已完成",
+  FAILED: "失败",
+  CANCELLED: "已取消",
+  pending: "等待处理",
+  sending: "发送中",
+  retry_wait: "等待重试",
+  deferred: "暂缓发送",
+  sent: "已发送",
+  failed: "失败",
+  cancelled: "已取消",
+  received: "已接收",
+  processing: "处理中",
+  processed: "已处理",
+  published: "已分发",
+  AGGREGATING: "生成中",
+  TEAM_DRAFT: "待确认",
+  LOCKED: "已归档",
+};
+
+function SystemLogBrowser() {
+  const queryClient = useQueryClient();
+  const [view, setView] = useState<"recent" | "history">("recent");
+  const [historyDate, setHistoryDate] = useState(() =>
+    dateKeyInTimezone("Asia/Shanghai"),
+  );
+  const [executionId, setExecutionId] = useState<string | null>(null);
+  const [problemsOnly, setProblemsOnly] = useState(false);
+  const params = useMemo(() => {
+    const value = new URLSearchParams();
+    if (view === "history") value.set("date", historyDate);
+    if (executionId) value.set("executionId", executionId);
+    return value.toString();
+  }, [executionId, historyDate, view]);
+  const logs = useQuery({
+    queryKey: ["admin-system-logs", view, historyDate, executionId],
+    queryFn: () => api<SystemLogs>(`/v1/admin/system-logs?${params}`),
+    refetchInterval: view === "recent" ? 10_000 : false,
+  });
+  const requestAnalysis = useMutation({
+    mutationFn: (selectedExecutionId: string) =>
+      api("/v1/admin/system-logs/analyze", {
+        method: "POST",
+        body: JSON.stringify({ executionId: selectedExecutionId }),
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["admin-system-logs"] }),
+  });
+
+  useEffect(() => {
+    if (!logs.data) return;
+    if (!executionId && logs.data.selectedExecutionId)
+      setExecutionId(logs.data.selectedExecutionId);
+    else if (
+      executionId &&
+      !logs.data.executions.some((item) => item.executionId === executionId)
+    )
+      setExecutionId(logs.data.selectedExecutionId);
+  }, [executionId, logs.data]);
+
+  const selected = logs.data?.executions.find(
+    (item) => item.executionId === logs.data?.selectedExecutionId,
+  );
+  const visibleEvents = (logs.data?.events ?? []).filter(
+    (item) => !problemsOnly || item.level !== "info",
+  );
+  const timezone = logs.data?.window.timezone ?? "Asia/Shanghai";
+  const today = dateKeyInTimezone(timezone);
+  const selectDate = (date: string) => {
+    setHistoryDate(date);
+    setExecutionId(null);
+    setProblemsOnly(false);
+  };
+
+  return (
+    <section className="system-log-section" aria-label="中台运行日志">
+      <div className="system-log-heading">
+        <div>
+          <TerminalSquare size={18} />
+          <strong>中台运行日志</strong>
+          <span>接收、生成、发送与报告状态</span>
+        </div>
+        <button
+          className="icon-button"
+          title="刷新中台日志"
+          onClick={() => void logs.refetch()}
+        >
+          <RefreshCw size={16} className={logs.isFetching ? "spin" : ""} />
+        </button>
+      </div>
+      <ErrorBanner error={logs.error ?? requestAnalysis.error} />
+      <div className="plugin-execution-browser system-execution-browser">
+        <aside className="plugin-execution-list" aria-label="中台运行记录">
+          <div className="plugin-log-section-title">
+            {view === "recent" ? (
+              <Clock3 size={17} />
+            ) : (
+              <CalendarDays size={17} />
+            )}
+            <strong>{view === "recent" ? "最近 24 小时" : "历史日志"}</strong>
+            <span>{logs.data?.executions.length ?? 0}</span>
+            <button
+              className="plugin-history-link"
+              onClick={() => {
+                if (view === "recent") {
+                  setView("history");
+                  selectDate(today);
+                } else {
+                  setView("recent");
+                  setExecutionId(null);
+                  setProblemsOnly(false);
+                }
+              }}
+            >
+              {view === "recent" ? (
+                <CalendarDays size={14} />
+              ) : (
+                <ArrowLeft size={14} />
+              )}
+              {view === "recent" ? "历史日志" : "最近日志"}
+            </button>
+          </div>
+          {view === "history" && (
+            <div className="plugin-history-toolbar">
+              <button
+                className="icon-button"
+                title="前一天"
+                onClick={() => selectDate(shiftDateKey(historyDate, -1))}
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <input
+                type="date"
+                aria-label="中台历史日志日期"
+                value={historyDate}
+                max={today}
+                onChange={(event) =>
+                  event.target.value && selectDate(event.target.value)
+                }
+              />
+              <button
+                className="icon-button"
+                title="后一天"
+                disabled={historyDate >= today}
+                onClick={() => selectDate(shiftDateKey(historyDate, 1))}
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
+          {logs.isLoading ? (
+            <div className="plugin-log-loading">
+              <RefreshCw size={16} className="spin" />
+              加载中台日志
+            </div>
+          ) : logs.data?.executions.length ? (
+            logs.data.executions.map((execution) => (
+              <button
+                key={execution.executionId}
+                className={`plugin-execution-row ${logs.data?.selectedExecutionId === execution.executionId ? "active" : ""}`}
+                onClick={() => {
+                  setExecutionId(execution.executionId);
+                  setProblemsOnly(false);
+                }}
+              >
+                <span
+                  className={`plugin-execution-state ${execution.severity}`}
+                >
+                  {execution.severity === "critical" ? (
+                    <AlertTriangle size={15} />
+                  ) : (
+                    <CheckCircle2 size={15} />
+                  )}
+                </span>
+                <span className="plugin-execution-copy">
+                  <strong>{execution.title}</strong>
+                  <small>
+                    {systemSourceLabel[execution.source]} ·{" "}
+                    {formatTime(execution.startedAt)}
+                  </small>
+                  <small>
+                    {execution.subject} · {execution.eventCount} 个事件
+                  </small>
+                  <small className="plugin-execution-conclusion">
+                    {execution.summary}
+                  </small>
+                </span>
+                <ChevronRight size={15} />
+              </button>
+            ))
+          ) : (
+            <EmptyState
+              title={
+                view === "recent"
+                  ? "最近 24 小时没有中台日志"
+                  : "这一天没有中台日志"
+              }
+            />
+          )}
+        </aside>
+        <section className="plugin-execution-detail">
+          {selected ? (
+            <>
+              <header className="plugin-execution-header">
+                <div>
+                  <span>{systemSourceLabel[selected.source]}</span>
+                  <strong>{selected.title}</strong>
+                </div>
+                <Badge tone={severityTone[selected.severity]}>
+                  {systemStatusLabel[selected.status] ?? selected.status}
+                </Badge>
+                {selected.severity !== "normal" && (
+                  <button
+                    className="plugin-analysis-button"
+                    onClick={() => requestAnalysis.mutate(selected.executionId)}
+                    disabled={
+                      requestAnalysis.isPending ||
+                      ["PENDING", "LEASED"].includes(
+                        logs.data?.modelAnalysis?.status ?? "",
+                      )
+                    }
+                  >
+                    {requestAnalysis.isPending ||
+                    ["PENDING", "LEASED"].includes(
+                      logs.data?.modelAnalysis?.status ?? "",
+                    ) ? (
+                      <LoaderCircle size={14} className="spin" />
+                    ) : (
+                      <Sparkles size={14} />
+                    )}
+                    {logs.data?.modelAnalysis?.status === "COMPLETED"
+                      ? "重新分析"
+                      : "模型分析"}
+                  </button>
+                )}
+              </header>
+              <div
+                className={`execution-diagnosis execution-diagnosis-${selected.severity}`}
+              >
+                <span className="execution-diagnosis-icon">
+                  {selected.severity === "critical" ? (
+                    <AlertTriangle size={18} />
+                  ) : (
+                    <CheckCircle2 size={18} />
+                  )}
+                </span>
+                <div>
+                  <span className="execution-conclusion-label">运行结论</span>
+                  <strong>{selected.summary}</strong>
+                  <p>{selected.subject}</p>
+                  <small>{selected.errorCode ?? "未发现错误代码"}</small>
+                </div>
+              </div>
+              {logs.data?.modelAnalysis && (
+                <div className="plugin-model-analysis">
+                  <span className="plugin-model-analysis-icon">
+                    {logs.data.modelAnalysis.status === "COMPLETED" ? (
+                      <Sparkles size={17} />
+                    ) : logs.data.modelAnalysis.status === "FAILED" ? (
+                      <AlertTriangle size={17} />
+                    ) : (
+                      <LoaderCircle size={17} className="spin" />
+                    )}
+                  </span>
+                  {logs.data.modelAnalysis.status === "COMPLETED" &&
+                  logs.data.modelAnalysis.output_payload ? (
+                    <div>
+                      <strong>
+                        模型分析 ·{" "}
+                        {logs.data.modelAnalysis.output_payload.summary}
+                      </strong>
+                      <p>
+                        <b>最可能原因：</b>
+                        {logs.data.modelAnalysis.output_payload.rootCause}
+                      </p>
+                      <ul>
+                        {logs.data.modelAnalysis.output_payload.recommendedActions.map(
+                          (action) => (
+                            <li key={action}>{action}</li>
+                          ),
+                        )}
+                      </ul>
+                      <small>
+                        可信度：
+                        {
+                          { high: "高", medium: "中", low: "低" }[
+                            logs.data.modelAnalysis.output_payload.confidence
+                          ]
+                        }
+                      </small>
+                    </div>
+                  ) : logs.data.modelAnalysis.status === "FAILED" ? (
+                    <div>
+                      <strong>模型分析失败</strong>
+                      <p>
+                        {logs.data.modelAnalysis.error_message ??
+                          logs.data.modelAnalysis.error_code ??
+                          "模型服务暂时不可用。"}
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <strong>模型正在分析这次中台运行</strong>
+                      <p>完成后会显示最可能原因和处理建议。</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              <dl className="plugin-execution-meta">
+                <div>
+                  <dt>开始时间</dt>
+                  <dd>{formatTime(selected.startedAt)}</dd>
+                </div>
+                <div>
+                  <dt>耗时</dt>
+                  <dd>{formatDuration(selected.durationMs)}</dd>
+                </div>
+                <div>
+                  <dt>记录类型</dt>
+                  <dd>{systemSourceLabel[selected.source]}</dd>
+                </div>
+                <div>
+                  <dt>记录编号</dt>
+                  <dd>{selected.sourceId.slice(0, 8)}</dd>
+                </div>
+              </dl>
+              <div className="plugin-event-toolbar">
+                <div>
+                  <TerminalSquare size={17} />
+                  <strong>执行时间线</strong>
+                  <span>{visibleEvents.length}</span>
+                </div>
+                <div className="plugin-event-mode" aria-label="中台日志筛选">
+                  <button
+                    className={!problemsOnly ? "active" : ""}
+                    onClick={() => setProblemsOnly(false)}
+                  >
+                    <TerminalSquare size={14} />
+                    全部
+                  </button>
+                  <button
+                    className={problemsOnly ? "active" : ""}
+                    onClick={() => setProblemsOnly(true)}
+                  >
+                    <ListFilter size={14} />
+                    仅看问题
+                  </button>
+                </div>
+              </div>
+              <div className="plugin-event-list">
+                {visibleEvents.length ? (
+                  visibleEvents.map((event) => (
+                    <details
+                      className={`plugin-event plugin-event-${event.level}`}
+                      key={event.id}
+                      open={event.level === "error"}
+                    >
+                      <summary>
+                        <span className="plugin-event-icon">
+                          {event.level === "info" ? (
+                            <CheckCircle2 size={16} />
+                          ) : (
+                            <AlertTriangle size={16} />
+                          )}
+                        </span>
+                        <span className="plugin-event-main">
+                          <strong>{event.title}</strong>
+                          <small>
+                            {event.eventCode} · {event.stage}
+                          </small>
+                        </span>
+                        <time>{formatTime(event.occurredAt)}</time>
+                      </summary>
+                      <div className="plugin-event-expanded">
+                        <p>{event.message}</p>
+                        <pre>{JSON.stringify(event.details, null, 2)}</pre>
+                      </div>
+                    </details>
+                  ))
+                ) : (
+                  <EmptyState
+                    title={
+                      problemsOnly
+                        ? "本次运行没有错误或警告"
+                        : "本次运行没有时间线事件"
+                    }
+                  />
+                )}
+              </div>
+            </>
+          ) : (
+            <EmptyState title="选择一条中台运行记录查看详情" />
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function SystemComponentRow({ component }: { component: SystemComponent }) {
   const [result, setResult] = useState<SystemProbeResult | null>(null);
   const probe = useMutation({
@@ -149,7 +640,6 @@ function SystemComponentRow({ component }: { component: SystemComponent }) {
       <div className="system-component-copy">
         <strong>{component.label}</strong>
         <span>{component.summary}</span>
-        <p>{component.detail}</p>
       </div>
       <div className="system-component-actions">
         <button
@@ -283,7 +773,9 @@ export function SystemMonitoringPage() {
             </div>
           </div>
 
-          <div className="system-monitor-workspace">
+          <div
+            className={`system-monitor-workspace ${data.incidents.length ? "has-incidents" : ""}`}
+          >
             <section
               className="system-component-panel"
               aria-label="系统模块状态"
@@ -303,15 +795,15 @@ export function SystemMonitoringPage() {
               </div>
             </section>
 
-            <section className="system-incident-panel" aria-label="当前异常">
-              <div className="system-monitor-section-title">
-                <AlertTriangle size={17} />
-                <strong>当前异常</strong>
-                <span>{data.incidents.length}</span>
-              </div>
-              <div className="system-incident-list">
-                {data.incidents.length ? (
-                  data.incidents.map((incident) => (
+            {data.incidents.length > 0 && (
+              <section className="system-incident-panel" aria-label="当前异常">
+                <div className="system-monitor-section-title">
+                  <AlertTriangle size={17} />
+                  <strong>当前异常</strong>
+                  <span>{data.incidents.length}</span>
+                </div>
+                <div className="system-incident-list">
+                  {data.incidents.map((incident) => (
                     <div
                       className={`system-incident system-incident-${incident.severity} ${expandedId === incident.id ? "open" : ""}`}
                       key={incident.id}
@@ -370,17 +862,16 @@ export function SystemMonitoringPage() {
                         </div>
                       )}
                     </div>
-                  ))
-                ) : (
-                  <EmptyState title="当前没有系统异常" />
-                )}
-              </div>
-              <div className="system-monitor-footnote">
-                <Clock3 size={14} />
-                状态每 10 秒自动更新
-              </div>
-            </section>
+                  ))}
+                </div>
+                <div className="system-monitor-footnote">
+                  <Clock3 size={14} />
+                  状态每 10 秒自动更新
+                </div>
+              </section>
+            )}
           </div>
+          <SystemLogBrowser />
         </>
       )}
     </div>

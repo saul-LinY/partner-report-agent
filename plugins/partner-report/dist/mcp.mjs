@@ -12922,7 +12922,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
             })));
           }
         }
-
+        
         if (${id}.value === undefined) {
           if (${k} in input) {
             newResult[${k}] = undefined;
@@ -12930,7 +12930,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
         } else {
           newResult[${k}] = ${id}.value;
         }
-
+        
       `);
       } else if (!isOptionalIn) {
         doc.write(`
@@ -12967,7 +12967,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
             path: iss.path ? [${k}, ...iss.path] : [${k}]
           })));
         }
-
+        
         if (${id}.value === undefined) {
           if (${k} in input) {
             newResult[${k}] = undefined;
@@ -12975,7 +12975,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
         } else {
           newResult[${k}] = ${id}.value;
         }
-
+        
       `);
       }
     }
@@ -26350,30 +26350,6 @@ registerTool(
     annotations: networkRead
   },
   () => execute(() => invokeCli("project-scope-list"))
-);
-registerTool(
-  "project_scope_sync",
-  {
-    description: "\u628A\u672C\u5730\u5DF2\u6709\u9879\u76EE\u6743\u9650\u4FEE\u6539\u63D0\u4EA4\u7ED9\u4E2D\u53F0\u5E76\u540C\u6B65\u7248\u672C\u3002",
-    annotations: networkWrite
-  },
-  () => execute(() => invokeCli("project-scope-sync"))
-);
-registerTool(
-  "project_scope_change",
-  {
-    description: "\u4FEE\u6539\u4E00\u4E2A\u5DF2\u7ECF\u5B8C\u6210\u98DE\u4E66\u5BA1\u6838\u7684\u9879\u76EE\u6743\u9650\uFF1Bpending \u9879\u76EE\u5FC5\u987B\u5728\u98DE\u4E66\u5361\u4E2D\u5BA1\u6838\u3002",
-    inputSchema: {
-      decision: external_exports.enum(["allow", "deny"]),
-      projectName: external_exports.string().min(1).optional(),
-      scopeKey: external_exports.string().min(1).optional()
-    },
-    annotations: networkWrite
-  },
-  ({ decision, projectName, scopeKey }) => execute(() => {
-    const selector = scopeKey ? ["--scope-key", scopeKey] : projectName ? ["--project", projectName] : [];
-    return invokeCli(`project-scope-${decision}`, selector);
-  })
 );
 registerTool(
   "exclusion_set",

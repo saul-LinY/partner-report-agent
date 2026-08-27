@@ -6277,41 +6277,6 @@ function mergeRemoteProjectScope(local, remote) {
     }))
   };
 }
-function inspectLocalProjectScopeChanges(local, remote) {
-  if (local.pluginInstanceId !== remote.pluginInstanceId)
-    return { kind: "conflict", reason: "\u9879\u76EE\u6743\u9650\u4E0D\u5C5E\u4E8E\u5F53\u524D Plugin Instance\u3002" };
-  if (local.version > remote.version)
-    return { kind: "conflict", reason: "\u672C\u5730\u6743\u9650\u7248\u672C\u9AD8\u4E8E\u4E2D\u53F0\u7248\u672C\u3002" };
-  const localEntries = new Map(
-    local.entries.map((entry) => [entry.scopeKey, entry])
-  );
-  const remoteEntries = new Map(
-    remote.entries.map((entry) => [entry.scopeKey, entry])
-  );
-  if ([...localEntries.keys()].some((scopeKey) => !remoteEntries.has(scopeKey)))
-    return {
-      kind: "conflict",
-      reason: "\u672C\u5730\u6743\u9650\u6587\u4EF6\u4E0D\u80FD\u65B0\u589E\u3001\u5220\u9664\u6216\u4F2A\u9020\u9879\u76EE\u3002"
-    };
-  const decisions = [];
-  for (const remoteEntry of remote.entries) {
-    const localEntry = localEntries.get(remoteEntry.scopeKey);
-    if (!localEntry) continue;
-    if (localEntry.status === remoteEntry.status) continue;
-    const locallyEdited = localEntry.lastSyncedStatus !== void 0 && localEntry.status !== localEntry.lastSyncedStatus;
-    const legacyLocalEdit = localEntry.lastSyncedStatus === void 0 && local.version === remote.version;
-    if (!locallyEdited && !legacyLocalEdit) continue;
-    if (local.version !== remote.version)
-      return { kind: "conflict", reason: "\u4E2D\u53F0\u6743\u9650\u5DF2\u66F4\u65B0\uFF0C\u8BF7\u5148\u540C\u6B65\u6700\u65B0\u7248\u672C\u3002" };
-    if (!["allowed", "denied"].includes(localEntry.status))
-      return { kind: "conflict", reason: "\u672C\u5730\u9879\u76EE\u6743\u9650\u72B6\u6001\u65E0\u6548\u3002" };
-    decisions.push({
-      scopeKey: remoteEntry.scopeKey,
-      decision: localEntry.status === "allowed" ? "allow" : "deny"
-    });
-  }
-  return decisions.length > 0 ? { kind: "changes", decisions } : { kind: "none", decisions: [] };
-}
 function anonymousProjectScopeKey(pluginInstanceId, scopeSalt, localRoot) {
   return createHmac("sha256", scopeSalt).update(`partner-report/project-scope/v1:${pluginInstanceId}:${localRoot}`).digest("hex");
 }
@@ -6983,7 +6948,6 @@ function cacheRemoteProjectScope(remote) {
 }
 async function synchronizeLocalProjectScope(remote, inspection = inspectLocalProjectScope(remote.pluginInstanceId)) {
   let synchronizedRemote = remote;
-  let changedCount = 0;
   let bootstrapped = false;
   const identityCollision = inspection.state === "valid" && remote.entries.length > 0 && localProjectScopeHasIdentityCollisions(inspection.scope);
   if (localProjectScopeRequiresBootstrap(inspection.state, remote) || identityCollision) {
@@ -6998,23 +6962,6 @@ async function synchronizeLocalProjectScope(remote, inspection = inspectLocalPro
       }
     );
     bootstrapped = true;
-  } else if (inspection.state === "valid") {
-    const changes = inspectLocalProjectScopeChanges(inspection.scope, remote);
-    if (changes.kind === "conflict")
-      throw Object.assign(new Error(changes.reason), {
-        code: "PROJECT_SCOPE_LOCAL_CONFLICT",
-        currentVersion: remote.version
-      });
-    if (changes.kind === "changes") {
-      synchronizedRemote = await fetchProjectScope({
-        method: "PATCH",
-        body: JSON.stringify({
-          baseVersion: remote.version,
-          decisions: changes.decisions
-        })
-      });
-      changedCount = changes.decisions.length;
-    }
   }
   const scope = mergeRemoteProjectScope(inspection.scope, synchronizedRemote);
   saveLocalProjectScope(scope);
@@ -7022,7 +6969,6 @@ async function synchronizeLocalProjectScope(remote, inspection = inspectLocalPro
     inspection,
     remote: synchronizedRemote,
     scope,
-    changedCount,
     bootstrapped
   };
 }
@@ -8746,75 +8692,6 @@ async function projectScopeList() {
     }))
   });
 }
-async function synchronizeProjectScopeCommand() {
-  const remote = await fetchProjectScope();
-  const synchronized = await synchronizeLocalProjectScope(remote);
-  output({
-    status: "project_scope_synced",
-    version: synchronized.remote.version,
-    changedCount: synchronized.changedCount,
-    localState: synchronized.inspection.state
-  });
-}
-async function changeProjectScope(decision) {
-  const config = loadConfig();
-  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
-  if (localInspection.state !== "valid")
-    throw Object.assign(
-      new Error("\u672C\u5730\u9879\u76EE\u8303\u56F4\u5C1A\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u5148\u540C\u6B65\u5E76\u5728\u98DE\u4E66\u5B8C\u6210\u9879\u76EE\u5BA1\u6838\u3002"),
-      { code: "PROJECT_SCOPE_SYNC_REQUIRED" }
-    );
-  const remote = await fetchProjectScope();
-  const scopeKey = option("scope-key")?.trim();
-  const projectName = option("project")?.trim().toLocaleLowerCase("zh-CN");
-  let selected = remote.entries.filter((entry) => {
-    if (flag("all-pending")) return entry.status === "pending";
-    if (scopeKey) return entry.scopeKey === scopeKey;
-    if (projectName)
-      return entry.displayName.toLocaleLowerCase("zh-CN") === projectName;
-    return false;
-  });
-  if (!scopeKey && !projectName && !flag("all-pending"))
-    throw new Error(
-      "\u9700\u8981 --project <\u9879\u76EE\u540D>\u3001--scope-key <key> \u6216 --all-pending\u3002"
-    );
-  if (projectName && selected.length > 1)
-    throw new Error(
-      "\u5B58\u5728\u540C\u540D\u9879\u76EE\uFF0C\u8BF7\u5148 project-scope-list\uFF0C\u518D\u7528 --scope-key \u6307\u5B9A\u3002"
-    );
-  if (selected.length === 0) throw new Error("\u6CA1\u6709\u627E\u5230\u5339\u914D\u7684\u9879\u76EE\u6743\u9650\u3002");
-  if (selected.some((entry) => entry.status === "pending"))
-    throw Object.assign(
-      new Error("\u5F85\u5BA1\u6279\u9879\u76EE\u53EA\u80FD\u7531\u7528\u6237\u5728\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u4E2D\u786E\u8BA4\u3002"),
-      { code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED" }
-    );
-  selected = selected.slice(0, 500);
-  const updated = await authenticatedRequest(
-    "/v1/project-scope",
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        baseVersion: remote.version,
-        decisions: selected.map((entry) => ({
-          scopeKey: entry.scopeKey,
-          decision
-        }))
-      })
-    }
-  );
-  saveLocalProjectScope(
-    mergeRemoteProjectScope(localInspection.scope, updated)
-  );
-  output({
-    status: "project_scope_updated",
-    decision,
-    version: updated.version,
-    projects: selected.map((entry) => ({
-      scopeKey: entry.scopeKey,
-      name: entry.displayName
-    }))
-  });
-}
 function configureExclusion(kind, remove = false) {
   const config = loadConfig();
   const raw = option(kind === "session" ? "session-id" : "path");
@@ -8851,9 +8728,6 @@ function help() {
       "collect-defer --run <path> --reason <TIME_BUDGET_EXHAUSTED|RUN_INTERRUPTED|TEMPORARILY_UNAVAILABLE>",
       "status",
       "project-scope-list",
-      "project-scope-sync",
-      "project-scope-allow --project <name>|--scope-key <key>|--all-pending",
-      "project-scope-deny --project <name>|--scope-key <key>|--all-pending",
       "exclude-session --session-id <id>",
       "include-session --session-id <id>",
       "exclude-path --path <absolute-path>",
@@ -8880,10 +8754,6 @@ async function runCommand() {
   else if (command === "collect-defer") collectDefer();
   else if (command === "status") await status();
   else if (command === "project-scope-list") await projectScopeList();
-  else if (command === "project-scope-sync")
-    await synchronizeProjectScopeCommand();
-  else if (command === "project-scope-allow") await changeProjectScope("allow");
-  else if (command === "project-scope-deny") await changeProjectScope("deny");
   else if (command === "exclude-session") configureExclusion("session");
   else if (command === "include-session") configureExclusion("session", true);
   else if (command === "exclude-path") configureExclusion("path");

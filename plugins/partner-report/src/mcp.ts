@@ -383,38 +383,6 @@ registerTool(
 );
 
 registerTool(
-  "project_scope_sync",
-  {
-    description: "把本地已有项目权限修改提交给中台并同步版本。",
-    annotations: networkWrite,
-  },
-  () => execute(() => invokeCli("project-scope-sync")),
-);
-
-registerTool(
-  "project_scope_change",
-  {
-    description:
-      "修改一个已经完成飞书审核的项目权限；pending 项目必须在飞书卡中审核。",
-    inputSchema: {
-      decision: z.enum(["allow", "deny"]),
-      projectName: z.string().min(1).optional(),
-      scopeKey: z.string().min(1).optional(),
-    },
-    annotations: networkWrite,
-  },
-  ({ decision, projectName, scopeKey }) =>
-    execute(() => {
-      const selector = scopeKey
-        ? ["--scope-key", scopeKey]
-        : projectName
-          ? ["--project", projectName]
-          : [];
-      return invokeCli(`project-scope-${decision}`, selector);
-    }),
-);
-
-registerTool(
   "exclusion_set",
   {
     description: "添加或移除 Session 或绝对目录排除项。",

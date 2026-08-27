@@ -51,6 +51,12 @@ export const projectScopeBootstrapSchema = z
   })
   .strict();
 
+export const projectScopeReapprovalSchema = z
+  .object({
+    baseVersion: z.number().int().positive(),
+  })
+  .strict();
+
 type ScopeIdentity = {
   tenantId: string;
   teamId: string;
@@ -435,6 +441,118 @@ export async function beginProjectScopeBootstrap(
   return loadProjectScopePolicy(identity, database);
 }
 
+export async function reopenProjectScopeReview(
+  actor: DomainActor,
+  pluginInstanceId: string,
+  rawInput: unknown,
+  database: Database = defaultDatabase,
+) {
+  const input = projectScopeReapprovalSchema.parse(rawInput);
+  const identity: ScopeIdentity = {
+    tenantId: actor.tenantId,
+    teamId: actor.teamId,
+    partnerId: "",
+    pluginInstanceId,
+  };
+
+  await database.begin(async (tx) => {
+    const instances = await tx<Array<{ partner_id: string }>>`
+      select partner_id from plugin_instances
+      where id = ${pluginInstanceId} and tenant_id = ${actor.tenantId}
+        and team_id = ${actor.teamId} and status = 'active'
+      limit 1
+      for update
+    `;
+    const instance = instances[0];
+    if (!instance)
+      throw new ApiError(404, "PROJECT_SCOPE_NOT_FOUND", "采集权限不存在。");
+    identity.partnerId = instance.partner_id;
+
+    const policies = await tx<PolicyRow[]>`
+      select version, initialized, initialized_at
+      from project_scope_policies
+      where plugin_instance_id = ${pluginInstanceId}
+        and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        and partner_id = ${instance.partner_id}
+      for update
+    `;
+    const policy = policies[0];
+    if (!policy)
+      throw new ApiError(404, "PROJECT_SCOPE_NOT_FOUND", "采集权限不存在。");
+    if (policy.version !== input.baseVersion)
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "权限已更新，请刷新后重试。",
+        {
+          currentVersion: policy.version,
+        },
+      );
+
+    const entries = await tx<Array<{ count: number; pending: number }>>`
+      select count(*)::int as count,
+        count(*) filter (where status = 'pending')::int as pending
+      from project_scope_entries
+      where plugin_instance_id = ${pluginInstanceId}
+        and tenant_id = ${actor.tenantId}
+    `;
+    if ((entries[0]?.count ?? 0) === 0)
+      throw new ApiError(
+        409,
+        "PROJECT_SCOPE_EMPTY",
+        "当前没有可重新审核的项目。",
+      );
+    if (!policy.initialized || (entries[0]?.pending ?? 0) > 0)
+      throw new ApiError(
+        409,
+        "PROJECT_SCOPE_REVIEW_IN_PROGRESS",
+        "当前项目仍在等待审核，无需重新发起。",
+      );
+
+    await tx`
+      update project_scope_entries set
+        status = 'pending', effective_from = null, decided_at = null,
+        updated_at = now()
+      where plugin_instance_id = ${pluginInstanceId}
+        and tenant_id = ${actor.tenantId}
+    `;
+    const versions = await tx<Array<{ version: number }>>`
+      update project_scope_policies set
+        version = version + 1, initialized = false, initialized_at = null,
+        updated_at = now()
+      where plugin_instance_id = ${pluginInstanceId}
+        and tenant_id = ${actor.tenantId}
+      returning version
+    `;
+    const periods = await tx<Array<{ period_key: string }>>`
+      select period_key from report_periods
+      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+      order by
+        case when starts_at <= now() and ends_at >= now() then 0 else 1 end,
+        starts_at desc
+      limit 1
+    `;
+    await tx`
+      insert into outbox_events (
+        id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+      ) values (
+        ${randomUUID()}, ${actor.tenantId}, 'project_scope.candidates.changed',
+        'plugin_instance', ${pluginInstanceId},
+        ${JSON.stringify({
+          teamId: actor.teamId,
+          partnerId: instance.partner_id,
+          pluginInstanceId,
+          periodKey: periods[0]?.period_key,
+          version: versions[0]?.version,
+          reason: "admin_reapproval",
+        })}::jsonb
+      )
+    `;
+  });
+
+  return loadProjectScopePolicy(identity, database);
+}
+
 export async function decideProjectScopes(
   actor: DomainActor,
   pluginInstanceId: string,
@@ -503,14 +621,11 @@ export async function decideProjectScopes(
         "PROJECT_SCOPE_NOT_FOUND",
         "部分项目权限不存在。",
       );
-    if (
-      actor.actorType !== "feishu" &&
-      entries.some((entry) => entry.status === "pending")
-    )
+    if (actor.actorType !== "feishu")
       throw new ApiError(
         403,
         "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED",
-        "待审批项目必须由用户在飞书权限卡中确认。",
+        "项目采集权限只能由用户在飞书权限卡中确认。",
       );
     for (const item of input.decisions) {
       const effectiveFrom = projectScopeEffectiveFrom({ now: new Date() });

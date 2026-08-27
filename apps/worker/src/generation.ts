@@ -400,7 +400,7 @@ async function leaseNextJob(onlyTenantId?: string) {
         and type in (
           'AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT',
           'SYSTEM_HEALTH_QUEUE', 'SYSTEM_HEALTH_GENERATION', 'SYSTEM_HEALTH_REPORTS',
-          'ANALYZE_PLUGIN_LOGS'
+          'ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS'
         )
         and attempt_count < max_attempts
         and (status = 'PENDING' or updated_at < now() - interval '1 minute')
@@ -845,6 +845,34 @@ async function runPluginLogAnalysisJob(job: Job) {
   );
 }
 
+async function runSystemLogAnalysisJob(job: Job) {
+  const events = Array.isArray(job.input_payload.events)
+    ? job.input_payload.events.slice(0, 100)
+    : [];
+  if (events.length === 0) throw new Error("SYSTEM_EXECUTION_LOGS_MISSING");
+  const { model } = await selectedTeamSettingsFor(job);
+  const generated = await generateStructured<Record<string, unknown>>({
+    name: "partner_report_system_log_analysis",
+    schema: pluginLogAnalysisModelSchema,
+    instructions:
+      "你是 Partner Report 中台故障分析器。只根据提供的中台运行时间线判断，不补充日志中没有的事实。中台链路通常包括：接收请求或飞书操作、任务入队、模型生成、结果保存、飞书发送和报告归档。区分直接证据与推测；证据不足时降低 confidence。使用通俗、简短的中文，不暴露凭证、内部 Payload 或个人敏感信息。failedStep 指出具体失败环节，rootCause 解释最可能原因，evidence 返回事件代码或可核对的状态，recommendedActions 返回管理员可执行的步骤。",
+    input: {
+      executionId: job.input_payload.executionId,
+      source: job.input_payload.source,
+      title: job.input_payload.title,
+      subject: job.input_payload.subject,
+      events,
+    },
+    model,
+    timeoutMs: 35_000,
+    maxOutputTokens: 900,
+  });
+  return normalizePluginLogAnalysis(
+    generated,
+    String(job.input_payload.title ?? "中台处理"),
+  );
+}
+
 function pluginLogAnalysisError(error: unknown) {
   if (error instanceof z.ZodError)
     return {
@@ -862,6 +890,16 @@ function pluginLogAnalysisError(error: unknown) {
     code: "PLUGIN_LOG_ANALYSIS_FAILED",
     message: "模型分析暂时失败，请稍后重试。",
   };
+}
+
+function systemLogAnalysisError(error: unknown) {
+  const base = pluginLogAnalysisError(error);
+  return base.code === "PLUGIN_LOG_ANALYSIS_FAILED"
+    ? {
+        code: "SYSTEM_LOG_ANALYSIS_FAILED",
+        message: "中台日志模型分析暂时失败，请稍后重试。",
+      }
+    : base;
 }
 
 function systemHealthErrorCode(job: Job, error: unknown) {
@@ -885,8 +923,14 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       `;
       return { processed: true, jobId: job.id, type: job.type };
     }
-    if (job.type === "ANALYZE_PLUGIN_LOGS") {
-      const output = await runPluginLogAnalysisJob(job);
+    if (
+      job.type === "ANALYZE_PLUGIN_LOGS" ||
+      job.type === "ANALYZE_SYSTEM_LOGS"
+    ) {
+      const output =
+        job.type === "ANALYZE_PLUGIN_LOGS"
+          ? await runPluginLogAnalysisJob(job)
+          : await runSystemLogAnalysisJob(job);
       await sql`
         update agent_jobs set status = 'COMPLETED',
           output_payload = ${JSON.stringify(output)}::jsonb,
@@ -972,7 +1016,11 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
   } catch (error) {
     const terminal = job.attempt_count >= job.max_attempts;
     const analysisError =
-      job.type === "ANALYZE_PLUGIN_LOGS" ? pluginLogAnalysisError(error) : null;
+      job.type === "ANALYZE_PLUGIN_LOGS"
+        ? pluginLogAnalysisError(error)
+        : job.type === "ANALYZE_SYSTEM_LOGS"
+          ? systemLogAnalysisError(error)
+          : null;
     const errorCode =
       analysisError?.code ??
       (isSystemHealthJob(job.type)

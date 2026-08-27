@@ -1,6 +1,6 @@
 ---
 name: partner-report-sync
-description: 连接当前 Codex 与 Partner Report，创建或修复官方定时任务，查询或修改项目采集权限，筛选本地 Codex Session 中有意义的项目贡献并上传中文摘要，管理本地排除项，或检查连接和采集状态。当用户要求连接、配置、授权、采集、同步、排除或检查 Partner Report 时使用。
+description: 连接当前 Codex 与 Partner Report，创建或修复官方定时任务，查询项目采集权限，筛选本地 Codex Session 中有意义的项目贡献并上传中文摘要，管理本地排除项，或检查连接和采集状态。当用户要求连接、配置、授权、采集、同步、排除或检查 Partner Report 时使用。
 ---
 
 # Partner Report 同步
@@ -62,7 +62,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 查询项目权限时调用 `project_scope_list`。只按项目显示名、状态、生效时间和聚合 Session 数回答；除非同名项目需要区分，否则不输出 `scopeKey`。
 
-待审批项目只能由用户在飞书项目权限卡中允许或拒绝，不得调用 `project_scope_change` 或修改本地文件代替审核。用户明确要求修改已经审核过的允许或拒绝状态时，才调用 `project_scope_change`，传入精确 `projectName` 和 `decision`；同名时先查询，再传 `scopeKey`。已有本地权限修改需要提交时调用 `project_scope_sync`，但它不得提交任何 pending 项目。
+项目采集权限只能由用户在飞书项目权限卡中允许或拒绝。插件只允许通过 `project_scope_list` 查询中台最终状态，不提供修改或同步权限的 MCP、CLI 或 API 入口；不得修改本地范围文件代替审核。已经完成审批后如需调整，也必须由管理员从中台重新发起飞书审核。
 
 中台确认并返回新版本后修改才生效。不得在本地新增、删除或伪造项目，不得绕过中台直接放行。中台不可达或版本冲突时说明修改尚未生效。
 

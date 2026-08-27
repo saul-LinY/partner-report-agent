@@ -121,6 +121,12 @@ export type LoadDeliveryForActionInput = {
   aggregateId: string;
 };
 
+export type ResolveScopeFormActionInput = {
+  messageId: string;
+  appId: string;
+  operatorOpenId: string;
+};
+
 type PartnerRow = {
   id: string;
   tenant_id: string;
@@ -919,6 +925,54 @@ export class FeishuDeliveryService {
       bindingId: row.binding_id,
       bindingStatus: row.binding_status,
       bindingOpenId: row.binding_open_id,
+    };
+  }
+
+  async resolveScopeFormAction(rawInput: ResolveScopeFormActionInput): Promise<{
+    deliveryId: string;
+    aggregateId: string;
+    baseVersion: number;
+  } | null> {
+    const input = {
+      messageId: identifierSchema.parse(rawInput.messageId),
+      appId: identifierSchema.parse(rawInput.appId),
+      operatorOpenId: identifierSchema.parse(rawInput.operatorOpenId),
+    };
+    const rows = await this.database<
+      Array<{
+        delivery_id: string;
+        aggregate_id: string;
+        domain_version: number | null;
+      }>
+    >`
+      select d.id as delivery_id, d.aggregate_id, d.domain_version
+      from feishu_deliveries d
+      join partners p
+        on p.id = d.partner_id and p.tenant_id = d.tenant_id
+        and p.team_id = d.team_id and p.status = 'active'
+      join feishu_partner_bindings b
+        on b.partner_id = d.partner_id and b.tenant_id = d.tenant_id
+        and b.team_id = d.team_id and b.app_id = ${input.appId}
+      where d.message_id = ${input.messageId} and d.kind = 'scope'
+        and d.aggregate_type = 'project_scope'
+        and d.domain_version is not null and d.domain_version > 0
+        and (
+          (
+            b.status = 'active' and b.open_id = ${input.operatorOpenId}
+            and d.receive_id_type = 'open_id' and d.receive_id = b.open_id
+          ) or (
+            b.status = 'pending' and d.receive_id_type = 'email'
+            and lower(d.receive_id) = lower(p.email)
+          )
+        )
+      limit 1
+    `;
+    const row = rows[0];
+    if (!row?.domain_version) return null;
+    return {
+      deliveryId: row.delivery_id,
+      aggregateId: row.aggregate_id,
+      baseVersion: row.domain_version,
     };
   }
 

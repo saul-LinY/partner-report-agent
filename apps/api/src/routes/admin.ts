@@ -12,6 +12,7 @@ import {
   sha256,
   userCode,
 } from "../common.js";
+import { reopenProjectScopeReview } from "../project-scope.js";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -589,6 +590,28 @@ export async function adminRoutes(app: FastifyInstance) {
       instances,
     };
   });
+
+  app.post(
+    "/v1/admin/plugin-instances/:id/project-scopes/reapproval",
+    async (request) => {
+      const actor = await requireWebActor(request, "admin");
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+      const policy = await reopenProjectScopeReview(actor, id, request.body);
+      await audit(
+        request,
+        actor,
+        "project_scope.reapproval_requested",
+        "plugin_instance",
+        id,
+        { version: policy.version, projectCount: policy.entries.length },
+      );
+      return {
+        status: "reapproval_requested",
+        version: policy.version,
+        pending: policy.entries.length,
+      };
+    },
+  );
 
   app.post("/v1/admin/partners", async (request) => {
     const actor = await requireWebActor(request, "admin");

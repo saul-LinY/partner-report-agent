@@ -444,67 +444,6 @@ export function mergeRemoteProjectScope(
   };
 }
 
-export type LocalProjectScopeDecision = {
-  scopeKey: string;
-  decision: "allow" | "deny";
-};
-
-export type LocalProjectScopeChangeCheck =
-  | { kind: "none"; decisions: [] }
-  | { kind: "changes"; decisions: LocalProjectScopeDecision[] }
-  | { kind: "conflict"; reason: string };
-
-/**
- * Local edits are limited to changing the status of projects already known by
- * the central policy. The central version remains the concurrency boundary.
- */
-export function inspectLocalProjectScopeChanges(
-  local: LocalProjectScope,
-  remote: RemoteProjectScopePolicy,
-): LocalProjectScopeChangeCheck {
-  if (local.pluginInstanceId !== remote.pluginInstanceId)
-    return { kind: "conflict", reason: "项目权限不属于当前 Plugin Instance。" };
-  if (local.version > remote.version)
-    return { kind: "conflict", reason: "本地权限版本高于中台版本。" };
-
-  const localEntries = new Map(
-    local.entries.map((entry) => [entry.scopeKey, entry]),
-  );
-  const remoteEntries = new Map(
-    remote.entries.map((entry) => [entry.scopeKey, entry]),
-  );
-  if ([...localEntries.keys()].some((scopeKey) => !remoteEntries.has(scopeKey)))
-    return {
-      kind: "conflict",
-      reason: "本地权限文件不能新增、删除或伪造项目。",
-    };
-
-  const decisions: LocalProjectScopeDecision[] = [];
-  for (const remoteEntry of remote.entries) {
-    const localEntry = localEntries.get(remoteEntry.scopeKey);
-    if (!localEntry) continue;
-    if (localEntry.status === remoteEntry.status) continue;
-    const locallyEdited =
-      localEntry.lastSyncedStatus !== undefined &&
-      localEntry.status !== localEntry.lastSyncedStatus;
-    const legacyLocalEdit =
-      localEntry.lastSyncedStatus === undefined &&
-      local.version === remote.version;
-    if (!locallyEdited && !legacyLocalEdit) continue;
-    if (local.version !== remote.version)
-      return { kind: "conflict", reason: "中台权限已更新，请先同步最新版本。" };
-    if (!["allowed", "denied"].includes(localEntry.status))
-      return { kind: "conflict", reason: "本地项目权限状态无效。" };
-    decisions.push({
-      scopeKey: remoteEntry.scopeKey,
-      decision: localEntry.status === "allowed" ? "allow" : "deny",
-    });
-  }
-  return decisions.length > 0
-    ? { kind: "changes", decisions }
-    : { kind: "none", decisions: [] };
-}
-
 export function anonymousProjectScopeKey(
   pluginInstanceId: string,
   scopeSalt: string,

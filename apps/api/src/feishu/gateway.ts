@@ -59,7 +59,8 @@ const cardActionEventSchema = z
       .passthrough(),
     action: z
       .object({
-        value: z.unknown(),
+        name: z.string().trim().min(1).max(128).optional(),
+        value: z.unknown().optional(),
         form_value: z.record(z.unknown()).optional(),
       })
       .passthrough(),
@@ -121,7 +122,13 @@ function callbackResponse(
   return { toast: { type, content } };
 }
 
-function reviewProcessingCard(action: FeishuActionValue["action"]): FeishuCard {
+function actionProcessingCard(action: FeishuActionValue["action"]): FeishuCard {
+  if (action.startsWith("scope_")) {
+    return renderProcessingCard({
+      title: "权限审核处理中",
+      message: "权限选择已收到，系统正在处理。完成后这张卡片会自动更新。",
+    });
+  }
   const regenerating = action === "review_regenerate";
   return renderProcessingCard({
     title: regenerating ? "正在重新生成" : "审核处理中",
@@ -309,9 +316,22 @@ export class FeishuGateway {
       );
       return callbackResponse("error", "应用身份校验失败。");
     }
-    const actionValue = feishuActionValueSchema.safeParse(
+    let actionValue = feishuActionValueSchema.safeParse(
       parsedEvent.data.action.value,
     );
+    if (
+      !actionValue.success &&
+      parsedEvent.data.action.name === "scope_submit"
+    ) {
+      const recovered = await this.deliveries.resolveScopeFormAction({
+        messageId: parsedEvent.data.context.open_message_id,
+        appId: parsedEvent.data.app_id,
+        operatorOpenId: parsedEvent.data.operator.open_id,
+      });
+      actionValue = feishuActionValueSchema.safeParse(
+        recovered ? { ...recovered, action: "scope_submit" } : undefined,
+      );
+    }
     if (!actionValue.success) {
       this.logger.warn(
         { eventId: parsedEvent.data.event_id, reason: "invalid_action" },
@@ -351,8 +371,12 @@ export class FeishuGateway {
     `;
 
     this.kickHandler?.();
-    if (inserted[0] && actionValue.data.action.startsWith("review_")) {
-      return reviewProcessingCard(actionValue.data.action);
+    if (
+      inserted[0] &&
+      (actionValue.data.action.startsWith("review_") ||
+        actionValue.data.action.startsWith("scope_"))
+    ) {
+      return actionProcessingCard(actionValue.data.action);
     }
     return callbackResponse(
       "success",
@@ -381,7 +405,7 @@ export class FeishuGateway {
             }
           } else {
             try {
-              const reflected = await this.reflectUnexpectedReviewFailure(
+              const reflected = await this.reflectUnexpectedActionFailure(
                 event,
                 error,
               );
@@ -1192,21 +1216,30 @@ export class FeishuGateway {
     }
   }
 
-  private async reflectUnexpectedReviewFailure(
+  private async reflectUnexpectedActionFailure(
     row: InboxRow,
     error: unknown,
   ): Promise<boolean> {
     const event = storedCardActionSchema.parse(row.sanitized_payload);
-    if (!event.value.action.startsWith("review_")) return false;
+    const kind = expectedDeliveryKind(event.value.action);
+    if (kind !== "review" && kind !== "scope") return false;
     const delivery = await this.deliveries.loadDeliveryForAction({
       deliveryId: event.value.deliveryId,
       messageId: event.messageId,
       appId: event.appId,
       operatorOpenId: event.operatorOpenId,
-      expectedKind: "review",
+      expectedKind: kind,
       aggregateId: event.value.aggregateId,
     });
     if (!delivery) return false;
+    if (kind === "scope") {
+      const result = await this.deliveries.patchScopeStatus({
+        ...delivery,
+        aggregateId: event.value.aggregateId,
+        card: renderErrorCard({ message: "处理失败，请重试。" }),
+      });
+      return !deliveryNeedsStatusRetry(result);
+    }
     return this.restoreReviewCardAfterFailure(
       event,
       delivery,

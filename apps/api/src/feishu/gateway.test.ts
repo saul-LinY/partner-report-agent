@@ -1111,12 +1111,7 @@ describe("FeishuGateway project scope delivery", () => {
           app_id: appId,
           operator: { open_id: openId },
           action: {
-            value: {
-              deliveryId: scopeDeliveries[0]!.id,
-              aggregateId: `${pluginInstanceId}:${periodKey}`,
-              baseVersion: 4,
-              action: "scope_submit",
-            },
+            name: "scope_submit",
             form_value: {
               scope_decision_0: "allow",
               scope_decision_1: "deny",
@@ -1124,8 +1119,9 @@ describe("FeishuGateway project scope delivery", () => {
           },
           context: { open_message_id: newMessageId },
         }),
-      ).resolves.toEqual({
-        toast: { type: "success", content: "已收到，正在处理。" },
+      ).resolves.toMatchObject({
+        schema: "2.0",
+        header: { title: { content: "权限审核处理中" } },
       });
       await expect(gateway.drainInbox()).resolves.toBe(1);
 

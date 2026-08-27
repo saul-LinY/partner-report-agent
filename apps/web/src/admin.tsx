@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Send,
   Server,
   ShieldCheck,
   Trash2,
@@ -566,12 +567,29 @@ function ProjectScopeModal({
   connection: PartnerConnection;
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["admin-project-scopes", connection.partnerId],
     queryFn: () =>
       api<AdminProjectScope>(
         `/v1/admin/partners/${connection.partnerId}/project-scopes`,
       ),
+  });
+  const reapproval = useMutation({
+    mutationFn: (instance: AdminProjectScope["instances"][number]) =>
+      api(
+        `/v1/admin/plugin-instances/${instance.id}/project-scopes/reapproval`,
+        {
+          method: "POST",
+          body: JSON.stringify({ baseVersion: instance.policyVersion }),
+        },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["admin-project-scopes", connection.partnerId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+    },
   });
   const data = query.data;
 
@@ -596,6 +614,7 @@ function ProjectScopeModal({
         <ErrorBanner error={query.error} />
       ) : data ? (
         <>
+          <ErrorBanner error={reapproval.error} />
           <div className="scope-summary" aria-label="项目采集权限汇总">
             <div>
               <span>允许采集</span>
@@ -623,9 +642,34 @@ function ProjectScopeModal({
                         v{instance.version} · 权限版本 {instance.policyVersion}
                       </span>
                     </div>
-                    <Badge tone={instance.initialized ? "success" : "warning"}>
-                      {instance.initialized ? "首次审批完成" : "等待首次审批"}
-                    </Badge>
+                    <div className="scope-instance-actions">
+                      <Badge
+                        tone={instance.initialized ? "success" : "warning"}
+                      >
+                        {instance.initialized ? "审批已完成" : "等待审批"}
+                      </Badge>
+                      {instance.initialized && instance.projects.length > 0 && (
+                        <Button
+                          variant="secondary"
+                          icon={<Send size={14} />}
+                          loading={
+                            reapproval.isPending &&
+                            reapproval.variables?.id === instance.id
+                          }
+                          disabled={reapproval.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "重新发起后，当前项目的采集权限会立即暂停，用户需要在飞书重新审核。确认继续吗？",
+                              )
+                            )
+                              reapproval.mutate(instance);
+                          }}
+                        >
+                          重新发起审核
+                        </Button>
+                      )}
+                    </div>
                   </header>
                   {instance.projects.length === 0 ? (
                     <div className="scope-instance-empty">尚未发现项目</div>

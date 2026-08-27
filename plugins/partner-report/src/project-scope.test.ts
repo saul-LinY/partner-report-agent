@@ -14,7 +14,6 @@ import {
   authorizedProjectThreads,
   classifyProjectEnvironment,
   discoverProjectScopes,
-  inspectLocalProjectScopeChanges,
   inspectLocalProjectScope,
   localProjectScopeHasIdentityCollisions,
   localProjectScopeRequiresBootstrap,
@@ -259,82 +258,6 @@ describe("project scope privacy boundary", () => {
       false,
     );
     expect(scopeIsActive(merged.entries[0], new Date("2026-08-09"))).toBe(true);
-  });
-
-  it("turns local status edits into versioned central decisions", () => {
-    const scopeKey = "d".repeat(64);
-    const remote = {
-      pluginInstanceId,
-      identityConfirmed: true,
-      version: 3,
-      initialized: true,
-      initializedAt: "2026-08-02T00:00:00.000Z",
-      currentPeriod: null,
-      entries: [
-        {
-          scopeKey,
-          displayName: "project",
-          status: "pending" as const,
-          effectiveFrom: null,
-          firstSeenPeriodKey: "2026-W31",
-          firstSeenAt: "2026-08-01T00:00:00.000Z",
-          lastSeenAt: "2026-08-01T00:00:00.000Z",
-          sessionCount: 1,
-        },
-      ],
-    };
-    const remoteEntry = remote.entries[0]!;
-    const edited = localScope([
-      {
-        ...remoteEntry,
-        status: "allowed",
-        localRoot: "/workspace/project",
-        lastSyncedStatus: "pending",
-      },
-    ]);
-    edited.version = remote.version;
-    expect(inspectLocalProjectScopeChanges(edited, remote)).toEqual({
-      kind: "changes",
-      decisions: [{ scopeKey, decision: "allow" }],
-    });
-    const legacyEdited = localScope([
-      { ...remoteEntry, status: "allowed", localRoot: "/workspace/project" },
-    ]);
-    legacyEdited.version = remote.version;
-    expect(inspectLocalProjectScopeChanges(legacyEdited, remote)).toEqual({
-      kind: "changes",
-      decisions: [{ scopeKey, decision: "allow" }],
-    });
-    const centrallyApproved = {
-      ...remote,
-      version: remote.version + 1,
-      entries: [{ ...remoteEntry, status: "allowed" as const }],
-    };
-    const staleLocal = localScope([
-      {
-        ...remoteEntry,
-        localRoot: "/workspace/project",
-        lastSyncedStatus: "pending",
-      },
-    ]);
-    expect(
-      inspectLocalProjectScopeChanges(staleLocal, centrallyApproved),
-    ).toEqual({
-      kind: "none",
-      decisions: [],
-    });
-    edited.version = remote.version - 1;
-    expect(inspectLocalProjectScopeChanges(edited, remote)).toMatchObject({
-      kind: "conflict",
-    });
-    edited.version = remote.version;
-    edited.entries.push({
-      ...edited.entries[0]!,
-      scopeKey: "e".repeat(64),
-    });
-    expect(inspectLocalProjectScopeChanges(edited, remote)).toMatchObject({
-      kind: "conflict",
-    });
   });
 
   it("queues only active allowed projects before thread content is read", () => {

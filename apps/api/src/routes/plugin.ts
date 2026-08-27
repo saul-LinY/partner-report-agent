@@ -26,7 +26,6 @@ import {
 } from "../connectivity.js";
 import {
   beginProjectScopeBootstrap,
-  decideProjectScopes,
   loadProjectScopePolicy,
   registerProjectScopeCandidates,
 } from "../project-scope.js";
@@ -735,24 +734,6 @@ export async function pluginRoutes(app: FastifyInstance) {
       "plugin_instance",
       actor.pluginInstanceId,
       { reason, version: policy.version },
-    );
-    return policy;
-  });
-
-  app.patch("/v1/project-scope", async (request) => {
-    const actor = await requirePluginActor(request);
-    const policy = await decideProjectScopes(
-      actor,
-      actor.pluginInstanceId,
-      request.body,
-    );
-    await audit(
-      request,
-      actor,
-      "project_scope.changed",
-      "plugin_instance",
-      actor.pluginInstanceId,
-      { version: policy.version },
     );
     return policy;
   });

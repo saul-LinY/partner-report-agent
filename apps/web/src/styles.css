@@ -2096,6 +2096,13 @@ select:focus {
   padding: 0 14px 14px 42px;
 }
 
+.plugin-event-expanded > p {
+  margin: 0;
+  color: #3d484e;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .plugin-event-expanded dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2203,15 +2210,56 @@ select:focus {
 }
 
 .system-monitor-workspace {
-  display: grid;
-  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
-  min-height: 560px;
   border: 1px solid var(--line);
   background: var(--surface);
 }
 
+.system-log-section {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.system-log-heading {
+  min-height: 52px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.system-log-heading > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system-log-heading strong {
+  font-size: 14px;
+}
+
+.system-log-heading span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-execution-browser {
+  min-height: 620px;
+  border-top: 1px solid var(--line);
+}
+
 .system-component-panel {
-  border-right: 1px solid var(--line);
+  min-width: 0;
+}
+
+.system-component-list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .system-monitor-section-title {
@@ -2235,18 +2283,23 @@ select:focus {
 }
 
 .system-component-row {
-  min-height: 96px;
-  padding: 14px;
+  min-width: 0;
+  min-height: 112px;
+  padding: 12px;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr);
   align-items: start;
-  gap: 11px;
-  border-bottom: 1px solid var(--line);
+  gap: 9px;
+  border-right: 1px solid var(--line);
+}
+
+.system-component-row:last-child {
+  border-right: 0;
 }
 
 .system-component-icon {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   border: 1px solid #c9dfd7;
@@ -2278,19 +2331,15 @@ select:focus {
 }
 
 .system-component-copy span {
-  font-size: 12px;
-}
-
-.system-component-row p {
-  margin: 2px 0 0;
-  color: var(--muted);
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
 .system-component-actions {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
@@ -2323,7 +2372,7 @@ select:focus {
 }
 
 .system-probe-result {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   min-width: 0;
   padding: 10px 11px;
   display: grid;
@@ -2368,11 +2417,17 @@ select:focus {
 }
 
 .system-incident-list {
-  min-height: 420px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .system-incident {
+  border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+}
+
+.system-incident:nth-child(2n) {
+  border-right: 0;
 }
 
 .system-incident-summary {
@@ -2488,25 +2543,30 @@ select:focus {
 
 @media (max-width: 900px) {
   .system-monitor-workspace {
-    grid-template-columns: 1fr;
     min-height: 0;
   }
   .system-component-panel {
     border-right: 0;
-    border-bottom: 1px solid var(--line);
+  }
+  .system-component-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .system-component-row {
-    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-columns: 30px minmax(0, 1fr);
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
   }
-  .system-component-actions,
-  .system-probe-result {
-    grid-column: 2;
+  .system-component-row:nth-child(2n) {
+    border-right: 0;
   }
-  .system-component-actions {
-    justify-content: space-between;
+  .system-component-row:last-child {
+    border-bottom: 0;
   }
   .system-incident-list {
-    min-height: 140px;
+    grid-template-columns: 1fr;
+  }
+  .system-incident {
+    border-right: 0;
   }
   .plugin-log-workspace {
     grid-template-columns: 1fr;
@@ -3259,6 +3319,17 @@ select:focus {
   margin-top: 3px;
   color: var(--muted);
   font-size: 10px;
+}
+.scope-instance-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.scope-instance-actions .button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
 }
 .scope-instance-empty {
   padding: 18px 0;
