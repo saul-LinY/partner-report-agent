@@ -9,6 +9,7 @@ import {
   normalizePluginLogAnalysis,
   normalizeTeamReportGeneration,
   normalizeTeamReportSummary,
+  projectAggregationInputs,
   projectStatusWithCompletionSupport,
 } from "./generation.js";
 
@@ -30,6 +31,32 @@ describe("reader-facing generation instructions", () => {
     );
     expect(instructions).toContain("must not silently change");
     expect(instructions).toContain("2026-08-27.project-card.v6");
+  });
+});
+
+describe("project work card generation inputs", () => {
+  it("creates one model input per project", () => {
+    const input = {
+      schemaVersion: "1.0",
+      reviewId: "review-1",
+      projectBuckets: [
+        { projectKey: "project-a", facts: [{ id: "fact-a" }] },
+        { projectKey: "project-b", facts: [{ id: "fact-b" }] },
+      ],
+    };
+
+    expect(projectAggregationInputs(input)).toEqual([
+      {
+        schemaVersion: "1.0",
+        reviewId: "review-1",
+        projectBuckets: [input.projectBuckets[0]],
+      },
+      {
+        schemaVersion: "1.0",
+        reviewId: "review-1",
+        projectBuckets: [input.projectBuckets[1]],
+      },
+    ]);
   });
 });
 

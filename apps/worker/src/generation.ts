@@ -112,6 +112,42 @@ function isSystemHealthJob(type: string) {
 export const aggregationInstructions = (model: string) =>
   `You generate one reviewable Project Work Card for every supplied projectBuckets entry. Return exactly one group for every projectKey and never merge, split, rename, add, or omit a project. Write projectDescription, overview and dailyProgress.summary in simplified Chinese. For initial generation, copy each bucket.projectDescription exactly into group.projectDescription; do not rewrite it. A project description may change only when reviewInstruction explicitly asks to modify the project description, introduction, positioning, or purpose. Treat reviewInstruction as an authoritative first-hand correction from the Partner: it may correct wording, emphasis, dates, results, or add weekly work facts explicitly stated by the user. Never invent anything beyond the supplied bucket and the explicit reviewInstruction, and preserve uncertainty when neither source proves a result. A general request to revise weekly work must not silently change projectDescription. Use plain, direct, everyday Chinese that a colleague without technical context can understand. Explain necessary technical terms in ordinary language instead of stacking jargon. Make the card detailed enough for the user to verify whether the work was described accurately. In overview, explain the work's context or purpose, the concrete actions, the supported result or current state, and any remaining issue or next step when available. Use two to four informative sentences, usually 120 to 240 Chinese characters. For each dailyProgress.summary, keep distinct meaningful activities from that date and explain what was done and what result or change it produced in about 150 Chinese characters, usually 120 to 180 and never more than 200. Do not compress several unrelated contributions into a vague phrase. Avoid process narration, filler, repeated background, unsupported business impact, and claims such as "completed" unless the supplied contributions or explicit reviewInstruction support them. Keep projectDescription around 200 Chinese characters, preferably 150 to 250, and no more than 300. Order dailyProgress by ascending YYYY-MM-DD and combine contributions from the same date into one entry. Return production metadata {"skillVersion":"partner-report-platform/0.3.0","promptVersion":"2026-08-27.project-card.v6","schemaVersion":"1.0","producer":"data-platform","modelVersion":"${model}"}.`;
 
+export function projectAggregationInputs(inputPayload: any) {
+  const projectBuckets = Array.isArray(inputPayload.projectBuckets)
+    ? inputPayload.projectBuckets
+    : [];
+  return projectBuckets.map((projectBucket: any) => ({
+    ...inputPayload,
+    projectBuckets: [projectBucket],
+  }));
+}
+
+async function generateAggregationByProject(job: Job, model: string) {
+  const projectInputs = projectAggregationInputs(job.input_payload);
+  if (projectInputs.length === 0) throw new Error("PROJECT_BUCKETS_REQUIRED");
+
+  const results = await Promise.all(
+    projectInputs.map((input: any) =>
+      generateStructured<any>({
+        name: "partner_work_item_aggregation",
+        schema: aggregationResultSchema,
+        instructions: aggregationInstructions(model),
+        input,
+        model,
+      }),
+    ),
+  );
+
+  return {
+    schemaVersion: "1.0",
+    groups: results.flatMap((result) => result.groups),
+    qualityWarnings: [
+      ...new Set(results.flatMap((result) => result.qualityWarnings)),
+    ],
+    production: results[0].production,
+  };
+}
+
 const teamReportInstructions = (
   model: string,
   allowedWorkCardSnapshotIds: string[],
@@ -953,13 +989,7 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
         (workCard: any) => workCard.noReportableActivity === true,
       );
     const output = isAggregation
-      ? await generateStructured({
-          name: "partner_work_item_aggregation",
-          schema: aggregationResultSchema,
-          instructions: aggregationInstructions(model),
-          input: job.input_payload,
-          model,
-        })
+      ? await generateAggregationByProject(job, model)
       : isTeamReport
         ? allWorkCardsHaveNoActivity
           ? buildNoActivityTeamReport(job.input_payload.workCards, model)
