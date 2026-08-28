@@ -5215,6 +5215,18 @@ function missingSessionCoverage(authorizedSessions, processedSessionIds) {
     return true;
   });
 }
+function reviewSnapshotCoverage(input) {
+  const terminal = /* @__PURE__ */ new Set([
+    ...input.processedSessionIds,
+    ...input.terminalSessionIds
+  ]);
+  const unresolved = new Set(input.unresolvedSessionIds);
+  const missing = missingSessionCoverage(input.snapshot, terminal);
+  return {
+    retry: missing.filter((session) => unresolved.has(session.id)),
+    unaccounted: missing.filter((session) => !unresolved.has(session.id))
+  };
+}
 function shouldStopBeforeClaim(deadlineAt, now = Date.now(), reserveMs = COLLECTION_JOB_RESERVE_MS) {
   const deadline = new Date(deadlineAt).getTime();
   return !Number.isFinite(deadline) || deadline - now <= reserveMs;
@@ -5463,6 +5475,7 @@ var CODEX_THREAD_LIST_TIMEOUT_MS = 3e5;
 // src/app-server.ts
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
 var CODEX_THREAD_LIST_PAGE_LIMIT = 50;
+var CODEX_THREAD_LIST_MAX_RESULTS = 2e3;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 var DEFAULT_CODEX_BINARY_CANDIDATES = [
@@ -5762,7 +5775,12 @@ var CodexAppServer = class {
         (item) => Number.isFinite(item.updatedAt) && item.updatedAt < updatedSince
       );
       cursor = reachedCutoff ? null : result.nextCursor ?? null;
-    } while (cursor && threads.length < 2e3);
+    } while (cursor && threads.length < CODEX_THREAD_LIST_MAX_RESULTS);
+    if (cursor)
+      throw Object.assign(
+        new Error("Session \u6D3B\u52A8\u626B\u63CF\u8D85\u8FC7\u5B89\u5168\u4E0A\u9650\uFF0C\u672A\u521B\u5EFA\u4E0D\u5B8C\u6574\u91C7\u96C6\u5FEB\u7167\u3002"),
+        { code: "CODEX_SESSION_LIST_LIMIT_EXCEEDED" }
+      );
     return threads;
   }
   async readThread(threadId) {
@@ -7952,13 +7970,8 @@ async function collectStart() {
     metadataEligible,
     { configuredRoots }
   );
-  const existingScopeKeys = new Set(
-    localScope.entries.map((entry) => entry.scopeKey)
-  );
-  const existingCandidates = allThreadDiscovery.candidates.filter(
-    (candidate) => existingScopeKeys.has(candidate.scopeKey)
-  );
-  if (existingCandidates.length > 0) {
+  const discoveredCandidates = allThreadDiscovery.candidates;
+  if (discoveredCandidates.length > 0) {
     const registeredScope = await authenticatedRequest(
       "/v1/project-scope/candidates",
       {
@@ -7966,7 +7979,7 @@ async function collectStart() {
         body: JSON.stringify({
           periodKey: policy.currentPeriod.period_key,
           initialDiscovery: false,
-          candidates: existingCandidates.map((candidate) => ({
+          candidates: discoveredCandidates.map((candidate) => ({
             scopeKey: candidate.scopeKey,
             displayName: candidate.displayName,
             sessionCount: candidate.sessionCount
@@ -7976,7 +7989,7 @@ async function collectStart() {
     );
     localScope = mergeDiscoveredRoots(
       mergeRemoteProjectScope(localScope, registeredScope),
-      existingCandidates
+      discoveredCandidates
     );
     saveLocalProjectScope(localScope);
   }
@@ -8114,6 +8127,7 @@ function recordJobOutcome(manifest, current, outcome) {
     markThreadProcessed(manifest, current.threadId);
   manifest.outcomes.push({
     jobId: current.jobId,
+    ...current.threadId ? { threadId: current.threadId } : {},
     failureCount: current.failures.length,
     failureCodes: current.failures.map((failure) => failure.code),
     ...outcome
@@ -8363,107 +8377,20 @@ async function submitProjectDescription() {
     });
   }
 }
-async function startEndOfRunScopeScan(runPath, manifest) {
+function completeInitialQueueCoverage(runPath, manifest) {
   const scan = coverageState(manifest);
   if (scan.completed) return false;
-  const config = loadConfig();
-  const fixedWindowEnd = manifest.scanEndsAt ?? manifest.createdAt;
-  const scanStartsAt = initialProjectScopeStartAt(fixedWindowEnd);
-  const { summaries, metadataEligible } = await listCollectionThreadMetadata(
-    config,
-    scanStartsAt
-  );
-  manifest.counts.discovered = Math.max(
-    manifest.counts.discovered,
-    summaries.length
-  );
-  const inspection = inspectLocalProjectScope(manifest.pluginInstanceId);
-  if (inspection.state !== "valid")
-    throw Object.assign(
-      new Error("\u672B\u5C3E\u9879\u76EE\u626B\u63CF\u65F6\u672C\u5730\u9879\u76EE\u6743\u9650\u6587\u4EF6\u5931\u6548\uFF0C\u5DF2\u505C\u6B62\u8BFB\u53D6\u3002"),
-      { code: "PROJECT_SCOPE_LOCAL_INVALID" }
-    );
-  const localScope = inspection.scope;
-  const discoverySummaries = metadataEligible.filter(
-    (summary) => threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, fixedWindowEnd)
-  );
-  const discovery = discoverProjectScopes(
-    manifest.pluginInstanceId,
-    localScope,
-    discoverySummaries,
-    { configuredRoots: configuredProjectRoots(manifest.projects) }
-  );
-  const knownScopeKeys = new Set(
-    localScope.entries.map((entry) => entry.scopeKey)
-  );
-  const registeredScope = await authenticatedRequest(
-    "/v1/project-scope/candidates",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        periodKey: manifest.period.period_key,
-        initialDiscovery: false,
-        candidates: discovery.candidates.map((candidate) => ({
-          scopeKey: candidate.scopeKey,
-          displayName: candidate.displayName,
-          sessionCount: candidate.sessionCount
-        }))
-      })
-    }
-  );
-  const mergedScope = mergeDiscoveredRoots(
-    mergeRemoteProjectScope(localScope, registeredScope),
-    discovery.candidates
-  );
-  saveLocalProjectScope(mergedScope);
-  if (mergedScope.entries.some((entry) => !knownScopeKeys.has(entry.scopeKey))) {
-    manifest.projectDescriptionScan = {
-      initialized: false,
-      queue: [],
-      cursor: 0,
-      current: null,
-      generated: manifest.projectDescriptionScan?.generated ?? 0,
-      unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
-      unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
-      failed: manifest.projectDescriptionScan?.failed ?? 0
-    };
-  }
-  const possibleWindowSummaries = metadataEligible.filter(
-    (summary) => threadCouldContainWindowAnswer(
-      summary.updatedAt,
-      manifest.scanStartsAt ?? manifest.period.starts_at
-    )
-  );
-  const allThreadDiscovery = discoverProjectScopes(
-    manifest.pluginInstanceId,
-    mergedScope,
-    possibleWindowSummaries,
-    { configuredRoots: configuredProjectRoots(manifest.projects) }
-  );
-  const fixedWindowSummaries = possibleWindowSummaries;
-  const authorized = authorizedProjectThreads(
-    fixedWindowSummaries,
-    allThreadDiscovery.threadScopes,
-    mergedScope.entries,
-    /* @__PURE__ */ new Date()
-  ).map((summary) => ({
-    ...summary,
-    collectionEndsAt: fixedWindowEnd
-  }));
-  const missing = missingSessionCoverage(
-    authorized,
-    scan.processedThreadIds ?? []
-  );
+  const coverage = reviewSnapshotCoverage({
+    snapshot: manifest.queue,
+    processedSessionIds: scan.processedThreadIds ?? [],
+    terminalSessionIds: manifest.outcomes.flatMap(
+      (outcome) => outcome.threadId ? [outcome.threadId] : []
+    ),
+    unresolvedSessionIds: Object.keys(scan.unresolvedReadFailures ?? {})
+  });
   scan.passes = (scan.passes ?? 0) + 1;
-  if (missing.length > 0) {
-    const queuedIds = new Set(manifest.queue.map((summary) => summary.id));
-    const initialThreadIds = new Set(manifest.initialThreadIds ?? []);
-    for (const summary of missing) {
-      if (!queuedIds.has(summary.id) && initialThreadIds.has(summary.id))
-        manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
-      manifest.queue.push(summary);
-      queuedIds.add(summary.id);
-    }
+  if (coverage.retry.length > 0) {
+    manifest.queue.push(...coverage.retry);
     manifest.deadlineAt = collectionDeadline((/* @__PURE__ */ new Date()).toISOString());
     scan.completed = false;
     saveRun(runPath, manifest);
@@ -8471,13 +8398,18 @@ async function startEndOfRunScopeScan(runPath, manifest) {
       status: "coverage_repair_required",
       runPath,
       coveragePass: scan.passes,
-      missingSessions: missing.length,
+      missingSessions: coverage.retry.length,
       unresolvedReadFailures: Object.keys(scan.unresolvedReadFailures ?? {}).length,
-      collectionEndsAt: fixedWindowEnd,
+      collectionEndsAt: manifest.scanEndsAt ?? manifest.createdAt,
       nextCommand: `collect-next --run ${runPath}`
     });
     return true;
   }
+  if (coverage.unaccounted.length > 0)
+    throw Object.assign(
+      new Error("\u521D\u59CB Session \u5FEB\u7167\u5B58\u5728\u672A\u5904\u7406\u9879\uFF0C\u5DF2\u505C\u6B62\u63A8\u8FDB\u91C7\u96C6\u6E38\u6807\u3002"),
+      { code: "COLLECTION_SNAPSHOT_INCOMPLETE" }
+    );
   scan.completed = true;
   saveRun(runPath, manifest);
   return false;
@@ -8593,7 +8525,7 @@ async function collectNext() {
     server.close();
   }
   if (await continueProjectDescriptionScan(absolute, manifest)) return;
-  if (await startEndOfRunScopeScan(absolute, manifest)) return;
+  if (completeInitialQueueCoverage(absolute, manifest)) return;
   output({
     status: "review_required",
     runPath: absolute,

@@ -75,7 +75,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 范围单位只有顶层逻辑项目一层：子目录、新 Session 和嵌套 Git 仓库继承同一范围；同一 Git 仓库的多个 worktree 归并为一个逻辑项目；同名但不同仓库不得合并。系统任务、官方自动化、`~/Documents/Codex/YYYY-MM-DD/<任务名>`、Codex worktree、系统临时目录和已归档 Session 在登记前排除。每个真实项目至少 1 个 Session 即登记为 pending，不依赖 Codex 侧边栏项目列表。历史上未经飞书确认却为 allowed 的项目必须恢复为 pending；显式 denied 保持排除。
 
-首次绑定扫描到的项目必须发送飞书项目权限卡；用户首次提交项目审核前，`collect_start` 返回 `project_scope_approval_required` 且不创建 Run、不调用 `thread/read`。如果项目较多需要分批审核，已经允许的项目可以采集，剩余 pending 项目仍不得读取。每次正常运行处理完当前队列后重新读取 `thread/list` 元数据发现新项目；新项目登记为 pending 并发送“新增项目”飞书权限卡，不加入本轮队列，也不阻断已允许项目的采集。项目审核不在定时任务中轮询；用户在飞书完成审核后，由下一次手动或定时采集自然生效。显式 denied 和本地排除项继续生效。
+首次绑定扫描到的项目必须发送飞书项目权限卡；用户首次提交项目审核前，`collect_start` 返回 `project_scope_approval_required` 且不创建 Run、不调用 `thread/read`。如果项目较多需要分批审核，已经允许的项目可以采集，剩余 pending 项目仍不得读取。每次正常运行在首次 `thread/list` 元数据扫描时同时发现新项目；新项目登记为 pending 并发送“新增项目”飞书权限卡，不加入本轮队列，也不阻断已允许项目的采集。项目审核不在定时任务中轮询；用户在飞书完成审核后，由下一次手动或定时采集自然生效。显式 denied 和本地排除项继续生效。
 
 每周贡献生成项目工作卡片后，继续通过飞书“项目工作卡片审核”由用户逐张接受或排除；插件上传结果不等于用户已经接受周报内容，不得绕过该审核自动定稿。
 
@@ -98,8 +98,8 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 - 未完成 Run 以仅当前用户可读写的权限保存在稳定数据目录；任务或设备中断后，同一周期的下一次运行从原队列继续。
 - 周报截止后旧周期锁定。尚未处理的候选 Session 在下一次运行按上传成功时的开放周期归档，作为下一周期普通工作，不添加迟到或补采标签。
 - 只有 `completed`、`checkpointAdvanced: true` 且无读写或提取失败时才推进成功游标。
-- 每个 Run 在启动时冻结采集截止时间。结束前必须重新列举该固定窗口内所有已授权项目的非临时 Session，与本轮已处理 Session 逐项核对；发现漏项后追加到队列，处理后再次核对，直到差集为空。Run 启动后新增或更新的 Session 留给下一次运行。
-- 完整性核对中的 Session 读取失败必须保留为未解决失败并重新入队；不得把失败 Session 当作已排除项。读取失败、提取失败、未决策、差集非空、延后或未处理项任一存在时，终态审查必须失败，不得返回完成、推进游标或标记本周回采完成。
+- 每个 Run 在启动时冻结采集截止时间，并把首次 `thread/list` 成功扫描到的已授权候选 Session 固化为本轮快照。Run 启动后新增或更新的 Session 留给下一次运行；结束前不得再次调用 `thread/list`。
+- 完整性核对只检查冻结快照中的每个 Session 是否已上传、忽略、命中缓存、判定不符合窗口或产生明确失败。快照中的 Session 读取失败必须保留为未解决失败并从快照重新入队；不得把失败 Session 当作已排除项。读取失败、提取失败、未决策、延后或未处理项任一存在时，终态审查必须失败，不得返回完成、推进游标或标记本周回采完成。
 - 从旧采集语义升级时，必须仅一次撤销当前周的回采完成标记并重扫本周；保留 Session 级 accepted/ignored 内容 hash，废弃回合级断点。新旧 hash 不同的 Session 必须按整个 Session 新版本重新判断。
 
 `collect_start` 返回 `started` 后，按 `nextTool` 调用 `collect_next`。`queued` 只是粗筛候选数，不是模型需要处理的数量。
@@ -132,7 +132,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 ## 终态审查
 
-队列处理完后，插件先重新列举固定时间窗口内所有允许项目的非临时 Session，并与明确上传、忽略、命中缓存或判定不符合窗口的 Session 逐一核对。差集中的 Session 自动重新入队，处理后再次列举，直到差集和 `unresolvedReadFailures` 都为空，再按 `nextTool` 调用 `collect_review`。
+队列处理完后，插件不得再次调用 `thread/list`。插件只把 Run 启动时冻结的候选 Session 快照与明确上传、忽略、命中缓存、判定不符合窗口或产生明确失败的 Session 逐一核对。快照中的读取失败自动重新入队，直到 `unresolvedReadFailures` 为空，再按 `nextTool` 调用 `collect_review`。运行期间新增或更新的 Session 由下一次运行的首次扫描处理。
 
 审查不通过时按 `nextTool` 继续；只有 `completed`、`checkpointAdvanced: true` 且不再包含 `nextTool` 才结束。`coverageComplete` 必须为 true，并且不得存在 defer、skip、读取失败、提取失败或未处理项；任何一项不满足都不能删除 Run 或返回完成。
 

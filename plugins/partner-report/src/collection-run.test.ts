@@ -12,6 +12,7 @@ import {
   legalCollectSkipOutcome,
   missingSessionCoverage,
   repairImmutableResult,
+  reviewSnapshotCoverage,
   shouldStopBeforeClaim,
   type ExtractionFailure,
   type JobOutcome,
@@ -62,6 +63,26 @@ describe("collection run guards", () => {
         ["processed"],
       ),
     ).toEqual([{ id: "missing" }]);
+  });
+
+  it("audits the frozen Session snapshot without discovering new Sessions", () => {
+    expect(
+      reviewSnapshotCoverage({
+        snapshot: [
+          { id: "uploaded" },
+          { id: "ignored" },
+          { id: "failed-read" },
+          { id: "unaccounted" },
+          { id: "uploaded" },
+        ],
+        processedSessionIds: ["uploaded"],
+        terminalSessionIds: ["ignored"],
+        unresolvedSessionIds: ["failed-read"],
+      }),
+    ).toEqual({
+      retry: [{ id: "failed-read" }],
+      unaccounted: [{ id: "unaccounted" }],
+    });
   });
 
   it("stops claiming before the time budget is exhausted", () => {

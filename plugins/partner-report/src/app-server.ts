@@ -23,6 +23,7 @@ type ThreadListOptions = {
 
 export const CODEX_THREAD_READ_TIMEOUT_MS = 60_000;
 export const CODEX_THREAD_LIST_PAGE_LIMIT = 50;
+export const CODEX_THREAD_LIST_MAX_RESULTS = 2_000;
 export const CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 export const MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 export const DEFAULT_CODEX_BINARY_CANDIDATES = [
@@ -386,7 +387,12 @@ export class CodexAppServer {
             Number.isFinite(item.updatedAt) && item.updatedAt < updatedSince,
         );
       cursor = reachedCutoff ? null : (result.nextCursor ?? null);
-    } while (cursor && threads.length < 2_000);
+    } while (cursor && threads.length < CODEX_THREAD_LIST_MAX_RESULTS);
+    if (cursor)
+      throw Object.assign(
+        new Error("Session 活动扫描超过安全上限，未创建不完整采集快照。"),
+        { code: "CODEX_SESSION_LIST_LIMIT_EXCEEDED" },
+      );
     return threads;
   }
 

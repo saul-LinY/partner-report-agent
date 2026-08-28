@@ -115,7 +115,10 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("项目工作卡片整体接受后");
     expect(skill).toContain("项目工作卡片审核");
     expect(skill).toContain("终态审查");
-    expect(skill).toContain("差集和 `unresolvedReadFailures` 都为空");
+    expect(skill).toContain("结束前不得再次调用 `thread/list`");
+    expect(skill).toContain("插件不得再次调用 `thread/list`");
+    expect(skill).toContain("冻结的候选 Session 快照");
+    expect(skill).toContain("运行期间新增或更新的 Session");
     expect(skill).not.toContain("continuation-task-config");
     expect(skill).not.toContain("next-local");
     expect(skill).not.toContain("daily-finish");

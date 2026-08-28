@@ -328,6 +328,7 @@ var PARTNER_REPORT_MCP_TOOL_TIMEOUT_SEC = 700;
 // src/app-server.ts
 var CODEX_THREAD_READ_TIMEOUT_MS = 6e4;
 var CODEX_THREAD_LIST_PAGE_LIMIT = 50;
+var CODEX_THREAD_LIST_MAX_RESULTS = 2e3;
 var CODEX_THREAD_TURNS_PAGE_LIMIT = 100;
 var MINIMUM_CODEX_APP_SERVER_VERSION = "0.149.0";
 var DEFAULT_CODEX_BINARY_CANDIDATES = [
@@ -627,7 +628,12 @@ var CodexAppServer = class {
         (item) => Number.isFinite(item.updatedAt) && item.updatedAt < updatedSince
       );
       cursor = reachedCutoff ? null : result.nextCursor ?? null;
-    } while (cursor && threads.length < 2e3);
+    } while (cursor && threads.length < CODEX_THREAD_LIST_MAX_RESULTS);
+    if (cursor)
+      throw Object.assign(
+        new Error("Session \u6D3B\u52A8\u626B\u63CF\u8D85\u8FC7\u5B89\u5168\u4E0A\u9650\uFF0C\u672A\u521B\u5EFA\u4E0D\u5B8C\u6574\u91C7\u96C6\u5FEB\u7167\u3002"),
+        { code: "CODEX_SESSION_LIST_LIMIT_EXCEEDED" }
+      );
     return threads;
   }
   async readThread(threadId) {

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import {
   CODEX_THREAD_LIST_TIMEOUT_MS,
   CODEX_THREAD_LIST_PAGE_LIMIT,
+  CODEX_THREAD_LIST_MAX_RESULTS,
   CODEX_THREAD_READ_TIMEOUT_MS,
   CODEX_THREAD_TURNS_PAGE_LIMIT,
   DEFAULT_CODEX_BINARY_CANDIDATES,
@@ -139,6 +140,24 @@ describe("CodexAppServer.listThreads", () => {
         appServerStderrPresent: true,
       },
     });
+  });
+
+  it("rejects a partial snapshot when recent metadata exceeds the safety limit", async () => {
+    const server = new CodexAppServer("codex");
+    vi.spyOn(server, "request").mockResolvedValue({
+      data: Array.from(
+        { length: CODEX_THREAD_LIST_PAGE_LIMIT },
+        (_, index) => ({
+          id: `session-${index}`,
+          updatedAt: "2026-08-16T00:00:00.000Z",
+        }),
+      ),
+      nextCursor: "more-recent-sessions",
+    });
+
+    await expect(
+      server.listThreads({ updatedSince: "2026-08-10T00:00:00.000Z" }),
+    ).rejects.toMatchObject({ code: "CODEX_SESSION_LIST_LIMIT_EXCEEDED" });
   });
 
   it("rejects an invalid activity cutoff before contacting app-server", async () => {

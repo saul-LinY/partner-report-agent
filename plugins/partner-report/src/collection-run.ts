@@ -24,6 +24,7 @@ export type JobTerminalStatus =
 
 export type JobOutcome = {
   jobId: string;
+  threadId?: string;
   status: JobTerminalStatus;
   errorCode?: string;
   causeCode?: ExtractionFailureCode;
@@ -67,6 +68,24 @@ export function missingSessionCoverage<T extends { id: string }>(
     seen.add(session.id);
     return true;
   });
+}
+
+export function reviewSnapshotCoverage<T extends { id: string }>(input: {
+  snapshot: T[];
+  processedSessionIds: Iterable<string>;
+  terminalSessionIds: Iterable<string>;
+  unresolvedSessionIds: Iterable<string>;
+}) {
+  const terminal = new Set([
+    ...input.processedSessionIds,
+    ...input.terminalSessionIds,
+  ]);
+  const unresolved = new Set(input.unresolvedSessionIds);
+  const missing = missingSessionCoverage(input.snapshot, terminal);
+  return {
+    retry: missing.filter((session) => unresolved.has(session.id)),
+    unaccounted: missing.filter((session) => !unresolved.has(session.id)),
+  };
 }
 
 export function shouldStopBeforeClaim(
