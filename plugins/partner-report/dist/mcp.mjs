@@ -26307,7 +26307,7 @@ registerTool(
 registerTool(
   "collect_start",
   {
-    description: "\u4F7F\u7528 Codex App \u5B98\u65B9\u4EFB\u52A1\u5217\u8868\u7684\u8DE8 Host \u6700\u5C0F\u5143\u6570\u636E\u542F\u52A8\u91C7\u96C6\uFF1B\u666E\u901A\u8FD0\u884C\u4E0D\u5F97\u8BBE\u7F6E force\u3002\u4E0D\u5F97\u63D0\u4EA4 Session \u6B63\u6587\u3002",
+    description: "\u4F7F\u7528 Codex App \u5B98\u65B9\u4EFB\u52A1\u5217\u8868\u7684\u8DE8 Host \u6700\u5C0F\u5143\u6570\u636E\u542F\u52A8\u672C\u673A\u4F18\u5148\u91C7\u96C6\uFF1B\u672C\u673A\u5B8C\u6210\u540E\u624D\u8BFB\u53D6\u8FDC\u7A0B Host\u3002\u666E\u901A\u8FD0\u884C\u4E0D\u5F97\u8BBE\u7F6E force\u3002\u4E0D\u5F97\u63D0\u4EA4 Session \u6B63\u6587\u3002",
     inputSchema: {
       threads: external_exports.array(hostThreadMetadataSchema).max(CODEX_HOST_THREAD_LIST_LIMIT),
       pinnedThreads: external_exports.array(hostThreadMetadataSchema).max(CODEX_HOST_PINNED_THREAD_LIMIT).default([]),

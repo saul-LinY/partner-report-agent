@@ -5,12 +5,14 @@ import {
   appendExtractionFailure,
   canMarkExtractFailed,
   collectionDeadline,
+  completedCollectionSources,
   countJobOutcomes,
   failedExtractOutcomeIsExplained,
   immutableContributionFromRequirements,
   jobOutcomeFailureAuditIsValid,
   legalCollectSkipOutcome,
   missingSessionCoverage,
+  orderLocalCollectionFirst,
   repairImmutableResult,
   reviewSnapshotCoverage,
   shouldStopBeforeClaim,
@@ -56,6 +58,39 @@ function failures(count: number, code = "SCHEMA_VALIDATION_FAILED") {
 }
 
 describe("collection run guards", () => {
+  it("keeps local jobs first and preserves local completion during remote failure", () => {
+    const queue = orderLocalCollectionFirst(
+      [
+        { id: "remote", hostId: "host-a" },
+        { id: "local", hostId: "local" },
+      ],
+      "local",
+    );
+    expect(queue.map((item) => item.id)).toEqual(["local", "remote"]);
+    expect(
+      completedCollectionSources({
+        queue,
+        processedSessionIds: ["local:local"],
+        sessionKey: (item) => `${item.hostId}:${item.id}`,
+        localHostId: "local",
+        remoteHostIds: ["host-a"],
+        remoteDiscoveryComplete: false,
+      }),
+    ).toEqual({ localComplete: true, completedRemoteHostIds: [] });
+    expect(
+      completedCollectionSources({
+        queue,
+        processedSessionIds: ["local:local", "host-a:remote"],
+        sessionKey: (item) => `${item.hostId}:${item.id}`,
+        localHostId: "local",
+        remoteHostIds: ["host-a"],
+        remoteDiscoveryComplete: true,
+      }),
+    ).toEqual({
+      localComplete: true,
+      completedRemoteHostIds: ["host-a"],
+    });
+  });
   it("finds every unprocessed authorized Session exactly once", () => {
     expect(
       missingSessionCoverage(

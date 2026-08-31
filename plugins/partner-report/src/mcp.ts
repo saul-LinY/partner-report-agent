@@ -350,7 +350,7 @@ registerTool(
   "collect_start",
   {
     description:
-      "使用 Codex App 官方任务列表的跨 Host 最小元数据启动采集；普通运行不得设置 force。不得提交 Session 正文。",
+      "使用 Codex App 官方任务列表的跨 Host 最小元数据启动本机优先采集；本机完成后才读取远程 Host。普通运行不得设置 force。不得提交 Session 正文。",
     inputSchema: {
       threads: z
         .array(hostThreadMetadataSchema)

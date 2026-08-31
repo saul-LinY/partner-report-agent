@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODEX_HOST_THREAD_LIST_LIMIT,
   assertHostCollectionDiscoveryComplete,
+  hostCollectionDiscoveryStatus,
   hostProjectDiscoveryMayBePartial,
   hostThreadKey,
   parseHostCollectionDiscoveryInput,
@@ -118,5 +119,46 @@ describe("host project discovery input", () => {
     expect(() =>
       assertHostCollectionDiscoveryComplete(capped, "2026-08-28T00:00:00.000Z"),
     ).not.toThrow();
+  });
+
+  it("reports remote discovery gaps without requiring local collection to stop", () => {
+    const unavailable = parseHostCollectionDiscoveryInput({
+      threads: [],
+      pinnedThreads: [],
+      unavailableHosts: ["host-a"],
+      unavailableSources: [],
+    });
+    expect(
+      hostCollectionDiscoveryStatus(unavailable, "2026-08-27T00:00:00.000Z"),
+    ).toEqual({
+      complete: false,
+      warnings: ["REMOTE_HOST_DISCOVERY_UNAVAILABLE"],
+    });
+
+    const noRemote = parseHostCollectionDiscoveryInput({
+      threads: [],
+      pinnedThreads: [],
+      unavailableHosts: [],
+      unavailableSources: [],
+    });
+    expect(
+      hostCollectionDiscoveryStatus(noRemote, "2026-08-27T00:00:00.000Z"),
+    ).toEqual({ complete: true, warnings: [] });
+
+    const capped = parseHostCollectionDiscoveryInput({
+      threads: Array.from(
+        { length: CODEX_HOST_THREAD_LIST_LIMIT },
+        (_, index) => ({ ...thread(`recent-${index}`), hostId: "host-a" }),
+      ),
+      pinnedThreads: [],
+      unavailableHosts: [],
+      unavailableSources: [],
+    });
+    expect(
+      hostCollectionDiscoveryStatus(capped, "2026-08-27T00:00:00.000Z"),
+    ).toEqual({
+      complete: false,
+      warnings: ["REMOTE_HOST_DISCOVERY_WINDOW_INCOMPLETE"],
+    });
   });
 });

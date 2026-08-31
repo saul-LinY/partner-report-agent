@@ -72,6 +72,40 @@ export function missingSessionCoverage<T extends { id: string }>(
   });
 }
 
+export function orderLocalCollectionFirst<T extends { hostId: string }>(
+  queue: T[],
+  localHostId: string,
+) {
+  return [...queue].sort(
+    (left, right) =>
+      Number(left.hostId !== localHostId) -
+      Number(right.hostId !== localHostId),
+  );
+}
+
+export function completedCollectionSources<
+  T extends { hostId: string },
+>(input: {
+  queue: T[];
+  processedSessionIds: Iterable<string>;
+  sessionKey: (session: T) => string;
+  localHostId: string;
+  remoteHostIds: string[];
+  remoteDiscoveryComplete: boolean;
+}) {
+  const processed = new Set(input.processedSessionIds);
+  const sourceComplete = (hostId: string) =>
+    input.queue
+      .filter((session) => session.hostId === hostId)
+      .every((session) => processed.has(input.sessionKey(session)));
+  return {
+    localComplete: sourceComplete(input.localHostId),
+    completedRemoteHostIds: input.remoteDiscoveryComplete
+      ? input.remoteHostIds.filter(sourceComplete)
+      : [],
+  };
+}
+
 export function reviewSnapshotCoverage<T extends { id: string }>(input: {
   snapshot: T[];
   processedSessionIds: Iterable<string>;

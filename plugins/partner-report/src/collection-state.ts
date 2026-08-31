@@ -33,11 +33,18 @@ type ProcessedSessionState = {
 };
 
 export type CollectionState = {
-  schemaVersion: "5.0";
+  schemaVersion: "6.0";
   pluginInstanceId: string;
   collectionFloorAt: string | null;
   lastSuccessfulRunStartedAt: string | null;
   weekBackfillCompletedFor: string | null;
+  hostCheckpoints: Record<
+    string,
+    {
+      lastSuccessfulRunStartedAt: string | null;
+      weekBackfillCompletedFor: string | null;
+    }
+  >;
   acceptedSessions: Record<string, ProcessedSessionState>;
   ignoredSessions: Record<string, ProcessedSessionState>;
 };
@@ -60,11 +67,12 @@ function leasePath(directory: string) {
 
 function emptyState(pluginInstanceId: string): CollectionState {
   return {
-    schemaVersion: "5.0",
+    schemaVersion: "6.0",
     pluginInstanceId,
     collectionFloorAt: null,
     lastSuccessfulRunStartedAt: null,
     weekBackfillCompletedFor: null,
+    hostCheckpoints: {},
     acceptedSessions: {},
     ignoredSessions: {},
   };
@@ -89,7 +97,9 @@ function validateState(
     return emptyState(pluginInstanceId);
   const acceptedSessions = state.acceptedSessions ?? {};
   if (
-    !["1.0", "2.0", "3.0", "4.0", "5.0"].includes(state.schemaVersion ?? "") ||
+    !["1.0", "2.0", "3.0", "4.0", "5.0", "6.0"].includes(
+      state.schemaVersion ?? "",
+    ) ||
     (state.collectionFloorAt !== null && !validIso(state.collectionFloorAt)) ||
     (state.lastSuccessfulRunStartedAt !== null &&
       !validIso(state.lastSuccessfulRunStartedAt)) ||
@@ -105,6 +115,27 @@ function validateState(
       code: "COLLECTION_STATE_INVALID",
     });
   }
+  const hostCheckpoints = state.hostCheckpoints ?? {};
+  if (
+    !hostCheckpoints ||
+    typeof hostCheckpoints !== "object" ||
+    Array.isArray(hostCheckpoints) ||
+    Object.keys(hostCheckpoints).length > 200 ||
+    Object.entries(hostCheckpoints).some(
+      ([hostId, checkpoint]) =>
+        !hostId ||
+        hostId.length > 512 ||
+        !checkpoint ||
+        typeof checkpoint !== "object" ||
+        (checkpoint.lastSuccessfulRunStartedAt !== null &&
+          !validIso(checkpoint.lastSuccessfulRunStartedAt)) ||
+        (checkpoint.weekBackfillCompletedFor !== null &&
+          !validIso(checkpoint.weekBackfillCompletedFor)),
+    )
+  )
+    throw Object.assign(new Error("远程 Host 采集状态格式无效。"), {
+      code: "COLLECTION_STATE_INVALID",
+    });
   for (const records of [acceptedSessions, state.ignoredSessions]) {
     for (const [sessionKey, processed] of Object.entries(records)) {
       if (
@@ -121,14 +152,14 @@ function validateState(
     }
   }
   return {
-    schemaVersion: "5.0",
+    schemaVersion: "6.0",
     pluginInstanceId,
     collectionFloorAt: state.collectionFloorAt ?? null,
     lastSuccessfulRunStartedAt: state.lastSuccessfulRunStartedAt ?? null,
-    weekBackfillCompletedFor:
-      state.schemaVersion === "5.0"
-        ? (state.weekBackfillCompletedFor ?? null)
-        : null,
+    weekBackfillCompletedFor: ["5.0", "6.0"].includes(state.schemaVersion ?? "")
+      ? (state.weekBackfillCompletedFor ?? null)
+      : null,
+    hostCheckpoints,
     acceptedSessions,
     ignoredSessions: state.ignoredSessions,
   };
@@ -228,6 +259,41 @@ export function collectionWindow(
     ).toISOString(),
     scanStartsAt: new Date(scanStart).toISOString(),
     scanEndsAt: new Date(runStart).toISOString(),
+  };
+}
+
+export function hostCollectionWindow(
+  state: CollectionState,
+  hostId: string,
+  period: { starts_at: string; ends_at: string },
+  runStartedAt: string,
+) {
+  const checkpoint = state.hostCheckpoints[hostId];
+  return collectionWindow(
+    {
+      ...state,
+      lastSuccessfulRunStartedAt:
+        checkpoint?.lastSuccessfulRunStartedAt ?? null,
+      weekBackfillCompletedFor: checkpoint?.weekBackfillCompletedFor ?? null,
+    },
+    period,
+    runStartedAt,
+  );
+}
+
+export function advanceHostCollectionCheckpoint(
+  state: CollectionState,
+  hostId: string,
+  runStartedAt: string,
+) {
+  if (!hostId || !validIso(runStartedAt))
+    throw new Error("远程 Host 采集检查点无效。");
+  state.hostCheckpoints = {
+    ...state.hostCheckpoints,
+    [hostId]: {
+      lastSuccessfulRunStartedAt: runStartedAt,
+      weekBackfillCompletedFor: beijingWeekStartsAt(runStartedAt),
+    },
   };
 }
 

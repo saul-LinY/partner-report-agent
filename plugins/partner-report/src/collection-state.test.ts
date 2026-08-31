@@ -4,8 +4,10 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   acquireCollectionLease,
+  advanceHostCollectionCheckpoint,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
+  hostCollectionWindow,
   initialProjectDiscoveryNeedsResume,
   initialProjectScopeStartAt,
   initializeCollectionFloor,
@@ -149,7 +151,7 @@ describe("collection state", () => {
 
     const state = loadCollectionState(pluginInstanceId, directory);
     expect(state).toMatchObject({
-      schemaVersion: "5.0",
+      schemaVersion: "6.0",
       lastSuccessfulRunStartedAt: "2026-08-25T04:10:52.000Z",
       weekBackfillCompletedFor: null,
     });
@@ -227,7 +229,7 @@ describe("collection state", () => {
       }),
     );
     const state = loadCollectionState(pluginInstanceId, directory);
-    expect(state.schemaVersion).toBe("5.0");
+    expect(state.schemaVersion).toBe("6.0");
     expect(state.weekBackfillCompletedFor).toBeNull();
     expect(state).not.toHaveProperty("processedTurns");
   });
@@ -245,8 +247,63 @@ describe("collection state", () => {
       }),
     );
     expect(loadCollectionState(pluginInstanceId, directory)).toMatchObject({
+      schemaVersion: "6.0",
+      hostCheckpoints: {},
       acceptedSessions: {},
       ignoredSessions: {},
+    });
+  });
+
+  it("keeps local and remote Host collection checkpoints independent", () => {
+    const directory = temporaryDirectory();
+    const state = loadCollectionState(pluginInstanceId, directory);
+    initializeCollectionFloor(state, "2026-08-24T02:00:00.000Z");
+    state.lastSuccessfulRunStartedAt = "2026-08-29T02:00:00.000Z";
+    state.weekBackfillCompletedFor = "2026-08-23T16:00:00.000Z";
+    advanceHostCollectionCheckpoint(
+      state,
+      "host-a",
+      "2026-08-27T02:00:00.000Z",
+    );
+    saveCollectionState(state, directory);
+    const persisted = loadCollectionState(pluginInstanceId, directory);
+    const period = {
+      starts_at: "2026-08-23T16:00:00.000Z",
+      ends_at: "2026-08-30T16:00:00.000Z",
+    };
+
+    expect(
+      collectionWindow(persisted, period, "2026-08-30T02:00:00.000Z")
+        .extractionStartsAt,
+    ).toBe("2026-08-29T02:00:00.000Z");
+    expect(
+      hostCollectionWindow(
+        persisted,
+        "host-a",
+        period,
+        "2026-08-30T02:00:00.000Z",
+      ).extractionStartsAt,
+    ).toBe("2026-08-27T02:00:00.000Z");
+    expect(
+      hostCollectionWindow(
+        persisted,
+        "host-b",
+        period,
+        "2026-08-30T02:00:00.000Z",
+      ).extractionStartsAt,
+    ).toBe("2026-08-23T16:00:00.000Z");
+  });
+
+  it("stores a Host checkpoint without treating its id as an object key directive", () => {
+    const state = loadCollectionState(pluginInstanceId, temporaryDirectory());
+    advanceHostCollectionCheckpoint(
+      state,
+      "__proto__",
+      "2026-08-27T02:00:00.000Z",
+    );
+    expect(Object.hasOwn(state.hostCheckpoints, "__proto__")).toBe(true);
+    expect(state.hostCheckpoints.__proto__).toMatchObject({
+      lastSuccessfulRunStartedAt: "2026-08-27T02:00:00.000Z",
     });
   });
 

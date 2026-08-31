@@ -40,8 +40,10 @@ import {
 } from "./collection-dedup.js";
 import {
   acquireCollectionLease,
+  advanceHostCollectionCheckpoint,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
+  hostCollectionWindow,
   beijingWeekStartsAt,
   initialProjectDiscoveryNeedsResume,
   initialProjectScopeStartAt,
@@ -62,11 +64,14 @@ import {
   MAX_EXTRACTION_FAILURES,
   appendExtractionFailure,
   collectionDeadline,
+  completedCollectionSources,
   countJobOutcomes,
   failedExtractOutcomeIsExplained,
   immutableContributionFromRequirements,
   jobOutcomeFailureAuditIsValid,
   legalCollectSkipOutcome,
+  missingSessionCoverage,
+  orderLocalCollectionFirst,
   repairImmutableResult,
   reviewSnapshotCoverage,
   shouldStopBeforeClaim,
@@ -81,7 +86,7 @@ import {
 import {
   CODEX_HOST_THREAD_LIST_LIMIT,
   LOCAL_HOST_ID,
-  assertHostCollectionDiscoveryComplete,
+  hostCollectionDiscoveryStatus,
   hostThreadKey,
   hostProjectDiscoveryMayBePartial,
   parseHostCollectionDiscoveryInput,
@@ -225,6 +230,14 @@ type ProjectDescriptionScan = {
   failed: number;
 };
 
+type SourceProgress = {
+  localQueueLength: number;
+  localCheckpointAdvanced: boolean;
+  remoteDiscoveryComplete: boolean;
+  remoteWarnings: string[];
+  remoteHostIds: string[];
+};
+
 type RunCounts = {
   discovered: number;
   read: number;
@@ -255,7 +268,7 @@ type CurrentJob = {
 };
 
 type RunManifest = {
-  schemaVersion: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6";
+  schemaVersion: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6" | "1.7";
   runId: string;
   pluginInstanceId: string;
   createdAt: string;
@@ -281,6 +294,7 @@ type RunManifest = {
     "TIME_BUDGET_EXHAUSTED" | "RUN_INTERRUPTED" | "TEMPORARILY_UNAVAILABLE";
   endOfRunScopeScan?: EndOfRunScopeScan;
   projectDescriptionScan?: ProjectDescriptionScan;
+  sourceProgress?: SourceProgress;
 };
 
 const RUN_PREFIX = "partner-report-run-";
@@ -982,13 +996,16 @@ async function listCollectionThreadMetadata(
       .filter((value): value is ThreadSummary => Boolean(value));
     const localIds = new Set(summaries.map((summary) => summary.id));
     const remoteSummaries = uniqueHostProjectDiscoveryThreads(hostInput)
-      .filter((thread) => !localIds.has(thread.id))
+      .filter(
+        (thread) => thread.hostId !== LOCAL_HOST_ID && !localIds.has(thread.id),
+      )
       .map(summaryFromThread)
       .filter((value): value is ThreadSummary => Boolean(value));
     const merged = [...summaries, ...remoteSummaries];
     return {
       summaries: merged,
       metadataEligible: metadataEligibleThreads(merged, config),
+      remoteSummaries,
     };
   } finally {
     server.close();
@@ -1119,7 +1136,7 @@ function readRun(runPath: string) {
   const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RunManifest;
   const config = loadConfig()!;
   if (
-    !["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"].includes(
+    !["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"].includes(
       manifest.schemaVersion,
     ) ||
     manifest.pluginInstanceId !== config.pluginInstanceId
@@ -1170,6 +1187,21 @@ function readRun(runPath: string) {
     unchanged: 0,
     unauthorized: 0,
     failed: 0,
+  };
+  manifest.sourceProgress ??= {
+    localQueueLength: manifest.queue.filter(
+      (summary) => summary.hostId === LOCAL_HOST_ID,
+    ).length,
+    localCheckpointAdvanced: false,
+    remoteDiscoveryComplete: true,
+    remoteWarnings: [],
+    remoteHostIds: [
+      ...new Set(
+        manifest.queue
+          .filter((summary) => summary.hostId !== LOCAL_HOST_ID)
+          .map((summary) => summary.hostId),
+      ),
+    ],
   };
   refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
   return { absolute, manifest };
@@ -1290,6 +1322,7 @@ async function postCollectionStatus(
     ...((counts.invalidThreadHistory ?? 0) > 0
       ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"]
       : []),
+    ...(manifest.sourceProgress?.remoteWarnings ?? []),
   ];
   const coverage = {
     discovered: counts.discovered,
@@ -1402,20 +1435,21 @@ async function collectStart() {
       projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
     );
 
-  const resumable = synchronizedScope.bootstrapped
+  let resumable = synchronizedScope.bootstrapped
     ? null
     : takeResumableRun(
         config.pluginInstanceId,
         policy.currentPeriod.period_key,
       );
+  if (resumable?.manifest.sourceProgress?.localCheckpointAdvanced) {
+    releaseCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
+    rmSync(dirname(resumable.path), { recursive: true, force: true });
+    resumable = null;
+  }
   if (resumable) {
     acquireCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
     try {
       const { absolute, manifest } = readRun(resumable.path);
-      assertHostCollectionDiscoveryComplete(
-        hostInput,
-        manifest.scanStartsAt ?? manifest.createdAt,
-      );
       manifest.deadlineAt = collectionDeadline(new Date().toISOString());
       saveRun(absolute, manifest);
       await postCollectionStatus(config, manifest, "started");
@@ -1452,49 +1486,59 @@ async function collectStart() {
     starts_at: window.extractionStartsAt,
     ends_at: window.extractionEndsAt,
   };
-  try {
-    assertHostCollectionDiscoveryComplete(hostInput, window.scanStartsAt);
-  } catch (error) {
-    releaseCollectionLease(config.pluginInstanceId, runId);
-    throw error;
-  }
   let summaries: ThreadSummary[];
   let metadataEligible: ThreadSummary[];
+  let remoteSummaries: ThreadSummary[];
   try {
     // Project discovery applies its separate seven-day metadata window below.
     const metadataStartsAt = localScope.initialized
       ? window.scanStartsAt
       : initialProjectScopeStartAt(runStartedAt);
-    ({ summaries, metadataEligible } = await listCollectionThreadMetadata(
-      config,
-      metadataStartsAt,
-      hostInput,
-    ));
+    ({ summaries, metadataEligible, remoteSummaries } =
+      await listCollectionThreadMetadata(config, metadataStartsAt, hostInput));
   } catch (error) {
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
   }
-  const inWindow = flag("force")
-    ? metadataEligible
-    : metadataEligible.filter((summary) =>
-        threadCouldContainWindowAnswer(summary.updatedAt, window.scanStartsAt),
-      );
   const configuredRoots = configuredProjectRoots(policy.projects);
+  const localMetadataEligible = metadataEligible.filter(
+    (summary) => summary.hostId === LOCAL_HOST_ID,
+  );
+  let remoteMetadataEligible = metadataEligible.filter(
+    (summary) => summary.hostId !== LOCAL_HOST_ID,
+  );
   if (!localScope.initialized) {
     const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
-    const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
-      threadIsInKnownScanWindow(
-        summary.updatedAt,
-        initialProjectScopeStart,
-        runStartedAt,
-      ),
+    const permissionDiscoverySummaries = localMetadataEligible.filter(
+      (summary) =>
+        threadIsInKnownScanWindow(
+          summary.updatedAt,
+          initialProjectScopeStart,
+          runStartedAt,
+        ),
     );
-    const discovery = discoverProjectScopes(
+    let discovery = discoverProjectScopes(
       config.pluginInstanceId,
       localScope,
       permissionDiscoverySummaries,
       { configuredRoots },
     );
+    if (discovery.candidates.length === 0) {
+      const remotePermissionDiscoverySummaries = remoteMetadataEligible.filter(
+        (summary) =>
+          threadIsInKnownScanWindow(
+            summary.updatedAt,
+            initialProjectScopeStart,
+            runStartedAt,
+          ),
+      );
+      discovery = discoverProjectScopes(
+        config.pluginInstanceId,
+        localScope,
+        remotePermissionDiscoverySummaries,
+        { configuredRoots },
+      );
+    }
     try {
       const registeredScope =
         await authenticatedRequest<RemoteProjectScopePolicy>(
@@ -1526,14 +1570,13 @@ async function collectStart() {
       projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
     );
   }
-  const allThreadDiscovery = discoverProjectScopes(
+  const localThreadDiscovery = discoverProjectScopes(
     config.pluginInstanceId,
     localScope,
-    metadataEligible,
+    localMetadataEligible,
     { configuredRoots },
   );
-  const discoveredCandidates = allThreadDiscovery.candidates;
-  if (discoveredCandidates.length > 0) {
+  if (localThreadDiscovery.candidates.length > 0) {
     const registeredScope =
       await authenticatedRequest<RemoteProjectScopePolicy>(
         "/v1/project-scope/candidates",
@@ -1542,7 +1585,7 @@ async function collectStart() {
           body: JSON.stringify({
             periodKey: policy.currentPeriod.period_key,
             initialDiscovery: false,
-            candidates: discoveredCandidates.map((candidate) => ({
+            candidates: localThreadDiscovery.candidates.map((candidate) => ({
               scopeKey: candidate.scopeKey,
               displayName: candidate.displayName,
               sessionCount: candidate.sessionCount,
@@ -1552,10 +1595,95 @@ async function collectStart() {
       );
     localScope = mergeDiscoveredRoots(
       mergeRemoteProjectScope(localScope, registeredScope),
-      discoveredCandidates,
+      localThreadDiscovery.candidates,
     );
     saveLocalProjectScope(localScope);
   }
+  const remoteHostIds = [
+    ...new Set(remoteSummaries.map((summary) => summary.hostId)),
+  ];
+  const remoteWindows = new Map(
+    remoteHostIds.map((hostId) => [
+      hostId,
+      hostCollectionWindow(
+        localState,
+        hostId,
+        policy.currentPeriod!,
+        runStartedAt,
+      ),
+    ]),
+  );
+  const undiscoveredHostWindow = hostCollectionWindow(
+    localState,
+    "__partner_report_undiscovered_host__",
+    policy.currentPeriod,
+    runStartedAt,
+  );
+  const remoteScanStartsAt = [
+    undiscoveredHostWindow.scanStartsAt,
+    ...[...remoteWindows.values()].map((hostWindow) => hostWindow.scanStartsAt),
+  ].sort()[0]!;
+  const remoteDiscovery = hostCollectionDiscoveryStatus(
+    hostInput,
+    remoteScanStartsAt,
+  );
+  const remoteWarnings = [...remoteDiscovery.warnings];
+  let remoteDiscoveryComplete = remoteDiscovery.complete;
+  const remoteThreadDiscovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    remoteMetadataEligible,
+    { configuredRoots },
+  );
+  if (remoteThreadDiscovery.candidates.length > 0) {
+    try {
+      const registeredScope =
+        await authenticatedRequest<RemoteProjectScopePolicy>(
+          "/v1/project-scope/candidates",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              periodKey: policy.currentPeriod.period_key,
+              initialDiscovery: false,
+              candidates: remoteThreadDiscovery.candidates.map((candidate) => ({
+                scopeKey: candidate.scopeKey,
+                displayName: candidate.displayName,
+                sessionCount: candidate.sessionCount,
+              })),
+            }),
+          },
+        );
+      localScope = mergeDiscoveredRoots(
+        mergeRemoteProjectScope(localScope, registeredScope),
+        remoteThreadDiscovery.candidates,
+      );
+      saveLocalProjectScope(localScope);
+    } catch {
+      remoteMetadataEligible = [];
+      remoteDiscoveryComplete = false;
+      remoteWarnings.push("REMOTE_PROJECT_SCOPE_SYNC_FAILED");
+    }
+  }
+  const collectionMetadataEligible = [
+    ...localMetadataEligible,
+    ...remoteMetadataEligible,
+  ];
+  const allThreadDiscovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    collectionMetadataEligible,
+    { configuredRoots },
+  );
+  const inWindow = flag("force")
+    ? collectionMetadataEligible
+    : collectionMetadataEligible.filter((summary) => {
+        const scanStartsAt =
+          summary.hostId === LOCAL_HOST_ID
+            ? window.scanStartsAt
+            : (remoteWindows.get(summary.hostId)?.scanStartsAt ??
+              undiscoveredHostWindow.scanStartsAt);
+        return threadCouldContainWindowAnswer(summary.updatedAt, scanStartsAt);
+      });
   const regularQueue: ScopedThreadSummary[] = authorizedProjectThreads(
     inWindow,
     allThreadDiscovery.threadScopes,
@@ -1564,7 +1692,21 @@ async function collectStart() {
     localState.lastSuccessfulRunStartedAt === null
       ? effectivePeriod.starts_at
       : undefined,
-  );
+  ).map((summary) => {
+    if (summary.hostId === LOCAL_HOST_ID) return summary;
+    const hostWindow = remoteWindows.get(summary.hostId);
+    if (!hostWindow) return summary;
+    return {
+      ...summary,
+      collectionStartsAt: new Date(
+        Math.max(
+          new Date(summary.collectionStartsAt).getTime(),
+          new Date(hostWindow.extractionStartsAt).getTime(),
+        ),
+      ).toISOString(),
+      collectionEndsAt: hostWindow.extractionEndsAt,
+    };
+  });
 
   let state: {
     sessions: Array<{ sessionKey: string; contentHash: string }>;
@@ -1582,7 +1724,10 @@ async function collectStart() {
     localAccepted: localState.acceptedSessions,
     localIgnored: localState.ignoredSessions,
   });
-  const queue = [...regularQueue];
+  const queue = orderLocalCollectionFirst(regularQueue, LOCAL_HOST_ID);
+  const localQueueLength = queue.filter(
+    (summary) => summary.hostId === LOCAL_HOST_ID,
+  ).length;
   const inWindowIds = new Set(inWindow.map(hostThreadKey));
   const queuedOutsideWindow = queue.filter(
     (summary) => !inWindowIds.has(hostThreadKey(summary)),
@@ -1591,7 +1736,7 @@ async function collectStart() {
     inWindowIds.has(hostThreadKey(summary)),
   ).length;
   const manifest: RunManifest = {
-    schemaVersion: "1.6",
+    schemaVersion: "1.7",
     runId,
     pluginInstanceId: config.pluginInstanceId,
     createdAt: runStartedAt,
@@ -1651,6 +1796,13 @@ async function collectStart() {
       unauthorized: 0,
       failed: 0,
     },
+    sourceProgress: {
+      localQueueLength,
+      localCheckpointAdvanced: false,
+      remoteDiscoveryComplete,
+      remoteWarnings,
+      remoteHostIds,
+    },
   };
   let runPath: string | null = null;
   try {
@@ -1673,6 +1825,7 @@ async function collectStart() {
     queued: manifest.queue.length,
     outsideWindow: manifest.counts.outsideWindow,
     excluded: manifest.counts.excluded,
+    remoteWarnings,
     nextCommand: `collect-next --run ${runPath}`,
   });
 }
@@ -1763,6 +1916,7 @@ async function finishRun(
   config: PluginConfig,
 ) {
   const review = completionReview(manifest);
+  const remoteWarnings = advanceCompletedRemoteCheckpoints(manifest);
   await postCollectionStatus(config, manifest, "completed");
   const checkpointAdvanced = review.checkpointEligible;
   if (checkpointAdvanced) {
@@ -1786,6 +1940,7 @@ async function finishRun(
       ...((manifest.projectDescriptionScan?.failed ?? 0) > 0
         ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"]
         : []),
+      ...remoteWarnings,
     ],
     threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
     projectDescriptions: {
@@ -1814,9 +1969,74 @@ async function finishRun(
   output(summary);
 }
 
+function advanceCompletedRemoteCheckpoints(manifest: RunManifest) {
+  const progress = manifest.sourceProgress!;
+  const warnings = [...progress.remoteWarnings];
+  if (!progress.remoteDiscoveryComplete) {
+    progress.remoteWarnings = [...new Set(warnings)];
+    return progress.remoteWarnings;
+  }
+  const processed = new Set(coverageState(manifest).processedThreadIds ?? []);
+  const completedSources = completedCollectionSources({
+    queue: manifest.queue,
+    processedSessionIds: processed,
+    sessionKey: hostThreadKey,
+    localHostId: LOCAL_HOST_ID,
+    remoteHostIds: progress.remoteHostIds,
+    remoteDiscoveryComplete: progress.remoteDiscoveryComplete,
+  });
+  const completedRemoteHostIds = new Set(
+    completedSources.completedRemoteHostIds,
+  );
+  const state = loadCollectionState(manifest.pluginInstanceId);
+  let changed = false;
+  for (const hostId of progress.remoteHostIds) {
+    if (completedRemoteHostIds.has(hostId)) {
+      advanceHostCollectionCheckpoint(state, hostId, manifest.createdAt);
+      changed = true;
+    } else {
+      warnings.push("REMOTE_HOST_COLLECTION_INCOMPLETE");
+    }
+  }
+  if (changed) saveCollectionState(state);
+  progress.remoteWarnings = [...new Set(warnings)];
+  return progress.remoteWarnings;
+}
+
 function completionReview(manifest: RunManifest) {
   const outcomeCounts = countJobOutcomes(manifest.outcomes);
   const coverage = coverageState(manifest);
+  const progress = manifest.sourceProgress!;
+  const localThreadIds = new Set(
+    manifest.queue
+      .slice(0, progress.localQueueLength)
+      .map((summary) => hostThreadKey(summary)),
+  );
+  const localOutcomes = manifest.outcomes.filter(
+    (outcome) => outcome.threadId && localThreadIds.has(outcome.threadId),
+  );
+  const localReadFailures = Object.keys(
+    coverage.unresolvedReadFailures ?? {},
+  ).filter((threadId) => localThreadIds.has(threadId));
+  const localInvalidThreadHistory = localReadFailures.filter(
+    (threadId) =>
+      coverage.unresolvedReadFailures?.[threadId] ===
+      "CODEX_THREAD_HISTORY_INVALID",
+  ).length;
+  const localCounts = {
+    failedRead: localReadFailures.length,
+    invalidThreadHistory: localInvalidThreadHistory,
+    failedExtract: localOutcomes.filter(
+      (outcome) => outcome.status === "failedExtract",
+    ).length,
+    skipped: localOutcomes.filter((outcome) => outcome.status === "skipped")
+      .length,
+    deferred: localOutcomes.filter((outcome) => outcome.status === "deferred")
+      .length,
+    notProcessed: progress.localCheckpointAdvanced
+      ? 0
+      : Math.max(0, progress.localQueueLength - manifest.cursor),
+  };
   return reviewCollectionCompletion({
     cursor: manifest.cursor,
     queueLength: manifest.queue.length,
@@ -1837,9 +2057,10 @@ function completionReview(manifest: RunManifest) {
     ),
     coverageComplete:
       coverage.completed &&
-      Object.keys(coverage.unresolvedReadFailures ?? {}).length === 0,
+      localReadFailures.length === 0 &&
+      progress.localCheckpointAdvanced,
     stopped: manifest.stopReason !== undefined,
-    counts: manifest.counts,
+    counts: localCounts,
   });
 }
 
@@ -2008,6 +2229,55 @@ async function submitProjectDescription() {
   }
 }
 
+function localPhaseComplete(runPath: string, manifest: RunManifest): boolean {
+  const progress = manifest.sourceProgress!;
+  const currentSummary = manifest.current
+    ? manifest.queue[manifest.cursor - 1]
+    : undefined;
+  if (
+    progress.localCheckpointAdvanced ||
+    manifest.cursor < progress.localQueueLength ||
+    (manifest.current !== null && currentSummary?.hostId === LOCAL_HOST_ID)
+  )
+    return false;
+  const scan = coverageState(manifest);
+  const localSnapshot = manifest.queue.slice(0, progress.localQueueLength);
+  const missing = missingSessionCoverage(
+    localSnapshot,
+    scan.processedThreadIds ?? [],
+    hostThreadKey,
+  );
+  const unresolved = new Set(Object.keys(scan.unresolvedReadFailures ?? {}));
+  const retry = missing.filter((summary) =>
+    unresolved.has(hostThreadKey(summary)),
+  );
+  if (retry.length > 0) {
+    manifest.queue.splice(manifest.cursor, 0, ...retry);
+    progress.localQueueLength += retry.length;
+    manifest.deadlineAt = collectionDeadline(new Date().toISOString());
+    saveRun(runPath, manifest);
+    output({
+      status: "local_coverage_repair_required",
+      runPath,
+      missingSessions: retry.length,
+      nextCommand: `collect-next --run ${runPath}`,
+    });
+    return true;
+  }
+  if (missing.length > 0)
+    throw Object.assign(
+      new Error("本地 Session 尚未完整处理，远程采集不会开始。"),
+      { code: "LOCAL_COLLECTION_INCOMPLETE" },
+    );
+  const state = loadCollectionState(manifest.pluginInstanceId);
+  state.lastSuccessfulRunStartedAt = manifest.createdAt;
+  markWeekBackfillCompleted(state, beijingWeekStartsAt(manifest.createdAt));
+  saveCollectionState(state);
+  progress.localCheckpointAdvanced = true;
+  saveRun(runPath, manifest);
+  return false;
+}
+
 function completeInitialQueueCoverage(
   runPath: string,
   manifest: RunManifest,
@@ -2024,24 +2294,6 @@ function completeInitialQueueCoverage(
     sessionKey: hostThreadKey,
   });
   scan.passes = (scan.passes ?? 0) + 1;
-
-  if (coverage.retry.length > 0) {
-    manifest.queue.push(...coverage.retry);
-    manifest.deadlineAt = collectionDeadline(new Date().toISOString());
-    scan.completed = false;
-    saveRun(runPath, manifest);
-    output({
-      status: "coverage_repair_required",
-      runPath,
-      coveragePass: scan.passes,
-      missingSessions: coverage.retry.length,
-      unresolvedReadFailures: Object.keys(scan.unresolvedReadFailures ?? {})
-        .length,
-      collectionEndsAt: manifest.scanEndsAt ?? manifest.createdAt,
-      nextCommand: `collect-next --run ${runPath}`,
-    });
-    return true;
-  }
 
   if (coverage.unaccounted.length > 0)
     throw Object.assign(
@@ -2149,6 +2401,7 @@ async function collectNext() {
   const { absolute, manifest } = readRun(runPath);
   if (manifest.stopReason)
     return deferRun(absolute, manifest, manifest.stopReason);
+  if (localPhaseComplete(absolute, manifest)) return;
   if (manifest.pendingHostThreadRead)
     return hostThreadReadRequired(absolute, manifest.pendingHostThreadRead);
   if (
@@ -2161,6 +2414,7 @@ async function collectNext() {
   let connected = false;
   try {
     while (manifest.cursor < manifest.queue.length) {
+      if (localPhaseComplete(absolute, manifest)) return;
       if (shouldStopBeforeClaim(manifest.deadlineAt)) {
         deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
         return;
@@ -2220,6 +2474,7 @@ async function collectNext() {
   } finally {
     server.close();
   }
+  if (localPhaseComplete(absolute, manifest)) return;
   if (await continueProjectDescriptionScan(absolute, manifest)) return;
   if (completeInitialQueueCoverage(absolute, manifest)) return;
   output({

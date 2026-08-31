@@ -257,6 +257,30 @@ export function assertHostCollectionDiscoveryComplete(
     );
 }
 
+export function hostCollectionDiscoveryStatus(
+  input: HostCollectionDiscoveryInput,
+  scanStartsAt: string,
+) {
+  const warnings: string[] = [];
+  if (input.unavailableHosts.length || input.unavailableSources.length)
+    warnings.push("REMOTE_HOST_DISCOVERY_UNAVAILABLE");
+  if (input.threads.length >= CODEX_HOST_THREAD_LIST_LIMIT) {
+    const oldest = Math.min(
+      ...input.threads
+        .map((thread) => timestampMs(thread.updatedAt))
+        .filter((value): value is number => value !== null),
+    );
+    const startsAt = new Date(scanStartsAt).getTime();
+    if (
+      !Number.isFinite(oldest) ||
+      !Number.isFinite(startsAt) ||
+      oldest >= startsAt
+    )
+      warnings.push("REMOTE_HOST_DISCOVERY_WINDOW_INCOMPLETE");
+  }
+  return { complete: warnings.length === 0, warnings };
+}
+
 export function hostProjectDiscoveryMayBePartial(
   input: HostProjectDiscoveryInput,
 ) {
