@@ -83,7 +83,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 每次手动或定时采集开始时，先调用当前 Codex App 宿主的官方 `list_threads` 一次，参数固定为 `{ "limit": 50 }`，不得翻页或改用 shell、CLI、自建 app-server。把完整页的 `threads`、`pinnedThreads`、`unavailableHosts` 和 `unavailableSources` 交给 `collect_start`，由插件只保留 `kind` 为 `codex` 的任务；缺少后两个可用性字段时传空数组。任务项只保留 `id`、`hostId`、`kind`、`projectId`、`cwd`、`createdAt`、`updatedAt`、`archived`、`ephemeral`、`threadSource` 和 `systemGenerated`，不得传 title、summary 或正文。普通定时或手动采集必须使用 `force: false`。只有用户明确要求恢复重算时才可使用 `force: true`。
 
-插件同时使用本机完整元数据扫描和官方跨 Host 页：本机已发现的相同 `threadId` 保留旧的本机身份，其他 Host 使用 `hostId + threadId` 的私有复合身份。采集顺序固定为本机优先：必须先完整处理本机已授权项目的 Session 并保存本机检查点，之后才处理远程 Host。没有远程 Host 时正常结束。`unavailableHosts` 或 `unavailableSources` 非空，或 50 条上限没有覆盖远程扫描起点时，仍须把真实可用性字段交给 `collect_start`；插件只冻结受影响的远程 Host 检查点并返回安全告警，不得阻断、回滚或重复本机采集，也不得改传空可用性字段规避检查。
+插件同时使用本机完整元数据扫描和官方跨 Host 页：本机已发现的相同 `threadId` 保留旧的本机身份，其他 Host 使用 `hostId + threadId` 的私有复合身份。本机与远程 Host 是并列的采集来源，但执行时必须分成两个阶段：`collect_start` 只建立并处理本机队列，跨 Host 页中的远程最小元数据仅作为本轮私有冻结快照；完整处理本机已授权项目的 Session 并保存本机检查点后，才能登记远程项目权限、建立远程队列或请求 `read_thread`。没有远程 Host 时正常结束。`unavailableHosts` 或 `unavailableSources` 非空，或 50 条上限没有覆盖远程扫描起点时，仍须把真实可用性字段交给 `collect_start`；插件只冻结受影响的远程 Host 检查点并返回安全告警，不得阻断、回滚或重复本机采集，也不得改传空可用性字段规避检查。
 
 凭据恢复由 MCP 在第一个中台请求前自动完成，不是采集状态，也不允许产生审批等待态。恢复失败时本轮立即停止，且不得读取 Session、上传结果或推进游标。项目权限等待只允许由明确的 `project_scope_approval_required` 表示；本轮直接结束，不得轮询飞书或占用采集租约。
 
@@ -112,7 +112,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 不得主动调用 `collect_defer` 规避读取或提取；只有宿主运行时间硬上限导致 `collect_next` 返回 `deferred` 时，才按 `nextTool` 进入审查。审查必须返回非终态并保留成功游标，下次运行重扫同一窗口。`deferred` 不是提取失败，不得增加 `failedExtract` 或推进游标。
 
-`project_scope_approval_required` 是本轮等待飞书审核的正常终态，不包含 `nextTool`，不能报告为采集完成。`started`、`host_thread_read_required`、`host_thread_read_completed`、`job`、`project_description_job`、`validation_failed`、`uploaded`、`ignored`、`skipped`、`deferred`、`coverage_repair_required`、`review_required` 和 `review_failed` 都是非终态；有 `nextTool` 就继续。
+`project_scope_approval_required` 是本轮等待飞书审核的正常终态，不包含 `nextTool`，不能报告为采集完成。`started`、`local_collection_completed`、`remote_collection_started`、`remote_collection_not_found`、`host_thread_read_required`、`host_thread_read_completed`、`job`、`project_description_job`、`validation_failed`、`uploaded`、`ignored`、`skipped`、`deferred`、`coverage_repair_required`、`review_required` 和 `review_failed` 都是非终态；有 `nextTool` 就继续。`local_collection_completed` 只表示本机来源已经完成并保存检查点，不表示整个周期采集完成。
 
 ### 项目描述 Job
 
@@ -142,7 +142,7 @@ description: 连接当前 Codex 与 Partner Report，创建或修复官方定时
 
 审查不通过时按 `nextTool` 继续；只有本机 `completed`、`checkpointAdvanced: true` 且不再包含 `nextTool` 才结束。本机 `coverageComplete` 必须为 true，并且不得存在 defer、skip、读取失败、提取失败或未处理项。远程异常必须显示为安全 warning，并且不得推进受影响 Host 的检查点。
 
-最终只返回中文的周期 key、北京时间采集起止时间、`checkpointAdvanced`、安全 warning，以及分开的 `uploaded`、`ignored`、`skipped`、`failedExtract`、`deferred`、`notProcessed` 聚合计数。不得向用户展示带 `Z` 的 UTC 时间，不得输出 Session 文本、本地路径、指纹或标识。
+最终只返回中文的周期 key、北京时间采集起止时间、`checkpointAdvanced`、安全 warning，以及分开的 `uploaded`、`ignored`、`skipped`、`failedExtract`、`deferred`、`notProcessed` 聚合计数。本机和远程 Host 必须作为并列来源分别报告安全状态、检查点和上述计数；远程存在待授权项目时只报告聚合数量。不得向用户展示带 `Z` 的 UTC 时间，不得输出 Session 文本、本地路径、指纹或标识。
 
 Job 输入、结果和安全失败审计在终态审查完成前由 MCP 以私有文件权限保留，完成后统一清理。不得自行清理 Run。
 

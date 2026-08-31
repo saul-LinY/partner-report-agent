@@ -83,6 +83,35 @@ export function orderLocalCollectionFirst<T extends { hostId: string }>(
   );
 }
 
+export function splitCollectionSources<T extends { hostId: string }>(
+  sessions: T[],
+  localHostId: string,
+) {
+  return {
+    local: sessions.filter((session) => session.hostId === localHostId),
+    remote: sessions.filter((session) => session.hostId !== localHostId),
+  };
+}
+
+export function remoteCollectionCanStart(input: {
+  localCheckpointAdvanced: boolean;
+  remoteInitialized: boolean;
+}) {
+  return input.localCheckpointAdvanced && !input.remoteInitialized;
+}
+
+export function remoteCollectionStatus(input: {
+  warningCount: number;
+  hostCount: number;
+  pendingProjectCount: number;
+}) {
+  if (input.warningCount > 0) return "partial" as const;
+  if (input.hostCount === 0) return "not_found" as const;
+  if (input.pendingProjectCount > 0)
+    return "completed_with_pending_permission" as const;
+  return "completed" as const;
+}
+
 export function completedCollectionSources<
   T extends { hostId: string },
 >(input: {

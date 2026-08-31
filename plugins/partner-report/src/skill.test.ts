@@ -98,6 +98,11 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("`hostId + threadId`");
     expect(skill).toContain("`kind` 为 `codex`");
     expect(skill).toContain("`host_thread_read_required`");
+    expect(skill).toContain("本机与远程 Host 是并列的采集来源");
+    expect(skill).toContain("`collect_start` 只建立并处理本机队列");
+    expect(skill).toContain("`local_collection_completed`");
+    expect(skill).toContain("不表示整个周期采集完成");
+    expect(skill).toContain("作为并列来源分别报告安全状态");
     expect(skill).toContain("`hostTool.arguments`");
     expect(skill).toContain("不得更换 Host、Thread、cursor、页大小");
     expect(skill).toContain("不得传 title、summary");

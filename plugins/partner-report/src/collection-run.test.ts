@@ -14,8 +14,11 @@ import {
   missingSessionCoverage,
   orderLocalCollectionFirst,
   repairImmutableResult,
+  remoteCollectionCanStart,
+  remoteCollectionStatus,
   reviewSnapshotCoverage,
   shouldStopBeforeClaim,
+  splitCollectionSources,
   type ExtractionFailure,
   type JobOutcome,
 } from "./collection-run.js";
@@ -58,6 +61,63 @@ function failures(count: number, code = "SCHEMA_VALIDATION_FAILED") {
 }
 
 describe("collection run guards", () => {
+  it("keeps local and remote collection as separate peer sources", () => {
+    const sources = splitCollectionSources(
+      [
+        { id: "same", hostId: "local" },
+        { id: "same", hostId: "host-a" },
+      ],
+      "local",
+    );
+    expect(sources.local).toEqual([{ id: "same", hostId: "local" }]);
+    expect(sources.remote).toEqual([{ id: "same", hostId: "host-a" }]);
+  });
+
+  it("does not initialize remote collection before the local checkpoint", () => {
+    expect(
+      remoteCollectionCanStart({
+        localCheckpointAdvanced: false,
+        remoteInitialized: false,
+      }),
+    ).toBe(false);
+    expect(
+      remoteCollectionCanStart({
+        localCheckpointAdvanced: true,
+        remoteInitialized: false,
+      }),
+    ).toBe(true);
+    expect(
+      remoteCollectionCanStart({
+        localCheckpointAdvanced: true,
+        remoteInitialized: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("reports remote completion and pending permissions independently", () => {
+    expect(
+      remoteCollectionStatus({
+        warningCount: 0,
+        hostCount: 0,
+        pendingProjectCount: 0,
+      }),
+    ).toBe("not_found");
+    expect(
+      remoteCollectionStatus({
+        warningCount: 0,
+        hostCount: 1,
+        pendingProjectCount: 1,
+      }),
+    ).toBe("completed_with_pending_permission");
+    expect(
+      remoteCollectionStatus({
+        warningCount: 1,
+        hostCount: 1,
+        pendingProjectCount: 0,
+      }),
+    ).toBe("partial");
+  });
+
   it("keeps local jobs first and preserves local completion during remote failure", () => {
     const queue = orderLocalCollectionFirst(
       [
