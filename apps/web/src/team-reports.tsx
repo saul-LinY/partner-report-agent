@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Link, useRoute } from "wouter";
 import { api } from "./api.js";
 import { Button, EmptyState, ErrorBanner } from "./components.js";
@@ -135,8 +136,13 @@ function TeamReportDetail({ id }: { id: string }) {
             </div>
             <article className="report-document">
               <h1>{viewed?.title}</h1>
-              <p className="report-lede">{viewed?.summary}</p>
-              <ReactMarkdown>{viewed?.markdown ?? ""}</ReactMarkdown>
+              <section className="report-management-summary">
+                <h2>管理概览</h2>
+                <p className="report-lede">{viewed?.summary}</p>
+              </section>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {withoutLegacyWeeklySummary(viewed?.markdown ?? "")}
+              </ReactMarkdown>
             </article>
             <div className="team-report-meta">
               <span>
@@ -154,10 +160,20 @@ function TeamReportDetail({ id }: { id: string }) {
 }
 
 export function reportClipboardText(version: Version) {
-  return [`# ${version.title}`, version.summary, version.markdown]
+  return [
+    `# ${version.title}`,
+    version.summary,
+    withoutLegacyWeeklySummary(version.markdown),
+  ]
     .map((section) => section.trim())
     .filter(Boolean)
     .join("\n\n");
+}
+
+export function withoutLegacyWeeklySummary(markdown: string) {
+  return markdown
+    .replace(/(^|\n)##\s+本周团队工作摘要\s*\n[\s\S]*?(?=\n##\s+|$)/u, "$1")
+    .trim();
 }
 
 async function copyText(value: string) {

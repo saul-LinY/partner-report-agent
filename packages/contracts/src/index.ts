@@ -1,10 +1,7 @@
 import { z } from "zod";
 
 export { buildTeamReportWorkCards } from "./team-report-source.js";
-export type {
-  TeamReportSourceWorkCards,
-  TeamReportSourceProject,
-} from "./team-report-source.js";
+export type { TeamReportSourceWorkCards } from "./team-report-source.js";
 
 export const idSchema: z.ZodTypeAny = z.string().uuid();
 export const isoDateTimeSchema: z.ZodTypeAny = z
@@ -179,15 +176,14 @@ export const coverageSchema: z.ZodTypeAny = z.object({
 export const aggregationGroupSchema: z.ZodTypeAny = z
   .object({
     projectKey: z.string().default(""),
-    projectDescription: z.string().default(""),
     status: workStatusSchema,
-    overview: z.string().default(""),
+    overview: z.string().trim().min(1).max(120),
     dailyProgress: z
       .array(
         z
           .object({
             date: z.string().default(""),
-            summary: z.string().default(""),
+            summary: z.string().trim().min(1).max(60),
           })
           .strict(),
       )
@@ -224,21 +220,21 @@ export const teamReportClaimSchema: z.ZodTypeAny = z.object({
 });
 
 export const teamReportSectionSchema: z.ZodTypeAny = z.object({
-  key: z.enum(["summary", "project_progress", "risks"]),
+  key: z.enum(["project_progress", "week_comparison", "risks"]),
   title: z.string(),
   markdown: z.string(),
   claims: z.array(teamReportClaimSchema).default([]),
 });
 
 export const teamReportGenerationSectionSchema: z.ZodTypeAny = z.object({
-  key: z.enum(["summary", "project_progress", "risks"]),
+  key: z.enum(["project_progress", "week_comparison", "risks"]),
   markdown: z.string(),
   claims: z.array(teamReportClaimSchema).default([]),
 });
 
 export const teamReportGenerationResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
-  summary: z.string(),
+  summary: z.string().trim().min(1).max(360),
   sections: z.array(teamReportGenerationSectionSchema),
   missingPartnerIds: z.array(z.string()).default([]),
   qualityWarnings: z.array(z.string()).default([]),
@@ -248,7 +244,7 @@ export const teamReportGenerationResultSchema: z.ZodTypeAny = z.object({
 export const teamReportResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
   title: z.string(),
-  summary: z.string(),
+  summary: z.string().trim().min(240).max(360),
   sections: z.array(teamReportSectionSchema).length(3),
   markdown: z.string(),
   missingPartnerIds: z.array(idSchema).default([]),

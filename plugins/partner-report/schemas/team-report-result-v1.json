@@ -12,7 +12,9 @@
           "type": "string"
         },
         "summary": {
-          "type": "string"
+          "type": "string",
+          "minLength": 240,
+          "maxLength": 360
         },
         "sections": {
           "type": "array",
@@ -22,8 +24,8 @@
               "key": {
                 "type": "string",
                 "enum": [
-                  "summary",
                   "project_progress",
+                  "week_comparison",
                   "risks"
                 ]
               },

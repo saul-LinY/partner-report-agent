@@ -17,10 +17,6 @@
                 "type": "string",
                 "default": ""
               },
-              "projectDescription": {
-                "type": "string",
-                "default": ""
-              },
               "status": {
                 "type": "string",
                 "enum": [
@@ -35,7 +31,8 @@
               },
               "overview": {
                 "type": "string",
-                "default": ""
+                "minLength": 1,
+                "maxLength": 120
               },
               "dailyProgress": {
                 "type": "array",
@@ -48,16 +45,21 @@
                     },
                     "summary": {
                       "type": "string",
-                      "default": ""
+                      "minLength": 1,
+                      "maxLength": 60
                     }
                   },
+                  "required": [
+                    "summary"
+                  ],
                   "additionalProperties": false
                 },
                 "default": []
               }
             },
             "required": [
-              "status"
+              "status",
+              "overview"
             ],
             "additionalProperties": false
           }

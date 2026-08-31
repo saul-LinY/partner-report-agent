@@ -3,8 +3,9 @@ import {
   aggregationInstructions,
   bucketHasCompletionSupport,
   buildNoActivityTeamReport,
+  composeManagementSummary,
   formatReportDate,
-  injectApprovedProjectDescriptions,
+  managementSummaryNeedsExpansion,
   normalizeAggregation,
   normalizePluginLogAnalysis,
   normalizeTeamReportGeneration,
@@ -14,23 +15,17 @@ import {
 } from "./generation.js";
 
 describe("reader-facing generation instructions", () => {
-  it("asks work cards to use detailed, plain Chinese", () => {
+  it("asks work cards to use concise, plain Chinese", () => {
     const instructions = aggregationInstructions("test-model");
 
     expect(instructions).toContain("simplified Chinese");
     expect(instructions).toContain("plain, direct, everyday Chinese");
-    expect(instructions).toContain("120 to 240 Chinese characters");
-    expect(instructions).toContain("about 150 Chinese characters");
-    expect(instructions).toContain("never more than 200");
-    expect(instructions).toContain("around 200 Chinese characters");
-    expect(instructions).toContain("detailed enough for the user to verify");
+    expect(instructions).toContain("80 to 100 Chinese characters");
+    expect(instructions).toContain("about 50 Chinese characters");
+    expect(instructions).toContain("never more than 60");
     expect(instructions).toContain("authoritative first-hand correction");
-    expect(instructions).toContain("projectDescription");
-    expect(instructions).toContain(
-      "copy each bucket.projectDescription exactly",
-    );
-    expect(instructions).toContain("must not silently change");
-    expect(instructions).toContain("2026-08-27.project-card.v6");
+    expect(instructions).toContain("do not output a project description");
+    expect(instructions).toContain("2026-08-28.project-card.v7");
   });
 });
 
@@ -157,7 +152,6 @@ describe("work card model output normalization", () => {
         groups: [
           {
             projectKey: "project-a",
-            projectDescription: "模型擅自改写的简介。",
             status: "in_progress",
             overview: "项目正常推进。",
             dailyProgress: [
@@ -193,6 +187,28 @@ describe("work card model output normalization", () => {
 });
 
 describe("Team Report numbering", () => {
+  it("requests a dedicated rewrite only for short management summaries", () => {
+    expect(managementSummaryNeedsExpansion("概览".repeat(119))).toBe(true);
+    expect(managementSummaryNeedsExpansion("概览".repeat(120))).toBe(false);
+  });
+
+  it("combines management dimensions into one bounded overview", () => {
+    const summary = composeManagementSummary(
+      {
+        overallProgress: "进".repeat(60),
+        supportedResults: "果".repeat(60),
+        teamPace: "稳".repeat(60),
+        risksAndBlockers: "险".repeat(60),
+        nextSteps: "后".repeat(60),
+      },
+      "原概览。",
+    );
+
+    expect(Array.from(summary).length).toBeGreaterThanOrEqual(240);
+    expect(Array.from(summary).length).toBeLessThanOrEqual(360);
+    expect(summary.endsWith("。")).toBe(true);
+  });
+
   it("builds an honest Team Report when every person has no reportable record", () => {
     const snapshotId = "11111111-1111-4111-8111-111111111111";
     const report = buildNoActivityTeamReport(
@@ -202,9 +218,22 @@ describe("Team Report numbering", () => {
 
     expect(
       Array.from(report.summary.replace(/\s/gu, "")).length,
-    ).toBeGreaterThanOrEqual(250);
+    ).toBeLessThanOrEqual(360);
+    expect(
+      Array.from(report.summary.replace(/\s/gu, "")).length,
+    ).toBeGreaterThanOrEqual(260);
     expect(report.sections).toHaveLength(3);
-    expect(report.sections[1].markdown).toContain("不对其实际工作作出判断");
+    expect(report.sections[0].markdown).toContain(
+      "| 成员 | 项目 | 本周工作明细 |",
+    );
+    expect(report.sections[0].markdown).toContain("| 林勇 | - |");
+    expect(report.sections[0].markdown).toContain("不对其实际工作作出判断");
+    expect(report.sections[1].markdown).toContain(
+      "| 成员 | 项目 | 与上周相比 |",
+    );
+    expect(report.sections[2].markdown).toContain(
+      "| 成员 | 项目 | 风险与阻塞 |",
+    );
     expect(report.qualityWarnings).toContain(
       "NO_REPORTABLE_ACTIVITY_COLLECTED",
     );
@@ -216,11 +245,6 @@ describe("Team Report numbering", () => {
       {
         summary: "简短摘要。",
         sections: [
-          {
-            key: "summary",
-            markdown: "- 合并项目：本周有进展。",
-            claims: [{ workCardSnapshotIds: [snapshotId] }],
-          },
           {
             key: "project_progress",
             markdown: "林勇完成了相关工作。",
@@ -240,37 +264,60 @@ describe("Team Report numbering", () => {
 
     expect(report.summary).toBe("简短摘要。");
     expect(report.sections).toHaveLength(3);
-    expect(report.sections[0]!.claims).toEqual([]);
-    expect(report.sections[1]!.claims[0]!.workCardSnapshotIds).toEqual([
+    expect(report.sections[0]!.markdown).toContain(
+      "| 成员 | 项目 | 本周工作明细 |",
+    );
+    expect(report.sections[0]!.claims[0]!.workCardSnapshotIds).toEqual([
       snapshotId,
     ]);
+    expect(report.sections[1]).toMatchObject({
+      key: "week_comparison",
+      markdown: expect.stringContaining("| 成员 | 项目 | 与上周相比 |"),
+    });
     expect(report.sections[2]).toMatchObject({
       key: "risks",
-      markdown: "本期工作卡片未提供这一部分的相关内容。",
+      markdown: expect.stringContaining("| 成员 | 项目 | 风险与阻塞 |"),
     });
     expect(report.qualityWarnings).toContain(
       "MODEL_TEAM_REPORT_SECTIONS_NORMALIZED",
     );
   });
 
-  it("injects approved descriptions without changing nested progress", () => {
-    expect(
-      injectApprovedProjectDescriptions(
-        "- **partner-report-agent**：模型生成的周进展\n  - 林勇：完成审核链路。",
-        [
+  it("caps each project progress description at 120 characters", () => {
+    const snapshotId = "11111111-1111-4111-8111-111111111111";
+    const report = normalizeTeamReportGeneration(
+      {
+        summary: "团队本周整体推进平稳。",
+        sections: [
           {
-            projectDescriptions: [
-              {
-                name: "partner-report-agent",
-                description: "用于采集和审核团队工作记录的报告平台。",
-              },
-            ],
+            key: "project_progress",
+            markdown: `| 成员 | 项目 | 本周工作明细 |\n| --- | --- | --- |\n| 林勇 | 项目甲 | ${"进".repeat(140)} |`,
+            claims: [],
+          },
+          {
+            key: "week_comparison",
+            markdown:
+              "| 成员 | 项目 | 与上周相比 |\n| --- | --- | --- |\n| 林勇 | 项目甲 | 本周新增完成验证。 |",
+            claims: [],
+          },
+          {
+            key: "risks",
+            markdown:
+              "| 成员 | 项目 | 风险与阻塞 |\n| --- | --- | --- |\n| - | - | 本周工作卡片未报告明确风险与阻塞。 |",
+            claims: [],
           },
         ],
-      ),
-    ).toBe(
-      "- **partner-report-agent**：用于采集和审核团队工作记录的报告平台。\n  - 林勇：完成审核链路。",
+      },
+      [{ snapshotId }],
+      [],
+      "test-model",
     );
+    const detail = report.sections[0]!.markdown.split("\n")[2]!
+      .split("|")[3]!
+      .trim();
+
+    expect(Array.from(detail)).toHaveLength(120);
+    expect(detail.endsWith("…")).toBe(true);
   });
 
   it("formats the report creation date in the team's timezone", () => {

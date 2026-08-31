@@ -276,15 +276,8 @@ export function ReviewPage() {
                 </Badge>
               </div>
 
-              {selected.payload.projectDescription && (
-                <section className="project-overview">
-                  <h3>项目描述</h3>
-                  <p>{selected.payload.projectDescription}</p>
-                </section>
-              )}
-
               <section className="project-overview">
-                <h3>总览</h3>
+                <h3>本周进展总览</h3>
                 <p>{selected.payload.overview ?? selected.payload.summary}</p>
               </section>
 

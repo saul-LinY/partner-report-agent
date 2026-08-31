@@ -308,51 +308,48 @@ suite("synthetic report generation pipeline", () => {
           summary: expect.stringContaining("团队本周完成了重点工作的梳理"),
           missingPartnerIds: [],
           sections: [
-            { key: "summary", title: "本周团队工作摘要" },
             { key: "project_progress", title: "项目与人员工作明细" },
+            { key: "week_comparison", title: "与上周工作对比" },
             { key: "risks", title: "风险与阻塞" },
           ],
-          markdown: expect.stringContaining("## 本周团队工作摘要"),
+          markdown: expect.stringContaining("## 项目与人员工作明细"),
         },
       },
     ]);
     expect(teamReports[0].payload.markdown).not.toMatch(/数据覆盖|下一期重点/);
-    expect(lastTeamReportInstructions).toContain(
-      "group content by concrete Partner/person first",
-    );
+    expect(teamReports[0].payload.markdown).not.toContain("本周团队工作摘要");
     expect(lastTeamReportInstructions).toContain(
       "service assembles the top-level title and markdown deterministically",
     );
     expect(lastTeamReportInstructions).toContain(
-      "Organize the entire section by project as a Markdown bullet list",
+      "Include exactly three sections",
     );
     expect(lastTeamReportInstructions).toContain(
-      "top-level summary field is the executive overview",
+      "top-level summary field is the management overview",
     );
-    expect(lastTeamReportInstructions).toContain("450 to 600 characters");
+    expect(lastTeamReportInstructions).toContain("260 to 320");
     expect(lastTeamReportInstructions).toContain(
       "business leader who does not understand software engineering",
     );
     expect(lastTeamReportInstructions).toContain(
-      "management-level overview, not a compressed inventory",
+      "Do not turn it into a person-by-person or project-by-project list",
     );
     expect(lastTeamReportInstructions).toContain(
-      "exactly five substantial sentences",
+      "Target about 100 Chinese characters",
     );
     expect(lastTeamReportInstructions).toContain(
-      "language a non-technical leader can understand",
+      "copying each project name exactly",
+    );
+    expect(lastTeamReportInstructions).toContain("成员, 项目, 风险与阻塞");
+    expect(lastTeamReportInstructions).toContain("成员, 项目, 与上周相比");
+    expect(lastTeamReportInstructions).toContain(
+      "Absence from the current Work Cards is not evidence",
     );
     expect(lastTeamReportInstructions).toContain(
-      "exact project name copied verbatim",
+      'Do not start descriptions with phrases such as "当前状态为"',
     );
     expect(lastTeamReportInstructions).toContain(
-      "Do not use bullets, numbered lists, headings, or line breaks",
-    );
-    expect(lastTeamReportInstructions).toContain(
-      'Do not start a project entry with phrases such as "当前状态为"',
-    );
-    expect(lastTeamReportInstructions).toContain(
-      "Do not expose raw status enum identifiers",
+      "do not expose raw status enum identifiers",
     );
     expect(lastTeamReportInstructions).toContain(
       "copy only exact values from workCards[].snapshotId",
@@ -360,11 +357,10 @@ suite("synthetic report generation pipeline", () => {
     expect(lastTeamReportInstructions).toContain(
       `the complete allowlist is ["${snapshotId}"]`,
     );
-    expect(lastTeamReportInstructions).toContain("2026-08-12.team.v14");
-    expect(teamReports[0].payload.markdown).toContain("### Synthetic Partner");
-    expect(
-      teamReports[0].payload.markdown.indexOf("### Synthetic Partner"),
-    ).toBeLessThan(teamReports[0].payload.markdown.indexOf("#### 未识别项目"));
+    expect(lastTeamReportInstructions).toContain("2026-08-31.team.v18");
+    expect(teamReports[0].payload.markdown).toContain(
+      "| Synthetic Partner | 未识别项目 |",
+    );
     const duplicateJobs = await sql<any[]>`
       select status, error_code, error_message
       from agent_jobs where id = ${duplicateTeamJob}
@@ -380,6 +376,34 @@ suite("synthetic report generation pipeline", () => {
       select status from report_periods where id = ${fixture.period}
     `;
     expect(periods).toEqual([{ status: "completed" }]);
+
+    const regenerationJobId = randomUUID();
+    await sql`
+      insert into agent_jobs (
+        id, tenant_id, team_id, partner_id, type, idempotency_key,
+        input_payload
+      ) values (
+        ${regenerationJobId}, ${fixture.tenant}, ${fixture.team}, null,
+        'REGENERATE_TEAM_REPORT', ${`synthetic-team-regenerate:${regenerationJobId}`},
+        ${JSON.stringify(teamJobs[0].input_payload)}::jsonb
+      )
+    `;
+    nextOutput = teamReport(snapshotId);
+    expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
+      processed: true,
+      jobId: regenerationJobId,
+      type: "REGENERATE_TEAM_REPORT",
+    });
+    const regeneratedReports = await sql<any[]>`
+      select tr.status, tr.current_version, count(trv.id)::int as version_count
+      from team_reports tr
+      join team_report_versions trv on trv.report_id = tr.id
+      where tr.tenant_id = ${fixture.tenant} and tr.period_id = ${fixture.period}
+      group by tr.id
+    `;
+    expect(regeneratedReports).toEqual([
+      { status: "LOCKED", current_version: 2, version_count: 2 },
+    ]);
   });
 
   it("publishes a regenerated card only after the generation job is complete", async () => {
@@ -504,7 +528,6 @@ suite("synthetic report generation pipeline", () => {
       groups: [
         {
           projectKey: "regeneration-project",
-          projectDescription: "",
           status: "in_progress",
           overview:
             "本周完善了飞书审核卡片的更新流程，让用户提交修改意见后能够看到处理状态，并在生成完成后继续审核。当前链路已经完成验证。",
@@ -699,30 +722,25 @@ function production(promptVersion: string) {
 }
 
 function teamReport(snapshotId: string) {
-  const keys = ["summary", "project_progress", "risks"];
+  const keys = ["project_progress", "week_comparison", "risks"];
   return {
     schemaVersion: "1.0",
     summary:
-      "团队本周完成了重点工作的梳理、改进和验证，相关流程已经能够正常运行，并形成了可供后续使用的阶段性成果。".repeat(
-        9,
-      ),
+      "团队本周完成了重点工作的梳理、改进和验证，相关流程已经能够稳定运行，主要环节也形成了可供后续使用的阶段性成果。整体推进节奏平稳，各项工作均围绕明确目标展开，已有结果可以支持下一步继续完善。部分内容仍需结合实际使用情况进一步确认，当前结论只依据已经审核通过的工作记录，不扩大解释未被资料支持的影响。团队后续将继续补齐验证结果，集中处理尚未关闭的问题，并保持各项目进展与风险信息同步。管理上建议关注待确认事项是否按计划收口，同时及时协调跨项目需要共同解决的问题。总体情况清晰，下一阶段安排已有依据。",
     sections: keys.map((key) => ({
       key,
       markdown:
         key === "project_progress"
-          ? "### Synthetic Partner\n\n#### 未识别项目\n\n合成链路验证进行中。"
-          : key === "summary"
-            ? "- 未识别项目：完成合成链路验证。\n  - Synthetic Partner：完成本地验证。"
-            : `${key} 中文内容`,
-      claims:
-        key === "summary"
-          ? [
-              {
-                claim: "团队已完成链路验证",
-                workCardSnapshotIds: [snapshotId],
-              },
-            ]
-          : [],
+          ? "| 成员 | 项目 | 本周工作明细 |\n| --- | --- | --- |\n| Synthetic Partner | 未识别项目 | 合成链路验证进行中。 |"
+          : key === "week_comparison"
+            ? "| 成员 | 项目 | 与上周相比 |\n| --- | --- | --- |\n| Synthetic Partner | 未识别项目 | 上周没有同项目记录，本周新增链路验证进展。 |"
+            : "| 成员 | 项目 | 风险与阻塞 |\n| --- | --- | --- |\n| - | - | 本周工作卡片未报告明确风险与阻塞。 |",
+      claims: [
+        {
+          claim: "团队已完成链路验证",
+          workCardSnapshotIds: [snapshotId],
+        },
+      ],
     })),
     missingPartnerIds: [],
     qualityWarnings: [],

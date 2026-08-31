@@ -1807,6 +1807,118 @@ suite("tenant and role authorization", () => {
     }
   });
 
+  it("regenerates a locked Team Report while keeping its current version visible", async () => {
+    const periodId = randomUUID();
+    const reportId = randomUUID();
+    const sourceJobId = randomUUID();
+    try {
+      await sql.begin(async (tx) => {
+        await tx`
+          insert into report_periods (
+            id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+            submission_deadline_at, timezone, status
+          ) values (
+            ${periodId}, ${fixture.tenantA}, ${fixture.teamA}, ${`regenerate-${periodId}`},
+            '2023-08-01T00:00:00Z', '2023-08-08T00:00:00Z',
+            '2023-08-08T00:00:00Z', '2023-08-08T00:00:00Z',
+            'Asia/Shanghai', 'completed'
+          )
+        `;
+        await tx`
+          insert into team_reports (
+            id, tenant_id, team_id, period_id, status, current_version,
+            generated_at, locked_at
+          ) values (
+            ${reportId}, ${fixture.tenantA}, ${fixture.teamA}, ${periodId},
+            'LOCKED', 1, now(), now()
+          )
+        `;
+        await tx`
+          insert into team_report_versions (
+            id, tenant_id, report_id, version, title, summary, markdown,
+            payload, source_checksum, generator_version
+          ) values (
+            ${randomUUID()}, ${fixture.tenantA}, ${reportId}, 1,
+            'Locked Team Report', 'Locked summary', '# Locked Team Report',
+            '{"missingPartnerIds":[],"qualityWarnings":[]}'::jsonb,
+            'locked-source', 'synthetic-test/1.0'
+          )
+        `;
+        await tx`
+          insert into agent_jobs (
+            id, tenant_id, team_id, partner_id, type, status,
+            idempotency_key, input_payload, completed_at
+          ) values (
+            ${sourceJobId}, ${fixture.tenantA}, ${fixture.teamA}, null,
+            'GENERATE_TEAM_REPORT', 'COMPLETED', ${`fixture:${sourceJobId}`},
+            ${JSON.stringify({
+              reportId,
+              sourceChecksum: "locked-source",
+              workCards: [
+                {
+                  partnerId: fixture.partnerA,
+                  partnerName: "Fixture A",
+                  snapshotId: randomUUID(),
+                  workItems: [{ title: "Fixture Project" }],
+                  projectDescriptions: ["Should be removed"],
+                  noReportableActivity: false,
+                },
+              ],
+              missingPartnerIds: [],
+              previousTeamReport: null,
+            })}::jsonb,
+            now()
+          )
+        `;
+      });
+
+      const regenerated = await app.inject({
+        method: "POST",
+        url: `/v1/admin/team-reports/${reportId}/regenerate`,
+        headers,
+        payload: { instructions: "Use the current report structure." },
+      });
+      expect(regenerated.statusCode).toBe(200);
+      expect(regenerated.json()).toEqual({ jobId: expect.any(String) });
+
+      const [reports, jobs] = await Promise.all([
+        sql<any[]>`
+          select status, current_version from team_reports where id = ${reportId}
+        `,
+        sql<any[]>`
+          select input_payload from agent_jobs
+          where id = ${regenerated.json().jobId}
+        `,
+      ]);
+      expect(reports).toEqual([{ status: "LOCKED", current_version: 1 }]);
+      expect(jobs[0].input_payload.workCards).toMatchObject([
+        {
+          partnerName: "Fixture A",
+          projectNames: ["Fixture Project"],
+        },
+      ]);
+      expect(jobs[0].input_payload.workCards[0]).not.toHaveProperty(
+        "projectDescriptions",
+      );
+
+      const duplicate = await app.inject({
+        method: "POST",
+        url: `/v1/admin/team-reports/${reportId}/regenerate`,
+        headers,
+        payload: {},
+      });
+      expect(duplicate.statusCode).toBe(409);
+      expect(duplicate.json()).toMatchObject({
+        code: "TEAM_REPORT_REGENERATION_IN_PROGRESS",
+      });
+    } finally {
+      await sql`delete from agent_jobs where tenant_id = ${fixture.tenantA} and input_payload->>'reportId' = ${reportId}`;
+      await sql`delete from team_report_versions where report_id = ${reportId}`;
+      await sql`delete from team_reports where id = ${reportId}`;
+      await sql`delete from report_periods where id = ${periodId}`;
+    }
+  });
+
   it("creates a new immutable Work Card snapshot after reopening", async () => {
     const periodId = randomUUID();
     const reviewId = randomUUID();

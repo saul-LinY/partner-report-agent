@@ -361,8 +361,7 @@ suite("weekly reporting with no collected activity", () => {
         status: "LOCKED",
         missing_partner_ids: [],
         payload: {
-          summary:
-            expect.stringContaining("不代表团队成员在本周期没有开展工作"),
+          summary: expect.stringContaining("不代表团队成员没有开展工作"),
           qualityWarnings: ["NO_REPORTABLE_ACTIVITY_COLLECTED"],
         },
       },

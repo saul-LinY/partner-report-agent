@@ -18,6 +18,23 @@ type WorkCardSourceRow = {
   } | null;
 };
 
+function sanitizeTeamReportRegenerationPayload(payload: any) {
+  const workCards = Array.isArray(payload?.workCards)
+    ? buildTeamReportWorkCards(
+        payload.workCards.map((workCard: any) => ({
+          partnerId: workCard.partnerId,
+          partnerName: workCard.partnerName,
+          snapshotId: workCard.snapshotId,
+          workItemSnapshot: {
+            workItems: workCard.workItems,
+            noReportableActivity: workCard.noReportableActivity,
+          },
+        })),
+      )
+    : [];
+  return { ...payload, workCards };
+}
+
 async function enqueueTeamReportForPeriod(
   tx: any,
   input: {
@@ -75,14 +92,6 @@ async function enqueueTeamReportForPeriod(
     );
   if (input.requireAllLocked && missingPartnerIds.length > 0) return null;
 
-  const approvedProjects = await tx<
-    Array<{ id: string; name: string; description: string }>
-  >`
-      select id, name, description from projects
-      where tenant_id = ${input.tenantId} and team_id = ${input.teamId}
-        and status = 'active' and description is not null
-    `;
-
   const previousRows = await tx<any[]>`
     select trv.id as version_id, previous_period.period_key, trv.payload
     from report_periods previous_period
@@ -107,7 +116,6 @@ async function enqueueTeamReportForPeriod(
         snapshotId: row.snapshot_id!,
         workItemSnapshot: row.work_item_snapshot,
       })),
-      approvedProjects,
     ),
     missingPartnerIds,
     previousTeamReport: previousRows[0] ?? null,
@@ -388,48 +396,63 @@ export async function teamReportRoutes(app: FastifyInstance) {
     const input = z
       .object({ instructions: z.string().max(1000).optional() })
       .parse(request.body ?? {});
-    const reports = await sql<any[]>`
-      select * from team_reports where id = ${id} and tenant_id = ${actor.tenantId}
-        and team_id = ${actor.teamId} limit 1
-    `;
-    const report = reports[0];
-    if (!report || report.status === "LOCKED")
-      throw new ApiError(
-        409,
-        "TEAM_REPORT_NOT_EDITABLE",
-        "Team Report 已锁定或不存在。",
-      );
-    const sourceRows = await sql<any[]>`
-      select input_payload from agent_jobs
-      where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and type in ('GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT')
-        and input_payload->>'reportId' = ${id}
-      order by created_at desc limit 1
-    `;
-    if (!sourceRows[0])
-      throw new ApiError(
-        409,
-        "TEAM_REPORT_SOURCE_MISSING",
-        "Team Report 生成快照不存在。",
-      );
-    const payload = {
-      ...sourceRows[0].input_payload,
-      regenerationInstructions: input.instructions ?? "",
-    };
-    const jobId = randomUUID();
-    await sql`
-      insert into agent_jobs (
-        id, tenant_id, team_id, partner_id, type, idempotency_key, input_payload
-      ) values (
-        ${jobId}, ${actor.tenantId}, ${actor.teamId}, null,
-        'REGENERATE_TEAM_REPORT', ${`team-report-regenerate:${id}:${randomUUID()}`},
-        ${JSON.stringify(payload)}::jsonb
-      )
-    `;
-    await sql`
-      update team_reports set status = 'AGGREGATING', updated_at = now()
-      where id = ${id}
-    `;
+    const jobId = await sql.begin(async (tx) => {
+      const reports = await tx<any[]>`
+        select * from team_reports where id = ${id}
+          and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+        limit 1 for update
+      `;
+      const report = reports[0];
+      if (!report) throw new ApiError(404, "NOT_FOUND", "Team Report 不存在。");
+      const activeJobs = await tx<any[]>`
+        select id from agent_jobs
+        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and type in ('GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT')
+          and input_payload->>'reportId' = ${id}
+          and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
+        limit 1
+      `;
+      if (activeJobs[0])
+        throw new ApiError(
+          409,
+          "TEAM_REPORT_REGENERATION_IN_PROGRESS",
+          "该团队周报正在生成，请稍后再试。",
+        );
+      const sourceRows = await tx<any[]>`
+        select input_payload from agent_jobs
+        where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          and type in ('GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT')
+          and input_payload->>'reportId' = ${id}
+        order by created_at desc limit 1
+      `;
+      if (!sourceRows[0])
+        throw new ApiError(
+          409,
+          "TEAM_REPORT_SOURCE_MISSING",
+          "Team Report 生成快照不存在。",
+        );
+      const payload = {
+        ...sanitizeTeamReportRegenerationPayload(sourceRows[0].input_payload),
+        regenerationInstructions: input.instructions ?? "",
+      };
+      const nextJobId = randomUUID();
+      await tx`
+        insert into agent_jobs (
+          id, tenant_id, team_id, partner_id, type, idempotency_key, input_payload
+        ) values (
+          ${nextJobId}, ${actor.tenantId}, ${actor.teamId}, null,
+          'REGENERATE_TEAM_REPORT', ${`team-report-regenerate:${id}:${randomUUID()}`},
+          ${JSON.stringify(payload)}::jsonb
+        )
+      `;
+      if (report.status !== "LOCKED") {
+        await tx`
+          update team_reports set status = 'AGGREGATING', updated_at = now()
+          where id = ${id}
+        `;
+      }
+      return nextJobId;
+    });
     await audit(
       request,
       actor,

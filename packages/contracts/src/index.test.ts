@@ -11,6 +11,7 @@ import {
   sessionContributionSchema,
   sessionExtractionResultSchema,
   teamReportGenerationResultSchema,
+  teamReportResultSchema,
 } from "./index.js";
 
 describe("collection coverage contract", () => {
@@ -352,11 +353,17 @@ describe("project card aggregation contract", () => {
         groups: [
           {
             ...result.groups[0],
-            dailyProgress: [{ date: "2026-08-03", summary: "进".repeat(201) }],
+            dailyProgress: [{ date: "2026-08-03", summary: "进".repeat(61) }],
           },
         ],
       }).success,
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      aggregationResultSchema.safeParse({
+        ...result,
+        groups: [{ ...result.groups[0], overview: "进".repeat(121) }],
+      }).success,
+    ).toBe(false);
     expect(
       aggregationResultSchema.safeParse({
         ...result,
@@ -373,13 +380,8 @@ describe("team report model output contract", () => {
     expect(
       teamReportGenerationResultSchema.safeParse({
         schemaVersion: "1.0",
-        summary: "简短摘要。",
+        summary: "管理概览".repeat(70),
         sections: [
-          {
-            key: "summary",
-            markdown: "项目摘要。",
-            claims: [{ workCardSnapshotIds: [] }],
-          },
           {
             key: "project_progress",
             markdown: "人员进展。",
@@ -390,12 +392,52 @@ describe("team report model output contract", () => {
         qualityWarnings: [],
         production: {
           skillVersion: "partner-report-platform/0.3.0",
-          promptVersion: "2026-08-27.team.v15",
+          promptVersion: "2026-08-31.team.v18",
           schemaVersion: "1.0",
           producer: "data-platform",
         },
       }).success,
     ).toBe(true);
+    expect(
+      teamReportGenerationResultSchema.safeParse({
+        schemaVersion: "1.0",
+        summary: "管".repeat(361),
+        sections: [],
+        production: {
+          skillVersion: "partner-report-platform/0.3.0",
+          promptVersion: "2026-08-31.team.v18",
+          schemaVersion: "1.0",
+          producer: "data-platform",
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      teamReportResultSchema.safeParse({
+        schemaVersion: "1.0",
+        title: "团队周报",
+        summary: "过短概览。",
+        sections: [
+          {
+            key: "project_progress",
+            title: "项目与人员工作明细",
+            markdown: "表格",
+          },
+          {
+            key: "week_comparison",
+            title: "与上周工作对比",
+            markdown: "表格",
+          },
+          { key: "risks", title: "风险与阻塞", markdown: "表格" },
+        ],
+        markdown: "正文",
+        production: {
+          skillVersion: "partner-report-platform/0.3.0",
+          promptVersion: "2026-08-31.team.v18",
+          schemaVersion: "1.0",
+          producer: "data-platform",
+        },
+      }).success,
+    ).toBe(false);
   });
 });
 

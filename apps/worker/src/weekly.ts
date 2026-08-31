@@ -394,13 +394,6 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
             !row.work_item_snapshot,
         )
         .map((row) => row.partner_id);
-      const approvedProjects = await tx<
-        Array<{ id: string; name: string; description: string }>
-      >`
-          select id, name, description from projects
-          where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
-            and status = 'active' and description is not null
-        `;
       if (sourceRows.length === 0 || missingPartnerIds.length > 0) return 0;
       const previousRows = await tx<any[]>`
         select trv.id as version_id, previous_period.period_key, trv.payload
@@ -426,7 +419,6 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
             snapshotId: row.snapshot_id,
             workItemSnapshot: row.work_item_snapshot,
           })),
-          approvedProjects,
         ),
         missingPartnerIds,
         previousTeamReport: previousRows[0] ?? null,

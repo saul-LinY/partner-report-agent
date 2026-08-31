@@ -57,7 +57,6 @@ export type ReviewDeliveryView = FeishuDeliveryScope & {
   item: {
     id: string;
     title: string;
-    projectDescription: string;
     status: string;
     overview: string;
     dailyProgress: Array<{ date: string; summary: string }>;
@@ -342,10 +341,6 @@ export class FeishuDeliveryService {
       item: {
         id: item.id,
         title: item.title,
-        projectDescription:
-          typeof payload.projectDescription === "string"
-            ? payload.projectDescription
-            : "",
         status: item.status,
         overview:
           typeof payload.overview === "string"
