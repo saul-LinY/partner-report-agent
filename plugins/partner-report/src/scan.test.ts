@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { PLUGIN_VERSION } from "./config.js";
 import {
   anonymousSessionKey,
   buildSessionJob,
@@ -203,7 +202,7 @@ describe("safe Session input", () => {
       expect.arrayContaining([expect.stringContaining("必须使用简体中文")]),
     );
     expect(job!.expected.production).toMatchObject({
-      skillVersion: `partner-report-sync/${PLUGIN_VERSION}`,
+      skillVersion: "partner-report-sync/2.0.0",
       promptVersion: "2026-08-25.zh-whole-session-value.v4",
     });
     const serialized = JSON.stringify(job);

@@ -40,9 +40,7 @@ describe("partner report skill packaging", () => {
       "utf8",
     );
 
-    expect(skill).toContain(
-      "本 Skill 只使用插件自带的 `partner-report` MCP 工具",
-    );
+    expect(skill).toContain("只使用插件自带的 `partner-report` MCP 工具");
     expect(skill).toContain("不得改用其他工具、shell 或 CLI");
     expect(skill).not.toContain('node "<PLUGIN_PATH>/dist/cli.mjs"');
     expect(skill).toContain("不得修改 Codex 的全局权限模式");
@@ -50,7 +48,6 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("只有 `completed` 且没有 `nextTool`");
     expect(skill).toContain("collect_start");
     expect(skill).toContain("collect_next");
-    expect(skill).toContain("collect_host_thread_submit");
     expect(skill).toContain("collect_submit");
     expect(skill).toContain("collect_review");
     expect(skill).toContain("collect_defer");
@@ -94,17 +91,6 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("Codex App 官方 `list_threads(limit: 50)`");
     expect(skill).toContain('{ "limit": 50 }');
     expect(skill).toContain("`threads` 和 `pinnedThreads`");
-    expect(skill).toContain("`unavailableHosts` 和 `unavailableSources`");
-    expect(skill).toContain("`hostId + threadId`");
-    expect(skill).toContain("`kind` 为 `codex`");
-    expect(skill).toContain("`host_thread_read_required`");
-    expect(skill).toContain("本机与远程 Host 是并列的采集来源");
-    expect(skill).toContain("`collect_start` 只建立并处理本机队列");
-    expect(skill).toContain("`local_collection_completed`");
-    expect(skill).toContain("不表示整个周期采集完成");
-    expect(skill).toContain("作为并列来源分别报告安全状态");
-    expect(skill).toContain("`hostTool.arguments`");
-    expect(skill).toContain("不得更换 Host、Thread、cursor、页大小");
     expect(skill).toContain("不得传 title、summary");
     expect(skill).toContain(
       "不得改用 shell、插件 CLI 或自行启动 `codex app-server`",
@@ -129,12 +115,8 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("项目工作卡片整体接受后");
     expect(skill).toContain("项目工作卡片审核");
     expect(skill).toContain("终态审查");
-    expect(skill).toContain(
-      "结束前不得再次调用 `list_threads` 或本机 `thread/list`",
-    );
-    expect(skill).toContain(
-      "插件不得再次调用 `list_threads` 或本机 `thread/list`",
-    );
+    expect(skill).toContain("结束前不得再次调用 `thread/list`");
+    expect(skill).toContain("插件不得再次调用 `thread/list`");
     expect(skill).toContain("冻结的候选 Session 快照");
     expect(skill).toContain("运行期间新增或更新的 Session");
     expect(skill).not.toContain("continuation-task-config");

@@ -17,7 +17,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
-export const PLUGIN_VERSION = "2.1.1";
+export const PLUGIN_VERSION = "2.0.0";
 
 export type PluginConfig = {
   serverUrl: string;

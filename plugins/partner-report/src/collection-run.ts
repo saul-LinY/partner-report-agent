@@ -60,79 +60,14 @@ export function collectionDeadline(createdAt: string) {
 export function missingSessionCoverage<T extends { id: string }>(
   authorizedSessions: T[],
   processedSessionIds: Iterable<string>,
-  sessionKey: (session: T) => string = (session) => session.id,
 ) {
   const processed = new Set(processedSessionIds);
   const seen = new Set<string>();
   return authorizedSessions.filter((session) => {
-    const key = sessionKey(session);
-    if (processed.has(key) || seen.has(key)) return false;
-    seen.add(key);
+    if (processed.has(session.id) || seen.has(session.id)) return false;
+    seen.add(session.id);
     return true;
   });
-}
-
-export function orderLocalCollectionFirst<T extends { hostId: string }>(
-  queue: T[],
-  localHostId: string,
-) {
-  return [...queue].sort(
-    (left, right) =>
-      Number(left.hostId !== localHostId) -
-      Number(right.hostId !== localHostId),
-  );
-}
-
-export function splitCollectionSources<T extends { hostId: string }>(
-  sessions: T[],
-  localHostId: string,
-) {
-  return {
-    local: sessions.filter((session) => session.hostId === localHostId),
-    remote: sessions.filter((session) => session.hostId !== localHostId),
-  };
-}
-
-export function remoteCollectionCanStart(input: {
-  localCheckpointAdvanced: boolean;
-  remoteInitialized: boolean;
-}) {
-  return input.localCheckpointAdvanced && !input.remoteInitialized;
-}
-
-export function remoteCollectionStatus(input: {
-  warningCount: number;
-  hostCount: number;
-  pendingProjectCount: number;
-}) {
-  if (input.warningCount > 0) return "partial" as const;
-  if (input.hostCount === 0) return "not_found" as const;
-  if (input.pendingProjectCount > 0)
-    return "completed_with_pending_permission" as const;
-  return "completed" as const;
-}
-
-export function completedCollectionSources<
-  T extends { hostId: string },
->(input: {
-  queue: T[];
-  processedSessionIds: Iterable<string>;
-  sessionKey: (session: T) => string;
-  localHostId: string;
-  remoteHostIds: string[];
-  remoteDiscoveryComplete: boolean;
-}) {
-  const processed = new Set(input.processedSessionIds);
-  const sourceComplete = (hostId: string) =>
-    input.queue
-      .filter((session) => session.hostId === hostId)
-      .every((session) => processed.has(input.sessionKey(session)));
-  return {
-    localComplete: sourceComplete(input.localHostId),
-    completedRemoteHostIds: input.remoteDiscoveryComplete
-      ? input.remoteHostIds.filter(sourceComplete)
-      : [],
-  };
 }
 
 export function reviewSnapshotCoverage<T extends { id: string }>(input: {
@@ -140,20 +75,16 @@ export function reviewSnapshotCoverage<T extends { id: string }>(input: {
   processedSessionIds: Iterable<string>;
   terminalSessionIds: Iterable<string>;
   unresolvedSessionIds: Iterable<string>;
-  sessionKey?: (session: T) => string;
 }) {
   const terminal = new Set([
     ...input.processedSessionIds,
     ...input.terminalSessionIds,
   ]);
   const unresolved = new Set(input.unresolvedSessionIds);
-  const sessionKey = input.sessionKey ?? ((session: T) => session.id);
-  const missing = missingSessionCoverage(input.snapshot, terminal, sessionKey);
+  const missing = missingSessionCoverage(input.snapshot, terminal);
   return {
-    retry: missing.filter((session) => unresolved.has(sessionKey(session))),
-    unaccounted: missing.filter(
-      (session) => !unresolved.has(sessionKey(session)),
-    ),
+    retry: missing.filter((session) => unresolved.has(session.id)),
+    unaccounted: missing.filter((session) => !unresolved.has(session.id)),
   };
 }
 

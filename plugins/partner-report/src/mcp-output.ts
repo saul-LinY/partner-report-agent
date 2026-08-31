@@ -67,11 +67,6 @@ export function withNextTool(result: CliOutput) {
       name: "collect_submit",
       arguments: { runPath, jobId: result.jobId },
     };
-  } else if (nextCommand.startsWith("collect-host-thread-submit") && runPath) {
-    nextTool = {
-      name: "collect_host_thread_submit",
-      arguments: { runPath },
-    };
   } else if (nextCommand.startsWith("project-description-submit") && runPath) {
     nextTool = {
       name: "project_description_submit",

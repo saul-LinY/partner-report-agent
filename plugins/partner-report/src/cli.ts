@@ -40,10 +40,8 @@ import {
 } from "./collection-dedup.js";
 import {
   acquireCollectionLease,
-  advanceHostCollectionCheckpoint,
   canAdvanceCollectionCheckpoint,
   collectionWindow,
-  hostCollectionWindow,
   beijingWeekStartsAt,
   initialProjectDiscoveryNeedsResume,
   initialProjectScopeStartAt,
@@ -64,19 +62,14 @@ import {
   MAX_EXTRACTION_FAILURES,
   appendExtractionFailure,
   collectionDeadline,
-  completedCollectionSources,
   countJobOutcomes,
   failedExtractOutcomeIsExplained,
   immutableContributionFromRequirements,
   jobOutcomeFailureAuditIsValid,
   legalCollectSkipOutcome,
-  missingSessionCoverage,
   repairImmutableResult,
-  remoteCollectionCanStart,
-  remoteCollectionStatus,
   reviewSnapshotCoverage,
   shouldStopBeforeClaim,
-  splitCollectionSources,
   type ExtractionFailure,
   type ExtractionFailureCode,
   type JobOutcome,
@@ -87,22 +80,10 @@ import {
 } from "./app-server.js";
 import {
   CODEX_HOST_THREAD_LIST_LIMIT,
-  LOCAL_HOST_ID,
-  hostCollectionDiscoveryStatus,
-  hostThreadKey,
   hostProjectDiscoveryMayBePartial,
-  parseHostCollectionDiscoveryInput,
   parseHostProjectDiscoveryInput,
   uniqueHostProjectDiscoveryThreads,
-  type HostCollectionDiscoveryInput,
 } from "./host-project-discovery.js";
-import {
-  appendHostThreadReadPage,
-  beginHostThreadRead,
-  completedHostThread,
-  hostThreadReadTool,
-  type PendingHostThreadRead,
-} from "./host-thread-read.js";
 import {
   anonymousSessionKey,
   buildSessionJob,
@@ -174,9 +155,6 @@ type ClaimResponse = ConnectivityChallenge & {
 
 type ThreadSummary = {
   id: string;
-  hostId: string;
-  kind: string;
-  projectId?: string | null;
   title: string | null;
   cwd: string | null;
   createdAt: string | number | null;
@@ -232,22 +210,6 @@ type ProjectDescriptionScan = {
   failed: number;
 };
 
-type SourceProgress = {
-  phase: "local_collecting" | "local_completed" | "remote_collecting";
-  localQueueLength: number;
-  localCheckpointAdvanced: boolean;
-  localCounts?: RunCounts;
-  remoteInitialized: boolean;
-  remoteSnapshot?: {
-    hostInput: HostCollectionDiscoveryInput;
-    summaries: ThreadSummary[];
-  } | null;
-  remoteDiscoveryComplete: boolean;
-  remoteWarnings: string[];
-  remoteHostIds: string[];
-  remotePendingProjects: number;
-};
-
 type RunCounts = {
   discovered: number;
   read: number;
@@ -278,8 +240,7 @@ type CurrentJob = {
 };
 
 type RunManifest = {
-  schemaVersion:
-    "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6" | "1.7" | "1.8";
+  schemaVersion: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5";
   runId: string;
   pluginInstanceId: string;
   createdAt: string;
@@ -298,14 +259,12 @@ type RunManifest = {
   counts: RunCounts;
   threadReadFailureCodes?: Partial<Record<CodexThreadReadFailureCode, number>>;
   current: CurrentJob | null;
-  pendingHostThreadRead?: PendingHostThreadRead | null;
   claimedJobs: number;
   outcomes: JobOutcome[];
   stopReason?:
     "TIME_BUDGET_EXHAUSTED" | "RUN_INTERRUPTED" | "TEMPORARILY_UNAVAILABLE";
   endOfRunScopeScan?: EndOfRunScopeScan;
   projectDescriptionScan?: ProjectDescriptionScan;
-  sourceProgress?: SourceProgress;
 };
 
 const RUN_PREFIX = "partner-report-run-";
@@ -707,7 +666,7 @@ async function submitHostProjectDiscovery() {
     throw Object.assign(new Error("首次项目发现缺少宿主任务列表输入。"), {
       code: "PROJECT_DISCOVERY_INPUT_REQUIRED",
     });
-  let input = parseHostProjectDiscoveryInput(
+  const input = parseHostProjectDiscoveryInput(
     JSON.parse(readFileSync(inputPath, "utf8")),
   );
   const [policy, remoteScope] = await Promise.all([
@@ -723,30 +682,6 @@ async function submitHostProjectDiscovery() {
 
   const runStartedAt = new Date().toISOString();
   const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
-  const localServer = new CodexAppServer();
-  try {
-    await localServer.connect();
-    const localThreadIds = new Set(
-      (await localServer.listThreads({ updatedSince: scanStartsAt }))
-        .map(summaryFromThread)
-        .filter((value): value is ThreadSummary => Boolean(value))
-        .map((summary) => summary.id),
-    );
-    input = {
-      threads: input.threads.map((thread) =>
-        localThreadIds.has(thread.id)
-          ? { ...thread, hostId: LOCAL_HOST_ID }
-          : thread,
-      ),
-      pinnedThreads: input.pinnedThreads.map((thread) =>
-        localThreadIds.has(thread.id)
-          ? { ...thread, hostId: LOCAL_HOST_ID }
-          : thread,
-      ),
-    };
-  } finally {
-    localServer.close();
-  }
   const summaries = uniqueHostProjectDiscoveryThreads(input)
     .map(summaryFromThread)
     .filter((value): value is ThreadSummary => Boolean(value));
@@ -934,18 +869,6 @@ function summaryFromThread(value: any): ThreadSummary | null {
         : null;
   return {
     id: String(value.id),
-    hostId:
-      typeof value.hostId === "string" && value.hostId.trim()
-        ? value.hostId.trim()
-        : LOCAL_HOST_ID,
-    kind:
-      typeof value.kind === "string" && value.kind.trim()
-        ? value.kind.trim().toLowerCase()
-        : "codex",
-    projectId:
-      typeof value.projectId === "string"
-        ? value.projectId.trim() || null
-        : null,
     title,
     cwd: typeof value.cwd === "string" ? value.cwd : null,
     createdAt: value.createdAt ?? value.created_at ?? null,
@@ -986,7 +909,6 @@ function metadataEligibleThreads(
   return summaries.filter(
     (summary) =>
       summary.id !== currentSessionId &&
-      summary.kind === "codex" &&
       !summary.archived &&
       !excludedSessionIds.has(summary.id) &&
       !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
@@ -997,7 +919,6 @@ function metadataEligibleThreads(
 async function listCollectionThreadMetadata(
   config: PluginConfig,
   updatedSince: string,
-  hostInput: HostCollectionDiscoveryInput,
 ) {
   const server = new CodexAppServer();
   try {
@@ -1005,14 +926,9 @@ async function listCollectionThreadMetadata(
     const summaries = (await server.listThreads({ updatedSince }))
       .map(summaryFromThread)
       .filter((value): value is ThreadSummary => Boolean(value));
-    const remoteSummaries = uniqueHostProjectDiscoveryThreads(hostInput)
-      .filter((thread) => thread.hostId !== LOCAL_HOST_ID)
-      .map(summaryFromThread)
-      .filter((value): value is ThreadSummary => Boolean(value));
     return {
       summaries,
       metadataEligible: metadataEligibleThreads(summaries, config),
-      remoteSummaries,
     };
   } finally {
     server.close();
@@ -1143,7 +1059,7 @@ function readRun(runPath: string) {
   const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RunManifest;
   const config = loadConfig()!;
   if (
-    !["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8"].includes(
+    !["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"].includes(
       manifest.schemaVersion,
     ) ||
     manifest.pluginInstanceId !== config.pluginInstanceId
@@ -1158,7 +1074,6 @@ function readRun(runPath: string) {
   manifest.counts.failedThreadRead ??= 0;
   manifest.counts.invalidThreadHistory ??= 0;
   manifest.threadReadFailureCodes ??= {};
-  for (const summary of manifest.queue) summary.hostId ??= LOCAL_HOST_ID;
   const existingCoverage = manifest.endOfRunScopeScan;
   manifest.endOfRunScopeScan = {
     completed:
@@ -1178,10 +1093,7 @@ function readRun(runPath: string) {
     (manifest.current ? 1 : 0);
   if (manifest.current) {
     manifest.current.failures ??= [];
-    const inferredSummary = manifest.queue[manifest.cursor - 1];
-    const inferredThreadId = inferredSummary
-      ? hostThreadKey(inferredSummary)
-      : undefined;
+    const inferredThreadId = manifest.queue[manifest.cursor - 1]?.id;
     if (!manifest.current.threadId && inferredThreadId)
       manifest.current.threadId = inferredThreadId;
   }
@@ -1195,32 +1107,6 @@ function readRun(runPath: string) {
     unauthorized: 0,
     failed: 0,
   };
-  manifest.sourceProgress ??= {
-    phase: "local_collecting",
-    localQueueLength: manifest.queue.filter(
-      (summary) => summary.hostId === LOCAL_HOST_ID,
-    ).length,
-    localCheckpointAdvanced: false,
-    remoteInitialized: true,
-    remoteSnapshot: null,
-    remoteDiscoveryComplete: true,
-    remoteWarnings: [],
-    remoteHostIds: [
-      ...new Set(
-        manifest.queue
-          .filter((summary) => summary.hostId !== LOCAL_HOST_ID)
-          .map((summary) => summary.hostId),
-      ),
-    ],
-    remotePendingProjects: 0,
-  };
-  manifest.sourceProgress.remoteInitialized ??= true;
-  manifest.sourceProgress.remoteSnapshot ??= null;
-  manifest.sourceProgress.phase ??= manifest.sourceProgress
-    .localCheckpointAdvanced
-    ? "remote_collecting"
-    : "local_collecting";
-  manifest.sourceProgress.remotePendingProjects ??= 0;
   refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
   return { absolute, manifest };
 }
@@ -1340,7 +1226,6 @@ async function postCollectionStatus(
     ...((counts.invalidThreadHistory ?? 0) > 0
       ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"]
       : []),
-    ...(manifest.sourceProgress?.remoteWarnings ?? []),
   ];
   const coverage = {
     discovered: counts.discovered,
@@ -1411,14 +1296,6 @@ async function postCollectionStatus(
 
 async function collectStart() {
   const config = loadConfig()!;
-  const inputPath = option("input");
-  if (!inputPath)
-    throw Object.assign(new Error("采集缺少 Codex 宿主任务列表输入。"), {
-      code: "HOST_THREAD_DISCOVERY_INPUT_REQUIRED",
-    });
-  const hostInput = parseHostCollectionDiscoveryInput(
-    JSON.parse(readFileSync(inputPath, "utf8")),
-  );
   const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
   const policy = await fetchPolicy();
   if (!policy.currentPeriod)
@@ -1453,17 +1330,12 @@ async function collectStart() {
       projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
     );
 
-  let resumable = synchronizedScope.bootstrapped
+  const resumable = synchronizedScope.bootstrapped
     ? null
     : takeResumableRun(
         config.pluginInstanceId,
         policy.currentPeriod.period_key,
       );
-  if (resumable?.manifest.sourceProgress?.localCheckpointAdvanced) {
-    releaseCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
-    rmSync(dirname(resumable.path), { recursive: true, force: true });
-    resumable = null;
-  }
   if (resumable) {
     acquireCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
     try {
@@ -1506,59 +1378,40 @@ async function collectStart() {
   };
   let summaries: ThreadSummary[];
   let metadataEligible: ThreadSummary[];
-  let remoteSummaries: ThreadSummary[];
   try {
     // Project discovery applies its separate seven-day metadata window below.
     const metadataStartsAt = localScope.initialized
       ? window.scanStartsAt
       : initialProjectScopeStartAt(runStartedAt);
-    ({ summaries, metadataEligible, remoteSummaries } =
-      await listCollectionThreadMetadata(config, metadataStartsAt, hostInput));
+    ({ summaries, metadataEligible } = await listCollectionThreadMetadata(
+      config,
+      metadataStartsAt,
+    ));
   } catch (error) {
     releaseCollectionLease(config.pluginInstanceId, runId);
     throw error;
   }
+  const inWindow = flag("force")
+    ? metadataEligible
+    : metadataEligible.filter((summary) =>
+        threadCouldContainWindowAnswer(summary.updatedAt, window.scanStartsAt),
+      );
   const configuredRoots = configuredProjectRoots(policy.projects);
-  const localSummaries = splitCollectionSources(summaries, LOCAL_HOST_ID).local;
-  const localMetadataEligible = metadataEligible.filter(
-    (summary) => summary.hostId === LOCAL_HOST_ID,
-  );
   if (!localScope.initialized) {
     const initialProjectScopeStart = initialProjectScopeStartAt(runStartedAt);
-    const permissionDiscoverySummaries = localMetadataEligible.filter(
-      (summary) =>
-        threadIsInKnownScanWindow(
-          summary.updatedAt,
-          initialProjectScopeStart,
-          runStartedAt,
-        ),
+    const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
+      threadIsInKnownScanWindow(
+        summary.updatedAt,
+        initialProjectScopeStart,
+        runStartedAt,
+      ),
     );
-    let discovery = discoverProjectScopes(
+    const discovery = discoverProjectScopes(
       config.pluginInstanceId,
       localScope,
       permissionDiscoverySummaries,
       { configuredRoots },
     );
-    if (discovery.candidates.length === 0) {
-      const remoteMetadataEligible = metadataEligibleThreads(
-        remoteSummaries,
-        config,
-      );
-      const remotePermissionDiscoverySummaries = remoteMetadataEligible.filter(
-        (summary) =>
-          threadIsInKnownScanWindow(
-            summary.updatedAt,
-            initialProjectScopeStart,
-            runStartedAt,
-          ),
-      );
-      discovery = discoverProjectScopes(
-        config.pluginInstanceId,
-        localScope,
-        remotePermissionDiscoverySummaries,
-        { configuredRoots },
-      );
-    }
     try {
       const registeredScope =
         await authenticatedRequest<RemoteProjectScopePolicy>(
@@ -1590,13 +1443,14 @@ async function collectStart() {
       projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
     );
   }
-  const localThreadDiscovery = discoverProjectScopes(
+  const allThreadDiscovery = discoverProjectScopes(
     config.pluginInstanceId,
     localScope,
-    localMetadataEligible,
+    metadataEligible,
     { configuredRoots },
   );
-  if (localThreadDiscovery.candidates.length > 0) {
+  const discoveredCandidates = allThreadDiscovery.candidates;
+  if (discoveredCandidates.length > 0) {
     const registeredScope =
       await authenticatedRequest<RemoteProjectScopePolicy>(
         "/v1/project-scope/candidates",
@@ -1605,7 +1459,7 @@ async function collectStart() {
           body: JSON.stringify({
             periodKey: policy.currentPeriod.period_key,
             initialDiscovery: false,
-            candidates: localThreadDiscovery.candidates.map((candidate) => ({
+            candidates: discoveredCandidates.map((candidate) => ({
               scopeKey: candidate.scopeKey,
               displayName: candidate.displayName,
               sessionCount: candidate.sessionCount,
@@ -1615,19 +1469,13 @@ async function collectStart() {
       );
     localScope = mergeDiscoveredRoots(
       mergeRemoteProjectScope(localScope, registeredScope),
-      localThreadDiscovery.candidates,
+      discoveredCandidates,
     );
     saveLocalProjectScope(localScope);
   }
-  const collectionMetadataEligible = localMetadataEligible;
-  const inWindow = flag("force")
-    ? collectionMetadataEligible
-    : collectionMetadataEligible.filter((summary) =>
-        threadCouldContainWindowAnswer(summary.updatedAt, window.scanStartsAt),
-      );
   const regularQueue: ScopedThreadSummary[] = authorizedProjectThreads(
     inWindow,
-    localThreadDiscovery.threadScopes,
+    allThreadDiscovery.threadScopes,
     localScope.entries,
     new Date(runStartedAt),
     localState.lastSuccessfulRunStartedAt === null
@@ -1651,17 +1499,16 @@ async function collectStart() {
     localAccepted: localState.acceptedSessions,
     localIgnored: localState.ignoredSessions,
   });
-  const queue = regularQueue;
-  const localQueueLength = queue.length;
-  const inWindowIds = new Set(inWindow.map(hostThreadKey));
+  const queue = [...regularQueue];
+  const inWindowIds = new Set(inWindow.map((summary) => summary.id));
   const queuedOutsideWindow = queue.filter(
-    (summary) => !inWindowIds.has(hostThreadKey(summary)),
+    (summary) => !inWindowIds.has(summary.id),
   ).length;
   const queuedInsideWindow = queue.filter((summary) =>
-    inWindowIds.has(hostThreadKey(summary)),
+    inWindowIds.has(summary.id),
   ).length;
   const manifest: RunManifest = {
-    schemaVersion: "1.8",
+    schemaVersion: "1.5",
     runId,
     pluginInstanceId: config.pluginInstanceId,
     createdAt: runStartedAt,
@@ -1672,13 +1519,13 @@ async function collectStart() {
     reportPeriodEndsAt: policy.currentPeriod.ends_at,
     scanStartsAt: window.scanStartsAt,
     scanEndsAt: window.scanEndsAt,
-    initialThreadIds: localSummaries.map(hostThreadKey),
+    initialThreadIds: summaries.map((summary) => summary.id),
     projects: policy.projects,
     queue,
     cursor: 0,
     knownSessions,
     counts: {
-      discovered: localSummaries.length,
+      discovered: summaries.length,
       read: 0,
       eligible: 0,
       uploaded: 0,
@@ -1686,10 +1533,10 @@ async function collectStart() {
       unchanged: 0,
       cachedIgnored: 0,
       outsideWindow:
-        localMetadataEligible.length - inWindow.length - queuedOutsideWindow,
+        metadataEligible.length - inWindow.length - queuedOutsideWindow,
       excluded:
-        localSummaries.length -
-        localMetadataEligible.length +
+        summaries.length -
+        metadataEligible.length +
         (inWindow.length - queuedInsideWindow),
       failedRead: 0,
       failedPermissionCheck: 0,
@@ -1701,7 +1548,6 @@ async function collectStart() {
       notProcessed: 0,
     },
     current: null,
-    pendingHostThreadRead: null,
     claimedJobs: 0,
     outcomes: [],
     endOfRunScopeScan: {
@@ -1720,20 +1566,6 @@ async function collectStart() {
       unchanged: 0,
       unauthorized: 0,
       failed: 0,
-    },
-    sourceProgress: {
-      phase: "local_collecting",
-      localQueueLength,
-      localCheckpointAdvanced: false,
-      remoteInitialized: false,
-      remoteSnapshot: {
-        hostInput,
-        summaries: remoteSummaries,
-      },
-      remoteDiscoveryComplete: false,
-      remoteWarnings: [],
-      remoteHostIds: [],
-      remotePendingProjects: 0,
     },
   };
   let runPath: string | null = null;
@@ -1757,8 +1589,6 @@ async function collectStart() {
     queued: manifest.queue.length,
     outsideWindow: manifest.counts.outsideWindow,
     excluded: manifest.counts.excluded,
-    phase: "local_collecting",
-    remoteWarnings: [],
     nextCommand: `collect-next --run ${runPath}`,
   });
 }
@@ -1815,9 +1645,7 @@ function deferRun(
   manifest.stopReason = reason;
   manifest.counts.notProcessed = Math.max(
     0,
-    manifest.queue.length -
-      manifest.cursor +
-      (manifest.pendingHostThreadRead ? 1 : 0),
+    manifest.queue.length - manifest.cursor,
   );
   saveRun(runPath, manifest);
   enqueueCollectionFinalState({
@@ -1849,7 +1677,6 @@ async function finishRun(
   config: PluginConfig,
 ) {
   const review = completionReview(manifest);
-  const remoteWarnings = advanceCompletedRemoteCheckpoints(manifest);
   await postCollectionStatus(config, manifest, "completed");
   const checkpointAdvanced = review.checkpointEligible;
   if (checkpointAdvanced) {
@@ -1858,18 +1685,6 @@ async function finishRun(
     markWeekBackfillCompleted(state, beijingWeekStartsAt(manifest.createdAt));
     saveCollectionState(state);
   }
-  const localCounts = manifest.sourceProgress?.localCounts;
-  const sourceSummary = localCounts
-    ? {
-        local: safeSourceCounts(localCounts),
-        remote: safeSourceCountDifference(manifest.counts, localCounts),
-      }
-    : undefined;
-  const remoteStatus = remoteCollectionStatus({
-    warningCount: remoteWarnings.length,
-    hostCount: manifest.sourceProgress?.remoteHostIds.length ?? 0,
-    pendingProjectCount: manifest.sourceProgress?.remotePendingProjects ?? 0,
-  });
   const summary = {
     status: "completed",
     reviewed: true,
@@ -1885,7 +1700,6 @@ async function finishRun(
       ...((manifest.projectDescriptionScan?.failed ?? 0) > 0
         ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"]
         : []),
-      ...remoteWarnings,
     ],
     threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
     projectDescriptions: {
@@ -1894,26 +1708,6 @@ async function finishRun(
       unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
       failed: manifest.projectDescriptionScan?.failed ?? 0,
     },
-    sources: sourceSummary
-      ? {
-          local: {
-            status: "completed",
-            checkpointAdvanced: true,
-            ...sourceSummary.local,
-          },
-          remote: {
-            status: remoteStatus,
-            hosts: manifest.sourceProgress?.remoteHostIds.length ?? 0,
-            pendingProjects:
-              manifest.sourceProgress?.remotePendingProjects ?? 0,
-            checkpointAdvanced: [
-              "completed",
-              "completed_with_pending_permission",
-            ].includes(remoteStatus),
-            ...sourceSummary.remote,
-          },
-        }
-      : undefined,
     ...manifest.counts,
   };
   enqueueCollectionFinalState({
@@ -1934,103 +1728,13 @@ async function finishRun(
   output(summary);
 }
 
-function safeSourceCounts(counts: RunCounts) {
-  return {
-    uploaded: counts.uploaded,
-    ignored: counts.ignored + counts.cachedIgnored,
-    skipped: counts.skipped,
-    failedExtract: counts.failedExtract,
-    deferred: counts.deferred,
-    notProcessed: counts.notProcessed,
-  };
-}
-
-function safeSourceCountDifference(total: RunCounts, local: RunCounts) {
-  const difference = (key: keyof RunCounts) =>
-    Math.max(0, (total[key] ?? 0) - (local[key] ?? 0));
-  return {
-    uploaded: difference("uploaded"),
-    ignored: difference("ignored") + difference("cachedIgnored"),
-    skipped: difference("skipped"),
-    failedExtract: difference("failedExtract"),
-    deferred: difference("deferred"),
-    notProcessed: difference("notProcessed"),
-  };
-}
-
-function advanceCompletedRemoteCheckpoints(manifest: RunManifest) {
-  const progress = manifest.sourceProgress!;
-  const warnings = [...progress.remoteWarnings];
-  if (!progress.remoteDiscoveryComplete) {
-    progress.remoteWarnings = [...new Set(warnings)];
-    return progress.remoteWarnings;
-  }
-  const processed = new Set(coverageState(manifest).processedThreadIds ?? []);
-  const completedSources = completedCollectionSources({
-    queue: manifest.queue,
-    processedSessionIds: processed,
-    sessionKey: hostThreadKey,
-    localHostId: LOCAL_HOST_ID,
-    remoteHostIds: progress.remoteHostIds,
-    remoteDiscoveryComplete: progress.remoteDiscoveryComplete,
-  });
-  const completedRemoteHostIds = new Set(
-    completedSources.completedRemoteHostIds,
-  );
-  const state = loadCollectionState(manifest.pluginInstanceId);
-  let changed = false;
-  for (const hostId of progress.remoteHostIds) {
-    if (completedRemoteHostIds.has(hostId)) {
-      advanceHostCollectionCheckpoint(state, hostId, manifest.createdAt);
-      changed = true;
-    } else {
-      warnings.push("REMOTE_HOST_COLLECTION_INCOMPLETE");
-    }
-  }
-  if (changed) saveCollectionState(state);
-  progress.remoteWarnings = [...new Set(warnings)];
-  return progress.remoteWarnings;
-}
-
 function completionReview(manifest: RunManifest) {
   const outcomeCounts = countJobOutcomes(manifest.outcomes);
   const coverage = coverageState(manifest);
-  const progress = manifest.sourceProgress!;
-  const localThreadIds = new Set(
-    manifest.queue
-      .slice(0, progress.localQueueLength)
-      .map((summary) => hostThreadKey(summary)),
-  );
-  const localOutcomes = manifest.outcomes.filter(
-    (outcome) => outcome.threadId && localThreadIds.has(outcome.threadId),
-  );
-  const localReadFailures = Object.keys(
-    coverage.unresolvedReadFailures ?? {},
-  ).filter((threadId) => localThreadIds.has(threadId));
-  const localInvalidThreadHistory = localReadFailures.filter(
-    (threadId) =>
-      coverage.unresolvedReadFailures?.[threadId] ===
-      "CODEX_THREAD_HISTORY_INVALID",
-  ).length;
-  const localCounts = {
-    failedRead: localReadFailures.length,
-    invalidThreadHistory: localInvalidThreadHistory,
-    failedExtract: localOutcomes.filter(
-      (outcome) => outcome.status === "failedExtract",
-    ).length,
-    skipped: localOutcomes.filter((outcome) => outcome.status === "skipped")
-      .length,
-    deferred: localOutcomes.filter((outcome) => outcome.status === "deferred")
-      .length,
-    notProcessed: progress.localCheckpointAdvanced
-      ? 0
-      : Math.max(0, progress.localQueueLength - manifest.cursor),
-  };
   return reviewCollectionCompletion({
     cursor: manifest.cursor,
     queueLength: manifest.queue.length,
-    hasCurrentJob:
-      manifest.current !== null || manifest.pendingHostThreadRead != null,
+    hasCurrentJob: manifest.current !== null,
     claimedJobs: manifest.claimedJobs,
     terminalJobs: manifest.outcomes.length,
     uniqueTerminalJobs:
@@ -2046,10 +1750,9 @@ function completionReview(manifest: RunManifest) {
     ),
     coverageComplete:
       coverage.completed &&
-      localReadFailures.length === 0 &&
-      progress.localCheckpointAdvanced,
+      Object.keys(coverage.unresolvedReadFailures ?? {}).length === 0,
     stopped: manifest.stopReason !== undefined,
-    counts: localCounts,
+    counts: manifest.counts,
   });
 }
 
@@ -2086,12 +1789,7 @@ async function initializeProjectDescriptionScan(
     return;
   }
   const sources = local.scope.entries.flatMap((entry) => {
-    if (
-      !scopeIsActive(entry) ||
-      !entry.localRoot ||
-      (entry.hostId && entry.hostId !== LOCAL_HOST_ID)
-    )
-      return [];
+    if (!scopeIsActive(entry) || !entry.localRoot) return [];
     const project = mappedProject(entry.localRoot, manifest.projects);
     const source = buildProjectDescriptionSource({
       projectName: entry.displayName,
@@ -2218,274 +1916,6 @@ async function submitProjectDescription() {
   }
 }
 
-function localPhaseComplete(runPath: string, manifest: RunManifest): boolean {
-  const progress = manifest.sourceProgress!;
-  const currentSummary = manifest.current
-    ? manifest.queue[manifest.cursor - 1]
-    : undefined;
-  if (
-    progress.localCheckpointAdvanced ||
-    manifest.cursor < progress.localQueueLength ||
-    (manifest.current !== null && currentSummary?.hostId === LOCAL_HOST_ID)
-  )
-    return false;
-  const scan = coverageState(manifest);
-  const localSnapshot = manifest.queue.slice(0, progress.localQueueLength);
-  const missing = missingSessionCoverage(
-    localSnapshot,
-    scan.processedThreadIds ?? [],
-    hostThreadKey,
-  );
-  const unresolved = new Set(Object.keys(scan.unresolvedReadFailures ?? {}));
-  const retry = missing.filter((summary) =>
-    unresolved.has(hostThreadKey(summary)),
-  );
-  if (retry.length > 0) {
-    manifest.queue.splice(manifest.cursor, 0, ...retry);
-    progress.localQueueLength += retry.length;
-    manifest.deadlineAt = collectionDeadline(new Date().toISOString());
-    saveRun(runPath, manifest);
-    output({
-      status: "local_coverage_repair_required",
-      runPath,
-      missingSessions: retry.length,
-      nextCommand: `collect-next --run ${runPath}`,
-    });
-    return true;
-  }
-  if (missing.length > 0)
-    throw Object.assign(
-      new Error("本地 Session 尚未完整处理，远程采集不会开始。"),
-      { code: "LOCAL_COLLECTION_INCOMPLETE" },
-    );
-  const state = loadCollectionState(manifest.pluginInstanceId);
-  state.lastSuccessfulRunStartedAt = manifest.createdAt;
-  markWeekBackfillCompleted(state, beijingWeekStartsAt(manifest.createdAt));
-  saveCollectionState(state);
-  progress.localCheckpointAdvanced = true;
-  progress.localCounts = { ...manifest.counts };
-  progress.phase = "local_completed";
-  saveRun(runPath, manifest);
-  output({
-    status: "local_collection_completed",
-    runPath,
-    checkpointAdvanced: true,
-    uploaded: manifest.counts.uploaded,
-    ignored: manifest.counts.ignored + manifest.counts.cachedIgnored,
-    skipped: manifest.counts.skipped,
-    failedExtract: manifest.counts.failedExtract,
-    deferred: manifest.counts.deferred,
-    notProcessed: 0,
-    nextCommand: `collect-next --run ${runPath}`,
-  });
-  return true;
-}
-
-async function initializeRemotePhase(
-  runPath: string,
-  manifest: RunManifest,
-): Promise<boolean> {
-  const progress = manifest.sourceProgress!;
-  if (!remoteCollectionCanStart(progress)) return false;
-
-  const snapshot = progress.remoteSnapshot ?? {
-    hostInput: {
-      threads: [],
-      pinnedThreads: [],
-      unavailableHosts: [],
-      unavailableSources: [],
-    },
-    summaries: [],
-  };
-  const config = loadConfig()!;
-  const localState = loadCollectionState(manifest.pluginInstanceId);
-  let remoteMetadataEligible = metadataEligibleThreads(
-    snapshot.summaries,
-    config,
-  );
-  const remoteHostIds = [
-    ...new Set(snapshot.summaries.map((summary) => summary.hostId)),
-  ];
-  const localScopeInspection = inspectLocalProjectScope(
-    manifest.pluginInstanceId,
-  );
-  if (remoteHostIds.length > 0 && localScopeInspection.state !== "valid") {
-    const warnings = ["REMOTE_PROJECT_SCOPE_LOCAL_INVALID"];
-    manifest.initialThreadIds ??= [];
-    manifest.initialThreadIds.push(...snapshot.summaries.map(hostThreadKey));
-    manifest.counts.discovered += snapshot.summaries.length;
-    manifest.counts.excluded += snapshot.summaries.length;
-    coverageState(manifest).completed = false;
-    progress.phase = "remote_collecting";
-    progress.remoteInitialized = true;
-    progress.remoteSnapshot = null;
-    progress.remoteDiscoveryComplete = false;
-    progress.remoteWarnings = warnings;
-    progress.remoteHostIds = remoteHostIds;
-    progress.remotePendingProjects = 0;
-    saveRun(runPath, manifest);
-    output({
-      status: "remote_collection_started",
-      runPath,
-      phase: "remote_collecting",
-      remoteHosts: remoteHostIds.length,
-      queued: 0,
-      warnings,
-      nextCommand: `collect-next --run ${runPath}`,
-    });
-    return true;
-  }
-  let localScope = localScopeInspection.scope;
-  const configuredRoots = configuredProjectRoots(manifest.projects);
-  const reportPeriod = {
-    starts_at: manifest.reportPeriodStartsAt ?? manifest.period.starts_at,
-    ends_at: manifest.reportPeriodEndsAt ?? manifest.period.ends_at,
-  };
-  const remoteWindows = new Map(
-    remoteHostIds.map((hostId) => [
-      hostId,
-      hostCollectionWindow(
-        localState,
-        hostId,
-        reportPeriod,
-        manifest.createdAt,
-      ),
-    ]),
-  );
-  const undiscoveredHostWindow = hostCollectionWindow(
-    localState,
-    "__partner_report_undiscovered_host__",
-    reportPeriod,
-    manifest.createdAt,
-  );
-  const remoteScanStartsAt = [
-    undiscoveredHostWindow.scanStartsAt,
-    ...[...remoteWindows.values()].map((hostWindow) => hostWindow.scanStartsAt),
-  ].sort()[0]!;
-  const remoteDiscovery = hostCollectionDiscoveryStatus(
-    snapshot.hostInput,
-    remoteScanStartsAt,
-  );
-  const remoteWarnings = [...remoteDiscovery.warnings];
-  let remoteDiscoveryComplete = remoteDiscovery.complete;
-  const remoteThreadDiscovery = discoverProjectScopes(
-    config.pluginInstanceId,
-    localScope,
-    remoteMetadataEligible,
-    { configuredRoots },
-  );
-
-  if (remoteThreadDiscovery.candidates.length > 0) {
-    try {
-      const registeredScope =
-        await authenticatedRequest<RemoteProjectScopePolicy>(
-          "/v1/project-scope/candidates",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              periodKey: manifest.period.period_key,
-              initialDiscovery: false,
-              candidates: remoteThreadDiscovery.candidates.map((candidate) => ({
-                scopeKey: candidate.scopeKey,
-                displayName: candidate.displayName,
-                sessionCount: candidate.sessionCount,
-              })),
-            }),
-          },
-        );
-      localScope = mergeDiscoveredRoots(
-        mergeRemoteProjectScope(localScope, registeredScope),
-        remoteThreadDiscovery.candidates,
-      );
-      saveLocalProjectScope(localScope);
-    } catch {
-      remoteMetadataEligible = [];
-      remoteDiscoveryComplete = false;
-      remoteWarnings.push("REMOTE_PROJECT_SCOPE_SYNC_FAILED");
-    }
-  }
-
-  const remoteCandidateScopeKeys = new Set(
-    remoteThreadDiscovery.candidates.map((candidate) => candidate.scopeKey),
-  );
-  const remotePendingProjects = localScope.entries.filter(
-    (entry) =>
-      remoteCandidateScopeKeys.has(entry.scopeKey) &&
-      entry.status === "pending",
-  ).length;
-
-  const inWindow = manifest.force
-    ? remoteMetadataEligible
-    : remoteMetadataEligible.filter((summary) => {
-        const scanStartsAt =
-          remoteWindows.get(summary.hostId)?.scanStartsAt ??
-          undiscoveredHostWindow.scanStartsAt;
-        return threadCouldContainWindowAnswer(summary.updatedAt, scanStartsAt);
-      });
-  const remoteQueue: ScopedThreadSummary[] = authorizedProjectThreads(
-    inWindow,
-    remoteThreadDiscovery.threadScopes,
-    localScope.entries,
-    new Date(manifest.createdAt),
-  ).map((summary) => {
-    const hostWindow = remoteWindows.get(summary.hostId);
-    if (!hostWindow) return summary;
-    return {
-      ...summary,
-      collectionStartsAt: new Date(
-        Math.max(
-          new Date(summary.collectionStartsAt).getTime(),
-          new Date(hostWindow.extractionStartsAt).getTime(),
-        ),
-      ).toISOString(),
-      collectionEndsAt: hostWindow.extractionEndsAt,
-    };
-  });
-  const inWindowIds = new Set(inWindow.map(hostThreadKey));
-  const queuedOutsideWindow = remoteQueue.filter(
-    (summary) => !inWindowIds.has(hostThreadKey(summary)),
-  ).length;
-  const queuedInsideWindow = remoteQueue.filter((summary) =>
-    inWindowIds.has(hostThreadKey(summary)),
-  ).length;
-
-  manifest.queue.push(...remoteQueue);
-  manifest.initialThreadIds ??= [];
-  manifest.initialThreadIds.push(...snapshot.summaries.map(hostThreadKey));
-  manifest.counts.discovered += snapshot.summaries.length;
-  manifest.counts.outsideWindow +=
-    remoteMetadataEligible.length - inWindow.length - queuedOutsideWindow;
-  manifest.counts.excluded +=
-    snapshot.summaries.length -
-    remoteMetadataEligible.length +
-    (inWindow.length - queuedInsideWindow);
-  coverageState(manifest).completed = false;
-  progress.phase = "remote_collecting";
-  progress.remoteInitialized = true;
-  progress.remoteSnapshot = null;
-  progress.remoteDiscoveryComplete = remoteDiscoveryComplete;
-  progress.remoteWarnings = [...new Set(remoteWarnings)];
-  progress.remoteHostIds = remoteHostIds;
-  progress.remotePendingProjects = remotePendingProjects;
-  saveRun(runPath, manifest);
-
-  const noRemoteHost =
-    remoteHostIds.length === 0 && remoteWarnings.length === 0;
-  output({
-    status: noRemoteHost
-      ? "remote_collection_not_found"
-      : "remote_collection_started",
-    runPath,
-    phase: "remote_collecting",
-    remoteHosts: remoteHostIds.length,
-    queued: remoteQueue.length,
-    pendingProjects: remotePendingProjects,
-    warnings: progress.remoteWarnings,
-    nextCommand: `collect-next --run ${runPath}`,
-  });
-  return true;
-}
-
 function completeInitialQueueCoverage(
   runPath: string,
   manifest: RunManifest,
@@ -2499,9 +1929,26 @@ function completeInitialQueueCoverage(
       outcome.threadId ? [outcome.threadId] : [],
     ),
     unresolvedSessionIds: Object.keys(scan.unresolvedReadFailures ?? {}),
-    sessionKey: hostThreadKey,
   });
   scan.passes = (scan.passes ?? 0) + 1;
+
+  if (coverage.retry.length > 0) {
+    manifest.queue.push(...coverage.retry);
+    manifest.deadlineAt = collectionDeadline(new Date().toISOString());
+    scan.completed = false;
+    saveRun(runPath, manifest);
+    output({
+      status: "coverage_repair_required",
+      runPath,
+      coveragePass: scan.passes,
+      missingSessions: coverage.retry.length,
+      unresolvedReadFailures: Object.keys(scan.unresolvedReadFailures ?? {})
+        .length,
+      collectionEndsAt: manifest.scanEndsAt ?? manifest.createdAt,
+      nextCommand: `collect-next --run ${runPath}`,
+    });
+    return true;
+  }
 
   if (coverage.unaccounted.length > 0)
     throw Object.assign(
@@ -2514,105 +1961,12 @@ function completeInitialQueueCoverage(
   return false;
 }
 
-function hostThreadReadRequired(
-  runPath: string,
-  pending: PendingHostThreadRead,
-) {
-  output({
-    status: "host_thread_read_required",
-    runPath,
-    hostTool: hostThreadReadTool(pending),
-    nextCommand: `collect-host-thread-submit --run ${runPath}`,
-  });
-}
-
-function processReadThread(
-  runPath: string,
-  manifest: RunManifest,
-  summary: ScopedThreadSummary,
-  thread: any,
-) {
-  const threadKey = hostThreadKey(summary);
-  const job = buildSessionJob({
-    pluginInstanceId: manifest.pluginInstanceId,
-    sessionId: threadKey,
-    hostId: summary.hostId,
-    title: thread.name ?? summary.title,
-    cwd: thread.cwd ?? summary.cwd,
-    updatedAt: thread.updatedAt ?? summary.updatedAt,
-    turns: Array.isArray(thread.turns) ? thread.turns : [],
-    projects: manifest.projects,
-    scopeKey: summary.scopeKey,
-    period:
-      summary.collectionStartsAt || summary.collectionEndsAt
-        ? {
-            ...manifest.period,
-            starts_at: new Date(
-              Math.max(
-                new Date(manifest.period.starts_at).getTime(),
-                new Date(
-                  summary.collectionStartsAt ?? manifest.period.starts_at,
-                ).getTime(),
-              ),
-            ).toISOString(),
-            ends_at: summary.collectionEndsAt ?? manifest.period.ends_at,
-          }
-        : manifest.period,
-  });
-  if (!job) {
-    markThreadProcessed(manifest, threadKey);
-    manifest.counts.excluded += 1;
-    saveRun(runPath, manifest);
-    return false;
-  }
-  manifest.counts.eligible += 1;
-  const known = manifest.knownSessions[job.sessionKey];
-  const compatibleContentHashes = new Set([
-    job.contentHash,
-    ...job.compatibleContentHashes,
-  ]);
-  const knownDecision = manifest.force
-    ? null
-    : matchingKnownDecision(known, compatibleContentHashes);
-  if (knownDecision) {
-    const state = loadCollectionState(manifest.pluginInstanceId);
-    if (knownDecision === "accepted")
-      recordAcceptedSession(state, job.sessionKey, job.contentHash);
-    else recordIgnoredSession(state, job.sessionKey, job.contentHash);
-    saveCollectionState(state);
-    if (knownDecision === "accepted") manifest.counts.unchanged += 1;
-    else manifest.counts.cachedIgnored += 1;
-    markThreadProcessed(manifest, threadKey);
-    saveRun(runPath, manifest);
-    return false;
-  }
-  const jobId = randomUUID();
-  const paths = writeJob(runPath, jobId, job.modelInput);
-  manifest.current = {
-    jobId,
-    threadId: threadKey,
-    ...paths,
-    expected: immutableContributionFromRequirements(
-      job.modelInput.outputRequirements.include.contribution,
-    ),
-    failures: [],
-  };
-  manifest.claimedJobs += 1;
-  saveRun(runPath, manifest);
-  currentJobOutput(runPath, manifest.current);
-  return true;
-}
-
 async function collectNext() {
   const runPath = option("run");
   if (!runPath) throw new Error("collect-next 需要 --run <path>。");
   const { absolute, manifest } = readRun(runPath);
   if (manifest.stopReason)
     return deferRun(absolute, manifest, manifest.stopReason);
-  if (localPhaseComplete(absolute, manifest)) return;
-  if (await initializeRemotePhase(absolute, manifest)) return;
-  if (manifest.pendingHostThreadRead)
-    return hostThreadReadRequired(absolute, manifest.pendingHostThreadRead);
   if (
     (manifest.current || manifest.cursor < manifest.queue.length) &&
     shouldStopBeforeClaim(manifest.deadlineAt)
@@ -2620,17 +1974,14 @@ async function collectNext() {
     return deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
   if (manifest.current) return currentJobOutput(absolute, manifest.current);
   const server = new CodexAppServer();
-  let connected = false;
   try {
+    await server.connect();
     while (manifest.cursor < manifest.queue.length) {
-      if (localPhaseComplete(absolute, manifest)) return;
-      if (await initializeRemotePhase(absolute, manifest)) return;
       if (shouldStopBeforeClaim(manifest.deadlineAt)) {
         deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
         return;
       }
-      const summary = manifest.queue[manifest.cursor]!;
-      const threadKey = hostThreadKey(summary);
+      const summary = manifest.queue[manifest.cursor++]!;
       const localScope = inspectLocalProjectScope(manifest.pluginInstanceId);
       if (
         localScope.state !== "valid" ||
@@ -2638,30 +1989,18 @@ async function collectNext() {
           configuredRoots: configuredProjectRoots(manifest.projects),
         })
       ) {
-        manifest.cursor += 1;
         recordCoverageReadFailure(
           manifest,
-          threadKey,
+          summary.id,
           "PROJECT_SCOPE_RECHECK_FAILED",
         );
         saveRun(absolute, manifest);
         continue;
       }
-      if (summary.hostId !== LOCAL_HOST_ID) {
-        manifest.cursor += 1;
-        manifest.pendingHostThreadRead = beginHostThreadRead(summary);
-        saveRun(absolute, manifest);
-        return hostThreadReadRequired(absolute, manifest.pendingHostThreadRead);
-      }
-      manifest.cursor += 1;
       let thread: any;
       try {
-        if (!connected) {
-          await server.connect();
-          connected = true;
-        }
         thread = await server.readThread(summary.id);
-        clearCoverageReadFailure(manifest, threadKey);
+        clearCoverageReadFailure(manifest, summary.id);
         manifest.counts.read += 1;
       } catch (error) {
         const code =
@@ -2675,17 +2014,80 @@ async function collectNext() {
           ].includes(String(error.code))
             ? (String(error.code) as CodexThreadReadFailureCode)
             : "CODEX_THREAD_READ_FAILED";
-        recordCoverageReadFailure(manifest, threadKey, code);
+        recordCoverageReadFailure(manifest, summary.id, code);
         saveRun(absolute, manifest);
         continue;
       }
-      if (processReadThread(absolute, manifest, summary, thread)) return;
+      const job = buildSessionJob({
+        pluginInstanceId: manifest.pluginInstanceId,
+        sessionId: summary.id,
+        title: thread.name ?? summary.title,
+        cwd: thread.cwd ?? summary.cwd,
+        updatedAt: thread.updatedAt ?? summary.updatedAt,
+        turns: Array.isArray(thread.turns) ? thread.turns : [],
+        projects: manifest.projects,
+        scopeKey: summary.scopeKey,
+        period:
+          summary.collectionStartsAt || summary.collectionEndsAt
+            ? {
+                ...manifest.period,
+                starts_at: new Date(
+                  Math.max(
+                    new Date(manifest.period.starts_at).getTime(),
+                    new Date(
+                      summary.collectionStartsAt ?? manifest.period.starts_at,
+                    ).getTime(),
+                  ),
+                ).toISOString(),
+                ends_at: summary.collectionEndsAt ?? manifest.period.ends_at,
+              }
+            : manifest.period,
+      });
+      if (!job) {
+        markThreadProcessed(manifest, summary.id);
+        manifest.counts.excluded += 1;
+        saveRun(absolute, manifest);
+        continue;
+      }
+      manifest.counts.eligible += 1;
+      const known = manifest.knownSessions[job.sessionKey];
+      const compatibleContentHashes = new Set([
+        job.contentHash,
+        ...job.compatibleContentHashes,
+      ]);
+      const knownDecision = manifest.force
+        ? null
+        : matchingKnownDecision(known, compatibleContentHashes);
+      if (knownDecision) {
+        const state = loadCollectionState(manifest.pluginInstanceId);
+        if (knownDecision === "accepted")
+          recordAcceptedSession(state, job.sessionKey, job.contentHash);
+        else recordIgnoredSession(state, job.sessionKey, job.contentHash);
+        saveCollectionState(state);
+        if (knownDecision === "accepted") manifest.counts.unchanged += 1;
+        else manifest.counts.cachedIgnored += 1;
+        markThreadProcessed(manifest, summary.id);
+        saveRun(absolute, manifest);
+        continue;
+      }
+      const jobId = randomUUID();
+      const paths = writeJob(absolute, jobId, job.modelInput);
+      manifest.current = {
+        jobId,
+        threadId: summary.id,
+        ...paths,
+        expected: immutableContributionFromRequirements(
+          job.modelInput.outputRequirements.include.contribution,
+        ),
+        failures: [],
+      };
+      manifest.claimedJobs += 1;
+      saveRun(absolute, manifest);
+      return currentJobOutput(absolute, manifest.current);
     }
   } finally {
     server.close();
   }
-  if (localPhaseComplete(absolute, manifest)) return;
-  if (await initializeRemotePhase(absolute, manifest)) return;
   if (await continueProjectDescriptionScan(absolute, manifest)) return;
   if (completeInitialQueueCoverage(absolute, manifest)) return;
   output({
@@ -2693,58 +2095,6 @@ async function collectNext() {
     runPath: absolute,
     review: completionReview(manifest),
     nextCommand: `collect-review --run ${absolute}`,
-  });
-}
-
-async function collectHostThreadSubmit() {
-  const runPath = option("run");
-  const inputPath = option("input");
-  if (!runPath || !inputPath)
-    throw new Error(
-      "collect-host-thread-submit 需要 --run <path> --input <path>。",
-    );
-  const { absolute, manifest } = readRun(runPath);
-  const pending = manifest.pendingHostThreadRead;
-  if (!pending) throw new Error("当前 Run 没有等待远程 Host 分页结果。");
-  let appended: ReturnType<typeof appendHostThreadReadPage>;
-  try {
-    appended = appendHostThreadReadPage(
-      pending,
-      JSON.parse(readFileSync(inputPath, "utf8")),
-    );
-  } catch (error) {
-    recordCoverageReadFailure(
-      manifest,
-      pending.threadKey,
-      "CODEX_THREAD_HISTORY_INVALID",
-    );
-    saveRun(absolute, manifest);
-    throw error;
-  }
-  manifest.pendingHostThreadRead = appended.pending;
-  if (!appended.complete) {
-    saveRun(absolute, manifest);
-    return hostThreadReadRequired(absolute, appended.pending);
-  }
-  const summary = manifest.queue[manifest.cursor - 1];
-  if (!summary || hostThreadKey(summary) !== pending.threadKey)
-    throw Object.assign(new Error("远程 Host 分页结果与 Run 队列不一致。"), {
-      code: "CODEX_HOST_THREAD_HISTORY_INVALID",
-    });
-  manifest.pendingHostThreadRead = null;
-  clearCoverageReadFailure(manifest, pending.threadKey);
-  manifest.counts.read += 1;
-  const emittedJob = processReadThread(
-    absolute,
-    manifest,
-    summary,
-    completedHostThread(appended.pending),
-  );
-  if (emittedJob) return;
-  output({
-    status: "host_thread_read_completed",
-    runPath: absolute,
-    nextCommand: `collect-next --run ${absolute}`,
   });
 }
 
@@ -3127,9 +2477,8 @@ function help() {
       "server-url-set --server <url> [--allow-insecure-http]",
       "scheduled-task-config",
       "migrate-credentials",
-      "collect-start --input <host-thread-list-json> [--force]",
+      "collect-start [--force]",
       "collect-next --run <path>",
-      "collect-host-thread-submit --run <path> --input <read-thread-page-json>",
       "collect-review --run <path>",
       "collect-submit --run <path> --result <path>",
       "project-description-submit --run <path> --result <path>",
@@ -3158,8 +2507,6 @@ async function runCommand() {
   else if (command === "collect-start" || command === "daily-collect")
     await collectStart();
   else if (command === "collect-next") await collectNext();
-  else if (command === "collect-host-thread-submit")
-    await collectHostThreadSubmit();
   else if (command === "collect-review") await collectReview();
   else if (command === "collect-submit") await collectSubmit();
   else if (command === "project-description-submit")

@@ -214,47 +214,6 @@ describe("project scope privacy boundary", () => {
     }
   });
 
-  it("does not merge the same remote path across different hosts", () => {
-    const discovery = discoverProjectScopes(
-      pluginInstanceId,
-      localScope(),
-      [
-        { id: "thread", hostId: "remote-a", cwd: "/srv/project" },
-        { id: "thread", hostId: "remote-b", cwd: "/srv/project" },
-      ],
-      { temporaryRoots: [] },
-    );
-    expect(discovery.candidates).toHaveLength(2);
-    expect(
-      new Set(discovery.candidates.map((item) => item.scopeKey)).size,
-    ).toBe(2);
-    expect(discovery.threadScopes.size).toBe(2);
-  });
-
-  it("uses the host project id to merge remote working directories", () => {
-    const discovery = discoverProjectScopes(
-      pluginInstanceId,
-      localScope(),
-      [
-        {
-          id: "thread-a",
-          hostId: "remote-a",
-          projectId: "project-1",
-          cwd: "/srv/project/packages/a",
-        },
-        {
-          id: "thread-b",
-          hostId: "remote-a",
-          projectId: "project-1",
-          cwd: "/srv/project/packages/b",
-        },
-      ],
-      { temporaryRoots: [] },
-    );
-    expect(discovery.candidates).toHaveLength(1);
-    expect(discovery.candidates[0]?.sessionCount).toBe(2);
-  });
-
   it("preserves local roots while applying central status and effective time", () => {
     const scopeKey = "c".repeat(64);
     const merged = mergeRemoteProjectScope(
