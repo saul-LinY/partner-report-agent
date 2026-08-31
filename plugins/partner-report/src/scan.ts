@@ -272,6 +272,7 @@ export function mappedProject(
   cwd: string | null | undefined,
   projects: ProjectPolicy[],
   stableScope?: { pluginInstanceId: string; scopeKey: string },
+  hostId = "local",
 ): ProjectIdentity {
   if (!cwd) {
     return {
@@ -285,7 +286,11 @@ export function mappedProject(
   const absoluteCwd = resolve(cwd);
   if (stableScope) {
     const discoveredRoot = nearestGitRoot(absoluteCwd) ?? absoluteCwd;
-    const rootFingerprint = sha256(discoveredRoot);
+    const rootFingerprint = sha256(
+      hostId === "local"
+        ? discoveredRoot
+        : JSON.stringify([hostId, discoveredRoot]),
+    );
     const stableExternalId = `scope:${stableScope.pluginInstanceId}:${stableScope.scopeKey}`;
     const known = projects.find((project) =>
       (project.external_ids ?? []).includes(stableExternalId),
@@ -368,6 +373,7 @@ export function anonymousSessionKey(
 export function buildSessionJob(input: {
   pluginInstanceId: string;
   sessionId: string;
+  hostId?: string;
   title?: string | null;
   cwd?: string | null;
   updatedAt?: string | number | null;
@@ -395,6 +401,7 @@ export function buildSessionJob(input: {
     input.scopeKey
       ? { pluginInstanceId: input.pluginInstanceId, scopeKey: input.scopeKey }
       : undefined,
+    input.hostId,
   );
   if (input.scopeKey) project.scopeKey = input.scopeKey;
   const activity = {

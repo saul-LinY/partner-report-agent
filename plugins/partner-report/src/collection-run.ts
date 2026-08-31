@@ -60,12 +60,14 @@ export function collectionDeadline(createdAt: string) {
 export function missingSessionCoverage<T extends { id: string }>(
   authorizedSessions: T[],
   processedSessionIds: Iterable<string>,
+  sessionKey: (session: T) => string = (session) => session.id,
 ) {
   const processed = new Set(processedSessionIds);
   const seen = new Set<string>();
   return authorizedSessions.filter((session) => {
-    if (processed.has(session.id) || seen.has(session.id)) return false;
-    seen.add(session.id);
+    const key = sessionKey(session);
+    if (processed.has(key) || seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -75,16 +77,20 @@ export function reviewSnapshotCoverage<T extends { id: string }>(input: {
   processedSessionIds: Iterable<string>;
   terminalSessionIds: Iterable<string>;
   unresolvedSessionIds: Iterable<string>;
+  sessionKey?: (session: T) => string;
 }) {
   const terminal = new Set([
     ...input.processedSessionIds,
     ...input.terminalSessionIds,
   ]);
   const unresolved = new Set(input.unresolvedSessionIds);
-  const missing = missingSessionCoverage(input.snapshot, terminal);
+  const sessionKey = input.sessionKey ?? ((session: T) => session.id);
+  const missing = missingSessionCoverage(input.snapshot, terminal, sessionKey);
   return {
-    retry: missing.filter((session) => unresolved.has(session.id)),
-    unaccounted: missing.filter((session) => !unresolved.has(session.id)),
+    retry: missing.filter((session) => unresolved.has(sessionKey(session))),
+    unaccounted: missing.filter(
+      (session) => !unresolved.has(sessionKey(session)),
+    ),
   };
 }
 

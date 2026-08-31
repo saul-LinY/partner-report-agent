@@ -79,6 +79,25 @@ describe("MCP output adapter", () => {
     });
   });
 
+  it("routes remote Host pages back to the local collector", () => {
+    expect(
+      withNextTool({
+        status: "host_thread_read_required",
+        runPath: "/tmp/run.json",
+        hostTool: { name: "codex_app__read_thread", arguments: {} },
+        nextCommand: "collect-host-thread-submit --run /tmp/run.json",
+      }),
+    ).toEqual({
+      status: "host_thread_read_required",
+      runPath: "/tmp/run.json",
+      hostTool: { name: "codex_app__read_thread", arguments: {} },
+      nextTool: {
+        name: "collect_host_thread_submit",
+        arguments: { runPath: "/tmp/run.json" },
+      },
+    });
+  });
+
   it("rejects a continuation that cannot be converted to an MCP call", () => {
     expect(() =>
       withNextTool({

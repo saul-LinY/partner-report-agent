@@ -25955,7 +25955,7 @@ var coerce = {
 var NEVER = INVALID2;
 
 // src/config.ts
-var PLUGIN_VERSION = "2.0.0";
+var PLUGIN_VERSION = "2.1.0";
 
 // src/mcp-output.ts
 import { readFileSync } from "node:fs";
@@ -26018,6 +26018,11 @@ function withNextTool(result) {
       name: "collect_submit",
       arguments: { runPath, jobId: result.jobId }
     };
+  } else if (nextCommand.startsWith("collect-host-thread-submit") && runPath) {
+    nextTool = {
+      name: "collect_host_thread_submit",
+      arguments: { runPath }
+    };
   } else if (nextCommand.startsWith("project-description-submit") && runPath) {
     nextTool = {
       name: "project_description_submit",
@@ -26055,9 +26060,12 @@ var PARTNER_REPORT_CLI_TIMEOUT_MS = 62e4;
 var CODEX_HOST_THREAD_LIST_LIMIT = 50;
 var CODEX_HOST_PINNED_THREAD_LIMIT = 200;
 var CODEX_HOST_THREAD_ID_MAX_LENGTH = 256;
+var CODEX_HOST_ID_MAX_LENGTH = 512;
 var CODEX_HOST_CWD_MAX_LENGTH = 8192;
 var CODEX_HOST_TIMESTAMP_MAX_LENGTH = 80;
 var CODEX_HOST_THREAD_SOURCE_MAX_LENGTH = 120;
+var CODEX_HOST_KIND_MAX_LENGTH = 40;
+var CODEX_HOST_PROJECT_ID_MAX_LENGTH = 512;
 
 // src/mcp.ts
 var execFileAsync = promisify(execFile);
@@ -26067,6 +26075,9 @@ var hostTimestampSchema = external_exports.union([
 ]);
 var hostThreadMetadataSchema = external_exports.object({
   id: external_exports.string().trim().min(1).max(CODEX_HOST_THREAD_ID_MAX_LENGTH),
+  hostId: external_exports.string().trim().min(1).max(CODEX_HOST_ID_MAX_LENGTH).default("local"),
+  kind: external_exports.string().trim().min(1).max(CODEX_HOST_KIND_MAX_LENGTH).default("codex"),
+  projectId: external_exports.string().trim().max(CODEX_HOST_PROJECT_ID_MAX_LENGTH).nullable().optional(),
   cwd: external_exports.string().max(CODEX_HOST_CWD_MAX_LENGTH).nullable(),
   createdAt: hostTimestampSchema.nullable().optional(),
   updatedAt: hostTimestampSchema.nullable(),
@@ -26113,16 +26124,16 @@ async function invokeCli(command, args = []) {
     throw error2;
   }
 }
-async function invokeCliWithPrivateJson(command, value) {
+async function invokeCliWithPrivateJson(command, value, args = []) {
   const directory = mkdtempSync(
-    resolve(tmpdir(), "partner-report-project-discovery-")
+    resolve(tmpdir(), "partner-report-private-input-")
   );
   const inputPath = resolve(directory, "input.json");
   try {
     writeFileSync(inputPath, `${JSON.stringify(value)}
 `, { mode: 384 });
     chmodSync(inputPath, 384);
-    return await invokeCli(command, ["--input", inputPath]);
+    return await invokeCli(command, ["--input", inputPath, ...args]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -26296,11 +26307,23 @@ registerTool(
 registerTool(
   "collect_start",
   {
-    description: "\u542F\u52A8\u4E00\u6B21\u91C7\u96C6 Run\uFF1B\u666E\u901A\u8FD0\u884C\u4E0D\u5F97\u8BBE\u7F6E force\u3002",
-    inputSchema: { force: external_exports.boolean().default(false) },
+    description: "\u4F7F\u7528 Codex App \u5B98\u65B9\u4EFB\u52A1\u5217\u8868\u7684\u8DE8 Host \u6700\u5C0F\u5143\u6570\u636E\u542F\u52A8\u91C7\u96C6\uFF1B\u666E\u901A\u8FD0\u884C\u4E0D\u5F97\u8BBE\u7F6E force\u3002\u4E0D\u5F97\u63D0\u4EA4 Session \u6B63\u6587\u3002",
+    inputSchema: {
+      threads: external_exports.array(hostThreadMetadataSchema).max(CODEX_HOST_THREAD_LIST_LIMIT),
+      pinnedThreads: external_exports.array(hostThreadMetadataSchema).max(CODEX_HOST_PINNED_THREAD_LIMIT).default([]),
+      unavailableHosts: external_exports.array(external_exports.unknown()).max(200).default([]),
+      unavailableSources: external_exports.array(external_exports.unknown()).max(200).default([]),
+      force: external_exports.boolean().default(false)
+    },
     annotations: networkWrite
   },
-  ({ force }) => execute(() => invokeCli("collect-start", force ? ["--force"] : []))
+  ({ threads, pinnedThreads, unavailableHosts, unavailableSources, force }) => execute(
+    () => invokeCliWithPrivateJson(
+      "collect-start",
+      { threads, pinnedThreads, unavailableHosts, unavailableSources },
+      force ? ["--force"] : []
+    )
+  )
 );
 registerTool(
   "collect_next",
@@ -26311,6 +26334,23 @@ registerTool(
   },
   ({ runPath }) => execute(
     async () => exposeJobInput(await invokeCli("collect-next", ["--run", runPath]))
+  )
+);
+registerTool(
+  "collect_host_thread_submit",
+  {
+    description: "\u628A Codex App \u5B98\u65B9 read_thread \u8FD4\u56DE\u7684\u5F53\u524D\u5206\u9875\u539F\u6837\u4EA4\u7ED9\u672C\u5730\u91C7\u96C6\u5668\u6821\u9A8C\u548C\u8131\u654F\uFF1B\u4E0D\u5F97\u628A\u8BE5\u5206\u9875\u7528\u4E8E\u6458\u8981\u6216\u4E0A\u4F20\u3002",
+    inputSchema: {
+      runPath: external_exports.string().min(1),
+      page: external_exports.record(external_exports.unknown())
+    },
+    annotations: localWrite
+  },
+  ({ runPath, page }) => execute(
+    () => invokeCliWithPrivateJson("collect-host-thread-submit", page, [
+      "--run",
+      runPath
+    ])
   )
 );
 registerTool(

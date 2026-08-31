@@ -17,12 +17,14 @@ import {
 import { PARTNER_REPORT_CLI_TIMEOUT_MS } from "./timeouts.js";
 import {
   CODEX_HOST_CWD_MAX_LENGTH,
+  CODEX_HOST_ID_MAX_LENGTH,
+  CODEX_HOST_KIND_MAX_LENGTH,
+  CODEX_HOST_PROJECT_ID_MAX_LENGTH,
   CODEX_HOST_PINNED_THREAD_LIMIT,
   CODEX_HOST_THREAD_LIST_LIMIT,
   CODEX_HOST_THREAD_ID_MAX_LENGTH,
   CODEX_HOST_THREAD_SOURCE_MAX_LENGTH,
   CODEX_HOST_TIMESTAMP_MAX_LENGTH,
-  type HostProjectDiscoveryInput,
 } from "./host-project-discovery.js";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +35,24 @@ const hostTimestampSchema = z.union([
 const hostThreadMetadataSchema = z
   .object({
     id: z.string().trim().min(1).max(CODEX_HOST_THREAD_ID_MAX_LENGTH),
+    hostId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CODEX_HOST_ID_MAX_LENGTH)
+      .default("local"),
+    kind: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CODEX_HOST_KIND_MAX_LENGTH)
+      .default("codex"),
+    projectId: z
+      .string()
+      .trim()
+      .max(CODEX_HOST_PROJECT_ID_MAX_LENGTH)
+      .nullable()
+      .optional(),
     cwd: z.string().max(CODEX_HOST_CWD_MAX_LENGTH).nullable(),
     createdAt: hostTimestampSchema.nullable().optional(),
     updatedAt: hostTimestampSchema.nullable(),
@@ -96,16 +116,17 @@ async function invokeCli(command: string, args: string[] = []) {
 
 async function invokeCliWithPrivateJson(
   command: string,
-  value: HostProjectDiscoveryInput,
+  value: unknown,
+  args: string[] = [],
 ) {
   const directory = mkdtempSync(
-    resolve(tmpdir(), "partner-report-project-discovery-"),
+    resolve(tmpdir(), "partner-report-private-input-"),
   );
   const inputPath = resolve(directory, "input.json");
   try {
     writeFileSync(inputPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
     chmodSync(inputPath, 0o600);
-    return await invokeCli(command, ["--input", inputPath]);
+    return await invokeCli(command, ["--input", inputPath, ...args]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -328,12 +349,30 @@ registerTool(
 registerTool(
   "collect_start",
   {
-    description: "启动一次采集 Run；普通运行不得设置 force。",
-    inputSchema: { force: z.boolean().default(false) },
+    description:
+      "使用 Codex App 官方任务列表的跨 Host 最小元数据启动采集；普通运行不得设置 force。不得提交 Session 正文。",
+    inputSchema: {
+      threads: z
+        .array(hostThreadMetadataSchema)
+        .max(CODEX_HOST_THREAD_LIST_LIMIT),
+      pinnedThreads: z
+        .array(hostThreadMetadataSchema)
+        .max(CODEX_HOST_PINNED_THREAD_LIMIT)
+        .default([]),
+      unavailableHosts: z.array(z.unknown()).max(200).default([]),
+      unavailableSources: z.array(z.unknown()).max(200).default([]),
+      force: z.boolean().default(false),
+    },
     annotations: networkWrite,
   },
-  ({ force }) =>
-    execute(() => invokeCli("collect-start", force ? ["--force"] : [])),
+  ({ threads, pinnedThreads, unavailableHosts, unavailableSources, force }) =>
+    execute(() =>
+      invokeCliWithPrivateJson(
+        "collect-start",
+        { threads, pinnedThreads, unavailableHosts, unavailableSources },
+        force ? ["--force"] : [],
+      ),
+    ),
 );
 
 registerTool(
@@ -346,6 +385,26 @@ registerTool(
   ({ runPath }) =>
     execute(async () =>
       exposeJobInput(await invokeCli("collect-next", ["--run", runPath])),
+    ),
+);
+
+registerTool(
+  "collect_host_thread_submit",
+  {
+    description:
+      "把 Codex App 官方 read_thread 返回的当前分页原样交给本地采集器校验和脱敏；不得把该分页用于摘要或上传。",
+    inputSchema: {
+      runPath: z.string().min(1),
+      page: z.record(z.unknown()),
+    },
+    annotations: localWrite,
+  },
+  ({ runPath, page }) =>
+    execute(() =>
+      invokeCliWithPrivateJson("collect-host-thread-submit", page, [
+        "--run",
+        runPath,
+      ]),
     ),
 );
 
