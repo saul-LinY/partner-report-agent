@@ -166,19 +166,51 @@ describe("Feishu JSON 2.0 cards", () => {
       baseVersion: 4,
       deviceName: "Saul MacBook",
       initial: true,
-      projects: Array.from({ length: 13 }, (_, index) => ({
+      projects: Array.from({ length: 21 }, (_, index) => ({
         scopeKey: index.toString(16).padStart(64, "0"),
         displayName: `project-${index + 1}`,
         sessionCount: index + 1,
       })),
     });
 
-    expect(findByElementId(card, "scope_select_11")).toBeDefined();
-    expect(findByElementId(card, "scope_select_12")).toBeUndefined();
+    expect(findByElementId(card, "scope_select_19")).toBeDefined();
+    expect(findByElementId(card, "scope_select_20")).toBeUndefined();
     expect(JSON.stringify(card)).toContain("同一张卡片继续显示");
     expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThan(
       FEISHU_CARD_MAX_JSON_BYTES,
     );
+  });
+
+  it("prefills project scope decisions without applying them", () => {
+    const card = renderScopeCard({
+      deliveryId: ids.deliveryId,
+      aggregateId: `${ids.aggregateId}:2026-W35`,
+      baseVersion: 15,
+      deviceName: "Swift MacBook",
+      periodLabel: "2026-W35",
+      initial: true,
+      projects: [
+        {
+          scopeKey: "a".repeat(64),
+          displayName: "allowed-project",
+          sessionCount: 2,
+          initialDecision: "allow",
+        },
+        {
+          scopeKey: "b".repeat(64),
+          displayName: "denied-project",
+          sessionCount: 1,
+          initialDecision: "deny",
+        },
+      ],
+    });
+
+    expect(findByElementId(card, "scope_select_0")).toMatchObject({
+      initial_option: "allow",
+    });
+    expect(findByElementId(card, "scope_select_1")).toMatchObject({
+      initial_option: "deny",
+    });
   });
 
   it("renders a read-only project scope status without callbacks", () => {

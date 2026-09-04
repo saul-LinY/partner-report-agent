@@ -165,6 +165,7 @@ export const scopeCardInputSchema = z
             scopeKey: z.string().regex(/^[a-f0-9]{64}$/),
             displayName: z.string().trim().min(1).max(120),
             sessionCount: z.number().int().nonnegative(),
+            initialDecision: z.enum(["allow", "deny"]).optional(),
           })
           .strict(),
       )
@@ -206,7 +207,7 @@ export type StatusCardInput = z.input<typeof statusCardInputSchema>;
 export type ScopeCardInput = z.input<typeof scopeCardInputSchema>;
 export type ScopeStatusCardInput = z.input<typeof scopeStatusCardInputSchema>;
 
-export const SCOPE_FORM_PROJECT_LIMIT = 12;
+export const SCOPE_FORM_PROJECT_LIMIT = 20;
 export const SCOPE_FORM_FIELD_PREFIX = "scope_decision_";
 
 type HeaderTemplate = "blue" | "green" | "red" | "grey";
@@ -370,6 +371,9 @@ function scopeDecisionForm(input: {
           required: true,
           width: "fill",
           placeholder: plainText("选择采集权限"),
+          ...(project.initialDecision
+            ? { initial_option: project.initialDecision }
+            : {}),
           options: [
             { text: plainText("允许采集"), value: "allow" },
             { text: plainText("不采集"), value: "deny" },
