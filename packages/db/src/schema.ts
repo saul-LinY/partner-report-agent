@@ -575,6 +575,70 @@ export const projectScopeEntries = pgTable(
   ],
 );
 
+export const projectScopeBackupSnapshots = pgTable(
+  "project_scope_backup_snapshots",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id").notNull(),
+    pluginInstanceId: uuid("plugin_instance_id").notNull(),
+    partnerName: text("partner_name").notNull(),
+    deviceName: text("device_name").notNull(),
+    pluginVersion: text("plugin_version").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    reason: text("reason").notNull(),
+    entryCount: integer("entry_count").notNull(),
+    allowedCount: integer("allowed_count").notNull(),
+    deniedCount: integer("denied_count").notNull(),
+    pendingCount: integer("pending_count").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("project_scope_backup_team_created_idx").on(
+      table.tenantId,
+      table.teamId,
+      table.createdAt,
+    ),
+    index("project_scope_backup_plugin_created_idx").on(
+      table.pluginInstanceId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const projectScopeBackupEntries = pgTable(
+  "project_scope_backup_entries",
+  {
+    id: uuid("id").primaryKey(),
+    snapshotId: uuid("snapshot_id")
+      .notNull()
+      .references(() => projectScopeBackupSnapshots.id, {
+        onDelete: "cascade",
+      }),
+    scopeKey: text("scope_key").notNull(),
+    displayName: text("display_name").notNull(),
+    status: text("status").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    firstSeenPeriodKey: text("first_seen_period_key").notNull(),
+    sessionCount: integer("session_count").notNull(),
+  },
+  (table) => [
+    uniqueIndex("project_scope_backup_entry_key_unique").on(
+      table.snapshotId,
+      table.scopeKey,
+    ),
+    index("project_scope_backup_entries_snapshot_idx").on(table.snapshotId),
+  ],
+);
+
 export const projectDescriptionCandidates = pgTable(
   "project_description_candidates",
   {

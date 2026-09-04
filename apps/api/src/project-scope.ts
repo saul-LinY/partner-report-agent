@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sqlClient as defaultDatabase } from "@partner-report/db";
 import { ApiError, type DomainActor } from "./common.js";
+import { createProjectScopeBackup } from "./project-scope-backup.js";
 
 type Database = typeof defaultDatabase;
 
@@ -424,6 +425,8 @@ export async function beginProjectScopeBootstrap(
     `;
     if (!policy.initialized && (entries[0]?.count ?? 0) === 0) return;
 
+    await createProjectScopeBackup(identity, input.reason, tx);
+
     await tx`
       delete from project_scope_entries
       where plugin_instance_id = ${identity.pluginInstanceId}
@@ -508,6 +511,8 @@ export async function reopenProjectScopeReview(
         "PROJECT_SCOPE_REVIEW_IN_PROGRESS",
         "当前项目仍在等待审核，无需重新发起。",
       );
+
+    await createProjectScopeBackup(identity, "admin_reapproval", tx);
 
     await tx`
       update project_scope_entries set

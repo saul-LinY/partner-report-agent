@@ -72,6 +72,7 @@ suite("project scope persistence", () => {
       await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenantId}`;
       await tx`delete from feishu_partner_bindings where tenant_id = ${fixture.tenantId}`;
       await tx`delete from audit_events where tenant_id = ${fixture.tenantId}`;
+      await tx`delete from project_scope_backup_snapshots where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_entries where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_policies where tenant_id = ${fixture.tenantId}`;
       await tx`delete from plugin_binding_codes where tenant_id = ${fixture.tenantId}`;
@@ -272,6 +273,28 @@ suite("project scope persistence", () => {
     expect(
       reopened.entries.every((entry) => entry.effectiveFrom === null),
     ).toBe(true);
+    const reapprovalBackups = await sql<
+      Array<{
+        reason: string;
+        entry_count: number;
+        allowed_count: number;
+        denied_count: number;
+      }>
+    >`
+      select reason, entry_count, allowed_count, denied_count
+      from project_scope_backup_snapshots
+      where plugin_instance_id = ${fixture.pluginInstanceId}
+      order by created_at desc
+      limit 1
+    `;
+    expect(reapprovalBackups).toEqual([
+      {
+        reason: "admin_reapproval",
+        entry_count: 3,
+        allowed_count: 2,
+        denied_count: 1,
+      },
+    ]);
     const reapprovalEvents = await sql<Array<{ payload: any }>>`
       select payload from outbox_events
       where tenant_id = ${fixture.tenantId}
@@ -319,6 +342,26 @@ suite("project scope persistence", () => {
       initializedAt: null,
       entries: [],
     });
+    const bootstrapBackups = await sql<
+      Array<{
+        reason: string;
+        entry_count: number;
+        allowed_count: number;
+      }>
+    >`
+      select reason, entry_count, allowed_count
+      from project_scope_backup_snapshots
+      where plugin_instance_id = ${fixture.pluginInstanceId}
+      order by created_at desc, id desc
+      limit 1
+    `;
+    expect(bootstrapBackups).toEqual([
+      {
+        reason: "local_scope_invalid",
+        entry_count: 3,
+        allowed_count: 3,
+      },
+    ]);
     await expect(
       beginProjectScopeBootstrap(identity, {
         baseVersion: reapproved.version,

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
 import { buildApp } from "./server.js";
+import { createProjectScopeBackup } from "./project-scope-backup.js";
 
 const enabled = process.env.RUN_DB_TESTS === "1";
 const suite = enabled ? describe : describe.skip;
@@ -88,6 +89,7 @@ suite("tenant and role authorization", () => {
       await tx`delete from session_facts where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from session_records where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from collection_runs where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
+      await tx`delete from project_scope_backup_snapshots where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from project_scope_entries where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from project_scope_policies where tenant_id in (${fixture.tenantA}, ${fixture.tenantB})`;
       await tx`delete from plugin_instances where tenant_id = ${fixture.tenantA} and id != ${fixture.pluginA}`;
@@ -972,6 +974,59 @@ suite("tenant and role authorization", () => {
       headers,
     });
     expect(crossTenant.statusCode).toBe(404);
+  });
+
+  it("lets an Admin preview the latest protected permission backup", async () => {
+    const snapshot = await createProjectScopeBackup(
+      {
+        tenantId: fixture.tenantA,
+        teamId: fixture.teamA,
+        partnerId: fixture.partnerA,
+        pluginInstanceId: fixture.pluginA,
+      },
+      "manual_test",
+    );
+    expect(snapshot).not.toBeNull();
+
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/admin/project-scope-backups/latest",
+        headers,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        summary: { total: 2, allowed: 1, pending: 1, denied: 0 },
+        plugins: [
+          {
+            partnerName: "Fixture A",
+            deviceName: "Fixture Laptop",
+            reason: "manual_test",
+            summary: { total: 2, allowed: 1, pending: 1, denied: 0 },
+            projects: expect.arrayContaining([
+              expect.objectContaining({
+                name: "Allowed Fixture Project",
+                permission: "allowed",
+              }),
+              expect.objectContaining({
+                name: "Pending Fixture Project",
+                permission: "pending",
+              }),
+            ]),
+          },
+        ],
+      });
+      expect(response.body).not.toContain("a".repeat(64));
+      expect(response.body).not.toContain("b".repeat(64));
+      expect(response.body).not.toContain("scopeKey");
+      expect(response.body).not.toContain("pluginInstanceId");
+    } finally {
+      if (snapshot)
+        await sql`
+          delete from project_scope_backup_snapshots
+          where id = ${snapshot.id}
+        `;
+    }
   });
 
   it("lets an Admin reopen completed permissions only through Feishu review", async () => {

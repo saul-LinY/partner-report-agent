@@ -14,11 +14,12 @@ import {
   RefreshCw,
   RotateCcw,
   Server,
+  ShieldCheck,
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
 import { api } from "./api.js";
-import { Badge, EmptyState, ErrorBanner } from "./components.js";
+import { Badge, Button, EmptyState, ErrorBanner, Modal } from "./components.js";
 import {
   pluginExecutionKindLabel,
   pluginExecutionLabel,
@@ -68,6 +69,38 @@ type PluginMonitoring = {
     unknown: number;
   };
   plugins: Plugin[];
+};
+
+type PermissionBackup = {
+  backedUpAt: string | null;
+  summary: {
+    total: number;
+    allowed: number;
+    denied: number;
+    pending: number;
+  };
+  plugins: Array<{
+    partnerName: string;
+    deviceName: string;
+    pluginVersion: string;
+    policyVersion: number;
+    reason: string;
+    backedUpAt: string;
+    summary: {
+      total: number;
+      allowed: number;
+      denied: number;
+      pending: number;
+    };
+    projects: Array<{
+      name: string;
+      permission: "pending" | "allowed" | "denied";
+      effectiveFrom: string | null;
+      decidedAt: string | null;
+      firstSeenPeriodKey: string;
+      sessionCount: number;
+    }>;
+  }>;
 };
 
 type LogEvent = {
@@ -183,6 +216,39 @@ function formatTime(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatBackupTime(value: string | null) {
+  if (!value) return "暂无";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
+
+const permissionLabel = {
+  allowed: "允许采集",
+  denied: "不采集",
+  pending: "待审核",
+} as const;
+
+const permissionTone = {
+  allowed: "success",
+  denied: "neutral",
+  pending: "warning",
+} as const;
+
+const backupReasonLabel: Record<string, string> = {
+  manual_baseline: "初始保护备份",
+  local_scope_missing: "本地权限文件缺失前",
+  local_scope_invalid: "本地权限文件异常前",
+  local_scope_identity_conflict: "项目身份冲突前",
+  admin_reapproval: "管理员重新审核前",
+};
+
 function shortId(value: string) {
   return value.slice(0, 8);
 }
@@ -217,6 +283,7 @@ export function PluginMonitoringPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [problemsOnly, setProblemsOnly] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
   const [logView, setLogView] = useState<"recent" | "history">("recent");
   const [historyDate, setHistoryDate] = useState(() =>
     dateKeyInTimezone("Asia/Shanghai"),
@@ -227,6 +294,12 @@ export function PluginMonitoringPage() {
     refetchInterval: 10_000,
   });
   const plugins = monitoring.data?.plugins ?? [];
+  const permissionBackup = useQuery({
+    queryKey: ["admin-project-scope-backup"],
+    queryFn: () =>
+      api<PermissionBackup>("/v1/admin/project-scope-backups/latest"),
+    enabled: backupOpen,
+  });
 
   useEffect(() => {
     if (!selectedId && plugins[0]) setSelectedId(plugins[0].id);
@@ -327,19 +400,29 @@ export function PluginMonitoringPage() {
           <h1>插件监控</h1>
           <p>按插件命令或采集批次查看运行过程、返回结果和故障位置。</p>
         </div>
-        <button
-          className="icon-button"
-          title="刷新插件状态"
-          onClick={() => {
-            void monitoring.refetch();
-            void logs.refetch();
-          }}
-        >
-          <RefreshCw
-            size={17}
-            className={monitoring.isFetching || logs.isFetching ? "spin" : ""}
-          />
-        </button>
+        <div className="header-actions">
+          <Button
+            type="button"
+            variant="secondary"
+            icon={<ShieldCheck size={16} />}
+            onClick={() => setBackupOpen(true)}
+          >
+            权限备份
+          </Button>
+          <button
+            className="icon-button"
+            title="刷新插件状态"
+            onClick={() => {
+              void monitoring.refetch();
+              void logs.refetch();
+            }}
+          >
+            <RefreshCw
+              size={17}
+              className={monitoring.isFetching || logs.isFetching ? "spin" : ""}
+            />
+          </button>
+        </div>
       </header>
       <ErrorBanner
         error={
@@ -866,6 +949,117 @@ export function PluginMonitoringPage() {
             </div>
           </section>
         </div>
+      )}
+      {backupOpen && (
+        <Modal
+          title="权限备份预览"
+          onClose={() => setBackupOpen(false)}
+          footer={
+            <Button variant="secondary" onClick={() => setBackupOpen(false)}>
+              关闭
+            </Button>
+          }
+        >
+          {permissionBackup.isLoading ? (
+            <div className="page-loading permission-backup-loading">
+              <RefreshCw size={16} className="spin" />
+              加载权限备份
+            </div>
+          ) : permissionBackup.error ? (
+            <ErrorBanner error={permissionBackup.error} />
+          ) : !permissionBackup.data?.plugins.length ? (
+            <EmptyState title="还没有权限备份" />
+          ) : (
+            <>
+              <div className="permission-backup-meta">
+                <div>
+                  <span>最近备份</span>
+                  <strong>
+                    {formatBackupTime(permissionBackup.data.backedUpAt)}
+                  </strong>
+                </div>
+                <div>
+                  <span>项目总数</span>
+                  <strong>{permissionBackup.data.summary.total}</strong>
+                </div>
+                <div className="allowed">
+                  <span>允许采集</span>
+                  <strong>{permissionBackup.data.summary.allowed}</strong>
+                </div>
+                <div>
+                  <span>不采集</span>
+                  <strong>{permissionBackup.data.summary.denied}</strong>
+                </div>
+              </div>
+              <div className="permission-backup-groups">
+                {permissionBackup.data.plugins.map((plugin) => (
+                  <section
+                    className="permission-backup-group"
+                    key={`${plugin.partnerName}:${plugin.deviceName}`}
+                  >
+                    <header>
+                      <div>
+                        <strong>{plugin.partnerName}</strong>
+                        <span>
+                          {plugin.deviceName} · 插件 v{plugin.pluginVersion} ·
+                          权限 v{plugin.policyVersion}
+                        </span>
+                      </div>
+                      <div>
+                        <Badge tone="success">
+                          允许 {plugin.summary.allowed}
+                        </Badge>
+                        <Badge tone="neutral">
+                          不采集 {plugin.summary.denied}
+                        </Badge>
+                      </div>
+                    </header>
+                    <div className="permission-backup-context">
+                      <span>
+                        {backupReasonLabel[plugin.reason] ?? plugin.reason}
+                      </span>
+                      <time>{formatBackupTime(plugin.backedUpAt)}</time>
+                    </div>
+                    <div className="permission-backup-table-wrap">
+                      <table className="permission-backup-table">
+                        <thead>
+                          <tr>
+                            <th>项目</th>
+                            <th>审核结果</th>
+                            <th>Session</th>
+                            <th>审核时间</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {plugin.projects.map((project, index) => (
+                            <tr
+                              key={`${project.name}:${project.firstSeenPeriodKey}:${index}`}
+                            >
+                              <td>{project.name}</td>
+                              <td>
+                                <Badge
+                                  tone={permissionTone[project.permission]}
+                                >
+                                  {permissionLabel[project.permission]}
+                                </Badge>
+                              </td>
+                              <td>{project.sessionCount}</td>
+                              <td>
+                                {formatBackupTime(
+                                  project.decidedAt ?? project.effectiveFrom,
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </>
+          )}
+        </Modal>
       )}
     </div>
   );

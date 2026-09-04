@@ -13,6 +13,7 @@ import {
   userCode,
 } from "../common.js";
 import { reopenProjectScopeReview } from "../project-scope.js";
+import { loadLatestProjectScopeBackups } from "../project-scope-backup.js";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -225,6 +226,11 @@ export function partnerReviewProgress(row: {
 }
 
 export async function adminRoutes(app: FastifyInstance) {
+  app.get("/v1/admin/project-scope-backups/latest", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    return loadLatestProjectScopeBackups(actor);
+  });
+
   app.get("/v1/admin/overview", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const feishuAppId = process.env.FEISHU_APP_ID?.trim() ?? "";

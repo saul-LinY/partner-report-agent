@@ -232,6 +232,13 @@
       "when": 1787803433347,
       "tag": "0032_fast_magdalene",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788514568484,
+      "tag": "0033_fancy_leader",
+      "breakpoints": true
     }
   ]
 }
