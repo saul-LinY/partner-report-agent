@@ -3,9 +3,7 @@ import {
   aggregationInstructions,
   bucketHasCompletionSupport,
   buildNoActivityTeamReport,
-  composeManagementSummary,
   formatReportDate,
-  managementSummaryNeedsExpansion,
   normalizeAggregation,
   normalizePluginLogAnalysis,
   normalizeTeamReportGeneration,
@@ -153,9 +151,9 @@ describe("work card model output normalization", () => {
           {
             projectKey: "project-a",
             status: "in_progress",
-            overview: "项目正常推进。",
+            overview: "概".repeat(121),
             dailyProgress: [
-              { date: "2026-08-27", summary: "后一天。" },
+              { date: "2026-08-27", summary: "进".repeat(61) },
               { date: "2026-08-26", summary: "前一天。" },
             ],
           },
@@ -178,6 +176,8 @@ describe("work card model output normalization", () => {
         (entry: { date: string }) => entry.date,
       ),
     ).toEqual(["2026-08-26", "2026-08-27"]);
+    expect(result.groups[0].overview).toBe("概".repeat(121));
+    expect(result.groups[0].dailyProgress[1].summary).toBe("进".repeat(61));
     expect(result.groups[1]).toMatchObject({
       projectKey: "project-b",
       status: "awaiting_validation",
@@ -186,29 +186,7 @@ describe("work card model output normalization", () => {
   });
 });
 
-describe("Team Report numbering", () => {
-  it("requests a dedicated rewrite only for short management summaries", () => {
-    expect(managementSummaryNeedsExpansion("概览".repeat(119))).toBe(true);
-    expect(managementSummaryNeedsExpansion("概览".repeat(120))).toBe(false);
-  });
-
-  it("combines management dimensions into one bounded overview", () => {
-    const summary = composeManagementSummary(
-      {
-        overallProgress: "进".repeat(60),
-        supportedResults: "果".repeat(60),
-        teamPace: "稳".repeat(60),
-        risksAndBlockers: "险".repeat(60),
-        nextSteps: "后".repeat(60),
-      },
-      "原概览。",
-    );
-
-    expect(Array.from(summary).length).toBeGreaterThanOrEqual(240);
-    expect(Array.from(summary).length).toBeLessThanOrEqual(360);
-    expect(summary.endsWith("。")).toBe(true);
-  });
-
+describe("Team Report normalization", () => {
   it("builds an honest Team Report when every person has no reportable record", () => {
     const snapshotId = "11111111-1111-4111-8111-111111111111";
     const report = buildNoActivityTeamReport(
@@ -216,12 +194,7 @@ describe("Team Report numbering", () => {
       "gpt-5.6-sol",
     );
 
-    expect(
-      Array.from(report.summary.replace(/\s/gu, "")).length,
-    ).toBeLessThanOrEqual(360);
-    expect(
-      Array.from(report.summary.replace(/\s/gu, "")).length,
-    ).toBeGreaterThanOrEqual(260);
+    expect(report.summary).toContain("系统没有采集到可用于团队工作汇报的记录");
     expect(report.sections).toHaveLength(3);
     expect(report.sections[0].markdown).toContain(
       "| 成员 | 项目 | 本周工作明细 |",
@@ -283,7 +256,7 @@ describe("Team Report numbering", () => {
     );
   });
 
-  it("caps each project progress description at 120 characters", () => {
+  it("preserves project progress descriptions longer than the prompt target", () => {
     const snapshotId = "11111111-1111-4111-8111-111111111111";
     const report = normalizeTeamReportGeneration(
       {
@@ -316,8 +289,8 @@ describe("Team Report numbering", () => {
       .split("|")[3]!
       .trim();
 
-    expect(Array.from(detail)).toHaveLength(120);
-    expect(detail.endsWith("…")).toBe(true);
+    expect(Array.from(detail)).toHaveLength(140);
+    expect(detail).toBe("进".repeat(140));
   });
 
   it("formats the report creation date in the team's timezone", () => {

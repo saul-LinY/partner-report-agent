@@ -177,13 +177,13 @@ export const aggregationGroupSchema: z.ZodTypeAny = z
   .object({
     projectKey: z.string().default(""),
     status: workStatusSchema,
-    overview: z.string().trim().min(1).max(120),
+    overview: z.string().trim().min(1),
     dailyProgress: z
       .array(
         z
           .object({
             date: z.string().default(""),
-            summary: z.string().trim().min(1).max(60),
+            summary: z.string().trim().min(1),
           })
           .strict(),
       )
@@ -234,7 +234,7 @@ export const teamReportGenerationSectionSchema: z.ZodTypeAny = z.object({
 
 export const teamReportGenerationResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
-  summary: z.string().trim().min(1).max(360),
+  summary: z.string().trim().min(1),
   sections: z.array(teamReportGenerationSectionSchema),
   missingPartnerIds: z.array(z.string()).default([]),
   qualityWarnings: z.array(z.string()).default([]),
@@ -244,7 +244,7 @@ export const teamReportGenerationResultSchema: z.ZodTypeAny = z.object({
 export const teamReportResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
   title: z.string(),
-  summary: z.string().trim().min(240).max(360),
+  summary: z.string().trim().min(1),
   sections: z.array(teamReportSectionSchema).length(3),
   markdown: z.string(),
   missingPartnerIds: z.array(idSchema).default([]),

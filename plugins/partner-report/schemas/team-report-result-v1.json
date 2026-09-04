@@ -13,8 +13,7 @@
         },
         "summary": {
           "type": "string",
-          "minLength": 240,
-          "maxLength": 360
+          "minLength": 1
         },
         "sections": {
           "type": "array",

@@ -180,47 +180,6 @@ const teamReportSectionKeys = [
   "risks",
 ] as const;
 
-const managementSummaryResultSchema = z
-  .object({
-    overallProgress: z.string().trim().min(1).max(100),
-    supportedResults: z.string().trim().min(1).max(100),
-    teamPace: z.string().trim().min(1).max(100),
-    risksAndBlockers: z.string().trim().min(1).max(100),
-    nextSteps: z.string().trim().min(1).max(100),
-  })
-  .strict();
-
-const managementSummaryInstructions =
-  "根据已审核工作卡片和已有概览，分别写出团队周报管理概览的五个部分：overallProgress 说明总体推进情况，supportedResults 说明主要阶段结果，teamPace 说明团队整体节奏，risksAndBlockers 说明共同风险或资料限制，nextSteps 说明下一步关注点。每个字段写一句 50 至 70 个中文字符的通俗简体中文。只使用输入中已有事实，不补充业务影响，不逐人或逐项目罗列，不出现成员名、项目名、代码、配置、协议或专业测试术语。";
-
-export function managementSummaryNeedsExpansion(summary: string) {
-  return Array.from(normalizeTeamReportSummary(summary)).length < 240;
-}
-
-export function composeManagementSummary(
-  parts: Record<string, string>,
-  draftSummary: string,
-) {
-  const sentences = Object.values(parts)
-    .map(normalizeTeamReportSummary)
-    .filter(Boolean)
-    .map((sentence) =>
-      /[。！？]$/u.test(sentence) ? sentence : `${sentence}。`,
-    );
-  let summary = [...new Set(sentences)].join("");
-  if (Array.from(summary).length < 240) {
-    const draft = normalizeTeamReportSummary(draftSummary);
-    if (draft && !summary.includes(draft))
-      summary += /[。！？]$/u.test(draft) ? draft : `${draft}。`;
-  }
-  const characters = Array.from(summary);
-  if (characters.length <= 360) return summary;
-  return `${characters
-    .slice(0, 359)
-    .join("")
-    .replace(/[，、；：]$/u, "")}。`;
-}
-
 export function formatReportDate(date: Date, timezone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -244,7 +203,7 @@ export function normalizeTeamReportSummary(summary: string) {
 }
 
 async function generateTeamReport(job: Job, model: string) {
-  const result = await generateStructured<any>({
+  return generateStructured<any>({
     name: "partner_team_report",
     schema: teamReportGenerationResultSchema,
     instructions: teamReportInstructions(
@@ -254,34 +213,12 @@ async function generateTeamReport(job: Job, model: string) {
     input: job.input_payload,
     model,
   });
-  if (!managementSummaryNeedsExpansion(result.summary)) return result;
-  const expanded = await generateStructured<Record<string, string>>({
-    name: "partner_team_report_management_summary",
-    schema: managementSummaryResultSchema,
-    instructions: managementSummaryInstructions,
-    input: {
-      draftSummary: result.summary,
-      workCards: job.input_payload.workCards,
-      previousTeamReport: job.input_payload.previousTeamReport ?? null,
-    },
-    model,
-    maxOutputTokens: 2_000,
-  });
-  return {
-    ...result,
-    summary: composeManagementSummary(expanded, result.summary),
-  };
 }
 
-function reportTableCell(value: string, maxLength?: number) {
-  const normalized = normalizeTeamReportSummary(value)
+function reportTableCell(value: string) {
+  return normalizeTeamReportSummary(value)
     .replace(/\\\|/g, "|")
     .replace(/\|/g, "\\|");
-  if (!maxLength || Array.from(normalized).length <= maxLength)
-    return normalized;
-  return `${Array.from(normalized)
-    .slice(0, maxLength - 1)
-    .join("")}…`;
 }
 
 function markdownTable(markdown: string, header: RegExp) {
@@ -315,11 +252,11 @@ function structuredSectionMarkdown(
             .replace(/^\||\|$/g, "")
             .split(/(?<!\\)\|/);
           if (cells.length !== 3) return line;
-          return `| ${cells[0]!.trim()} | ${cells[1]!.trim()} | ${reportTableCell(cells[2]!, 120)} |`;
+          return `| ${cells[0]!.trim()} | ${cells[1]!.trim()} | ${reportTableCell(cells[2]!)} |`;
         })
         .join("\n");
     qualityWarnings.push("MODEL_TEAM_PROGRESS_TABLE_NORMALIZED");
-    return `| 成员 | 项目 | 本周工作明细 |\n| --- | --- | --- |\n| - | - | ${reportTableCell(markdown, 120)} |`;
+    return `| 成员 | 项目 | 本周工作明细 |\n| --- | --- | --- |\n| - | - | ${reportTableCell(markdown)} |`;
   }
   if (key === "week_comparison") {
     const table = markdownTable(
@@ -585,11 +522,7 @@ export function normalizeAggregation(job: Job, output: unknown, model: string) {
       const previous = progressByDate.get(date);
       progressByDate.set(
         date,
-        Array.from(
-          previous && previous !== summary ? `${previous} ${summary}` : summary,
-        )
-          .slice(0, 60)
-          .join(""),
+        previous && previous !== summary ? `${previous} ${summary}` : summary,
       );
     }
     const parsedStatus = workStatusSchema.safeParse(group?.status);

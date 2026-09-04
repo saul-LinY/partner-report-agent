@@ -353,17 +353,12 @@ describe("project card aggregation contract", () => {
         groups: [
           {
             ...result.groups[0],
+            overview: "进".repeat(121),
             dailyProgress: [{ date: "2026-08-03", summary: "进".repeat(61) }],
           },
         ],
       }).success,
-    ).toBe(false);
-    expect(
-      aggregationResultSchema.safeParse({
-        ...result,
-        groups: [{ ...result.groups[0], overview: "进".repeat(121) }],
-      }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       aggregationResultSchema.safeParse({
         ...result,
@@ -410,7 +405,7 @@ describe("team report model output contract", () => {
           producer: "data-platform",
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       teamReportResultSchema.safeParse({
         schemaVersion: "1.0",
@@ -437,7 +432,7 @@ describe("team report model output contract", () => {
           producer: "data-platform",
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

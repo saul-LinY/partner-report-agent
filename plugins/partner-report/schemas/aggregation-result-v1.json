@@ -31,8 +31,7 @@
               },
               "overview": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 120
+                "minLength": 1
               },
               "dailyProgress": {
                 "type": "array",
@@ -45,8 +44,7 @@
                     },
                     "summary": {
                       "type": "string",
-                      "minLength": 1,
-                      "maxLength": 60
+                      "minLength": 1
                     }
                   },
                   "required": [

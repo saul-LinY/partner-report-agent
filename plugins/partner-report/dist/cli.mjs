@@ -4199,11 +4199,11 @@ var coverageSchema = external_exports.object({
 var aggregationGroupSchema = external_exports.object({
   projectKey: external_exports.string().default(""),
   status: workStatusSchema,
-  overview: external_exports.string().trim().min(1).max(120),
+  overview: external_exports.string().trim().min(1),
   dailyProgress: external_exports.array(
     external_exports.object({
       date: external_exports.string().default(""),
-      summary: external_exports.string().trim().min(1).max(60)
+      summary: external_exports.string().trim().min(1)
     }).strict()
   ).default([])
 }).strict();
@@ -4240,7 +4240,7 @@ var teamReportGenerationSectionSchema = external_exports.object({
 });
 var teamReportGenerationResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
-  summary: external_exports.string().trim().min(1).max(360),
+  summary: external_exports.string().trim().min(1),
   sections: external_exports.array(teamReportGenerationSectionSchema),
   missingPartnerIds: external_exports.array(external_exports.string()).default([]),
   qualityWarnings: external_exports.array(external_exports.string()).default([]),
@@ -4249,7 +4249,7 @@ var teamReportGenerationResultSchema = external_exports.object({
 var teamReportResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
   title: external_exports.string(),
-  summary: external_exports.string().trim().min(240).max(360),
+  summary: external_exports.string().trim().min(1),
   sections: external_exports.array(teamReportSectionSchema).length(3),
   markdown: external_exports.string(),
   missingPartnerIds: external_exports.array(idSchema).default([]),
