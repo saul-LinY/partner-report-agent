@@ -38,6 +38,15 @@ const reviewActionValueSchema = z
   })
   .strict();
 
+const reviewPageActionValueSchema = z
+  .object({
+    ...actionBase,
+    action: z.literal("review_page"),
+    itemId: opaqueIdSchema,
+    page: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();
+
 const scopeItemActionValueSchema = z
   .object({
     ...actionBase,
@@ -64,6 +73,7 @@ export const feishuActionValueSchema = z.discriminatedUnion("action", [
   bindingActionValueSchema,
   recoveryActionValueSchema,
   reviewActionValueSchema,
+  reviewPageActionValueSchema,
   scopeItemActionValueSchema,
   scopeAllActionValueSchema,
   scopeSubmitActionValueSchema,
@@ -92,7 +102,7 @@ export const recoveryCardInputSchema = z
 const dailyProgressSchema = z
   .object({
     date: z.string().trim().min(1).max(40),
-    summary: displayTextSchema,
+    summary: z.string(),
   })
   .strict();
 
@@ -127,13 +137,19 @@ export const reviewCardInputSchema = z
     aggregateId: opaqueIdSchema,
     baseVersion: baseVersionSchema,
     periodLabel: z.string().trim().min(1).max(120).optional(),
+    page: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .default(0),
     progress: reviewProgressSchema,
     item: z
       .object({
         id: opaqueIdSchema,
         title: z.string().trim().min(1).max(2_000),
         status: z.string().trim().min(1).max(120),
-        overview: displayTextSchema,
+        overview: z.string(),
         dailyProgress: z.array(dailyProgressSchema).max(366).default([]),
       })
       .strict(),
@@ -655,8 +671,135 @@ export function renderScopeStatusCard(
   });
 }
 
+type ReviewBlock = { heading: string; text: string; date?: string };
+type ParsedReviewInput = z.output<typeof reviewCardInputSchema>;
+
+function reviewBody(input: ParsedReviewInput, blocks: ReviewBlock[]) {
+  const lines = [`**${escapeLarkMarkdown(input.item.title)}**`];
+  let heading = "";
+  for (const block of blocks) {
+    if (heading !== block.heading) {
+      lines.push("", `**${block.heading}**`);
+      heading = block.heading;
+    }
+    lines.push(
+      block.date
+        ? `- ${escapeLarkMarkdown(block.date)}：${escapeLarkMarkdown(block.text)}`
+        : escapeLarkMarkdown(block.text),
+    );
+  }
+  return lines.join("\n");
+}
+
+// Include JSON string escaping and leave room for routing fields in the API request.
+function reviewPageFits(card: FeishuCard) {
+  return (
+    Buffer.byteLength(
+      JSON.stringify({ content: JSON.stringify(card) }),
+      "utf8",
+    ) <=
+    FEISHU_CARD_MAX_JSON_BYTES - 1024
+  );
+}
+
+function splitReviewBlock(
+  block: ReviewBlock,
+  fits: (block: ReviewBlock) => boolean,
+): ReviewBlock[] {
+  const parts: ReviewBlock[] = [];
+  let text = block.text;
+  const graphemes = new Intl.Segmenter("zh", { granularity: "grapheme" });
+  const sentences = new Intl.Segmenter("zh", { granularity: "sentence" });
+  while (!fits({ ...block, text })) {
+    const boundaries = Array.from(
+      graphemes.segment(text),
+      (part) => part.index + part.segment.length,
+    );
+    let low = 0;
+    let high = boundaries.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (fits({ ...block, text: text.slice(0, boundaries[mid - 1]) }))
+        low = mid;
+      else high = mid - 1;
+    }
+    if (low === 0) throw new Error("FEISHU_REVIEW_PAGE_TOO_LARGE");
+    let end = boundaries[low - 1]!;
+    let sentenceEnd = 0;
+    for (const part of sentences.segment(text)) {
+      const next = part.index + part.segment.length;
+      if (next > end) break;
+      sentenceEnd = next;
+    }
+    if (sentenceEnd) end = sentenceEnd;
+    parts.push({ ...block, text: text.slice(0, end) });
+    text = text.slice(end);
+  }
+  parts.push({ ...block, text });
+  return parts;
+}
+
 export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
   const input = reviewCardInputSchema.parse(rawInput);
+  const blocks: ReviewBlock[] = [
+    ...input.item.overview
+      .split(/\n\s*\n/u)
+      .map((text) => ({ heading: "本周进展总览", text })),
+    ...input.item.dailyProgress.map((entry) => ({
+      heading: "每日进展",
+      date: entry.date,
+      text: entry.summary,
+    })),
+  ];
+  const full = renderReviewPage(input, reviewBody(input, blocks), 0, 1);
+  if (reviewPageFits(full)) return full;
+
+  // Reserve the largest navigation labels so every resulting page fits on first render.
+  const fits = (page: ReviewBlock[]) =>
+    reviewPageFits(
+      renderReviewPage(
+        input,
+        reviewBody(input, page),
+        Number.MAX_SAFE_INTEGER - 2,
+        Number.MAX_SAFE_INTEGER,
+      ),
+    );
+  const pages: ReviewBlock[][] = [];
+  let current: ReviewBlock[] = [];
+  for (const block of blocks) {
+    if (fits([...current, block])) {
+      current.push(block);
+      continue;
+    }
+    if (current.length) {
+      pages.push(current);
+      current = [];
+    }
+    const parts = splitReviewBlock(block, (part) => fits([part]));
+    for (const part of parts) {
+      if (current.length && !fits([...current, part])) {
+        pages.push(current);
+        current = [];
+      }
+      current.push(part);
+    }
+  }
+  if (current.length) pages.push(current);
+  const page = Math.min(input.page, pages.length - 1);
+  return renderReviewPage(
+    input,
+    reviewBody(input, pages[page]!),
+    page,
+    pages.length,
+  );
+}
+
+function renderReviewPage(
+  input: ParsedReviewInput,
+  itemBody: string,
+  page: number,
+  pageCount: number,
+): FeishuCard {
   const pending = Math.max(
     0,
     input.progress.total - input.progress.approved - input.progress.excluded,
@@ -667,27 +810,6 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
     `已忽略 ${input.progress.excluded}`,
     `待审核 ${pending}`,
   ].join(" · ");
-  const dailyProgress = input.item.dailyProgress
-    .slice(0, 5)
-    .map(
-      (entry) =>
-        `- ${safeMarkdownText(entry.date, 40)}：${safeMarkdownText(
-          entry.summary,
-          300,
-        )}`,
-    );
-  if (input.item.dailyProgress.length > dailyProgress.length) {
-    dailyProgress.push(
-      `- 另有 ${input.item.dailyProgress.length - dailyProgress.length} 条进展未在卡片中展开`,
-    );
-  }
-  const itemBody = [
-    `**${safeMarkdownText(input.item.title, 160)}**`,
-    "",
-    "**本周进展总览**",
-    safeMarkdownText(input.item.overview, 900),
-    ...(dailyProgress.length > 0 ? ["", "**每日进展**", ...dailyProgress] : []),
-  ].join("\n");
   const baseValue = {
     deliveryId: input.deliveryId,
     aggregateId: input.aggregateId,
@@ -696,10 +818,36 @@ export function renderReviewCard(rawInput: ReviewCardInput): FeishuCard {
   };
   const elements: FeishuCardElement[] = [
     notation(progressText, "review_progress"),
-    markdown(
-      truncateCardText(itemBody, FEISHU_CARD_BODY_TEXT_LIMIT),
-      "review_item",
-    ),
+    markdown(itemBody, "review_item"),
+    ...(pageCount > 1
+      ? [
+          notation(`第 ${page + 1} / ${pageCount} 页`, "review_page_progress"),
+          buttonRow([
+            callbackButton({
+              elementId: "review_previous_page",
+              label: "上一页",
+              type: "default",
+              disabled: page === 0,
+              value: {
+                ...baseValue,
+                action: "review_page",
+                page: Math.max(0, page - 1),
+              },
+            }),
+            callbackButton({
+              elementId: "review_next_page",
+              label: "下一页",
+              type: "default",
+              disabled: page === pageCount - 1,
+              value: {
+                ...baseValue,
+                action: "review_page",
+                page: Math.min(pageCount - 1, page + 1),
+              },
+            }),
+          ]),
+        ]
+      : []),
     ...(input.regenerationError
       ? [
           markdown(

@@ -1707,7 +1707,7 @@ suite("tenant and role authorization", () => {
         ) values (
           ${randomUUID()}, ${fixture.tenantA}, ${reportId}, 1,
           'Fixture Team Report', 'Fixture summary', '# Fixture Team Report',
-          '{"missingPartnerIds":[],"qualityWarnings":[]}'::jsonb,
+          '{"missingPartnerIds":[],"qualityWarnings":[],"projectProgress":[{"progress":"Stale baseline"}]}'::jsonb,
           'fixture-team-source', 'synthetic-test/1.0'
         )
       `;
@@ -1734,6 +1734,13 @@ suite("tenant and role authorization", () => {
     });
     expect(edited.statusCode).toBe(200);
     expect(edited.json()).toEqual({ version: 2 });
+    const [editedVersion] = await sql<any[]>`
+      select payload from team_report_versions where report_id = ${reportId} and version = 2
+    `;
+    expect(editedVersion.payload).not.toHaveProperty("projectProgress");
+    expect(editedVersion.payload.markdown).toBe(
+      "# Edited Team Report\n\nReviewed.",
+    );
     const submitted = await app.inject({
       method: "POST",
       url: `/v1/admin/team-reports/${reportId}/submit`,

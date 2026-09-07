@@ -8,6 +8,8 @@ type GenerateInput = {
   model: string;
   timeoutMs?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: "none";
+  plainTextField?: string;
 };
 
 const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 240_000;
@@ -83,8 +85,9 @@ function responsesEndpoint() {
   return `${baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`}/responses`;
 }
 
-function reasoningRequest() {
+function reasoningRequest(override?: "none") {
   const effort =
+    override ??
     process.env.MODEL_REASONING_EFFORT ??
     process.env.OPENAI_REASONING_EFFORT ??
     "low";
@@ -234,13 +237,20 @@ function outputInstructions(
   return `${instructions}\n\nReturn exactly one valid JSON object matching the JSON Schema below. Do not return Markdown, code fences, headings, commentary, or any text outside the JSON object.\n<output_json_schema>\n${JSON.stringify(jsonSchema)}\n</output_json_schema>`;
 }
 
-function parseStructuredText(text: string) {
+function parseStructuredText(text: string, plainTextField?: string) {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   const candidate = fenced?.[1]?.trim() ?? trimmed;
   try {
-    return JSON.parse(candidate);
+    const parsed = JSON.parse(candidate);
+    return plainTextField && typeof parsed === "string"
+      ? { [plainTextField]: parsed }
+      : parsed;
   } catch {
+    // Some gateways return prose for a single-field writing request.
+    // Keep malformed JSON and markup on the normal failure path.
+    if (plainTextField && !fenced && !/^[\s{\["`<]/u.test(candidate))
+      return { [plainTextField]: candidate };
     throw new ModelGatewayError(
       "MODEL_OUTPUT_NOT_VALID_JSON",
       "MODEL_OUTPUT_NOT_VALID_JSON",
@@ -257,6 +267,8 @@ export async function generateStructured<T>({
   model,
   timeoutMs: timeoutOverride,
   maxOutputTokens,
+  reasoningEffort,
+  plainTextField,
 }: GenerateInput): Promise<T> {
   const apiKey = process.env.MODEL_API_KEY ?? process.env.OPENAI_API_KEY;
   if (!apiKey)
@@ -284,7 +296,7 @@ export async function generateStructured<T>({
       body: JSON.stringify({
         model,
         store: false,
-        ...reasoningRequest(),
+        ...reasoningRequest(reasoningEffort),
         max_output_tokens: maxOutputTokens ?? modelMaxOutputTokens(),
         input: [
           {
@@ -366,7 +378,9 @@ export async function generateStructured<T>({
           undefined,
           response.requestId,
         );
-      const parsed = schema.safeParse(parseStructuredText(text));
+      const parsed = schema.safeParse(
+        parseStructuredText(text, plainTextField),
+      );
       if (!parsed.success)
         throw new ModelGatewayError(
           "MODEL_OUTPUT_SCHEMA_INVALID",

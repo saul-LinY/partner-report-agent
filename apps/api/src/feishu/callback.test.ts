@@ -52,15 +52,19 @@ afterEach(() => vi.useRealTimers());
 
 describe("Feishu callback response contract", () => {
   it.each([
-    "review_approve",
-    "review_exclude",
-    "review_regenerate",
-    "scope_submit",
-    "binding_confirm",
-    "recovery_confirm",
+    ...[
+      "review_approve",
+      "review_exclude",
+      "review_regenerate",
+      "scope_submit",
+      "binding_confirm",
+      "recovery_confirm",
+    ].map((action) => ({ action, page: undefined as number | undefined })),
+    { action: "review_page", page: 1 },
+    { action: "review_page", page: 0 },
   ])(
-    "returns a toast through the real SDK dispatcher for %s",
-    async (action) => {
+    "returns a toast through the real SDK dispatcher for $action (page $page)",
+    async ({ action, page }) => {
       const { gateway, database, messageClient, event } = fixture();
       const dispatcher = createFeishuEventDispatcher(config);
       dispatcher.register<{
@@ -80,6 +84,7 @@ describe("Feishu callback response contract", () => {
                 ...value,
                 ...(action.startsWith("review_") ? { itemId } : {}),
                 action,
+                ...(page !== undefined ? { page } : {}),
               },
             },
           },
@@ -90,6 +95,10 @@ describe("Feishu callback response contract", () => {
         toast: { type: "success", content: "已收到，正在处理。" },
       });
       expect(database).toHaveBeenCalledTimes(1);
+      if (page !== undefined)
+        expect(JSON.stringify(database.mock.calls)).toContain(
+          `\\"page\\":${page}`,
+        );
       expect(JSON.stringify(database.mock.calls)).not.toContain(
         "callback-token",
       );

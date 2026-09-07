@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateAggregationByProject } from "./generation.js";
 
+vi.mock("./project-outcomes.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./project-outcomes.js")>()),
+  loadProjectOutcomeDraft: async (_job: unknown, bucket: unknown) => ({
+    id: "fixed-draft",
+    source_payload: { bucket, period: {} },
+    material: {
+      projectPurpose: "Synthetic purpose",
+      weeklyFocus: [],
+      daily: [],
+    },
+  }),
+}));
+
 const job = {
   id: "job",
   tenant_id: "tenant",

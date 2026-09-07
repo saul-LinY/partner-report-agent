@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { Link, useRoute } from "wouter";
 import { api } from "./api.js";
 import { Button, EmptyState, ErrorBanner } from "./components.js";
+import { remarkReportLayout } from "./report-layout.js";
 
 type TeamReportSummary = {
   id: string;
@@ -23,7 +24,15 @@ type Version = {
   title: string;
   summary: string;
   markdown: string;
-  payload: { missingPartnerIds?: string[]; qualityWarnings?: string[] };
+  payload: {
+    missingPartnerIds?: string[];
+    qualityWarnings?: string[];
+    projectProgress?: Array<{
+      partnerId: string;
+      partnerName: string;
+      projectName: string;
+    }>;
+  };
   created_at: string;
 };
 
@@ -137,10 +146,18 @@ function TeamReportDetail({ id }: { id: string }) {
             <article className="report-document">
               <h1>{viewed?.title}</h1>
               <section className="report-management-summary">
-                <h2>管理概览</h2>
+                <h2>本周总览</h2>
                 <p className="report-lede">{viewed?.summary}</p>
               </section>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown
+                remarkPlugins={[
+                  remarkGfm,
+                  [
+                    remarkReportLayout,
+                    { projectProgress: viewed?.payload.projectProgress },
+                  ],
+                ]}
+              >
                 {withoutLegacyWeeklySummary(viewed?.markdown ?? "")}
               </ReactMarkdown>
             </article>

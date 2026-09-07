@@ -494,6 +494,7 @@ export class FeishuDeliveryService {
     view: ReviewDeliveryView,
     deliveryId: string,
     actionError?: string,
+    page = 0,
   ): FeishuCard {
     if (view.regenerationPending) {
       return renderStatusCard({
@@ -507,6 +508,7 @@ export class FeishuDeliveryService {
       deliveryId,
       aggregateId: view.reviewId,
       baseVersion: view.version,
+      page,
       periodLabel: view.periodLabel,
       progress: view.progress,
       item: view.item,

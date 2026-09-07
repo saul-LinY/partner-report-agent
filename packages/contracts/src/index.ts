@@ -232,10 +232,20 @@ export const teamReportGenerationSectionSchema: z.ZodTypeAny = z.object({
   claims: z.array(teamReportClaimSchema).default([]),
 });
 
+export const teamReportProjectProgressSchema = z.object({
+  partnerId: z.string(),
+  partnerName: z.string(),
+  projectKey: z.string().nullable(),
+  projectName: z.string(),
+  progress: z.string(),
+  workCardSnapshotIds: z.array(z.string()),
+});
+
 export const teamReportGenerationResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
   summary: z.string().trim().min(1),
   sections: z.array(teamReportGenerationSectionSchema),
+  projectProgress: z.array(teamReportProjectProgressSchema).optional(),
   missingPartnerIds: z.array(z.string()).default([]),
   qualityWarnings: z.array(z.string()).default([]),
   production: productionMetadataSchema,
@@ -245,7 +255,8 @@ export const teamReportResultSchema: z.ZodTypeAny = z.object({
   schemaVersion: z.literal("1.0"),
   title: z.string(),
   summary: z.string().trim().min(1),
-  sections: z.array(teamReportSectionSchema).length(3),
+  sections: z.array(teamReportSectionSchema).min(1).max(3),
+  projectProgress: z.array(teamReportProjectProgressSchema).optional(),
   markdown: z.string(),
   missingPartnerIds: z.array(idSchema).default([]),
   qualityWarnings: z.array(z.string()).default([]),

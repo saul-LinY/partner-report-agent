@@ -63,8 +63,49 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 3,
+          "minItems": 1,
           "maxItems": 3
+        },
+        "projectProgress": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "partnerId": {
+                "type": "string"
+              },
+              "partnerName": {
+                "type": "string"
+              },
+              "projectKey": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "projectName": {
+                "type": "string"
+              },
+              "progress": {
+                "type": "string"
+              },
+              "workCardSnapshotIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "partnerId",
+              "partnerName",
+              "projectKey",
+              "projectName",
+              "progress",
+              "workCardSnapshotIds"
+            ],
+            "additionalProperties": false
+          }
         },
         "markdown": {
           "type": "string"

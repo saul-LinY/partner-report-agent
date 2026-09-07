@@ -815,6 +815,38 @@ export class FeishuGateway {
       return;
     }
 
+    if (event.value.action === "review_page") {
+      const view = await this.deliveries.loadReviewDeliveryView(
+        scope,
+        event.value.aggregateId,
+      );
+      if (!view)
+        throw new ApiError(
+          409,
+          "REVIEW_NOT_EDITABLE",
+          "该项目审核已结束，请查看最新卡片。",
+        );
+      if (
+        view.version !== event.value.baseVersion ||
+        view.item.id !== event.value.itemId
+      )
+        throw new ApiError(
+          409,
+          "VERSION_CONFLICT",
+          "卡片内容已更新，请查看最新版本。",
+        );
+      await this.messageClient.updateInteractiveCard({
+        messageId: delivery.messageId,
+        card: this.deliveries.renderReviewDeliveryCard(
+          view,
+          delivery.deliveryId,
+          undefined,
+          event.value.page,
+        ),
+      });
+      return;
+    }
+
     if (
       event.value.action === "review_approve" ||
       event.value.action === "review_exclude"

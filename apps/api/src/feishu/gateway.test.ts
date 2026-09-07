@@ -109,6 +109,9 @@ describe("FeishuGateway review decisions", () => {
     const deliveryId = randomUUID();
     const eventId = randomUUID();
     const staleEventId = randomUUID();
+    const pageEventId = randomUUID();
+    const unauthorizedPageEventId = randomUUID();
+    const stalePageEventId = randomUUID();
     const appId = `cli_review_decision_test_${randomUUID()}`;
     const openId = `ou_${randomUUID()}`;
     const messageId = `om_${randomUUID()}`;
@@ -154,7 +157,7 @@ describe("FeishuGateway review decisions", () => {
         ) values (
           ${firstItemId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
           ${reviewId}, '第一张工作卡片', 'in_progress', 'pending', '[]'::jsonb,
-          '{"overview":"第一项进展","dailyProgress":[]}'::jsonb,
+          ${JSON.stringify({ overview: "第一项完整进展。".repeat(2500), dailyProgress: [] })}::jsonb,
           '2099-03-01T01:00:00Z'
         ), (
           ${secondItemId}, ${tenantId}, ${teamId}, ${partnerId}, ${periodId},
@@ -210,6 +213,47 @@ describe("FeishuGateway review decisions", () => {
         context: { open_message_id: messageId },
       };
 
+      const pageCallback = {
+        ...callback,
+        event_id: pageEventId,
+        action: {
+          value: { ...callback.action.value, action: "review_page", page: 1 },
+        },
+      };
+      await gateway.acceptCardAction(pageCallback);
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(updateInteractiveCard.mock.calls[0]?.[0]).toMatchObject({
+        messageId,
+      });
+      expect(
+        JSON.stringify(updateInteractiveCard.mock.calls[0]?.[0]),
+      ).toContain("第 2 /");
+      const [unchangedReview] =
+        await sql`select version,approved_count,pending_count from reviews where id=${reviewId}`;
+      expect(unchangedReview).toEqual({
+        version: 1,
+        approved_count: 0,
+        pending_count: 2,
+      });
+      expect(
+        await sql`select id from agent_jobs where tenant_id=${tenantId}`,
+      ).toHaveLength(0);
+      expect(
+        await sql`select id from work_item_snapshots where tenant_id=${tenantId}`,
+      ).toHaveLength(0);
+      await gateway.acceptCardAction(pageCallback);
+      await expect(gateway.drainInbox()).resolves.toBe(0);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+      await gateway.acceptCardAction({
+        ...pageCallback,
+        event_id: unauthorizedPageEventId,
+        operator: { open_id: "ou_wrong_person" },
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+      expect(updateInteractiveCard).toHaveBeenCalledTimes(1);
+      updateInteractiveCard.mockClear();
+
       const processingCard = await gateway.acceptCardAction(callback);
       expect(processingCard).toEqual({
         toast: { type: "success", content: "已收到，正在处理。" },
@@ -256,8 +300,23 @@ describe("FeishuGateway review decisions", () => {
         JSON.stringify(updateInteractiveCard.mock.calls[1]?.[0]),
       ).toContain("第二张工作卡片");
       expect(sendInteractiveCard).not.toHaveBeenCalled();
+      await gateway.acceptCardAction({
+        ...pageCallback,
+        event_id: stalePageEventId,
+      });
+      await expect(gateway.drainInbox()).resolves.toBe(1);
+      expect(
+        JSON.stringify(updateInteractiveCard.mock.calls.at(-1)?.[0]),
+      ).toContain("第二张工作卡片");
+      const [afterStalePage] =
+        await sql`select version,approved_count,pending_count from reviews where id=${reviewId}`;
+      expect(afterStalePage).toEqual({
+        version: 2,
+        approved_count: 1,
+        pending_count: 1,
+      });
     } finally {
-      await sql`delete from feishu_inbox_events where event_id in (${eventId}, ${staleEventId})`;
+      await sql`delete from feishu_inbox_events where event_id in (${eventId}, ${staleEventId}, ${pageEventId}, ${unauthorizedPageEventId}, ${stalePageEventId})`;
       await sql`delete from audit_events where tenant_id = ${tenantId}`;
       await sql`delete from outbox_events where tenant_id = ${tenantId}`;
       await sql`delete from feishu_deliveries where tenant_id = ${tenantId}`;

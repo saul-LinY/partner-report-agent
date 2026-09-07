@@ -18,12 +18,14 @@ describe("reader-facing generation instructions", () => {
 
     expect(instructions).toContain("simplified Chinese");
     expect(instructions).toContain("plain, direct, everyday Chinese");
-    expect(instructions).toContain("80 to 100 Chinese characters");
-    expect(instructions).toContain("about 50 Chinese characters");
-    expect(instructions).toContain("never more than 60");
+    expect(instructions).toContain("120 to 180 Chinese characters");
+    expect(instructions).toContain("50 to 90 Chinese characters");
+    expect(instructions).toContain("fixed outcomeMaterial");
+    expect(instructions).toContain("currentCard");
+    expect(instructions).toContain("reviewInstructions");
     expect(instructions).toContain("authoritative first-hand correction");
     expect(instructions).toContain("do not output a project description");
-    expect(instructions).toContain("2026-08-28.project-card.v7");
+    expect(instructions).toContain("2026-09-07.project-card.v8");
   });
 });
 
@@ -195,24 +197,16 @@ describe("Team Report normalization", () => {
     );
 
     expect(report.summary).toContain("系统没有采集到可用于团队工作汇报的记录");
-    expect(report.sections).toHaveLength(3);
-    expect(report.sections[0].markdown).toContain(
-      "| 成员 | 项目 | 本周工作明细 |",
-    );
-    expect(report.sections[0].markdown).toContain("| 林勇 | - |");
-    expect(report.sections[0].markdown).toContain("不对其实际工作作出判断");
-    expect(report.sections[1].markdown).toContain(
-      "| 成员 | 项目 | 与上周相比 |",
-    );
-    expect(report.sections[2].markdown).toContain(
-      "| 成员 | 项目 | 风险与阻塞 |",
-    );
+    expect(report.sections).toHaveLength(1);
+    expect(report.sections[0].markdown).toContain("暂无可用于汇报的项目记录");
+    expect(report.projectProgress).toEqual([]);
+    expect(report.summary).toContain("不代表团队成员没有开展工作");
     expect(report.qualityWarnings).toContain(
       "NO_REPORTABLE_ACTIVITY_COLLECTED",
     );
   });
 
-  it("normalizes model deviations without blocking report generation", () => {
+  it("filters unsupported references without inventing missing sections", () => {
     const snapshotId = "11111111-1111-4111-8111-111111111111";
     const report = normalizeTeamReportGeneration(
       {
@@ -236,24 +230,11 @@ describe("Team Report normalization", () => {
     );
 
     expect(report.summary).toBe("简短摘要。");
-    expect(report.sections).toHaveLength(3);
-    expect(report.sections[0]!.markdown).toContain(
-      "| 成员 | 项目 | 本周工作明细 |",
-    );
+    expect(report.sections).toHaveLength(1);
+    expect(report.sections[0]!.markdown).toBe("林勇完成了相关工作。");
     expect(report.sections[0]!.claims[0]!.workCardSnapshotIds).toEqual([
       snapshotId,
     ]);
-    expect(report.sections[1]).toMatchObject({
-      key: "week_comparison",
-      markdown: expect.stringContaining("| 成员 | 项目 | 与上周相比 |"),
-    });
-    expect(report.sections[2]).toMatchObject({
-      key: "risks",
-      markdown: expect.stringContaining("| 成员 | 项目 | 风险与阻塞 |"),
-    });
-    expect(report.qualityWarnings).toContain(
-      "MODEL_TEAM_REPORT_SECTIONS_NORMALIZED",
-    );
   });
 
   it("preserves project progress descriptions longer than the prompt target", () => {

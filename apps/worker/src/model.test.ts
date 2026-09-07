@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { aggregationResultSchema } from "@partner-report/contracts";
 import { generateStructured, retryAfterMs } from "./model.js";
 
@@ -46,6 +47,76 @@ describe("central structured model client", () => {
         output_text: JSON.stringify(result),
       }),
     );
+
+  it("accepts complete prose only when a single-field writer explicitly opts in", async () => {
+    process.env.MODEL_API_KEY = "test-only-key";
+    const progress = "已完成可用的产品初版。".repeat(40);
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ output_text: progress })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const input = {
+      name: "project_writing",
+      schema: z.object({ progress: z.string().min(1) }).strict(),
+      instructions: "Write progress.",
+      input: {},
+      model: "deepseek-v4-flash:cloud",
+    };
+    await expect(
+      generateStructured({ ...input, plainTextField: "progress" }),
+    ).resolves.toEqual({ progress });
+    await expect(generateStructured(input)).rejects.toMatchObject({
+      code: "MODEL_OUTPUT_NOT_VALID_JSON",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    '{"progress":"unfinished',
+    "<html>error</html>",
+    "```json\ninvalid\n```",
+  ])(
+    "does not turn malformed structured output into prose: %s",
+    async (text) => {
+      process.env.MODEL_API_KEY = "test-only-key";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(JSON.stringify({ output_text: text }))),
+      );
+      await expect(
+        generateStructured({
+          name: "project_writing",
+          schema: z.object({ progress: z.string() }).strict(),
+          instructions: "Write progress.",
+          input: {},
+          model: "deepseek-v4-flash:cloud",
+          plainTextField: "progress",
+        }),
+      ).rejects.toMatchObject({ code: "MODEL_OUTPUT_NOT_VALID_JSON" });
+    },
+  );
+
+  it("can disable reasoning for one writing call without changing other requests", async () => {
+    process.env.MODEL_API_KEY = "test-only-key";
+    process.env.MODEL_REASONING_EFFORT = "low";
+    const fetchMock = vi.fn(success);
+    vi.stubGlobal("fetch", fetchMock);
+    await generateStructured({
+      name: "project_writing",
+      schema: aggregationResultSchema,
+      instructions: "Write progress.",
+      input: {},
+      model: "deepseek-v4-flash:cloud",
+      reasoningEffort: "none",
+    });
+    await generate();
+    expect(
+      fetchMock.mock.calls.map(
+        (args) => JSON.parse(String((args as any)[1].body)).reasoning.effort,
+      ),
+    ).toEqual(["none", "low"]);
+    expect(process.env.MODEL_REASONING_EFFORT).toBe("low");
+  });
 
   it.each(["json", "html", "network"])(
     "recovers from a temporary %s failure within the request budget",

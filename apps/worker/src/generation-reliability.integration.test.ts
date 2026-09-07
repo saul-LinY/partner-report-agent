@@ -163,11 +163,38 @@ suite("durable model retry scheduling", () => {
     const projectBuckets = ["a", "b", "c", "d", "e"].map((projectKey) => ({
       projectKey,
     }));
-    const id = await createJob("AGGREGATE_WORK_ITEMS", { projectBuckets });
+    const id = await createJob("AGGREGATE_WORK_ITEMS", {
+      projectBuckets,
+      reviewId: randomUUID(),
+    });
     const fetchMock = vi.fn(async () => {
       const [row] =
         await sql`select extract(epoch from lease_until - updated_at) as lease_seconds from agent_jobs where id = ${id}`;
-      expect(Number(row!.lease_seconds)).toBe(3 * 240 + 60);
+      expect(Number(row!.lease_seconds)).toBe(3 * 2 * 240 + 60);
+      return new Response("unauthorized", { status: 401 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await processNextGenerationJob(tenant);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("leases time for all weekly project batches and the final summary", async () => {
+    const id = await createJob("GENERATE_TEAM_REPORT", {
+      workCards: [
+        {
+          partnerId: randomUUID(),
+          snapshotId: randomUUID(),
+          workItems: ["a", "b", "c", "d", "e"].map((projectKey) => ({
+            projectKey,
+            title: projectKey,
+          })),
+        },
+      ],
+    });
+    const fetchMock = vi.fn(async () => {
+      const [row] =
+        await sql`select extract(epoch from lease_until - updated_at) as lease_seconds from agent_jobs where id = ${id}`;
+      expect(Number(row!.lease_seconds)).toBe((3 + 1) * 240 + 60);
       return new Response("unauthorized", { status: 401 });
     });
     vi.stubGlobal("fetch", fetchMock);

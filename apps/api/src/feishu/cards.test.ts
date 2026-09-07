@@ -414,7 +414,7 @@ describe("Feishu JSON 2.0 cards", () => {
     ).toThrow();
   });
 
-  it("clips long card text without splitting Unicode characters", () => {
+  it("preserves long review text while retaining clipping for compact labels", () => {
     expect(truncateCardText("项目进展🚀继续推进", 8)).toBe("项目进展🚀...");
 
     const card = renderReviewCard({
@@ -432,10 +432,139 @@ describe("Feishu JSON 2.0 cards", () => {
     const item = findByElementId(card, "review_item");
     const content = (item?.text as { content: string }).content;
 
-    expect(Array.from(content).length).toBeLessThanOrEqual(
-      FEISHU_CARD_BODY_TEXT_LIMIT,
-    );
-    expect(content.endsWith("...")).toBe(true);
+    expect(content).toContain("甲".repeat(FEISHU_CARD_BODY_TEXT_LIMIT * 2));
+    expect(content.endsWith("...")).toBe(false);
+    expect(
+      callbackValues(card).some((value) => value.action === "review_page"),
+    ).toBe(false);
+  });
+
+  it("shows all dates and full summaries when the complete card fits", () => {
+    const dailyProgress = Array.from({ length: 8 }, (_, i) => ({
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      summary: `第${i + 1}天` + "完成".repeat(170),
+    }));
+    const card = renderReviewCard({
+      deliveryId: ids.deliveryId,
+      aggregateId: ids.aggregateId,
+      baseVersion: 1,
+      progress: { current: 1, total: 1, approved: 0, excluded: 0 },
+      item: {
+        id: ids.itemId,
+        title: "项目",
+        status: "in_progress",
+        overview: "总览".repeat(500),
+        dailyProgress,
+      },
+    });
+    const body = (
+      findByElementId(card, "review_item")!.text as { content: string }
+    ).content;
+    expect(body).toContain("总览".repeat(500));
+    for (const entry of dailyProgress)
+      expect(body).toContain(`${entry.date}：${entry.summary}`);
+    expect(body).not.toContain("未在卡片中展开");
+    expect(findByElementId(card, "review_next_page")).toBeUndefined();
+  });
+
+  it("paginates escaped Unicode text without loss and keeps whole-card actions on every page", () => {
+    const overview = "全文👩‍💻 & <标签> *重点* \\".repeat(2500);
+    const input = {
+      deliveryId: ids.deliveryId,
+      aggregateId: ids.aggregateId,
+      baseVersion: 8,
+      progress: { current: 1, total: 1, approved: 0, excluded: 0 },
+      item: {
+        id: ids.itemId,
+        title: "分页项目",
+        status: "in_progress",
+        overview,
+      },
+    };
+    const parts: string[] = [];
+    for (let page = 0; page < 100; page++) {
+      const card = renderReviewCard({ ...input, page });
+      expect(
+        Buffer.byteLength(
+          JSON.stringify({ content: JSON.stringify(card) }),
+          "utf8",
+        ),
+      ).toBeLessThan(FEISHU_CARD_MAX_JSON_BYTES);
+      const body = (
+        findByElementId(card, "review_item")!.text as { content: string }
+      ).content;
+      parts.push(body.split("**本周进展总览**\n")[1]!);
+      const values = callbackValues(card);
+      for (const action of [
+        "review_approve",
+        "review_exclude",
+        "review_regenerate",
+      ])
+        expect(values).toContainEqual({
+          deliveryId: ids.deliveryId,
+          aggregateId: ids.aggregateId,
+          itemId: ids.itemId,
+          baseVersion: 8,
+          action,
+        });
+      expect(
+        Boolean(findByElementId(card, "review_previous_page")!.disabled),
+      ).toBe(page === 0);
+      if (findByElementId(card, "review_next_page")!.disabled) break;
+      expect(values).toContainEqual(
+        expect.objectContaining({ action: "review_page", page: page + 1 }),
+      );
+    }
+    expect(parts.length).toBeGreaterThan(1);
+    const escaped = overview
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replace(/([\\`*_\[\]~])/g, "\\$1");
+    expect(parts.join("")).toBe(escaped);
+  });
+
+  it("keeps dates together across pages and resets a shorter rewritten card to its first page", () => {
+    const input = {
+      deliveryId: ids.deliveryId,
+      aggregateId: ids.aggregateId,
+      baseVersion: 1,
+      progress: { current: 1, total: 1, approved: 0, excluded: 0 },
+      item: {
+        id: ids.itemId,
+        title: "分页项目",
+        status: "in_progress",
+        overview: "概览",
+        dailyProgress: Array.from({ length: 8 }, (_, i) => ({
+          date: `2026-09-0${i + 1}`,
+          summary: `成果${i}。`.repeat(600),
+        })),
+      },
+    };
+    const bodies: string[] = [];
+    for (let page = 0; page < 20; page++) {
+      const card = renderReviewCard({ ...input, page });
+      bodies.push(
+        (findByElementId(card, "review_item")!.text as { content: string })
+          .content,
+      );
+      if (findByElementId(card, "review_next_page")?.disabled) break;
+    }
+    expect(bodies.length).toBeGreaterThan(1);
+    for (const entry of input.item.dailyProgress)
+      expect(
+        bodies.filter((body) =>
+          body.includes(`${entry.date}：${entry.summary}`),
+        ),
+      ).toHaveLength(1);
+    const shorter = renderReviewCard({
+      ...input,
+      baseVersion: 2,
+      page: 100,
+      item: { ...input.item, overview: "改写后的全文", dailyProgress: [] },
+    });
+    expect(findByElementId(shorter, "review_next_page")).toBeUndefined();
+    expect(JSON.stringify(shorter)).toContain("改写后的全文");
   });
 
   it("renders stale, error, and locked cards without callbacks", () => {

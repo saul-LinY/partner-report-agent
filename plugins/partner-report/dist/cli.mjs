@@ -4238,10 +4238,19 @@ var teamReportGenerationSectionSchema = external_exports.object({
   markdown: external_exports.string(),
   claims: external_exports.array(teamReportClaimSchema).default([])
 });
+var teamReportProjectProgressSchema = external_exports.object({
+  partnerId: external_exports.string(),
+  partnerName: external_exports.string(),
+  projectKey: external_exports.string().nullable(),
+  projectName: external_exports.string(),
+  progress: external_exports.string(),
+  workCardSnapshotIds: external_exports.array(external_exports.string())
+});
 var teamReportGenerationResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
   summary: external_exports.string().trim().min(1),
   sections: external_exports.array(teamReportGenerationSectionSchema),
+  projectProgress: external_exports.array(teamReportProjectProgressSchema).optional(),
   missingPartnerIds: external_exports.array(external_exports.string()).default([]),
   qualityWarnings: external_exports.array(external_exports.string()).default([]),
   production: productionMetadataSchema
@@ -4250,7 +4259,8 @@ var teamReportResultSchema = external_exports.object({
   schemaVersion: external_exports.literal("1.0"),
   title: external_exports.string(),
   summary: external_exports.string().trim().min(1),
-  sections: external_exports.array(teamReportSectionSchema).length(3),
+  sections: external_exports.array(teamReportSectionSchema).min(1).max(3),
+  projectProgress: external_exports.array(teamReportProjectProgressSchema).optional(),
   markdown: external_exports.string(),
   missingPartnerIds: external_exports.array(idSchema).default([]),
   qualityWarnings: external_exports.array(external_exports.string()).default([]),

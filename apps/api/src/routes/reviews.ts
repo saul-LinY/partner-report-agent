@@ -526,39 +526,66 @@ export async function regenerateReviewWorkItem(
     if (pendingJobs[0])
       throw new ApiError(409, "REGENERATION_PENDING", "这张卡片正在重新生成。");
 
-    const facts = await tx<any[]>`
-      select sf.id, sf.payload, sf.source_occurred_at
-      from work_item_facts wf
-      join session_facts sf on sf.id = wf.fact_id and sf.tenant_id = ${actor.tenantId}
-      where wf.work_item_id = ${workItemId}
-      order by sf.source_occurred_at nulls last, sf.created_at, sf.id
-    `;
-    if (facts.length === 0)
-      throw new ApiError(
-        409,
-        "PROJECT_CARD_EMPTY",
-        "这张卡片没有可用于重新生成的贡献。",
-      );
-
     const projectKey =
       item.payload.projectKey ??
       (item.project_id ? `project:${item.project_id}` : `work-item:${item.id}`);
+    const drafts = await tx<any[]>`
+      select source_payload from project_outcome_drafts
+      where tenant_id = ${actor.tenantId} and review_id = ${reviewId}
+        and project_key = ${projectKey}
+    `;
+    let projectBucket = drafts[0]?.source_payload.bucket;
+    if (!projectBucket) {
+      // Older cards have no stage-one draft. Prefer their original generation input for the one-time backfill.
+      const originals = await tx<any[]>`
+        select bucket from agent_jobs job
+        cross join lateral jsonb_array_elements(job.input_payload->'projectBuckets') bucket
+        where job.tenant_id = ${actor.tenantId} and job.partner_id = ${actor.partnerId}
+          and job.type = 'AGGREGATE_WORK_ITEMS'
+          and job.input_payload->>'reviewId' = ${reviewId}
+          and job.input_payload->>'targetWorkItemId' is null
+          and bucket->>'projectKey' = ${projectKey}
+        order by job.created_at, job.id limit 1
+      `;
+      projectBucket = originals[0]?.bucket;
+    }
+    if (!projectBucket) {
+      const facts = await tx<any[]>`
+        select sf.id, sf.payload, sf.source_occurred_at
+        from work_item_facts wf
+        join session_facts sf on sf.id = wf.fact_id and sf.tenant_id = ${actor.tenantId}
+        where wf.work_item_id = ${workItemId}
+        order by sf.source_occurred_at nulls last, sf.created_at, sf.id
+      `;
+      if (facts.length === 0)
+        throw new ApiError(
+          409,
+          "PROJECT_CARD_EMPTY",
+          "这张卡片没有可用于重新生成的贡献。",
+        );
+      projectBucket = {
+        projectKey,
+        projectId: item.project_id,
+        projectName: item.project_name ?? item.title,
+        projectDescription: item.payload.projectDescription ?? "",
+        projectDescriptionCandidateId:
+          item.payload.projectDescriptionCandidateId ?? null,
+        projectDescriptionSourceFingerprint:
+          item.payload.projectDescriptionSourceFingerprint ?? null,
+        factIds: facts.map((fact: any) => fact.id),
+        facts,
+      };
+    }
+    const priorVersions = await tx<{ instruction: string }[]>`
+      select instruction from work_item_versions
+      where tenant_id = ${actor.tenantId} and work_item_id = ${workItemId}
+        and instruction is not null
+      order by version
+    `;
+    const previousInstructions = priorVersions.map(
+      (version) => version.instruction,
+    );
     const jobId = randomUUID();
-    const projectBucket = {
-      projectKey,
-      projectId: item.project_id,
-      projectName: item.project_name ?? item.title,
-      projectDescription:
-        typeof item.payload.projectDescription === "string"
-          ? item.payload.projectDescription
-          : "",
-      projectDescriptionCandidateId:
-        item.payload.projectDescriptionCandidateId ?? null,
-      projectDescriptionSourceFingerprint:
-        item.payload.projectDescriptionSourceFingerprint ?? null,
-      factIds: facts.map((fact) => fact.id),
-      facts,
-    };
     await tx`
       update work_items set review_status = 'pending', updated_at = now()
       where id = ${workItemId} and review_id = ${reviewId}
@@ -586,6 +613,12 @@ export async function regenerateReviewWorkItem(
           period: { id: review.period_id },
           projectBuckets: [projectBucket],
           reviewInstruction: instruction,
+          reviewInstructions: [...previousInstructions, instruction],
+          currentCard: {
+            status: item.status,
+            overview: item.payload.overview,
+            dailyProgress: item.payload.dailyProgress ?? [],
+          },
         })}::jsonb
       )
     `;

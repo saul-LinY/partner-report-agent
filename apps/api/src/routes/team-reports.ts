@@ -503,6 +503,8 @@ export async function teamReportRoutes(app: FastifyInstance) {
         title: input.title,
         summary: input.summary,
         markdown: input.markdown,
+        // Manually edited prose becomes the baseline for subsequent reports.
+        projectProgress: undefined,
       };
       await tx`
         insert into team_report_versions (

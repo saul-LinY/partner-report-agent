@@ -1076,6 +1076,34 @@ export const reviews = pgTable(
   ],
 );
 
+export const projectOutcomeDrafts = pgTable(
+  "project_outcome_drafts",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    reviewId: uuid("review_id")
+      .notNull()
+      .references(() => reviews.id, { onDelete: "cascade" }),
+    projectKey: text("project_key").notNull(),
+    sourcePayload: jsonb("source_payload").notNull(),
+    sourceChecksum: text("source_checksum").notNull(),
+    material: jsonb("material").notNull(),
+    production: jsonb("production").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_outcome_drafts_review_project_unique").on(
+      table.tenantId,
+      table.reviewId,
+      table.projectKey,
+    ),
+  ],
+);
+
 export const workItems = pgTable(
   "work_items",
   {

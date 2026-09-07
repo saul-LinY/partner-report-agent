@@ -43,9 +43,56 @@ suite("synthetic report generation pipeline", () => {
           expect(request.text.format.schema.properties).not.toHaveProperty(
             "markdown",
           );
-          expect(
-            request.text.format.schema.properties.sections.items.properties,
-          ).not.toHaveProperty("title");
+          expect(request.text.format.schema.properties).toHaveProperty(
+            "blockers",
+          );
+          return new Response(
+            JSON.stringify({
+              output_text: JSON.stringify({
+                summary: (nextOutput as any).summary,
+                blockers: [],
+              }),
+            }),
+          );
+        }
+        if (request.text?.format?.name === "partner_team_project_progress") {
+          expect(request.reasoning.effort).toBe("none");
+          return new Response(
+            JSON.stringify({
+              output_text: JSON.stringify({
+                progress:
+                  "上周无同项目记录可供比较。本周完成合成项目成果验证。",
+              }),
+            }),
+          );
+        }
+        if (request.text?.format?.name === "partner_project_outcomes") {
+          const input = JSON.parse(
+            request.input[1].content[0].text
+              .split("<partner_report_data>\n")[1]
+              .split("\n</partner_report_data>")[0],
+          );
+          return new Response(
+            JSON.stringify({
+              output_text: JSON.stringify({
+                projectPurpose: "合成项目用于验证报告流程。",
+                weeklyFocus: ["验证项目成果"],
+                daily: [
+                  {
+                    date: input.facts[0].date ?? "2026-08-04",
+                    outcomes: [
+                      {
+                        done: "完成合成项目成果",
+                        purpose: "支持报告生成",
+                        unfinished: [],
+                        evidenceRefs: [input.facts[0].ref],
+                      },
+                    ],
+                  },
+                ],
+              }),
+            }),
+          );
         }
         return new Response(
           JSON.stringify({
@@ -307,57 +354,22 @@ suite("synthetic report generation pipeline", () => {
           title: "团队周报 2026-08-10",
           summary: expect.stringContaining("团队本周完成了重点工作的梳理"),
           missingPartnerIds: [],
-          sections: [
-            { key: "project_progress", title: "项目与人员工作明细" },
-            { key: "week_comparison", title: "与上周工作对比" },
-            { key: "risks", title: "风险与阻塞" },
-          ],
-          markdown: expect.stringContaining("## 项目与人员工作明细"),
+          sections: [{ key: "project_progress", title: "项目人员与工作明细" }],
+          markdown: expect.stringContaining("## 项目人员与工作明细"),
         },
       },
     ]);
     expect(teamReports[0].payload.markdown).not.toMatch(/数据覆盖|下一期重点/);
     expect(teamReports[0].payload.markdown).not.toContain("本周团队工作摘要");
-    expect(lastTeamReportInstructions).toContain(
-      "service assembles the top-level title and markdown deterministically",
+    expect(lastTeamReportInstructions).toContain("STAR");
+    expect(lastTeamReportInstructions).toContain("完整工作卡片");
+    expect(teamReports[0].payload.projectProgress).toHaveLength(1);
+    expect(teamReports[0].payload.production.promptVersion).toBe(
+      "2026-09-07.team.v19",
     );
-    expect(lastTeamReportInstructions).toContain(
-      "Include exactly three sections",
+    expect(teamReports[0].payload.markdown).toContain(
+      "| 项目负责人 | 项目名称 | 较上周进展 |",
     );
-    expect(lastTeamReportInstructions).toContain(
-      "top-level summary field is the management overview",
-    );
-    expect(lastTeamReportInstructions).toContain("260 to 320");
-    expect(lastTeamReportInstructions).toContain(
-      "business leader who does not understand software engineering",
-    );
-    expect(lastTeamReportInstructions).toContain(
-      "Do not turn it into a person-by-person or project-by-project list",
-    );
-    expect(lastTeamReportInstructions).toContain(
-      "Target about 100 Chinese characters",
-    );
-    expect(lastTeamReportInstructions).toContain(
-      "copying each project name exactly",
-    );
-    expect(lastTeamReportInstructions).toContain("成员, 项目, 风险与阻塞");
-    expect(lastTeamReportInstructions).toContain("成员, 项目, 与上周相比");
-    expect(lastTeamReportInstructions).toContain(
-      "Absence from the current Work Cards is not evidence",
-    );
-    expect(lastTeamReportInstructions).toContain(
-      'Do not start descriptions with phrases such as "当前状态为"',
-    );
-    expect(lastTeamReportInstructions).toContain(
-      "do not expose raw status enum identifiers",
-    );
-    expect(lastTeamReportInstructions).toContain(
-      "copy only exact values from workCards[].snapshotId",
-    );
-    expect(lastTeamReportInstructions).toContain(
-      `the complete allowlist is ["${snapshotId}"]`,
-    );
-    expect(lastTeamReportInstructions).toContain("2026-08-31.team.v18");
     expect(teamReports[0].payload.markdown).toContain(
       "| Synthetic Partner | 未识别项目 |",
     );
