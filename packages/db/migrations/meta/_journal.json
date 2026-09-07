@@ -239,6 +239,13 @@
       "when": 1788514568484,
       "tag": "0033_fancy_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788752663726,
+      "tag": "0034_model_job_retry_schedule",
+      "breakpoints": true
     }
   ]
 }

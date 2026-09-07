@@ -11,7 +11,6 @@ import {
   REVIEW_REGENERATION_INSTRUCTION_FIELD,
   renderErrorCard,
   renderLockedCard,
-  renderProcessingCard,
   renderStaleCard,
   renderStatusCard,
   SCOPE_FORM_FIELD_PREFIX,
@@ -106,36 +105,20 @@ type DeliveryRetryRow = FeishuDeliveryScope & {
   aggregateId: string;
 };
 
-export type FeishuCallbackResponse =
-  | {
-      toast: {
-        type: "success" | "error";
-        content: string;
-      };
-    }
-  | FeishuCard;
+export type FeishuCallbackResponse = {
+  toast: {
+    type: "success" | "error" | "info";
+    content: string;
+  };
+};
+
+export const FEISHU_CALLBACK_RESPONSE_TIMEOUT_MS = 1_500;
 
 function callbackResponse(
-  type: "success" | "error",
+  type: FeishuCallbackResponse["toast"]["type"],
   content: string,
 ): FeishuCallbackResponse {
   return { toast: { type, content } };
-}
-
-function actionProcessingCard(action: FeishuActionValue["action"]): FeishuCard {
-  if (action.startsWith("scope_")) {
-    return renderProcessingCard({
-      title: "权限审核处理中",
-      message: "权限选择已收到，系统正在处理。完成后这张卡片会自动更新。",
-    });
-  }
-  const regenerating = action === "review_regenerate";
-  return renderProcessingCard({
-    title: regenerating ? "正在重新生成" : "审核处理中",
-    message: regenerating
-      ? "修改意见已收到，系统正在重新生成工作卡片。完成后这张卡片会自动更新。"
-      : "审核操作已收到，系统正在处理。完成后这张卡片会自动更新。",
-  });
 }
 
 function expectedDeliveryKind(
@@ -301,6 +284,70 @@ export class FeishuGateway {
   }
 
   async acceptCardAction(rawEvent: unknown): Promise<FeishuCallbackResponse> {
+    const startedAt = performance.now();
+    const eventId = opaqueIdSchema.safeParse(safeRecord(rawEvent).event_id);
+    const context = {
+      component: "feishu_callback",
+      ...(eventId.success ? { eventId: eventId.data } : {}),
+    };
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const acceptance = Promise.resolve()
+      .then(() => this.enqueueCardAction(rawEvent))
+      .then(
+        (response) => {
+          this.logger.info(
+            {
+              ...context,
+              elapsedMs: Math.round(performance.now() - startedAt),
+              outcome:
+                response.toast.type === "error" ? "rejected" : "accepted",
+              afterResponseDeadline: timedOut,
+            },
+            "Feishu callback acceptance completed",
+          );
+          return response;
+        },
+        (error: unknown) => {
+          this.logger.error(
+            {
+              ...context,
+              elapsedMs: Math.round(performance.now() - startedAt),
+              afterResponseDeadline: timedOut,
+              errorCode: safeFailure(error).code,
+            },
+            "Feishu callback acceptance failed",
+          );
+          return callbackResponse("error", "操作接收失败，请稍后重试。");
+        },
+      );
+    // Keep slow writes alive: once persisted, the inbox worker applies the action.
+    // A toast-only ACK cannot overwrite a newer card patched by that worker.
+    const deadline = new Promise<FeishuCallbackResponse>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        this.logger.warn(
+          { ...context, elapsedMs: Math.round(performance.now() - startedAt) },
+          "Feishu callback response deadline reached",
+        );
+        resolve(
+          callbackResponse(
+            "info",
+            "请求接收较慢，请稍后查看卡片状态；未更新可重试。",
+          ),
+        );
+      }, FEISHU_CALLBACK_RESPONSE_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([acceptance, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async enqueueCardAction(
+    rawEvent: unknown,
+  ): Promise<FeishuCallbackResponse> {
     const parsedEvent = cardActionEventSchema.safeParse(rawEvent);
     if (!parsedEvent.success) {
       this.logger.warn(
@@ -371,13 +418,6 @@ export class FeishuGateway {
     `;
 
     this.kickHandler?.();
-    if (
-      inserted[0] &&
-      (actionValue.data.action.startsWith("review_") ||
-        actionValue.data.action.startsWith("scope_"))
-    ) {
-      return actionProcessingCard(actionValue.data.action);
-    }
     return callbackResponse(
       "success",
       inserted[0] ? "已收到，正在处理。" : "该操作已经收到，请勿重复点击。",
@@ -399,7 +439,11 @@ export class FeishuGateway {
           if (isExpectedError(error)) {
             try {
               await this.reflectExpectedError(event, error);
-              await this.markInboxProcessed(event.id, error);
+              if (error.code === "AGENT_JOB_PENDING") {
+                await this.markInboxFailed(event.id, error);
+              } else {
+                await this.markInboxProcessed(event.id, error);
+              }
             } catch (reflectionError) {
               await this.markInboxFailed(event.id, reflectionError);
             }
@@ -619,6 +663,8 @@ export class FeishuGateway {
         select id from feishu_inbox_events
         where status = 'received'
           or (status = 'failed' and updated_at < now() - interval '30 seconds')
+          or (status = 'processed' and error_code = 'AGENT_JOB_PENDING'
+            and updated_at < now() - interval '30 seconds')
           or (status = 'processing' and updated_at < now() - interval '2 minutes')
         order by received_at asc
         for update skip locked
@@ -1161,6 +1207,21 @@ export class FeishuGateway {
       return;
     }
 
+    if (kind === "review" && error.code === "AGENT_JOB_PENDING") {
+      const result = await this.deliveries.patchReviewStatus({
+        ...delivery,
+        reviewId: event.value.aggregateId,
+        card: renderStatusCard({
+          kind: "processing",
+          title: "等待当前审核任务完成",
+          message: "审核选择已保存，当前批次的任务结束后将自动继续。",
+        }),
+      });
+      if (deliveryNeedsStatusRetry(result))
+        throw new Error("FEISHU_STATUS_PATCH_DEFERRED");
+      return;
+    }
+
     const contentChanged = error.code === "VERSION_CONFLICT";
     if (contentChanged) {
       if (kind === "review") {
@@ -1572,10 +1633,17 @@ export class FeishuGateway {
         error_message = ${failure.message}, updated_at = now()
       where id = ${id}
     `;
-    this.logger.error(
-      { inboxId: id, errorCode: failure.code },
-      "Feishu inbox event failed",
-    );
+    if (failure.code === "AGENT_JOB_PENDING") {
+      this.logger.info(
+        { inboxId: id, errorCode: failure.code },
+        "Feishu review completion deferred until its jobs finish",
+      );
+    } else {
+      this.logger.error(
+        { inboxId: id, errorCode: failure.code },
+        "Feishu inbox event failed",
+      );
+    }
   }
 
   private async markInboxTerminalFailure(

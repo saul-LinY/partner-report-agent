@@ -15,11 +15,27 @@ const MAX_MODEL_REQUEST_TIMEOUT_MS = 900_000;
 const DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 32_768;
 const MAX_MODEL_MAX_OUTPUT_TOKENS = 128_000;
 
-export class ModelRequestTimeoutError extends Error {
-  readonly code = "MODEL_REQUEST_TIMEOUT";
+export class ModelGatewayError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly retryable: boolean,
+    readonly status?: number,
+    readonly retryAfterMs?: number,
+    readonly requestId?: string,
+  ) {
+    super(message);
+    this.name = "ModelGatewayError";
+  }
+}
 
+export class ModelRequestTimeoutError extends ModelGatewayError {
   constructor(readonly timeoutMs: number) {
-    super(`Model request timed out after ${timeoutMs}ms`);
+    super(
+      "MODEL_REQUEST_TIMEOUT",
+      `Model request timed out after ${timeoutMs}ms`,
+      true,
+    );
     this.name = "ModelRequestTimeoutError";
   }
 }
@@ -82,14 +98,133 @@ function reasoningRequest() {
 
 function responseText(payload: any) {
   if (typeof payload.output_text === "string") return payload.output_text;
-  for (const item of payload.output ?? []) {
+  const parts: string[] = [];
+  for (const item of Array.isArray(payload.output) ? payload.output : []) {
     if (item?.type !== "message") continue;
-    for (const content of item.content ?? []) {
+    for (const content of Array.isArray(item.content) ? item.content : []) {
       if (content?.type === "output_text" && typeof content.text === "string")
-        return content.text;
+        parts.push(content.text);
     }
   }
-  return null;
+  return parts.join("") || null;
+}
+
+export function retryAfterMs(value: string | null, now = Date.now()) {
+  if (!value?.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : undefined;
+}
+
+function diagnosticId(value: unknown) {
+  return typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,128}$/.test(value)
+    ? value
+    : undefined;
+}
+
+async function readResponse(response: Response) {
+  let payload: any;
+  try {
+    payload = JSON.parse(await response.text());
+  } catch (error) {
+    if (response.ok && error instanceof SyntaxError)
+      throw new ModelGatewayError(
+        "MODEL_INVALID_RESPONSE",
+        "Model gateway returned non-JSON data",
+        true,
+      );
+    if (response.ok) throw error;
+  }
+  const requestId =
+    diagnosticId(response.headers.get("x-request-id")) ??
+    diagnosticId(payload?.id);
+  if (!response.ok) {
+    const providerCode = diagnosticId(payload?.error?.code);
+    const permanentQuota = [
+      "insufficient_quota",
+      "billing_hard_limit_reached",
+    ].includes(providerCode ?? "");
+    const retryable =
+      !permanentQuota &&
+      [408, 409, 429, 500, 502, 503, 504].includes(response.status);
+    const code = permanentQuota
+      ? "MODEL_QUOTA_EXHAUSTED"
+      : response.status === 429
+        ? "MODEL_RATE_LIMITED"
+        : [401, 403].includes(response.status)
+          ? "MODEL_AUTH_FAILED"
+          : response.status >= 500
+            ? "MODEL_SERVICE_UNAVAILABLE"
+            : "MODEL_REQUEST_REJECTED";
+    throw new ModelGatewayError(
+      code,
+      `Model gateway HTTP ${response.status}${providerCode ? ` (${providerCode})` : ""}${requestId ? `; requestId=${requestId}` : ""}`,
+      retryable,
+      response.status,
+      retryAfterMs(response.headers.get("retry-after")),
+      requestId,
+    );
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload))
+    throw new ModelGatewayError(
+      "MODEL_INVALID_RESPONSE",
+      "Model gateway returned an invalid response object",
+      true,
+      undefined,
+      undefined,
+      requestId,
+    );
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const refused = output.some(
+    (item: any) =>
+      Array.isArray(item?.content) &&
+      item.content.some((content: any) => content?.type === "refusal"),
+  );
+  if (refused)
+    throw new ModelGatewayError(
+      "MODEL_OUTPUT_REFUSED",
+      "Model declined to generate structured output",
+      false,
+      undefined,
+      undefined,
+      requestId,
+    );
+  if (payload.status && payload.status !== "completed") {
+    const reason =
+      diagnosticId(payload.incomplete_details?.reason) ?? "unknown";
+    const types =
+      output
+        .map((item: any) => diagnosticId(item?.type))
+        .filter(Boolean)
+        .join(",") || "none";
+    throw new ModelGatewayError(
+      reason === "max_output_tokens"
+        ? "MODEL_OUTPUT_TOKEN_LIMIT"
+        : "MODEL_RESPONSE_INCOMPLETE",
+      `Model response ${requestId ?? "unknown"} did not complete (status=${diagnosticId(payload.status) ?? "unknown"}, reason=${reason}, outputTypes=${types})`,
+      reason !== "max_output_tokens" && reason !== "content_filter",
+      undefined,
+      undefined,
+      requestId,
+    );
+  }
+  return { payload, requestId };
+}
+
+function waitForRetry(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
 }
 
 function outputInstructions(
@@ -106,7 +241,11 @@ function parseStructuredText(text: string) {
   try {
     return JSON.parse(candidate);
   } catch {
-    throw new Error("MODEL_OUTPUT_NOT_VALID_JSON");
+    throw new ModelGatewayError(
+      "MODEL_OUTPUT_NOT_VALID_JSON",
+      "MODEL_OUTPUT_NOT_VALID_JSON",
+      true,
+    );
   }
 }
 
@@ -120,7 +259,12 @@ export async function generateStructured<T>({
   maxOutputTokens,
 }: GenerateInput): Promise<T> {
   const apiKey = process.env.MODEL_API_KEY ?? process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("MODEL_API_KEY is not configured");
+  if (!apiKey)
+    throw new ModelGatewayError(
+      "MODEL_NOT_CONFIGURED",
+      "MODEL_API_KEY is not configured",
+      false,
+    );
   const jsonSchema = zodToJsonSchema(schema as any, {
     $refStrategy: "none",
   }) as Record<string, unknown>;
@@ -128,8 +272,9 @@ export async function generateStructured<T>({
   const timeoutMs = timeoutOverride ?? modelRequestTimeoutMs();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const deadline = Date.now() + timeoutMs;
   try {
-    const response = await fetch(responsesEndpoint(), {
+    const request: RequestInit = {
       method: "POST",
       headers: {
         authorization: `Bearer ${apiKey}`,
@@ -170,28 +315,72 @@ export async function generateStructured<T>({
           },
         },
       }),
-    });
-    const payload = (await response.json()) as any;
-    if (!response.ok) {
-      throw new Error(
-        `OpenAI ${response.status}: ${payload?.error?.code ?? payload?.error?.message ?? "request_failed"}`,
-      );
+    };
+    // Short transport retries share one deadline; longer recovery belongs to the durable job queue.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      let response;
+      try {
+        response = await readResponse(
+          await fetch(responsesEndpoint(), request),
+        );
+      } catch (cause) {
+        if (controller.signal.aborted) throw cause;
+        const error =
+          cause instanceof TypeError
+            ? new ModelGatewayError(
+                "MODEL_NETWORK_ERROR",
+                "Model gateway network request failed",
+                true,
+              )
+            : cause;
+        const transportError =
+          error instanceof ModelGatewayError &&
+          error.retryable &&
+          (error.status !== undefined || error.code === "MODEL_NETWORK_ERROR");
+        if (!transportError || attempt === 3) throw error;
+        const delayMs = Math.max(
+          error.retryAfterMs ?? 0,
+          1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 500),
+        );
+        if (delayMs > 10_000 || Date.now() + delayMs + 1000 >= deadline)
+          throw error;
+        console.warn("Model request retry scheduled", {
+          name,
+          model,
+          attempt,
+          code: error.code,
+          status: error.status,
+          requestId: error.requestId,
+          delayMs,
+        });
+        await waitForRetry(delayMs, controller.signal);
+        continue;
+      }
+      const text = responseText(response.payload);
+      if (!text)
+        throw new ModelGatewayError(
+          "MODEL_OUTPUT_MISSING",
+          "Model response did not contain structured output",
+          true,
+          undefined,
+          undefined,
+          response.requestId,
+        );
+      const parsed = schema.safeParse(parseStructuredText(text));
+      if (!parsed.success)
+        throw new ModelGatewayError(
+          "MODEL_OUTPUT_SCHEMA_INVALID",
+          `Model output failed schema validation (${parsed.error.issues.length} issues)`,
+          true,
+          undefined,
+          undefined,
+          response.requestId,
+        );
+      const result = parsed.data;
+      if (result?.production) result.production.modelVersion = model;
+      return result as T;
     }
-    const text = responseText(payload);
-    if (!text) {
-      const outputTypes = Array.isArray(payload.output)
-        ? payload.output
-            .map((item: any) => item?.type)
-            .filter(Boolean)
-            .join(",")
-        : "none";
-      throw new Error(
-        `OpenAI response ${payload.id ?? "unknown"} did not contain structured output (status=${payload.status ?? "unknown"}, reason=${payload.incomplete_details?.reason ?? "unknown"}, outputTypes=${outputTypes || "none"})`,
-      );
-    }
-    const result = schema.parse(parseStructuredText(text)) as any;
-    if (result?.production) result.production.modelVersion = model;
-    return result as T;
+    throw new Error("MODEL_RETRY_EXHAUSTED");
   } catch (error) {
     if (controller.signal.aborted)
       throw new ModelRequestTimeoutError(timeoutMs);

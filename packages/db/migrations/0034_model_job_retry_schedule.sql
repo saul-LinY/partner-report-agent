@@ -1,0 +1,1 @@
+ALTER TABLE "agent_jobs" ADD COLUMN "next_retry_at" timestamp with time zone;

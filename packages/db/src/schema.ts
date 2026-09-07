@@ -1247,6 +1247,7 @@ export const agentJobs = pgTable(
     outputPayload: jsonb("output_payload"),
     leaseTokenHash: text("lease_token_hash"),
     leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
     attemptCount: integer("attempt_count").notNull().default(0),
     maxAttempts: integer("max_attempts").notNull().default(3),
     errorCode: text("error_code"),

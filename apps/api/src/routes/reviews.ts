@@ -305,10 +305,28 @@ export async function completeReview(
   )
     throw new ApiError(409, "REVIEW_INCOMPLETE", "仍有未确认的 Work Item。");
   const activeJobs = await sql`
-    select 1 from agent_jobs where tenant_id = ${actor.tenantId}
-      and partner_id = ${actor.partnerId}
-      and status in ('PENDING', 'LEASED', 'RETRY_WAIT')
-      and type in ('AGGREGATE_WORK_ITEMS', 'REANALYZE_SESSIONS')
+    select 1 from agent_jobs j where j.tenant_id = ${actor.tenantId}
+      and j.team_id = ${review.team_id} and j.partner_id = ${actor.partnerId}
+      and j.status in ('PENDING', 'LEASED', 'RETRY_WAIT')
+      and j.type in ('AGGREGATE_WORK_ITEMS', 'REANALYZE_SESSIONS')
+      and (
+        j.input_payload->>'reviewId' = ${reviewId}
+        or (
+          nullif(j.input_payload->>'reviewId', '') is null
+          and (
+            j.input_payload->'period'->>'id' = ${review.period_id}
+            or exists (
+              select 1 from work_items wi
+              where wi.tenant_id = j.tenant_id and wi.review_id = ${reviewId}
+                and wi.id::text = j.input_payload->>'targetWorkItemId'
+            )
+            or (
+              j.type = 'REANALYZE_SESSIONS'
+              and starts_with(j.idempotency_key, ${`reanalysis:${reviewId}:`})
+            )
+          )
+        )
+      )
     limit 1
   `;
   if (activeJobs.length > 0)
@@ -1174,7 +1192,11 @@ export async function reviewRoutes(app: FastifyInstance) {
             id, tenant_id, team_id, partner_id, plugin_instance_id, type, idempotency_key, input_payload
           ) values (
             ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${plugin.id}, 'REANALYZE_SESSIONS',
-            ${`reanalysis:${id}:${change.id}`}, ${JSON.stringify(change.after_payload)}::jsonb
+            ${`reanalysis:${id}:${change.id}`}, ${JSON.stringify({
+              ...change.after_payload,
+              reviewId: id,
+              period: { id: review.period_id },
+            })}::jsonb
           )
         `;
       } else {

@@ -11,6 +11,7 @@ import { sqlClient as sql } from "@partner-report/db";
 import { z } from "zod";
 import {
   generateStructured,
+  ModelGatewayError,
   ModelRequestTimeoutError,
   modelGatewayConfigured,
   modelRequestTimeoutMs,
@@ -122,21 +123,47 @@ export function projectAggregationInputs(inputPayload: any) {
   }));
 }
 
-async function generateAggregationByProject(job: Job, model: string) {
+const PROJECT_GENERATION_CONCURRENCY = 2;
+
+export async function generateAggregationByProject(job: Job, model: string) {
   const projectInputs = projectAggregationInputs(job.input_payload);
   if (projectInputs.length === 0) throw new Error("PROJECT_BUCKETS_REQUIRED");
 
-  const results = await Promise.all(
-    projectInputs.map((input: any) =>
-      generateStructured<any>({
-        name: "partner_work_item_aggregation",
-        schema: aggregationResultSchema,
-        instructions: aggregationInstructions(model),
-        input,
-        model,
-      }),
-    ),
-  );
+  const results: any[] = [];
+  for (
+    let start = 0;
+    start < projectInputs.length;
+    start += PROJECT_GENERATION_CONCURRENCY
+  ) {
+    // Drain this batch before retrying the job so requests never accumulate after a failure.
+    const batch = await Promise.allSettled(
+      projectInputs
+        .slice(start, start + PROJECT_GENERATION_CONCURRENCY)
+        .map((input: any) =>
+          generateStructured<any>({
+            name: "partner_work_item_aggregation",
+            schema: aggregationResultSchema,
+            instructions: aggregationInstructions(model),
+            input,
+            model,
+          }),
+        ),
+    );
+    const failed = batch.filter((result) => result.status === "rejected");
+    if (failed.length) {
+      const permanent = failed.find(
+        (result) =>
+          result.reason instanceof ModelGatewayError &&
+          !result.reason.retryable,
+      );
+      const longestDelay = failed.toSorted(
+        (a, b) => (b.reason?.retryAfterMs ?? 0) - (a.reason?.retryAfterMs ?? 0),
+      );
+      throw (permanent ?? longestDelay[0])!.reason;
+    }
+    for (const result of batch)
+      if (result.status === "fulfilled") results.push(result.value);
+  }
 
   return {
     schemaVersion: "1.0",
@@ -465,7 +492,6 @@ async function selectedTeamSettingsFor(job: Job) {
 }
 
 async function leaseNextJob(onlyTenantId?: string) {
-  const leaseMs = modelRequestTimeoutMs() + 60_000;
   return sql.begin(async (tx) => {
     const rows = await tx<Job[]>`
       select * from agent_jobs
@@ -477,16 +503,27 @@ async function leaseNextJob(onlyTenantId?: string) {
           'ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS'
         )
         and attempt_count < max_attempts
-        and (status = 'PENDING' or updated_at < now() - interval '1 minute')
+        and (status = 'PENDING' or coalesce(next_retry_at, updated_at + interval '1 minute') <= now())
       order by case when type like 'SYSTEM_HEALTH_%' then 0 else 1 end,
         created_at asc
       for update skip locked limit 1
     `;
     const job = rows[0];
     if (!job) return null;
+    const batches =
+      job.type === "AGGREGATE_WORK_ITEMS"
+        ? Math.max(
+            1,
+            Math.ceil(
+              projectAggregationInputs(job.input_payload).length /
+                PROJECT_GENERATION_CONCURRENCY,
+            ),
+          )
+        : 1;
+    const leaseMs = modelRequestTimeoutMs() * batches + 60_000;
     await tx`
       update agent_jobs set status = 'LEASED', attempt_count = attempt_count + 1,
-        lease_until = now() + ${leaseMs} * interval '1 millisecond', updated_at = now()
+        lease_until = now() + ${leaseMs} * interval '1 millisecond', next_retry_at = null, updated_at = now()
       where id = ${job.id}
     `;
     return { ...job, attempt_count: job.attempt_count + 1 };
@@ -810,7 +847,7 @@ function safeError(error: unknown) {
 }
 
 function generationErrorCode(error: unknown) {
-  if (error instanceof ModelRequestTimeoutError) return error.code;
+  if (error instanceof ModelGatewayError) return error.code;
   return modelGatewayConfigured()
     ? "CENTRAL_GENERATION_FAILED"
     : "MODEL_NOT_CONFIGURED";
@@ -829,7 +866,7 @@ async function runSystemHealthJob(job: Job) {
       input: { probe: "content_generation" },
       model,
       timeoutMs: 25_000,
-      maxOutputTokens: 64,
+      maxOutputTokens: 4096,
     });
     return { ok: true, component: "generation", model };
   }
@@ -902,7 +939,7 @@ async function runPluginLogAnalysisJob(job: Job) {
     },
     model,
     timeoutMs: 35_000,
-    maxOutputTokens: 900,
+    maxOutputTokens: 4096,
   });
   return normalizePluginLogAnalysis(
     generated,
@@ -930,7 +967,7 @@ async function runSystemLogAnalysisJob(job: Job) {
     },
     model,
     timeoutMs: 35_000,
-    maxOutputTokens: 900,
+    maxOutputTokens: 4096,
   });
   return normalizePluginLogAnalysis(
     generated,
@@ -946,6 +983,8 @@ function pluginLogAnalysisError(error: unknown) {
     };
   if (error instanceof ModelRequestTimeoutError)
     return { code: error.code, message: "模型分析超时，请稍后重试。" };
+  if (error instanceof ModelGatewayError)
+    return { code: error.code, message: error.message };
   if (!modelGatewayConfigured())
     return {
       code: "MODEL_NOT_CONFIGURED",
@@ -1062,7 +1101,17 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
     });
     return { processed: true, jobId: job.id, type: job.type };
   } catch (error) {
-    const terminal = job.attempt_count >= job.max_attempts;
+    const terminal =
+      job.attempt_count >= job.max_attempts ||
+      (error instanceof ModelGatewayError && !error.retryable);
+    const retryBaseMs = Math.min(
+      900_000,
+      60_000 * 2 ** Math.min(job.attempt_count - 1, 4),
+    );
+    const retryDelayMs = Math.max(
+      retryBaseMs + Math.floor(Math.random() * retryBaseMs * 0.25),
+      error instanceof ModelGatewayError ? (error.retryAfterMs ?? 0) : 0,
+    );
     const analysisError =
       job.type === "ANALYZE_PLUGIN_LOGS"
         ? pluginLogAnalysisError(error)
@@ -1079,7 +1128,9 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       await tx`
         update agent_jobs set status = ${terminal ? "FAILED" : "RETRY_WAIT"},
           error_code = ${errorCode}, error_message = ${errorMessage},
-          lease_until = null, updated_at = now()
+          lease_until = null,
+          next_retry_at = case when ${terminal} then null else now() + ${retryDelayMs} * interval '1 millisecond' end,
+          updated_at = now()
         where id = ${job.id} and status = 'LEASED'
       `;
       if (
@@ -1101,6 +1152,18 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
           )
         `;
       }
+    });
+    console.warn("Central generation attempt failed", {
+      jobId: job.id,
+      type: job.type,
+      attempt: job.attempt_count,
+      maxAttempts: job.max_attempts,
+      terminal,
+      code: errorCode,
+      message: errorMessage,
+      requestId:
+        error instanceof ModelGatewayError ? error.requestId : undefined,
+      retryDelayMs: terminal ? null : retryDelayMs,
     });
     return { processed: true, jobId: job.id, type: job.type, failed: true };
   }

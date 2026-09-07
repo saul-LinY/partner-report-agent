@@ -211,8 +211,8 @@ describe("FeishuGateway review decisions", () => {
       };
 
       const processingCard = await gateway.acceptCardAction(callback);
-      expect(processingCard).toMatchObject({
-        header: { title: { content: "审核处理中" } },
+      expect(processingCard).toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
       });
       expect(JSON.stringify(processingCard)).not.toContain("review_approve");
       expect(JSON.stringify(processingCard)).not.toContain("review_exclude");
@@ -247,8 +247,8 @@ describe("FeishuGateway review decisions", () => {
         ...callback,
         event_id: staleEventId,
       });
-      expect(staleProcessingCard).toMatchObject({
-        header: { title: { content: "审核处理中" } },
+      expect(staleProcessingCard).toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
       });
       await expect(gateway.drainInbox()).resolves.toBe(1);
       expect(updateInteractiveCard).toHaveBeenCalledTimes(2);
@@ -410,8 +410,8 @@ describe("FeishuGateway review decisions", () => {
         },
         context: { open_message_id: messageId },
       });
-      expect(processingCard).toMatchObject({
-        header: { title: { content: "正在重新生成" } },
+      expect(processingCard).toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
       });
       expect(JSON.stringify(processingCard)).not.toContain("review_regenerate");
       await expect(gateway.drainInbox()).resolves.toBe(1);
@@ -1119,9 +1119,8 @@ describe("FeishuGateway project scope delivery", () => {
           },
           context: { open_message_id: newMessageId },
         }),
-      ).resolves.toMatchObject({
-        schema: "2.0",
-        header: { title: { content: "权限审核处理中" } },
+      ).resolves.toEqual({
+        toast: { type: "success", content: "已收到，正在处理。" },
       });
       await expect(gateway.drainInbox()).resolves.toBe(1);
 
