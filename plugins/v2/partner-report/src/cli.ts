@@ -1,0 +1,2610 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { hostname, tmpdir } from "node:os";
+import { basename, dirname, relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import {
+  projectDescriptionResultSchema,
+  sessionExtractionResultSchema,
+} from "@partner-report/contracts";
+import {
+  PLUGIN_VERSION,
+  dataDirectory,
+  loadConfig,
+  loadSecret,
+  migrateLegacyInstallation,
+  normalizeServerUrl,
+  removeSecrets,
+  saveConfig,
+  saveSecret,
+  type PluginConfig,
+} from "./config.js";
+import { authenticatedRequest, HttpError, publicRequest } from "./http.js";
+import {
+  SCHEDULED_COLLECTION_TASK,
+  SCHEDULED_COLLECTION_TASK_POLICY,
+} from "./collection-config.js";
+import {
+  buildKnownSessionIndex,
+  matchingKnownDecision,
+  type KnownSession,
+} from "./collection-dedup.js";
+import {
+  acquireCollectionLease,
+  canAdvanceCollectionCheckpoint,
+  collectionWindow,
+  beijingWeekStartsAt,
+  initialProjectDiscoveryNeedsResume,
+  initialProjectScopeStartAt,
+  initializeCollectionFloor,
+  markWeekBackfillCompleted,
+  loadCollectionState,
+  recordAcceptedSession,
+  recordIgnoredSession,
+  refreshCollectionLease,
+  releaseCollectionLease,
+  reviewCollectionCompletion,
+  saveCollectionState,
+  threadIsInKnownScanWindow,
+  threadIsInScanWindow,
+  threadCouldContainWindowAnswer,
+} from "./collection-state.js";
+import {
+  MAX_EXTRACTION_FAILURES,
+  appendExtractionFailure,
+  collectionDeadline,
+  countJobOutcomes,
+  failedExtractOutcomeIsExplained,
+  immutableContributionFromRequirements,
+  jobOutcomeFailureAuditIsValid,
+  legalCollectSkipOutcome,
+  repairImmutableResult,
+  reviewSnapshotCoverage,
+  shouldStopBeforeClaim,
+  type ExtractionFailure,
+  type ExtractionFailureCode,
+  type JobOutcome,
+} from "./collection-run.js";
+import {
+  CodexAppServer,
+  type CodexThreadReadFailureCode,
+} from "./app-server.js";
+import {
+  CODEX_HOST_THREAD_LIST_LIMIT,
+  hostProjectDiscoveryMayBePartial,
+  parseHostProjectDiscoveryInput,
+  uniqueHostProjectDiscoveryThreads,
+} from "./host-project-discovery.js";
+import {
+  anonymousSessionKey,
+  buildSessionJob,
+  containsSensitive,
+  firstNonChineseContributionField,
+  isOfficialAutomationThread,
+  isPluginSystemThread,
+  mappedProject,
+  pathIsExcluded,
+  type CollectionPeriod,
+  type ProjectPolicy,
+} from "./scan.js";
+import {
+  authorizedProjectThreads,
+  applyScopeResolution,
+  discoverProjectScopes,
+  inspectLocalProjectScope,
+  mergeRemoteProjectScope,
+  saveLocalProjectScope,
+  scopeIsActive,
+  threadMayBeRead,
+  type LocalProjectScope,
+  type RemoteProjectScopePolicy,
+} from "./project-scope.js";
+import {
+  buildProjectDescriptionSource,
+  planProjectDescriptionSources,
+  projectDescriptionIsChinese,
+} from "./project-description.js";
+import {
+  installScheduledCollectionTask,
+  type ScheduledTaskInstallation,
+} from "./scheduled-task.js";
+import {
+  enqueueCollectionFinalState,
+  enqueuePluginLog,
+  flushPluginLogs,
+  pluginErrorDetails,
+  setPluginLogRunId,
+} from "./telemetry.js";
+import { waitForCondition } from "./poll-wait.js";
+
+type Policy = {
+  pluginInstanceId: string;
+  partnerId: string;
+  bindingStatus: string;
+  bindingCompleted: boolean;
+  team: { minimum_plugin_version?: string };
+  projects: ProjectPolicy[];
+  currentPeriod: (CollectionPeriod & { id: string }) | null;
+};
+
+type ConnectivityChallenge = {
+  challenge: string;
+  challengeExpiresAt: string;
+  capabilityVersion: "1.0";
+};
+
+type ClaimResponse = ConnectivityChallenge & {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  pluginInstanceId: string;
+  partnerId: string;
+  bindingStatus: string;
+};
+
+type ThreadSummary = {
+  id: string;
+  title: string | null;
+  cwd: string | null;
+  createdAt: string | number | null;
+  updatedAt: string | number | null;
+  archived: boolean;
+  ephemeral?: boolean;
+  threadSource?: string | null;
+  systemGenerated?: boolean;
+};
+
+type ScopedThreadSummary = ThreadSummary & {
+  scopeKey: string;
+  collectionStartsAt?: string;
+  collectionEndsAt?: string;
+  countedAsExcluded?: boolean;
+  initialCountBucket?: "excluded" | "outsideWindow";
+};
+
+type CoverageReadFailureCode =
+  CodexThreadReadFailureCode | "PROJECT_SCOPE_RECHECK_FAILED";
+
+type EndOfRunScopeScan = {
+  completed: boolean;
+  passes?: number;
+  processedThreadIds?: string[];
+  unresolvedReadFailures?: Record<string, CoverageReadFailureCode>;
+  readAttempts?: Record<string, number>;
+};
+
+type ProjectDescriptionQueueItem = {
+  scopeKey: string;
+  projectName: string;
+  rootFingerprint: string;
+  sourceFingerprint: string;
+  modelInput: Record<string, unknown>;
+};
+
+type ProjectDescriptionCurrent = ProjectDescriptionQueueItem & {
+  jobId?: string;
+  inputPath: string;
+  resultPath: string;
+  failures: number;
+};
+
+type ProjectDescriptionScan = {
+  initialized: boolean;
+  queue: ProjectDescriptionQueueItem[];
+  cursor: number;
+  current: ProjectDescriptionCurrent | null;
+  generated: number;
+  unchanged: number;
+  unauthorized?: number;
+  failed: number;
+};
+
+type RunCounts = {
+  discovered: number;
+  read: number;
+  eligible: number;
+  uploaded: number;
+  ignored: number;
+  unchanged: number;
+  cachedIgnored: number;
+  outsideWindow: number;
+  excluded: number;
+  failedRead: number;
+  failedPermissionCheck: number;
+  failedThreadRead: number;
+  invalidThreadHistory?: number;
+  failedExtract: number;
+  skipped: number;
+  deferred: number;
+  notProcessed: number;
+};
+
+type CurrentJob = {
+  jobId: string;
+  threadId?: string;
+  inputPath: string;
+  resultPath: string;
+  expected: any;
+  failures: ExtractionFailure[];
+};
+
+type RunManifest = {
+  schemaVersion: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5";
+  runId: string;
+  pluginInstanceId: string;
+  createdAt: string;
+  deadlineAt: string;
+  force: boolean;
+  period: CollectionPeriod;
+  reportPeriodStartsAt?: string;
+  reportPeriodEndsAt?: string;
+  scanStartsAt?: string;
+  scanEndsAt?: string;
+  initialThreadIds?: string[];
+  projects: ProjectPolicy[];
+  queue: ScopedThreadSummary[];
+  cursor: number;
+  knownSessions: Record<string, KnownSession>;
+  counts: RunCounts;
+  threadReadFailureCodes?: Partial<Record<CodexThreadReadFailureCode, number>>;
+  current: CurrentJob | null;
+  claimedJobs: number;
+  outcomes: JobOutcome[];
+  stopReason?:
+    "TIME_BUDGET_EXHAUSTED" | "RUN_INTERRUPTED" | "TEMPORARILY_UNAVAILABLE";
+  endOfRunScopeScan?: EndOfRunScopeScan;
+  projectDescriptionScan?: ProjectDescriptionScan;
+};
+
+const RUN_PREFIX = "partner-report-run-";
+const RUNS_DIRECTORY = "collection-runs";
+
+function option(name: string, fallback?: string) {
+  const index = process.argv.indexOf(`--${name}`);
+  if (index < 0) return fallback;
+  return process.argv[index + 1] ?? fallback;
+}
+
+function flag(name: string) {
+  return process.argv.includes(`--${name}`);
+}
+
+function output(value: unknown) {
+  if (
+    value &&
+    typeof value === "object" &&
+    "status" in value &&
+    typeof value.status === "string"
+  ) {
+    const event = value as Record<string, unknown>;
+    const review =
+      event.review && typeof event.review === "object"
+        ? (event.review as Record<string, unknown>)
+        : undefined;
+    let runId: string | undefined;
+    if (typeof event.runPath === "string") {
+      try {
+        runId = readRun(event.runPath).manifest.runId;
+        setPluginLogRunId(runId);
+        commandRunId = runId;
+      } catch {
+        runId = undefined;
+      }
+    }
+    enqueuePluginLog({
+      runId,
+      level:
+        value.status.includes("failed") || value.status === "error"
+          ? "error"
+          : value.status.includes("waiting") ||
+              value.status.includes("deferred")
+            ? "warning"
+            : "info",
+      stage: (process.argv[2] ?? "plugin").replaceAll("-", "_"),
+      eventType:
+        value.status.includes("failed") || value.status === "error"
+          ? "error"
+          : "result",
+      eventCode: value.status,
+      message: `插件命令返回状态：${value.status}`,
+      details: {
+        status: event.status,
+        code: event.code,
+        errorCode: event.errorCode,
+        reason: event.reason,
+        jobId: event.jobId,
+        periodKey: event.periodKey,
+        discovered: event.discovered,
+        queued: event.queued,
+        processed: event.processed,
+        uploaded: event.uploaded,
+        unchanged: event.unchanged,
+        ignored: event.ignored,
+        skipped: event.skipped,
+        deferred: event.deferred,
+        failedRead: event.failedRead,
+        failedPermissionCheck: event.failedPermissionCheck,
+        failedThreadRead: event.failedThreadRead,
+        invalidThreadHistory: event.invalidThreadHistory,
+        failedExtract: event.failedExtract,
+        checkpointAdvanced: event.checkpointAdvanced,
+        readyToFinalize: event.readyToFinalize,
+        reviewReadyToFinalize: review?.readyToFinalize,
+        attempts: event.attempts,
+        attemptsRemaining: event.attemptsRemaining,
+        validationFailures: event.validationFailures,
+        validationAttemptsRemaining: event.validationAttemptsRemaining,
+        warnings: event.warnings,
+        threadReadFailureCodes: event.threadReadFailureCodes,
+        retryable: event.retryable,
+      },
+    });
+    const currentCommand = process.argv[2] ?? "plugin";
+    if (
+      ["collect-start", "daily-collect"].includes(currentCommand) &&
+      [
+        "project_scope_approval_required",
+        "project_scope_waiting_for_projects",
+      ].includes(value.status)
+    ) {
+      const pendingProjects = Array.isArray(event.pendingProjects)
+        ? event.pendingProjects.length
+        : 0;
+      enqueueCollectionFinalState({
+        outcome: "failed",
+        summary:
+          value.status === "project_scope_approval_required"
+            ? `采集未开始：${pendingProjects} 个项目仍在等待飞书权限审核。`
+            : "采集未开始：当前扫描范围内还没有可审核项目。",
+        reasonCode: value.status,
+        details: { pendingProjects, periodKey: event.periodKey },
+      });
+    }
+  }
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function collectionFailureSummary(code: string, command: string) {
+  const signal = code.toUpperCase();
+  if (/AUTH|TOKEN|UNAUTHORIZED|FORBIDDEN/.test(signal))
+    return "采集失败：插件连接凭据无效，无法访问数据中台。";
+  if (/THREAD|SESSION|APP_SERVER|CODEX|LOCAL_AGENT/.test(signal))
+    return "采集失败：插件无法读取本机 Codex 会话。";
+  if (/PROJECT_SCOPE|PERMISSION/.test(signal))
+    return "采集失败：项目采集权限检查未通过。";
+  if (/EXTRACT|MODEL|VALIDATION|SCHEMA|OUTPUT/.test(signal))
+    return "采集失败：会话分析结果没有通过插件校验。";
+  if (/UPLOAD|SYNC|HTTP|NETWORK|TIMEOUT|ECONN|RATE_LIMIT/.test(signal))
+    return "采集失败：插件与数据中台通信或上传结果时发生异常。";
+  if (/LOCAL_STORAGE|ENOSPC|EACCES|FILE|DISK/.test(signal))
+    return "采集失败：插件无法读写本地采集状态。";
+  return `采集失败：${command} 返回错误 ${code}。`;
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function compareVersions(left: string, right: string) {
+  const parse = (value: string) =>
+    value.split(".").map((part) => Number(part.replace(/\D.*$/, "")) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    if ((a[index] ?? 0) !== (b[index] ?? 0))
+      return (a[index] ?? 0) - (b[index] ?? 0);
+  }
+  return 0;
+}
+
+async function fetchPolicy() {
+  const policy = await authenticatedRequest<Policy>("/v1/plugin-bindings/me");
+  if (
+    policy.team.minimum_plugin_version &&
+    compareVersions(PLUGIN_VERSION, policy.team.minimum_plugin_version) < 0
+  ) {
+    throw Object.assign(
+      new Error(
+        `Plugin v${PLUGIN_VERSION} 低于 Team 最低版本 v${policy.team.minimum_plugin_version}。`,
+      ),
+      { code: "PLUGIN_VERSION_BLOCKED" },
+    );
+  }
+  return policy;
+}
+
+async function fetchProjectScope(init: RequestInit = {}) {
+  try {
+    return await authenticatedRequest<RemoteProjectScopePolicy>(
+      "/v2/project-scope",
+      init,
+    );
+  } catch (error) {
+    if ((error as { status?: number }).status === 404)
+      throw Object.assign(
+        new Error("中台尚未支持项目权限核对，请先更新中台。"),
+        {
+          code: "PROJECT_SCOPE_RESOLUTION_UNSUPPORTED",
+        },
+      );
+    throw error;
+  }
+}
+
+function cacheRemoteProjectScope(remote: RemoteProjectScopePolicy) {
+  const inspection = inspectLocalProjectScope(remote.pluginInstanceId);
+  const scope = mergeRemoteProjectScope(inspection.scope, remote);
+  return { ...inspection, scope };
+}
+
+async function synchronizeLocalProjectScope(
+  remote: RemoteProjectScopePolicy,
+  inspection = inspectLocalProjectScope(remote.pluginInstanceId),
+) {
+  if (remote.resolutionVersion !== 1 || !remote.identitySalt)
+    throw Object.assign(new Error("中台尚未支持项目权限核对，请先更新中台。"), {
+      code: "PROJECT_SCOPE_RESOLUTION_UNSUPPORTED",
+    });
+  const bootstrapped =
+    inspection.state !== "valid" || !inspection.scope.identitySalt;
+  const scope = mergeRemoteProjectScope(inspection.scope, remote);
+  saveLocalProjectScope(scope);
+  return {
+    inspection,
+    remote,
+    scope,
+    bootstrapped,
+  };
+}
+
+async function resolveDiscoveredProjectScopes(
+  local: LocalProjectScope,
+  discovery: ReturnType<typeof discoverProjectScopes>,
+  periodKey: string,
+  initialDiscovery: boolean,
+) {
+  let baseVersion = local.version;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const remote = await authenticatedRequest<
+        RemoteProjectScopePolicy & {
+          bindings: Array<{ requestedScopeKey: string; scopeKey: string }>;
+        }
+      >("/v2/project-scope/resolve", {
+        method: "POST",
+        body: JSON.stringify({
+          baseVersion,
+          periodKey,
+          initialDiscovery,
+          candidates: discovery.candidates.map((candidate) => ({
+            scopeKey: candidate.scopeKey,
+            identityKey: candidate.identityKey,
+            recoveryKeys: candidate.recoveryKeys ?? [],
+            displayName: candidate.displayName,
+            sessionCount: candidate.sessionCount,
+          })),
+        }),
+      });
+      return applyScopeResolution(local, remote, discovery);
+    } catch (error) {
+      if (
+        (error as { code?: string }).code !== "VERSION_CONFLICT" ||
+        attempt === 2
+      )
+        throw error;
+      baseVersion = (await fetchProjectScope()).version;
+    }
+  }
+  throw new Error("PROJECT_SCOPE_RESOLUTION_FAILED");
+}
+
+function scheduledTaskConfig() {
+  output({
+    status: "scheduled_task_config",
+    scheduledTask: SCHEDULED_COLLECTION_TASK,
+    taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
+    setupMode:
+      "create_if_missing_or_update_prompt_or_reset_task_on_explicit_request",
+  });
+}
+
+async function performConnectivityTest(
+  supplied?: ConnectivityChallenge,
+): Promise<Record<string, unknown>> {
+  let config = loadConfig()!;
+  try {
+    const issueChallenge = async () => {
+      const connectivity = await authenticatedRequest<ConnectivityChallenge>(
+        "/v1/plugin-instances/me/connectivity-challenge",
+        { method: "POST", body: "{}" },
+      );
+      saveConfig({
+        ...config,
+        connectivityStatus: "pending",
+        pendingConnectivityChallenge: {
+          value: connectivity.challenge,
+          expiresAt: connectivity.challengeExpiresAt,
+        },
+      });
+      return connectivity;
+    };
+    let connectivity =
+      supplied && new Date(supplied.challengeExpiresAt).getTime() > Date.now()
+        ? supplied
+        : await issueChallenge();
+    const submitChallenge = () =>
+      authenticatedRequest<Record<string, unknown>>(
+        "/v1/plugin-instances/me/connectivity-test",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            challenge: connectivity.challenge,
+            pluginVersion: PLUGIN_VERSION,
+            clientTime: new Date().toISOString(),
+            capabilityVersion: "1.0",
+          }),
+        },
+      );
+    let response: Record<string, unknown>;
+    try {
+      response = await submitChallenge();
+    } catch (error) {
+      if (
+        !(error instanceof HttpError) ||
+        !["CHALLENGE_INVALID", "CHALLENGE_EXPIRED"].includes(error.code)
+      ) {
+        throw error;
+      }
+      connectivity = await issueChallenge();
+      response = await submitChallenge();
+    }
+    config = loadConfig()!;
+    const { pendingConnectivityChallenge: _pending, ...stableConfig } = config;
+    saveConfig({
+      ...stableConfig,
+      connectivityStatus: "verified",
+      connectivityVerifiedAt:
+        typeof response.verifiedAt === "string"
+          ? response.verifiedAt
+          : new Date().toISOString(),
+    });
+    return response;
+  } catch (error) {
+    config = loadConfig()!;
+    saveConfig({ ...config, connectivityStatus: "failed" });
+    throw error;
+  }
+}
+
+async function setServerUrl() {
+  const requestedServerUrl =
+    option("server") ?? process.env.PARTNER_REPORT_SERVER_URL;
+  if (!requestedServerUrl)
+    throw new Error(
+      "server-url-set 需要 --server <url>，也可以设置 PARTNER_REPORT_SERVER_URL。",
+    );
+  const config = loadConfig()!;
+  const serverUrl = normalizeServerUrl(
+    requestedServerUrl,
+    flag("allow-insecure-http"),
+  );
+  saveConfig({ ...config, serverUrl });
+  const connectivity = await performConnectivityTest();
+  output({
+    status: "server_url_updated",
+    serverUrl,
+    pluginInstanceId: config.pluginInstanceId,
+    connectivity,
+  });
+}
+
+async function bindingCompletionState(waitForDelivery: boolean) {
+  let latest: Policy | null = null;
+  let deliveryWaitStatus:
+    "not_required" | "confirmed" | "pending" | "timed_out" | "cancelled" =
+    "not_required";
+  if (waitForDelivery) {
+    const wait = await waitForCondition({
+      check: async () => {
+        latest = await fetchPolicy();
+        return latest.bindingCompleted;
+      },
+      deadlineAt: Date.now() + 20_000,
+      segmentDurationMs: 20_000,
+      errorCode: (error) => pluginErrorDetails(error).code,
+    });
+    deliveryWaitStatus = wait.status;
+  }
+  latest ??= await fetchPolicy();
+  return {
+    connectionStatus: "connected",
+    bindingStatus: latest.bindingStatus,
+    bindingCompleted: latest.bindingCompleted,
+    deliveryWaitStatus,
+  };
+}
+
+function connectedOutput(
+  partnerId: string,
+  deviceName: string,
+  connectivity: Record<string, unknown>,
+  binding: Awaited<ReturnType<typeof bindingCompletionState>>,
+  projectScope?: Record<string, unknown>,
+  scheduledTaskInstallation?: ScheduledTaskInstallation,
+) {
+  const config = loadConfig()!;
+  output({
+    status: projectScope?.status ?? "connected",
+    pluginInstanceId: config.pluginInstanceId,
+    partnerId,
+    deviceName,
+    ...binding,
+    connectivity,
+    ...(projectScope ?? {}),
+    scheduledTask: SCHEDULED_COLLECTION_TASK,
+    scheduledTaskInstallation,
+    taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
+    bindingNextStep: binding.bindingCompleted
+      ? "绑定链路已完成，绑定码已核销。"
+      : "中台连接已建立，但绑定尚未完成；绑定码不会在飞书项目权限卡成功送达前核销。",
+    nextStep:
+      scheduledTaskInstallation?.status === "failed"
+        ? "连接凭据已保留，但 Codex Scheduled Task 检查失败；请通过 Codex 官方自动化工具重试。"
+        : scheduledTaskInstallation?.status === "required"
+          ? "连接凭据已保留；请使用返回的 scheduledTask 配置通过 Codex 官方自动化工具创建任务。"
+          : "检测到同名 Codex Scheduled Task；请通过 Codex 官方自动化工具确认其可见。",
+  });
+}
+
+function hostProjectDiscoveryRequired(
+  currentPeriod: Policy["currentPeriod"],
+  scanEndsAt = new Date().toISOString(),
+) {
+  if (!currentPeriod)
+    throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
+      code: "REPORT_PERIOD_MISSING",
+    });
+  return {
+    status: "project_discovery_required",
+    periodKey: currentPeriod.period_key,
+    scanStartsAt: initialProjectScopeStartAt(scanEndsAt),
+    scanEndsAt,
+    hostTool: {
+      name: "list_threads",
+      arguments: { limit: CODEX_HOST_THREAD_LIST_LIMIT },
+      includePinnedThreads: true,
+    },
+    submitTool: { name: "project_discovery_submit" },
+    projectDiscoveryNextStep:
+      "调用 Codex App 官方 list_threads(limit: 50)，再把 threads 和 pinnedThreads 的最小元数据提交给 project_discovery_submit。",
+  };
+}
+
+async function submitHostProjectDiscovery() {
+  const config = loadConfig()!;
+  const inputPath = option("input");
+  if (!inputPath)
+    throw Object.assign(new Error("首次项目发现缺少宿主任务列表输入。"), {
+      code: "PROJECT_DISCOVERY_INPUT_REQUIRED",
+    });
+  const input = parseHostProjectDiscoveryInput(
+    JSON.parse(readFileSync(inputPath, "utf8")),
+  );
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  if (!policy.currentPeriod)
+    throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
+      code: "REPORT_PERIOD_MISSING",
+    });
+  const synchronized = await synchronizeLocalProjectScope(remoteScope);
+  const synchronizedLocalScope = synchronized.scope;
+
+  const runStartedAt = new Date().toISOString();
+  const scanStartsAt = initialProjectScopeStartAt(runStartedAt);
+  const summaries = uniqueHostProjectDiscoveryThreads(input)
+    .map(summaryFromThread)
+    .filter((value): value is ThreadSummary => Boolean(value));
+  const metadataEligible = metadataEligibleThreads(summaries, config);
+  const permissionDiscoverySummaries = metadataEligible.filter((summary) =>
+    threadIsInKnownScanWindow(summary.updatedAt, scanStartsAt, runStartedAt),
+  );
+  const discovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    synchronizedLocalScope,
+    permissionDiscoverySummaries,
+    {
+      configuredRoots: configuredProjectRoots(policy.projects),
+    },
+  );
+  const localScope = await resolveDiscoveredProjectScopes(
+    synchronized.scope,
+    discovery,
+    policy.currentPeriod.period_key,
+    true,
+  );
+  saveLocalProjectScope(localScope);
+  const projectScope =
+    localScope.initialized && !projectScopeHasPending(localScope)
+      ? projectScopeReady(policy.currentPeriod.period_key, localScope)
+      : projectScopeApprovalRequired(
+          policy.currentPeriod.period_key,
+          localScope,
+        );
+  const binding = await bindingCompletionState(
+    projectScope.status === "project_scope_approval_required",
+  );
+  connectedOutput(
+    policy.partnerId,
+    config.deviceName,
+    { status: config.connectivityStatus ?? "verified" },
+    binding,
+    {
+      ...projectScope,
+      projectDiscoverySource: "codex_app_list_threads",
+      listedThreads: input.threads.length,
+      listedPinnedThreads: input.pinnedThreads.length,
+      listingMayBePartial: hostProjectDiscoveryMayBePartial(input),
+      scanStartsAt,
+      scanEndsAt: runStartedAt,
+    },
+    installScheduledCollectionTask(),
+  );
+}
+
+async function connect() {
+  const requestedServerUrl =
+    option("server") ?? process.env.PARTNER_REPORT_SERVER_URL;
+  if (!requestedServerUrl)
+    throw new Error(
+      "connect 需要 --server <url>，也可以设置 PARTNER_REPORT_SERVER_URL。",
+    );
+  const bindingCode =
+    option("binding-code") ?? process.env.PARTNER_REPORT_BINDING_CODE;
+  if (!bindingCode)
+    throw new Error("connect 需要 Admin 生成的 --binding-code <code>。");
+  const serverUrl = normalizeServerUrl(
+    requestedServerUrl,
+    flag("allow-insecure-http"),
+  );
+  const deviceName = option("device-name", hostname())!;
+  const tokens = await publicRequest<ClaimResponse>(
+    serverUrl,
+    "/v1/plugin-bindings/claim",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        bindingCode,
+        deviceName,
+        pluginVersion: PLUGIN_VERSION,
+      }),
+    },
+  );
+  const existing = loadConfig(false);
+  if (existing && existing.pluginInstanceId !== tokens.pluginInstanceId)
+    removeSecrets(existing.pluginInstanceId);
+  const connectedAt =
+    existing?.pluginInstanceId === tokens.pluginInstanceId &&
+    existing.connectedAt
+      ? existing.connectedAt
+      : new Date().toISOString();
+  saveSecret(tokens.pluginInstanceId, "access", tokens.accessToken);
+  saveSecret(tokens.pluginInstanceId, "refresh", tokens.refreshToken);
+  saveConfig({
+    serverUrl,
+    pluginInstanceId: tokens.pluginInstanceId,
+    deviceName,
+    connectedAt,
+    accessExpiresAt: tokens.expiresAt,
+    connectivityStatus: "pending",
+    pendingConnectivityChallenge: {
+      value: tokens.challenge,
+      expiresAt: tokens.challengeExpiresAt,
+    },
+    excludedSessionIds: existing?.excludedSessionIds ?? [],
+    excludedPaths: existing?.excludedPaths ?? [],
+  });
+  const collectionState = loadCollectionState(tokens.pluginInstanceId);
+  initializeCollectionFloor(collectionState, connectedAt);
+  saveCollectionState(collectionState);
+  const connectivity = await performConnectivityTest(tokens);
+  const scheduledTaskInstallation = installScheduledCollectionTask();
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  const projectScope = initialProjectDiscoveryNeedsResume(
+    false,
+    remoteScope.initialized,
+    remoteScope.identityConfirmed,
+  )
+    ? hostProjectDiscoveryRequired(policy.currentPeriod)
+    : undefined;
+  const binding = await bindingCompletionState(false);
+  connectedOutput(
+    tokens.partnerId,
+    deviceName,
+    connectivity,
+    binding,
+    projectScope,
+    scheduledTaskInstallation,
+  );
+}
+
+async function connectivityTest() {
+  const config = loadConfig()!;
+  const pending = config.pendingConnectivityChallenge;
+  const connectivity = await performConnectivityTest(
+    pending
+      ? {
+          challenge: pending.value,
+          challengeExpiresAt: pending.expiresAt,
+          capabilityVersion: "1.0",
+        }
+      : undefined,
+  );
+  const scheduledTaskInstallation = installScheduledCollectionTask();
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  const projectScope = initialProjectDiscoveryNeedsResume(
+    Boolean(pending),
+    remoteScope.initialized,
+    remoteScope.identityConfirmed,
+  )
+    ? hostProjectDiscoveryRequired(policy.currentPeriod)
+    : undefined;
+  const binding = await bindingCompletionState(false);
+  connectedOutput(
+    policy.partnerId,
+    config.deviceName,
+    connectivity,
+    binding,
+    projectScope,
+    scheduledTaskInstallation,
+  );
+}
+
+function summaryFromThread(value: any): ThreadSummary | null {
+  if (!value?.id) return null;
+  const title =
+    typeof value.name === "string"
+      ? value.name
+      : typeof value.title === "string"
+        ? value.title
+        : null;
+  return {
+    id: String(value.id),
+    title,
+    cwd: typeof value.cwd === "string" ? value.cwd : null,
+    createdAt: value.createdAt ?? value.created_at ?? null,
+    updatedAt:
+      value.updatedAt ??
+      value.updated_at ??
+      value.createdAt ??
+      value.created_at ??
+      null,
+    archived:
+      value.archived === true ||
+      value.isArchived === true ||
+      (value.archived_at !== null && value.archived_at !== undefined),
+    ephemeral: value.ephemeral === true,
+    threadSource:
+      typeof value.threadSource === "string"
+        ? value.threadSource
+        : typeof value.thread_source === "string"
+          ? value.thread_source
+          : null,
+    systemGenerated:
+      value.ephemeral === true ||
+      isPluginSystemThread(value as Record<string, unknown>) ||
+      isOfficialAutomationThread(value as Record<string, unknown>),
+  };
+}
+
+function configuredProjectRoots(projects: ProjectPolicy[]) {
+  return projects.flatMap((project) => project.allowed_paths ?? []);
+}
+
+function metadataEligibleThreads(
+  summaries: ThreadSummary[],
+  config: PluginConfig,
+) {
+  const excludedSessionIds = new Set(config.excludedSessionIds ?? []);
+  const currentSessionId = process.env.CODEX_THREAD_ID;
+  return summaries.filter(
+    (summary) =>
+      summary.id !== currentSessionId &&
+      !summary.archived &&
+      !excludedSessionIds.has(summary.id) &&
+      !pathIsExcluded(summary.cwd, config.excludedPaths ?? []) &&
+      !isPluginSystemThread(summary as unknown as Record<string, unknown>),
+  );
+}
+
+async function listCollectionThreadMetadata(
+  config: PluginConfig,
+  updatedSince: string,
+) {
+  const server = new CodexAppServer();
+  try {
+    await server.connect();
+    const summaries = (await server.listThreads({ updatedSince }))
+      .map(summaryFromThread)
+      .filter((value): value is ThreadSummary => Boolean(value));
+    return {
+      summaries,
+      metadataEligible: metadataEligibleThreads(summaries, config),
+    };
+  } finally {
+    server.close();
+  }
+}
+
+function projectScopeReady(periodKey: string, localScope: LocalProjectScope) {
+  return {
+    status: "project_scope_ready",
+    periodKey,
+    policyVersion: localScope.version,
+    allowedProjects: localScope.entries.filter(
+      (entry) => entry.status === "allowed",
+    ).length,
+    deniedProjects: localScope.entries.filter(
+      (entry) => entry.status === "denied",
+    ).length,
+    message: "飞书项目权限审核已完成，只采集已允许的项目。",
+  };
+}
+
+function projectScopeHasPending(localScope: LocalProjectScope) {
+  return localScope.entries.some((entry) => entry.status === "pending");
+}
+
+function projectScopeApprovalRequired(
+  periodKey: string,
+  localScope: LocalProjectScope,
+) {
+  const pendingProjects = localScope.entries.filter(
+    (entry) => entry.status === "pending",
+  );
+  return {
+    status:
+      pendingProjects.length > 0
+        ? "project_scope_approval_required"
+        : "project_scope_waiting_for_projects",
+    periodKey,
+    policyVersion: localScope.version,
+    pendingProjects: pendingProjects.map((entry) => ({
+      name: entry.displayName,
+      sessionCount: entry.sessionCount,
+    })),
+    message:
+      pendingProjects.length > 0
+        ? "项目权限卡已请求发送到飞书；用户完成审核前不会读取这些项目的 Session。"
+        : "当前时间范围内未发现可审核项目；后续发现项目时会发送飞书权限卡。",
+  };
+}
+
+function createRun(manifest: RunManifest) {
+  const root = resolve(dataDirectory(), RUNS_DIRECTORY);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  chmodSync(root, 0o700);
+  const runDirectory = resolve(root, `${RUN_PREFIX}${manifest.runId}`);
+  mkdirSync(runDirectory, { mode: 0o700 });
+  chmodSync(runDirectory, 0o700);
+  const runPath = resolve(runDirectory, "run.json");
+  writeFileSync(runPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  chmodSync(runPath, 0o600);
+  return runPath;
+}
+
+function assertRunPath(runPath: string) {
+  const absolute = resolve(runPath);
+  const runDirectory = dirname(absolute);
+  const stableRoot = resolve(dataDirectory(), RUNS_DIRECTORY);
+  const withinStableRoot = !relative(stableRoot, runDirectory).startsWith("..");
+  const withinLegacyTemp = !relative(
+    resolve(tmpdir()),
+    runDirectory,
+  ).startsWith("..");
+  if (
+    (!withinStableRoot && !withinLegacyTemp) ||
+    !basename(runDirectory).startsWith(RUN_PREFIX) ||
+    basename(absolute) !== "run.json"
+  ) {
+    throw new Error("Run 路径不属于 Partner Report 临时目录。");
+  }
+  return absolute;
+}
+
+function storedRuns(pluginInstanceId: string) {
+  const root = resolve(dataDirectory(), RUNS_DIRECTORY);
+  if (!existsSync(root))
+    return [] as Array<{ path: string; manifest: RunManifest }>;
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory() || !entry.name.startsWith(RUN_PREFIX)) return [];
+    const path = resolve(root, entry.name, "run.json");
+    try {
+      const manifest = JSON.parse(readFileSync(path, "utf8")) as RunManifest;
+      return manifest.pluginInstanceId === pluginInstanceId
+        ? [{ path, manifest }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function takeResumableRun(pluginInstanceId: string, periodKey: string) {
+  let resumable: { path: string; manifest: RunManifest } | null = null;
+  for (const run of storedRuns(pluginInstanceId)) {
+    if (
+      run.manifest.period?.period_key === periodKey &&
+      !run.manifest.stopReason
+    ) {
+      if (!resumable || run.manifest.createdAt > resumable.manifest.createdAt)
+        resumable = run;
+      continue;
+    }
+    rmSync(dirname(run.path), { recursive: true, force: true });
+  }
+  return resumable;
+}
+
+function discardStoredRuns(pluginInstanceId: string) {
+  for (const run of storedRuns(pluginInstanceId)) {
+    releaseCollectionLease(pluginInstanceId, run.manifest.runId);
+    rmSync(dirname(run.path), { recursive: true, force: true });
+  }
+}
+
+function readRun(runPath: string) {
+  const absolute = assertRunPath(runPath);
+  const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RunManifest;
+  const config = loadConfig()!;
+  if (
+    !["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"].includes(
+      manifest.schemaVersion,
+    ) ||
+    manifest.pluginInstanceId !== config.pluginInstanceId
+  ) {
+    throw new Error("Run 清单无效或不属于当前 Plugin Instance。");
+  }
+  manifest.deadlineAt ??= collectionDeadline(manifest.createdAt);
+  manifest.counts.skipped ??= 0;
+  manifest.counts.deferred ??= 0;
+  manifest.counts.notProcessed ??= 0;
+  manifest.counts.failedPermissionCheck ??= 0;
+  manifest.counts.failedThreadRead ??= 0;
+  manifest.counts.invalidThreadHistory ??= 0;
+  manifest.threadReadFailureCodes ??= {};
+  const existingCoverage = manifest.endOfRunScopeScan;
+  manifest.endOfRunScopeScan = {
+    completed:
+      existingCoverage?.processedThreadIds !== undefined
+        ? existingCoverage.completed
+        : false,
+    passes: existingCoverage?.passes ?? 0,
+    processedThreadIds: existingCoverage?.processedThreadIds ?? [],
+    unresolvedReadFailures: existingCoverage?.unresolvedReadFailures ?? {},
+    readAttempts: existingCoverage?.readAttempts ?? {},
+  };
+  manifest.outcomes ??= [];
+  manifest.claimedJobs ??=
+    manifest.counts.uploaded +
+    manifest.counts.ignored +
+    manifest.counts.failedExtract +
+    (manifest.current ? 1 : 0);
+  if (manifest.current) {
+    manifest.current.failures ??= [];
+    const inferredThreadId = manifest.queue[manifest.cursor - 1]?.id;
+    if (!manifest.current.threadId && inferredThreadId)
+      manifest.current.threadId = inferredThreadId;
+  }
+  manifest.projectDescriptionScan ??= {
+    initialized: false,
+    queue: [],
+    cursor: 0,
+    current: null,
+    generated: 0,
+    unchanged: 0,
+    unauthorized: 0,
+    failed: 0,
+  };
+  refreshCollectionLease(manifest.pluginInstanceId, manifest.runId);
+  return { absolute, manifest };
+}
+
+function saveRun(runPath: string, manifest: RunManifest) {
+  const temporary = resolve(
+    dirname(runPath),
+    `.run.${process.pid}.${Date.now()}.tmp`,
+  );
+  writeFileSync(temporary, `${JSON.stringify(manifest, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, runPath);
+  chmodSync(runPath, 0o600);
+}
+
+function coverageState(manifest: RunManifest) {
+  manifest.endOfRunScopeScan ??= { completed: false };
+  const scan = manifest.endOfRunScopeScan;
+  scan.passes ??= 0;
+  scan.processedThreadIds ??= [];
+  scan.unresolvedReadFailures ??= {};
+  scan.readAttempts ??= {};
+  return scan;
+}
+
+function markThreadProcessed(manifest: RunManifest, threadId?: string) {
+  if (!threadId) return;
+  const scan = coverageState(manifest);
+  if (!scan.processedThreadIds!.includes(threadId))
+    scan.processedThreadIds!.push(threadId);
+}
+
+function recordCoverageReadFailure(
+  manifest: RunManifest,
+  threadId: string,
+  code: CoverageReadFailureCode,
+) {
+  const scan = coverageState(manifest);
+  scan.completed = false;
+  scan.readAttempts![threadId] = (scan.readAttempts![threadId] ?? 0) + 1;
+  if (scan.unresolvedReadFailures![threadId]) return;
+  scan.unresolvedReadFailures![threadId] = code;
+  manifest.counts.failedRead += 1;
+  if (code === "PROJECT_SCOPE_RECHECK_FAILED") {
+    manifest.counts.failedPermissionCheck += 1;
+    return;
+  }
+  manifest.counts.failedThreadRead += 1;
+  manifest.threadReadFailureCodes ??= {};
+  manifest.threadReadFailureCodes[code] =
+    (manifest.threadReadFailureCodes[code] ?? 0) + 1;
+  if (code === "CODEX_THREAD_HISTORY_INVALID") {
+    manifest.counts.invalidThreadHistory ??= 0;
+    manifest.counts.invalidThreadHistory += 1;
+    manifest.counts.excluded += 1;
+  }
+}
+
+function clearCoverageReadFailure(manifest: RunManifest, threadId: string) {
+  const scan = coverageState(manifest);
+  const code = scan.unresolvedReadFailures![threadId];
+  if (!code) return;
+  delete scan.unresolvedReadFailures![threadId];
+  manifest.counts.failedRead = Math.max(0, manifest.counts.failedRead - 1);
+  if (code === "PROJECT_SCOPE_RECHECK_FAILED") {
+    manifest.counts.failedPermissionCheck = Math.max(
+      0,
+      manifest.counts.failedPermissionCheck - 1,
+    );
+    return;
+  }
+  manifest.counts.failedThreadRead = Math.max(
+    0,
+    manifest.counts.failedThreadRead - 1,
+  );
+  const remaining = Math.max(
+    0,
+    (manifest.threadReadFailureCodes?.[code] ?? 0) - 1,
+  );
+  if (remaining === 0) delete manifest.threadReadFailureCodes?.[code];
+  else manifest.threadReadFailureCodes![code] = remaining;
+  if (code === "CODEX_THREAD_HISTORY_INVALID") {
+    manifest.counts.invalidThreadHistory = Math.max(
+      0,
+      (manifest.counts.invalidThreadHistory ?? 0) - 1,
+    );
+    manifest.counts.excluded = Math.max(0, manifest.counts.excluded - 1);
+  }
+}
+
+function writeJob(runPath: string, jobId: string, modelInput: unknown) {
+  const runDirectory = dirname(runPath);
+  const inputPath = resolve(runDirectory, `${jobId}-input.json`);
+  const resultPath = resolve(runDirectory, `${jobId}-result.json`);
+  writeFileSync(inputPath, `${JSON.stringify(modelInput, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  chmodSync(inputPath, 0o600);
+  return { inputPath, resultPath };
+}
+
+async function postCollectionStatus(
+  config: PluginConfig,
+  manifest: RunManifest,
+  phase: "started" | "completed",
+) {
+  const { counts } = manifest;
+  const checkpointEligible =
+    phase === "completed"
+      ? completionReview(manifest).checkpointEligible
+      : canAdvanceCollectionCheckpoint(counts);
+  const lastSyncAt = counts.uploaded > 0 ? new Date().toISOString() : undefined;
+  const warnings = [
+    ...(checkpointEligible ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"]),
+    ...((counts.invalidThreadHistory ?? 0) > 0
+      ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"]
+      : []),
+  ];
+  const coverage = {
+    discovered: counts.discovered,
+    eligible: counts.eligible,
+    readable: counts.read,
+    extracted: counts.uploaded + counts.unchanged,
+    deferred: counts.deferred,
+    skipped: counts.skipped,
+    notProcessed: counts.notProcessed,
+    failedRead: counts.failedRead,
+    failedPermissionCheck: counts.failedPermissionCheck,
+    failedThreadRead: counts.failedThreadRead,
+    invalidThreadHistory: counts.invalidThreadHistory ?? 0,
+    failedExtract: counts.failedExtract,
+    excluded: counts.excluded + counts.ignored + counts.cachedIgnored,
+    pendingSync: phase === "completed" ? 0 : manifest.queue.length,
+    activeAtCutoff: 0,
+    hookMissed: 0,
+    warnings,
+    ...(lastSyncAt ? { lastSyncAt } : {}),
+  };
+  await authenticatedRequest("/v1/plugin-instances/me/collection-status", {
+    method: "POST",
+    body: JSON.stringify({
+      pluginVersion: PLUGIN_VERSION,
+      deviceName: config.deviceName,
+      phase,
+      periodKey: manifest.period.period_key,
+      sessionCount: counts.uploaded + counts.unchanged,
+      factCount: counts.uploaded + counts.unchanged,
+      pendingLocalJobs: phase === "completed" ? 0 : manifest.queue.length,
+      discoveredCount: counts.discovered,
+      eligibleCount: counts.eligible,
+      deferredCount: counts.deferred,
+      excludedCount: counts.excluded + counts.ignored + counts.cachedIgnored,
+      lastScanAt: manifest.createdAt,
+      ...(lastSyncAt ? { lastSyncAt } : {}),
+      coverage,
+    }),
+  });
+  enqueuePluginLog({
+    runId: manifest.runId,
+    level: checkpointEligible ? "info" : "warning",
+    stage: "collection",
+    eventCode: `collection.${phase}`,
+    message:
+      phase === "completed" ? "本次采集已完成并上报结果。" : "本次采集已开始。",
+    details: {
+      periodKey: manifest.period.period_key,
+      discovered: counts.discovered,
+      eligible: counts.eligible,
+      read: counts.read,
+      uploaded: counts.uploaded,
+      unchanged: counts.unchanged,
+      deferred: counts.deferred,
+      skipped: counts.skipped,
+      failedRead: counts.failedRead,
+      failedPermissionCheck: counts.failedPermissionCheck,
+      failedThreadRead: counts.failedThreadRead,
+      invalidThreadHistory: counts.invalidThreadHistory ?? 0,
+      threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
+      failedExtract: counts.failedExtract,
+      checkpointEligible,
+    },
+  });
+  await flushPluginLogs();
+}
+
+async function collectStart() {
+  const config = loadConfig()!;
+  const localInspection = inspectLocalProjectScope(config.pluginInstanceId);
+  const policy = await fetchPolicy();
+  if (!policy.currentPeriod)
+    throw Object.assign(new Error("当前 Team 没有开放的 Report Period。"), {
+      code: "REPORT_PERIOD_MISSING",
+    });
+  const fetchedRemoteScope = await fetchProjectScope();
+  const synchronizedScope = await synchronizeLocalProjectScope(
+    fetchedRemoteScope,
+    localInspection,
+  );
+  let localScope: LocalProjectScope = synchronizedScope.scope;
+
+  if (synchronizedScope.bootstrapped)
+    discardStoredRuns(config.pluginInstanceId);
+
+  const resumable = synchronizedScope.bootstrapped
+    ? null
+    : takeResumableRun(
+        config.pluginInstanceId,
+        policy.currentPeriod.period_key,
+      );
+  if (resumable) {
+    acquireCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
+    try {
+      const { absolute, manifest } = readRun(resumable.path);
+      manifest.deadlineAt = collectionDeadline(new Date().toISOString());
+      saveRun(absolute, manifest);
+      await postCollectionStatus(config, manifest, "started");
+      return output({
+        status: "resumed",
+        runPath: absolute,
+        periodKey: manifest.period.period_key,
+        queued: manifest.queue.length,
+        processed: manifest.cursor,
+        nextCommand: `collect-next --run ${absolute}`,
+      });
+    } catch (error) {
+      releaseCollectionLease(config.pluginInstanceId, resumable.manifest.runId);
+      throw error;
+    }
+  }
+
+  const runId = randomUUID();
+  const runStartedAt = new Date().toISOString();
+  acquireCollectionLease(config.pluginInstanceId, runId);
+  let localState: ReturnType<typeof loadCollectionState>;
+  let window: ReturnType<typeof collectionWindow>;
+  try {
+    localState = loadCollectionState(config.pluginInstanceId);
+    initializeCollectionFloor(localState, config.connectedAt ?? runStartedAt);
+    saveCollectionState(localState);
+    window = collectionWindow(localState, policy.currentPeriod, runStartedAt);
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  const effectivePeriod: CollectionPeriod = {
+    period_key: policy.currentPeriod.period_key,
+    starts_at: window.extractionStartsAt,
+    ends_at: window.extractionEndsAt,
+  };
+  let summaries: ThreadSummary[];
+  let metadataEligible: ThreadSummary[];
+  try {
+    // Project discovery applies its separate seven-day metadata window below.
+    const metadataStartsAt = localScope.initialized
+      ? window.scanStartsAt
+      : initialProjectScopeStartAt(runStartedAt);
+    ({ summaries, metadataEligible } = await listCollectionThreadMetadata(
+      config,
+      metadataStartsAt,
+    ));
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  const inWindow = flag("force")
+    ? metadataEligible
+    : metadataEligible.filter((summary) =>
+        threadCouldContainWindowAnswer(summary.updatedAt, window.scanStartsAt),
+      );
+  const configuredRoots = configuredProjectRoots(policy.projects);
+  const allThreadDiscovery = discoverProjectScopes(
+    config.pluginInstanceId,
+    localScope,
+    localScope.initialized
+      ? metadataEligible
+      : metadataEligible.filter((summary) =>
+          threadIsInKnownScanWindow(
+            summary.updatedAt,
+            initialProjectScopeStartAt(runStartedAt),
+            runStartedAt,
+          ),
+        ),
+    { configuredRoots },
+  );
+  try {
+    localScope = await resolveDiscoveredProjectScopes(
+      localScope,
+      allThreadDiscovery,
+      policy.currentPeriod.period_key,
+      !localScope.initialized,
+    );
+    saveLocalProjectScope(localScope);
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  if (!localScope.initialized) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    return output(
+      projectScopeApprovalRequired(policy.currentPeriod.period_key, localScope),
+    );
+  }
+  const regularQueue: ScopedThreadSummary[] = authorizedProjectThreads(
+    inWindow,
+    allThreadDiscovery.threadScopes,
+    localScope.entries,
+    new Date(runStartedAt),
+    localState.lastSuccessfulRunStartedAt === null
+      ? effectivePeriod.starts_at
+      : undefined,
+  );
+
+  let state: {
+    sessions: Array<{ sessionKey: string; contentHash: string }>;
+  };
+  try {
+    state = await authenticatedRequest(
+      `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`,
+    );
+  } catch (error) {
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  const knownSessions = buildKnownSessionIndex({
+    remoteAccepted: state.sessions,
+    localAccepted: localState.acceptedSessions,
+    localIgnored: localState.ignoredSessions,
+  });
+  const queue = [...regularQueue];
+  const inWindowIds = new Set(inWindow.map((summary) => summary.id));
+  const queuedOutsideWindow = queue.filter(
+    (summary) => !inWindowIds.has(summary.id),
+  ).length;
+  const queuedInsideWindow = queue.filter((summary) =>
+    inWindowIds.has(summary.id),
+  ).length;
+  const manifest: RunManifest = {
+    schemaVersion: "1.5",
+    runId,
+    pluginInstanceId: config.pluginInstanceId,
+    createdAt: runStartedAt,
+    deadlineAt: collectionDeadline(runStartedAt),
+    force: flag("force"),
+    period: effectivePeriod,
+    reportPeriodStartsAt: policy.currentPeriod.starts_at,
+    reportPeriodEndsAt: policy.currentPeriod.ends_at,
+    scanStartsAt: window.scanStartsAt,
+    scanEndsAt: window.scanEndsAt,
+    initialThreadIds: summaries.map((summary) => summary.id),
+    projects: policy.projects,
+    queue,
+    cursor: 0,
+    knownSessions,
+    counts: {
+      discovered: summaries.length,
+      read: 0,
+      eligible: 0,
+      uploaded: 0,
+      ignored: 0,
+      unchanged: 0,
+      cachedIgnored: 0,
+      outsideWindow:
+        metadataEligible.length - inWindow.length - queuedOutsideWindow,
+      excluded:
+        summaries.length -
+        metadataEligible.length +
+        (inWindow.length - queuedInsideWindow),
+      failedRead: 0,
+      failedPermissionCheck: 0,
+      failedThreadRead: 0,
+      invalidThreadHistory: 0,
+      failedExtract: 0,
+      skipped: 0,
+      deferred: 0,
+      notProcessed: 0,
+    },
+    current: null,
+    claimedJobs: 0,
+    outcomes: [],
+    endOfRunScopeScan: {
+      completed: false,
+      passes: 0,
+      processedThreadIds: [],
+      unresolvedReadFailures: {},
+      readAttempts: {},
+    },
+    projectDescriptionScan: {
+      initialized: false,
+      queue: [],
+      cursor: 0,
+      current: null,
+      generated: 0,
+      unchanged: 0,
+      unauthorized: 0,
+      failed: 0,
+    },
+  };
+  let runPath: string | null = null;
+  try {
+    runPath = createRun(manifest);
+    await postCollectionStatus(config, manifest, "started");
+  } catch (error) {
+    if (runPath) rmSync(dirname(runPath), { recursive: true, force: true });
+    releaseCollectionLease(config.pluginInstanceId, runId);
+    throw error;
+  }
+  output({
+    status: "started",
+    runPath,
+    periodKey: manifest.period.period_key,
+    collectionStartsAt: manifest.period.starts_at,
+    collectionEndsAt: manifest.period.ends_at,
+    scanStartsAt: window.scanStartsAt,
+    scanEndsAt: window.scanEndsAt,
+    discovered: manifest.counts.discovered,
+    queued: manifest.queue.length,
+    outsideWindow: manifest.counts.outsideWindow,
+    excluded: manifest.counts.excluded,
+    nextCommand: `collect-next --run ${runPath}`,
+  });
+}
+
+function currentJobOutput(runPath: string, current: CurrentJob) {
+  output({
+    status: "job",
+    runPath,
+    jobId: current.jobId,
+    inputPath: current.inputPath,
+    resultPath: current.resultPath,
+    resultSchema: resolve(
+      import.meta.dirname,
+      "../schemas/session-extraction-result-v1.json",
+    ),
+    validationFailures: current.failures.length,
+    validationAttemptsRemaining: Math.max(
+      0,
+      MAX_EXTRACTION_FAILURES - current.failures.length,
+    ),
+    nextCommand: `collect-submit --run ${runPath} --result ${current.resultPath}`,
+  });
+}
+
+function recordJobOutcome(
+  manifest: RunManifest,
+  current: CurrentJob,
+  outcome: Omit<JobOutcome, "jobId" | "failureCount" | "failureCodes">,
+) {
+  if (["uploaded", "ignored"].includes(outcome.status))
+    markThreadProcessed(manifest, current.threadId);
+  manifest.outcomes.push({
+    jobId: current.jobId,
+    ...(current.threadId ? { threadId: current.threadId } : {}),
+    failureCount: current.failures.length,
+    failureCodes: current.failures.map((failure) => failure.code),
+    ...outcome,
+  });
+  manifest.counts[outcome.status] += 1;
+  manifest.current = null;
+}
+
+function deferRun(
+  runPath: string,
+  manifest: RunManifest,
+  reason: RunManifest["stopReason"],
+) {
+  if (!reason) throw new Error("延后处理必须提供安全原因码。");
+  if (manifest.current)
+    recordJobOutcome(manifest, manifest.current, {
+      status: "deferred",
+      errorCode: reason,
+    });
+  manifest.stopReason = reason;
+  manifest.counts.notProcessed = Math.max(
+    0,
+    manifest.queue.length - manifest.cursor,
+  );
+  saveRun(runPath, manifest);
+  enqueueCollectionFinalState({
+    runId: manifest.runId,
+    outcome: "failed",
+    summary: `采集未完成：运行已延后，剩余 ${manifest.counts.notProcessed} 个候选会话待处理。`,
+    reasonCode: reason,
+    details: {
+      periodKey: manifest.period.period_key,
+      deferred: manifest.counts.deferred,
+      notProcessed: manifest.counts.notProcessed,
+    },
+  });
+  output({
+    status: "deferred",
+    runPath,
+    reason,
+    deferred: manifest.counts.deferred,
+    notProcessed: manifest.counts.notProcessed,
+    checkpointAdvanced: false,
+    warnings: ["PARTIAL_COLLECTION_RETRY_REQUIRED"],
+    nextCommand: `collect-review --run ${runPath}`,
+  });
+}
+
+async function finishRun(
+  runPath: string,
+  manifest: RunManifest,
+  config: PluginConfig,
+) {
+  const review = completionReview(manifest);
+  await postCollectionStatus(config, manifest, "completed");
+  const checkpointAdvanced = review.checkpointEligible;
+  if (checkpointAdvanced) {
+    const state = loadCollectionState(manifest.pluginInstanceId);
+    state.lastSuccessfulRunStartedAt = manifest.createdAt;
+    markWeekBackfillCompleted(state, beijingWeekStartsAt(manifest.createdAt));
+    saveCollectionState(state);
+  }
+  const summary = {
+    status: "completed",
+    reviewed: true,
+    periodKey: manifest.period.period_key,
+    collectionStartsAt: manifest.period.starts_at,
+    collectionEndsAt: manifest.period.ends_at,
+    checkpointAdvanced,
+    warnings: [
+      ...(checkpointAdvanced ? [] : ["PARTIAL_COLLECTION_RETRY_REQUIRED"]),
+      ...((manifest.counts.invalidThreadHistory ?? 0) > 0
+        ? ["INVALID_THREAD_HISTORY_RETRY_REQUIRED"]
+        : []),
+      ...((manifest.projectDescriptionScan?.failed ?? 0) > 0
+        ? ["PROJECT_DESCRIPTION_RETRY_REQUIRED"]
+        : []),
+    ],
+    threadReadFailureCodes: manifest.threadReadFailureCodes ?? {},
+    projectDescriptions: {
+      generated: manifest.projectDescriptionScan?.generated ?? 0,
+      unchanged: manifest.projectDescriptionScan?.unchanged ?? 0,
+      unauthorized: manifest.projectDescriptionScan?.unauthorized ?? 0,
+      failed: manifest.projectDescriptionScan?.failed ?? 0,
+    },
+    ...manifest.counts,
+  };
+  enqueueCollectionFinalState({
+    runId: manifest.runId,
+    outcome: "success",
+    summary: `采集成功：上传 ${manifest.counts.uploaded} 项贡献，忽略 ${manifest.counts.ignored + manifest.counts.cachedIgnored} 个无有效贡献的会话，采集进度已更新。`,
+    details: {
+      periodKey: manifest.period.period_key,
+      uploaded: manifest.counts.uploaded,
+      unchanged: manifest.counts.unchanged,
+      ignored: manifest.counts.ignored + manifest.counts.cachedIgnored,
+      checkpointAdvanced,
+    },
+  });
+  await flushPluginLogs();
+  releaseCollectionLease(manifest.pluginInstanceId, manifest.runId);
+  rmSync(dirname(runPath), { recursive: true, force: true });
+  output(summary);
+}
+
+function completionReview(manifest: RunManifest) {
+  const outcomeCounts = countJobOutcomes(manifest.outcomes);
+  const coverage = coverageState(manifest);
+  return reviewCollectionCompletion({
+    cursor: manifest.cursor,
+    queueLength: manifest.queue.length,
+    hasCurrentJob: manifest.current !== null,
+    claimedJobs: manifest.claimedJobs,
+    terminalJobs: manifest.outcomes.length,
+    uniqueTerminalJobs:
+      new Set(manifest.outcomes.map((outcome) => outcome.jobId)).size ===
+      manifest.outcomes.length,
+    validFailureAudits: manifest.outcomes.every(jobOutcomeFailureAuditIsValid),
+    unexplainedFailedExtract: manifest.outcomes.filter(
+      (outcome) => !failedExtractOutcomeIsExplained(outcome),
+    ).length,
+    outcomeCountsMatch: Object.entries(outcomeCounts).every(
+      ([key, count]) =>
+        manifest.counts[key as keyof typeof outcomeCounts] === count,
+    ),
+    coverageComplete:
+      coverage.completed &&
+      Object.keys(coverage.unresolvedReadFailures ?? {}).length === 0,
+    stopped: manifest.stopReason !== undefined,
+    counts: manifest.counts,
+  });
+}
+
+function projectDescriptionJobOutput(
+  runPath: string,
+  current: ProjectDescriptionCurrent,
+) {
+  output({
+    status: "project_description_job",
+    runPath,
+    jobId:
+      current.jobId ?? basename(current.inputPath).replace(/-input\.json$/, ""),
+    projectName: current.projectName,
+    inputPath: current.inputPath,
+    resultPath: current.resultPath,
+    resultSchema: resolve(
+      import.meta.dirname,
+      "../schemas/project-description-result-v1.json",
+    ),
+    nextCommand: `project-description-submit --run ${runPath} --result ${current.resultPath}`,
+  });
+}
+
+async function initializeProjectDescriptionScan(
+  runPath: string,
+  manifest: RunManifest,
+) {
+  const scan = manifest.projectDescriptionScan!;
+  if (scan.initialized) return;
+  const local = inspectLocalProjectScope(manifest.pluginInstanceId);
+  if (local.state !== "valid") {
+    scan.initialized = true;
+    saveRun(runPath, manifest);
+    return;
+  }
+  const sources = local.scope.entries.flatMap((entry) => {
+    if (!scopeIsActive(entry) || !entry.localRoot) return [];
+    const project = mappedProject(entry.localRoot, manifest.projects);
+    const source = buildProjectDescriptionSource({
+      projectName: entry.displayName,
+      localRoot: entry.localRoot,
+      rootFingerprint: project.rootFingerprint,
+    });
+    return source ? [{ ...source, scopeKey: entry.scopeKey }] : [];
+  });
+  let remote: {
+    projects: Array<{
+      scopeKey: string;
+      sourceFingerprint: string | null;
+      pendingSourceFingerprint: string | null;
+    }>;
+  };
+  try {
+    remote = await authenticatedRequest("/v1/project-descriptions/state", {
+      method: "POST",
+      body: JSON.stringify({
+        projects: sources.map((source) => ({
+          scopeKey: source.scopeKey,
+          rootFingerprint: source.rootFingerprint,
+          sourceFingerprint: source.sourceFingerprint,
+        })),
+      }),
+    });
+  } catch {
+    scan.failed += sources.length;
+    scan.initialized = true;
+    saveRun(runPath, manifest);
+    return;
+  }
+  const plan = planProjectDescriptionSources(sources, remote.projects);
+  scan.queue = plan.queue;
+  scan.unchanged += plan.unchanged;
+  scan.unauthorized = (scan.unauthorized ?? 0) + plan.unauthorized;
+  scan.cursor = 0;
+  scan.initialized = true;
+  saveRun(runPath, manifest);
+}
+
+async function continueProjectDescriptionScan(
+  runPath: string,
+  manifest: RunManifest,
+): Promise<boolean> {
+  const scan = manifest.projectDescriptionScan!;
+  await initializeProjectDescriptionScan(runPath, manifest);
+  if (scan.current) {
+    projectDescriptionJobOutput(runPath, scan.current);
+    return true;
+  }
+  const next = scan.queue[scan.cursor++];
+  if (!next) return false;
+  const jobId = `project-description-${randomUUID()}`;
+  const paths = writeJob(runPath, jobId, next.modelInput);
+  scan.current = { ...next, jobId, ...paths, failures: 0 };
+  saveRun(runPath, manifest);
+  projectDescriptionJobOutput(runPath, scan.current);
+  return true;
+}
+
+async function submitProjectDescription() {
+  const runPath = option("run");
+  const resultPath = option("result");
+  if (!runPath || !resultPath)
+    throw new Error("project-description-submit 需要 --run 和 --result。");
+  const { absolute, manifest } = readRun(runPath);
+  const scan = manifest.projectDescriptionScan!;
+  const current = scan.current;
+  if (!current) throw new Error("当前没有待提交的项目描述 Job。");
+  if (resolve(resultPath) !== resolve(current.resultPath))
+    throw new Error("项目描述结果路径与当前 Job 不匹配。");
+  try {
+    const raw = JSON.parse(readFileSync(current.resultPath, "utf8"));
+    const result = projectDescriptionResultSchema.parse(raw);
+    if (!projectDescriptionIsChinese(result.description))
+      throw new Error("PROJECT_DESCRIPTION_CHINESE_REQUIRED");
+    if (containsSensitive(result.description))
+      throw new Error("PROJECT_DESCRIPTION_SENSITIVE");
+    await authenticatedRequest("/v1/project-descriptions/candidates", {
+      method: "POST",
+      headers: {
+        "idempotency-key": `${current.scopeKey}:${current.sourceFingerprint}`,
+      },
+      body: JSON.stringify({
+        scopeKey: current.scopeKey,
+        rootFingerprint: current.rootFingerprint,
+        sourceFingerprint: current.sourceFingerprint,
+        description: result.description.trim(),
+      }),
+    });
+    scan.generated += 1;
+    scan.current = null;
+    saveRun(absolute, manifest);
+    output({
+      status: "project_description_uploaded",
+      runPath: absolute,
+      generated: scan.generated,
+      nextCommand: `collect-next --run ${absolute}`,
+    });
+  } catch (error) {
+    current.failures += 1;
+    if (current.failures >= 3) {
+      scan.failed += 1;
+      scan.current = null;
+      saveRun(absolute, manifest);
+      return output({
+        status: "project_description_skipped",
+        runPath: absolute,
+        reason:
+          error instanceof Error
+            ? error.message.slice(0, 120)
+            : "INVALID_RESULT",
+        nextCommand: `collect-next --run ${absolute}`,
+      });
+    }
+    saveRun(absolute, manifest);
+    output({
+      status: "project_description_validation_failed",
+      runPath: absolute,
+      remainingAttempts: 3 - current.failures,
+      nextCommand: `project-description-submit --run ${absolute} --result ${current.resultPath}`,
+    });
+  }
+}
+
+function completeInitialQueueCoverage(
+  runPath: string,
+  manifest: RunManifest,
+): boolean {
+  const scan = coverageState(manifest);
+  if (scan.completed) return false;
+  const coverage = reviewSnapshotCoverage({
+    snapshot: manifest.queue,
+    processedSessionIds: scan.processedThreadIds ?? [],
+    terminalSessionIds: manifest.outcomes.flatMap((outcome) =>
+      outcome.threadId ? [outcome.threadId] : [],
+    ),
+    unresolvedSessionIds: Object.keys(scan.unresolvedReadFailures ?? {}),
+  });
+  scan.passes = (scan.passes ?? 0) + 1;
+
+  if (coverage.retry.length > 0) {
+    manifest.queue.push(...coverage.retry);
+    manifest.deadlineAt = collectionDeadline(new Date().toISOString());
+    scan.completed = false;
+    saveRun(runPath, manifest);
+    output({
+      status: "coverage_repair_required",
+      runPath,
+      coveragePass: scan.passes,
+      missingSessions: coverage.retry.length,
+      unresolvedReadFailures: Object.keys(scan.unresolvedReadFailures ?? {})
+        .length,
+      collectionEndsAt: manifest.scanEndsAt ?? manifest.createdAt,
+      nextCommand: `collect-next --run ${runPath}`,
+    });
+    return true;
+  }
+
+  if (coverage.unaccounted.length > 0)
+    throw Object.assign(
+      new Error("初始 Session 快照存在未处理项，已停止推进采集游标。"),
+      { code: "COLLECTION_SNAPSHOT_INCOMPLETE" },
+    );
+
+  scan.completed = true;
+  saveRun(runPath, manifest);
+  return false;
+}
+
+async function collectNext() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-next 需要 --run <path>。");
+  await synchronizeLocalProjectScope(await fetchProjectScope());
+  const { absolute, manifest } = readRun(runPath);
+  if (manifest.stopReason)
+    return deferRun(absolute, manifest, manifest.stopReason);
+  if (
+    (manifest.current || manifest.cursor < manifest.queue.length) &&
+    shouldStopBeforeClaim(manifest.deadlineAt)
+  )
+    return deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
+  if (manifest.current) {
+    assertCurrentJobPermission(manifest);
+    return currentJobOutput(absolute, manifest.current);
+  }
+  const server = new CodexAppServer();
+  try {
+    await server.connect();
+    while (manifest.cursor < manifest.queue.length) {
+      if (shouldStopBeforeClaim(manifest.deadlineAt)) {
+        deferRun(absolute, manifest, "TIME_BUDGET_EXHAUSTED");
+        return;
+      }
+      const summary = manifest.queue[manifest.cursor++]!;
+      const localScope = inspectLocalProjectScope(manifest.pluginInstanceId);
+      if (
+        localScope.state !== "valid" ||
+        !threadMayBeRead(summary, localScope.scope, {
+          configuredRoots: configuredProjectRoots(manifest.projects),
+        })
+      ) {
+        recordCoverageReadFailure(
+          manifest,
+          summary.id,
+          "PROJECT_SCOPE_RECHECK_FAILED",
+        );
+        saveRun(absolute, manifest);
+        continue;
+      }
+      let thread: any;
+      try {
+        thread = await server.readThread(summary.id);
+        clearCoverageReadFailure(manifest, summary.id);
+        manifest.counts.read += 1;
+      } catch (error) {
+        const code =
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          [
+            "CODEX_THREAD_READ_FAILED",
+            "CODEX_THREAD_TURNS_LIST_FAILED",
+            "CODEX_THREAD_HISTORY_INVALID",
+          ].includes(String(error.code))
+            ? (String(error.code) as CodexThreadReadFailureCode)
+            : "CODEX_THREAD_READ_FAILED";
+        recordCoverageReadFailure(manifest, summary.id, code);
+        saveRun(absolute, manifest);
+        continue;
+      }
+      const job = buildSessionJob({
+        pluginInstanceId: manifest.pluginInstanceId,
+        sessionId: summary.id,
+        title: thread.name ?? summary.title,
+        cwd: thread.cwd ?? summary.cwd,
+        updatedAt: thread.updatedAt ?? summary.updatedAt,
+        turns: Array.isArray(thread.turns) ? thread.turns : [],
+        projects: manifest.projects,
+        scopeKey: summary.scopeKey,
+        period:
+          summary.collectionStartsAt || summary.collectionEndsAt
+            ? {
+                ...manifest.period,
+                starts_at: new Date(
+                  Math.max(
+                    new Date(manifest.period.starts_at).getTime(),
+                    new Date(
+                      summary.collectionStartsAt ?? manifest.period.starts_at,
+                    ).getTime(),
+                  ),
+                ).toISOString(),
+                ends_at: summary.collectionEndsAt ?? manifest.period.ends_at,
+              }
+            : manifest.period,
+      });
+      if (!job) {
+        markThreadProcessed(manifest, summary.id);
+        manifest.counts.excluded += 1;
+        saveRun(absolute, manifest);
+        continue;
+      }
+      manifest.counts.eligible += 1;
+      const known = manifest.knownSessions[job.sessionKey];
+      const compatibleContentHashes = new Set([
+        job.contentHash,
+        ...job.compatibleContentHashes,
+      ]);
+      const knownDecision = manifest.force
+        ? null
+        : matchingKnownDecision(known, compatibleContentHashes);
+      if (knownDecision) {
+        const state = loadCollectionState(manifest.pluginInstanceId);
+        if (knownDecision === "accepted")
+          recordAcceptedSession(state, job.sessionKey, job.contentHash);
+        else recordIgnoredSession(state, job.sessionKey, job.contentHash);
+        saveCollectionState(state);
+        if (knownDecision === "accepted") manifest.counts.unchanged += 1;
+        else manifest.counts.cachedIgnored += 1;
+        markThreadProcessed(manifest, summary.id);
+        saveRun(absolute, manifest);
+        continue;
+      }
+      const jobId = randomUUID();
+      const paths = writeJob(absolute, jobId, job.modelInput);
+      manifest.current = {
+        jobId,
+        threadId: summary.id,
+        ...paths,
+        expected: immutableContributionFromRequirements(
+          job.modelInput.outputRequirements.include.contribution,
+        ),
+        failures: [],
+      };
+      manifest.claimedJobs += 1;
+      saveRun(absolute, manifest);
+      return currentJobOutput(absolute, manifest.current);
+    }
+  } finally {
+    server.close();
+  }
+  if (await continueProjectDescriptionScan(absolute, manifest)) return;
+  if (completeInitialQueueCoverage(absolute, manifest)) return;
+  output({
+    status: "review_required",
+    runPath: absolute,
+    review: completionReview(manifest),
+    nextCommand: `collect-review --run ${absolute}`,
+  });
+}
+
+async function collectReview() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-review 需要 --run <path>。");
+  const { absolute, manifest } = readRun(runPath);
+  const descriptionScan = manifest.projectDescriptionScan!;
+  if (
+    !descriptionScan.initialized ||
+    descriptionScan.current ||
+    descriptionScan.cursor < descriptionScan.queue.length
+  ) {
+    return output({
+      status: "review_failed",
+      runPath: absolute,
+      reason: "PROJECT_DESCRIPTION_SCAN_INCOMPLETE",
+      nextCommand: `collect-next --run ${absolute}`,
+    });
+  }
+  const review = completionReview(manifest);
+  if (!review.readyToFinalize) {
+    return output({
+      status: "review_failed",
+      runPath: absolute,
+      review,
+      nextCommand: `collect-next --run ${absolute}`,
+    });
+  }
+  await finishRun(absolute, manifest, loadConfig()!);
+}
+
+function assertImmutableContribution(contribution: any, expected: any) {
+  for (const key of [
+    "schemaVersion",
+    "periodKey",
+    "sessionKey",
+    "contentHash",
+    "project",
+    "activity",
+    "observedAt",
+  ]) {
+    if (!isDeepStrictEqual(contribution[key], expected[key]))
+      throw new Error(`模型修改了不可变字段 contribution.${key}。`);
+  }
+  const { modelVersion: _actualModel, ...actualProduction } =
+    contribution.production;
+  if (!isDeepStrictEqual(actualProduction, expected.production))
+    throw new Error("模型修改了不可变字段 contribution.production。");
+  if (contribution.contributions.length === 0)
+    throw new Error("include 结果必须至少包含一条有价值的项目贡献。");
+}
+
+function assertChineseContribution(contribution: any) {
+  const invalid = firstNonChineseContributionField(contribution);
+  if (invalid) {
+    throw Object.assign(new Error(`上传字段 ${invalid} 必须使用中文。`), {
+      code: "CHINESE_OUTPUT_REQUIRED",
+    });
+  }
+}
+
+function extractionFailureOutput(
+  runPath: string,
+  manifest: RunManifest,
+  current: CurrentJob,
+  code: ExtractionFailureCode,
+) {
+  current.failures = appendExtractionFailure(current.failures, code);
+  saveRun(runPath, manifest);
+  const attempts = current.failures.length;
+  const terminalSensitiveRejection = code === "SENSITIVE_EGRESS_REJECTED";
+  const retriesExhausted = attempts >= MAX_EXTRACTION_FAILURES;
+  output({
+    status: "validation_failed",
+    runPath,
+    jobId: current.jobId,
+    errorCode: code,
+    attempts,
+    attemptsRemaining: Math.max(0, MAX_EXTRACTION_FAILURES - attempts),
+    nextCommand: terminalSensitiveRejection
+      ? `collect-skip --run ${runPath} --job ${current.jobId} --error-code SENSITIVE_EGRESS_REJECTED`
+      : retriesExhausted
+        ? `collect-skip --run ${runPath} --job ${current.jobId} --error-code EXTRACT_FAILED --cause-code ${code}`
+        : `collect-submit --run ${runPath} --result ${current.resultPath}`,
+  });
+}
+
+function assertCurrentJobPermission(manifest: RunManifest) {
+  const summary = manifest.queue.find(
+    (item) => item.id === manifest.current?.threadId,
+  );
+  const local = inspectLocalProjectScope(manifest.pluginInstanceId);
+  if (
+    !summary ||
+    local.state !== "valid" ||
+    !threadMayBeRead(summary, local.scope, {
+      configuredRoots: configuredProjectRoots(manifest.projects),
+    })
+  )
+    throw Object.assign(
+      new Error("当前项目权限或身份已变化，请重新核对后采集。"),
+      {
+        code: "PROJECT_SCOPE_RECHECK_FAILED",
+      },
+    );
+}
+
+async function collectSubmit() {
+  const runPath = option("run");
+  const resultPath = option("result");
+  if (!runPath || !resultPath)
+    throw new Error("collect-submit 需要 --run <path> --result <path>。");
+  const { absolute, manifest } = readRun(runPath);
+  const current = manifest.current;
+  if (!current) throw new Error("当前 Run 没有待提交 Job。");
+  await synchronizeLocalProjectScope(await fetchProjectScope());
+  assertCurrentJobPermission(manifest);
+  if (resolve(resultPath) !== resolve(current.resultPath))
+    throw new Error("Result 路径与当前 Job 不匹配。");
+  if (current.failures.length >= MAX_EXTRACTION_FAILURES)
+    return output({
+      status: "validation_failed",
+      runPath: absolute,
+      jobId: current.jobId,
+      errorCode: current.failures.at(-1)!.code,
+      attempts: current.failures.length,
+      attemptsRemaining: 0,
+      nextCommand: `collect-skip --run ${absolute} --job ${current.jobId} --error-code EXTRACT_FAILED --cause-code ${current.failures.at(-1)!.code}`,
+    });
+  let rawResult: unknown;
+  try {
+    rawResult = JSON.parse(readFileSync(current.resultPath, "utf8"));
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "RESULT_JSON_INVALID",
+    );
+  }
+  const repaired = repairImmutableResult(rawResult, current.expected);
+  if (repaired.repaired)
+    writeFileSync(
+      current.resultPath,
+      `${JSON.stringify(repaired.result, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  const parsed = sessionExtractionResultSchema.safeParse(repaired.result);
+  if (!parsed.success)
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "SCHEMA_VALIDATION_FAILED",
+    );
+  const result = parsed.data as any;
+
+  if (result.decision === "ignore") {
+    const state = loadCollectionState(manifest.pluginInstanceId);
+    recordIgnoredSession(
+      state,
+      current.expected.sessionKey,
+      current.expected.contentHash,
+    );
+    saveCollectionState(state);
+    manifest.knownSessions[current.expected.sessionKey] = {
+      contentHashes: [current.expected.contentHash],
+      decision: "ignored",
+    };
+    recordJobOutcome(manifest, current, { status: "ignored" });
+    saveRun(absolute, manifest);
+    return output({
+      status: "ignored",
+      runPath: absolute,
+      reason: result.reason,
+      nextCommand: `collect-next --run ${absolute}`,
+    });
+  }
+
+  try {
+    assertImmutableContribution(result.contribution, current.expected);
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "IMMUTABLE_FIELD_MISMATCH",
+    );
+  }
+  try {
+    assertChineseContribution(result.contribution);
+  } catch {
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "CHINESE_OUTPUT_REQUIRED",
+    );
+  }
+  if (containsSensitive(result.contribution)) {
+    writeFileSync(
+      current.resultPath,
+      `${JSON.stringify({
+        schemaVersion: "1.0",
+        status: "rejected",
+        errorCode: "SENSITIVE_EGRESS_REJECTED",
+      })}\n`,
+      { mode: 0o600 },
+    );
+    return extractionFailureOutput(
+      absolute,
+      manifest,
+      current,
+      "SENSITIVE_EGRESS_REJECTED",
+    );
+  }
+  const idempotencyKey = sha256(
+    `${result.contribution.sessionKey}:${result.contribution.periodKey}:${result.contribution.contentHash}`,
+  );
+  const response = await authenticatedRequest<Record<string, unknown>>(
+    "/v1/session-contributions",
+    {
+      method: "POST",
+      headers: { "idempotency-key": idempotencyKey },
+      body: JSON.stringify(result.contribution),
+    },
+  );
+  const state = loadCollectionState(manifest.pluginInstanceId);
+  recordAcceptedSession(
+    state,
+    result.contribution.sessionKey,
+    result.contribution.contentHash,
+  );
+  saveCollectionState(state);
+  manifest.knownSessions[result.contribution.sessionKey] = {
+    contentHashes: [result.contribution.contentHash],
+    decision: "accepted",
+  };
+  recordJobOutcome(manifest, current, { status: "uploaded" });
+  saveRun(absolute, manifest);
+  output({
+    status: "uploaded",
+    runPath: absolute,
+    response,
+    nextCommand: `collect-next --run ${absolute}`,
+  });
+}
+
+function collectSkip() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-skip 需要 --run <path>。");
+  const { absolute, manifest } = readRun(runPath);
+  const current = manifest.current;
+  if (!current) throw new Error("当前 Run 没有待跳过 Job。");
+  const errorCode = option("error-code");
+  const causeCode = option("cause-code");
+  recordJobOutcome(
+    manifest,
+    current,
+    legalCollectSkipOutcome({
+      currentJobId: current.jobId,
+      requestedJobId: option("job"),
+      errorCode,
+      causeCode,
+      failures: current.failures,
+    }),
+  );
+  saveRun(absolute, manifest);
+  output({
+    status: "skipped",
+    runPath: absolute,
+    jobStatus: manifest.outcomes.at(-1)!.status,
+    errorCode,
+    ...(causeCode ? { causeCode } : {}),
+    nextCommand: `collect-next --run ${absolute}`,
+  });
+}
+
+function collectDefer() {
+  const runPath = option("run");
+  if (!runPath) throw new Error("collect-defer 需要 --run <path>。");
+  const { absolute, manifest } = readRun(runPath);
+  const reason = option("reason");
+  if (
+    ![
+      "TIME_BUDGET_EXHAUSTED",
+      "RUN_INTERRUPTED",
+      "TEMPORARILY_UNAVAILABLE",
+    ].includes(reason ?? "")
+  )
+    throw Object.assign(new Error("collect-defer 需要合法的安全原因码。"), {
+      code: "DEFER_REASON_REQUIRED",
+    });
+  deferRun(absolute, manifest, reason as RunManifest["stopReason"]);
+}
+
+async function status() {
+  const config = loadConfig(false);
+  if (!config) return output({ status: "not_connected" });
+  const [policy, remoteScope] = await Promise.all([
+    fetchPolicy(),
+    fetchProjectScope(),
+  ]);
+  const projectScope = cacheRemoteProjectScope(remoteScope);
+  const localState = loadCollectionState(config.pluginInstanceId);
+  const state = policy.currentPeriod
+    ? await authenticatedRequest<{ sessions: unknown[] }>(
+        `/v1/session-contributions/state?periodKey=${encodeURIComponent(policy.currentPeriod.period_key)}`,
+      )
+    : { sessions: [] };
+  output({
+    status: "connected",
+    pluginVersion: PLUGIN_VERSION,
+    deviceName: config.deviceName,
+    connectionStatus: "connected",
+    bindingStatus: policy.bindingStatus,
+    bindingCompleted: policy.bindingCompleted,
+    connectivityStatus: config.connectivityStatus ?? "pending",
+    periodKey: policy.currentPeriod?.period_key ?? null,
+    acceptedSessionCount: state.sessions.length,
+    localAcceptedSessionCount: Object.keys(localState.acceptedSessions).length,
+    ignoredSessionCount: Object.keys(localState.ignoredSessions).length,
+    collectionFloorAt: localState.collectionFloorAt,
+    lastSuccessfulRunStartedAt: localState.lastSuccessfulRunStartedAt,
+    excludedSessionCount: config.excludedSessionIds.length,
+    excludedPathCount: config.excludedPaths.length,
+    projectScopeLocalState: projectScope.state,
+    projectScopeVersion: projectScope.scope.version,
+    projectScopeInitialized:
+      projectScope.state === "valid" && projectScope.scope.initialized,
+    projectScopeRequiresApproval:
+      projectScope.state !== "valid" ||
+      !projectScope.scope.initialized ||
+      projectScopeHasPending(projectScope.scope),
+    allowedProjectCount:
+      projectScope.state === "valid"
+        ? projectScope.scope.entries.filter((entry) => scopeIsActive(entry))
+            .length
+        : 0,
+    pendingProjectCount: projectScope.scope.entries.filter(
+      (entry) => entry.status === "pending",
+    ).length,
+    deniedProjectCount: projectScope.scope.entries.filter(
+      (entry) => entry.status === "denied",
+    ).length,
+  });
+}
+
+async function projectScopeList() {
+  const remote = await fetchProjectScope();
+  const local = cacheRemoteProjectScope(remote);
+  output({
+    status: "project_scope",
+    localState: local.state,
+    version: local.scope.version,
+    initialized: local.scope.initialized,
+    requiresApproval:
+      local.state !== "valid" ||
+      !local.scope.initialized ||
+      projectScopeHasPending(local.scope),
+    projects: local.scope.entries.map((entry) => ({
+      scopeKey: entry.scopeKey,
+      name: entry.displayName,
+      permission: entry.status,
+      active: scopeIsActive(entry),
+      effectiveFrom: entry.effectiveFrom,
+      firstSeenPeriodKey: entry.firstSeenPeriodKey,
+      sessionCount: entry.sessionCount,
+    })),
+  });
+}
+
+function configureExclusion(kind: "session" | "path", remove = false) {
+  const config = loadConfig()!;
+  const raw = option(kind === "session" ? "session-id" : "path");
+  if (!raw)
+    throw new Error(
+      kind === "session"
+        ? "需要 --session-id <id>。"
+        : "需要 --path <absolute-path>。",
+    );
+  const value = kind === "path" ? resolve(raw) : raw.trim();
+  const key = kind === "session" ? "excludedSessionIds" : "excludedPaths";
+  const current = new Set(config[key] ?? []);
+  if (remove) current.delete(value);
+  else current.add(value);
+  saveConfig({ ...config, [key]: [...current].sort() });
+  output({
+    status: remove ? "exclusion_removed" : "excluded",
+    kind,
+    value,
+  });
+}
+
+function help() {
+  output({
+    commands: [
+      "connect --server <url> --binding-code <code> [--device-name <name>] [--allow-insecure-http]",
+      "connectivity-test",
+      "project-discovery-submit --input <path>",
+      "server-url-set --server <url> [--allow-insecure-http]",
+      "scheduled-task-config",
+      "migrate-credentials",
+      "collect-start [--force]",
+      "collect-next --run <path>",
+      "collect-review --run <path>",
+      "collect-submit --run <path> --result <path>",
+      "project-description-submit --run <path> --result <path>",
+      "collect-skip --run <path> --job <job-id> --error-code <code> [--cause-code <code>]",
+      "collect-defer --run <path> --reason <TIME_BUDGET_EXHAUSTED|RUN_INTERRUPTED|TEMPORARILY_UNAVAILABLE>",
+      "status",
+      "project-scope-list",
+      "exclude-session --session-id <id>",
+      "include-session --session-id <id>",
+      "exclude-path --path <absolute-path>",
+      "include-path --path <absolute-path>",
+    ],
+  });
+}
+
+const command = process.argv[2] ?? "help";
+async function runCommand() {
+  if (command === "connect") await connect();
+  else if (command === "connectivity-test") await connectivityTest();
+  else if (command === "project-discovery-submit")
+    await submitHostProjectDiscovery();
+  else if (command === "server-url-set") await setServerUrl();
+  else if (command === "scheduled-task-config") scheduledTaskConfig();
+  else if (command === "migrate-credentials")
+    output(migrateLegacyInstallation());
+  else if (command === "collect-start" || command === "daily-collect")
+    await collectStart();
+  else if (command === "collect-next") await collectNext();
+  else if (command === "collect-review") await collectReview();
+  else if (command === "collect-submit") await collectSubmit();
+  else if (command === "project-description-submit")
+    await submitProjectDescription();
+  else if (command === "collect-skip") collectSkip();
+  else if (command === "collect-defer") collectDefer();
+  else if (command === "status") await status();
+  else if (command === "project-scope-list") await projectScopeList();
+  else if (command === "exclude-session") configureExclusion("session");
+  else if (command === "include-session") configureExclusion("session", true);
+  else if (command === "exclude-path") configureExclusion("path");
+  else if (command === "include-path") configureExclusion("path", true);
+  else help();
+}
+
+const commandStartedAt = Date.now();
+let commandRunId: string | undefined;
+const commandRunPath = option("run");
+if (commandRunPath) {
+  try {
+    commandRunId = readRun(commandRunPath).manifest.runId;
+    setPluginLogRunId(commandRunId);
+  } catch {
+    commandRunId = undefined;
+  }
+}
+
+await flushPluginLogs();
+enqueuePluginLog({
+  runId: commandRunId,
+  level: "info",
+  stage: command.replaceAll("-", "_"),
+  eventCode: "command.started",
+  eventType: "lifecycle",
+  message: `插件命令开始：${command}`,
+  details: {
+    command,
+    pluginVersion: PLUGIN_VERSION,
+    nodeVersion: process.versions.node,
+    platform: process.platform,
+    architecture: process.arch,
+    forced: flag("force"),
+    hasCollectionRun: Boolean(commandRunId),
+  },
+});
+await flushPluginLogs();
+
+try {
+  await runCommand();
+  enqueuePluginLog({
+    runId: commandRunId,
+    level: "info",
+    stage: command.replaceAll("-", "_"),
+    eventCode: "command.completed",
+    eventType: "lifecycle",
+    message: `插件命令完成：${command}`,
+    durationMs: Date.now() - commandStartedAt,
+    details: { command },
+  });
+  await flushPluginLogs();
+} catch (error) {
+  const diagnostic = pluginErrorDetails(error);
+  enqueuePluginLog({
+    runId: commandRunId,
+    level: "error",
+    stage: command.replaceAll("-", "_"),
+    eventCode: diagnostic.code,
+    eventType: "error",
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+    durationMs: Date.now() - commandStartedAt,
+    requestId: diagnostic.requestId,
+    retryable:
+      diagnostic.status === 408 ||
+      diagnostic.status === 429 ||
+      (diagnostic.status !== undefined && diagnostic.status >= 500),
+    details: {
+      command,
+      httpStatus: diagnostic.status,
+      ...(diagnostic.details ?? {}),
+    },
+  });
+  if (
+    [
+      "collect-start",
+      "daily-collect",
+      "collect-next",
+      "collect-review",
+      "collect-submit",
+      "collect-defer",
+      "collect-skip",
+      "project-description-submit",
+    ].includes(command)
+  ) {
+    enqueueCollectionFinalState({
+      ...(commandRunId ? { runId: commandRunId } : {}),
+      outcome: "failed",
+      summary: collectionFailureSummary(diagnostic.code, command),
+      reasonCode: diagnostic.code,
+      details: { command, errorCode: diagnostic.code },
+    });
+  }
+  await flushPluginLogs();
+  {
+    const code =
+      error instanceof HttpError
+        ? error.code
+        : error && typeof error === "object" && "code" in error
+          ? String(error.code)
+          : "PLUGIN_COMMAND_FAILED";
+    process.stderr.write(
+      `${JSON.stringify({
+        status: "error",
+        code,
+        message: error instanceof Error ? error.message : String(error),
+      })}\n`,
+    );
+    process.exitCode = 1;
+  }
+}

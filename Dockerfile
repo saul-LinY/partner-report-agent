@@ -9,6 +9,7 @@ COPY apps/worker/package.json apps/worker/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY plugins/partner-report/package.json plugins/partner-report/package.json
+COPY plugins/v2/partner-report/package.json plugins/v2/partner-report/package.json
 
 RUN npm ci
 

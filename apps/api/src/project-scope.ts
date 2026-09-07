@@ -58,7 +58,7 @@ export const projectScopeReapprovalSchema = z
   })
   .strict();
 
-type ScopeIdentity = {
+export type ScopeIdentity = {
   tenantId: string;
   teamId: string;
   partnerId: string;
@@ -199,7 +199,10 @@ export async function registerProjectScopeCandidates(
   database: Database = defaultDatabase,
 ) {
   const input = projectScopeCandidateBatchSchema.parse(rawInput);
-  await database.begin(async (tx) => {
+  const transaction =
+    (database as any).savepoint?.bind(database) ??
+    database.begin.bind(database);
+  await transaction(async (tx: any) => {
     await ensurePolicy(tx, identity);
     const policyRows = await tx<PolicyRow[]>`
       select version, initialized, initialized_at
@@ -244,7 +247,9 @@ export async function registerProjectScopeCandidates(
               and scope_key in ${tx(eligibleCandidates.map((item) => item.scopeKey))}
           `
         : [];
-    const existingKeys = new Set(existing.map((item) => item.scope_key));
+    const existingKeys = new Set(
+      existing.map((item: { scope_key: string }) => item.scope_key),
+    );
     const newCandidates = eligibleCandidates.filter(
       (candidate) => !existingKeys.has(candidate.scopeKey),
     );

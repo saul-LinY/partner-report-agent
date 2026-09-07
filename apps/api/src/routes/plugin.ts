@@ -33,6 +33,10 @@ import {
   loadProjectDescriptionState,
   registerProjectDescriptionCandidate,
 } from "../project-description.js";
+import {
+  loadResolvableProjectScope,
+  resolveProjectScopes,
+} from "../project-scope-resolution.js";
 
 const deviceStartSchema = z.object({
   deviceName: z.string().min(1).max(120),
@@ -629,6 +633,32 @@ export async function pluginRoutes(app: FastifyInstance) {
   app.get("/v1/project-scope", async (request) => {
     const actor = await requirePluginActor(request);
     return loadProjectScopePolicy(actor);
+  });
+
+  app.get("/v2/project-scope", async (request) => {
+    return loadResolvableProjectScope(await requirePluginActor(request));
+  });
+
+  app.post("/v2/project-scope/resolve", async (request) => {
+    const actor = await requirePluginActor(request);
+    const result = await resolveProjectScopes(actor, request.body);
+    await audit(
+      request,
+      actor,
+      "project_scope.resolved",
+      "plugin_instance",
+      actor.pluginInstanceId,
+      {
+        version: result.version,
+        matched: result.bindings.filter(
+          (item) => item.resolution !== "identity_conflict",
+        ).length,
+        conflicts: result.bindings.filter(
+          (item) => item.resolution === "identity_conflict",
+        ).length,
+      },
+    );
+    return result;
   });
 
   app.post("/v1/project-descriptions/state", async (request) => {

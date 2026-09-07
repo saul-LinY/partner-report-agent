@@ -2,6 +2,8 @@ node_modules/
 dist/
 !plugins/partner-report/dist/
 !plugins/partner-report/dist/cli.mjs
+!plugins/v2/partner-report/dist/
+!plugins/v2/partner-report/dist/*.mjs
 .vite/
 coverage/
 playwright-report/
@@ -16,3 +18,4 @@ dogfood-output/
 *.sqlite-shm
 *.sqlite-wal
 plugins/partner-report/.data/
+plugins/v2/partner-report/.data/

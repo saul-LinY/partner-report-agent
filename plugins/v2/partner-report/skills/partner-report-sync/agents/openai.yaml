@@ -1,0 +1,4 @@
+interface:
+  display_name: "Partner Report Sync"
+  short_description: "Screen and sync meaningful Codex Session work"
+  default_prompt: "Use $partner-report-sync to collect meaningful project contributions from my Codex Sessions."

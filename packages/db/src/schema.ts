@@ -521,6 +521,7 @@ export const projectScopePolicies = pgTable(
     version: integer("version").notNull().default(1),
     initialized: boolean("initialized").notNull().default(false),
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
+    identitySalt: text("identity_salt"),
     ...timestamps(),
   },
   (table) => [
@@ -571,6 +572,29 @@ export const projectScopeEntries = pgTable(
       table.tenantId,
       table.partnerId,
       table.status,
+    ),
+  ],
+);
+
+export const projectScopeIdentities = pgTable(
+  "project_scope_identities",
+  {
+    id: uuid("id").primaryKey(),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id, { onDelete: "cascade" }),
+    identityKey: text("identity_key").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("project_scope_identity_unique").on(
+      table.pluginInstanceId,
+      table.identityKey,
+    ),
+    uniqueIndex("project_scope_identity_scope_unique").on(
+      table.pluginInstanceId,
+      table.scopeKey,
     ),
   ],
 );

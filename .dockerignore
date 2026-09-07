@@ -13,8 +13,8 @@ test-results
 dogfood-output
 .partner-report-data
 plugins/partner-report/.data
+plugins/v2/partner-report/.data
 datasets
 *.log
 .DS_Store
 docs/.DS_Store
-

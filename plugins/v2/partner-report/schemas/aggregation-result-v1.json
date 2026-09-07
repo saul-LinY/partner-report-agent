@@ -1,0 +1,118 @@
+{
+  "$ref": "#/definitions/AggregationResultV1",
+  "definitions": {
+    "AggregationResultV1": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "projectKey": {
+                "type": "string",
+                "default": ""
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "discussion",
+                  "planned",
+                  "in_progress",
+                  "awaiting_validation",
+                  "completed",
+                  "blocked",
+                  "cancelled"
+                ]
+              },
+              "overview": {
+                "type": "string",
+                "minLength": 1
+              },
+              "dailyProgress": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "default": ""
+                    },
+                    "summary": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "summary"
+                  ],
+                  "additionalProperties": false
+                },
+                "default": []
+              }
+            },
+            "required": [
+              "status",
+              "overview"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "qualityWarnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "production": {
+          "type": "object",
+          "properties": {
+            "skillVersion": {
+              "type": "string",
+              "pattern": "^partner-report-(sync|platform)\\/(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)$"
+            },
+            "promptVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "schemaVersion": {
+              "type": "string",
+              "const": "1.0"
+            },
+            "producer": {
+              "type": "string",
+              "enum": [
+                "codex-skill",
+                "data-platform"
+              ]
+            },
+            "modelVersion": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "skillVersion",
+            "promptVersion",
+            "schemaVersion",
+            "producer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "groups",
+        "production"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

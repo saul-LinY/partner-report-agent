@@ -253,6 +253,13 @@
       "when": 1788759935215,
       "tag": "0035_project_outcome_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1788771214716,
+      "tag": "0036_project_scope_resolution",
+      "breakpoints": true
     }
   ]
 }
