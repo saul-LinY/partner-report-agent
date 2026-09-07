@@ -2,20 +2,22 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarClock,
+  LayoutDashboard,
+  Users,
+  Settings2,
+  Laptop,
+  X,
   Check,
   ClipboardCheck,
   Copy,
   KeyRound,
-  MessageSquareText,
   Pencil,
   Plus,
   RefreshCw,
   Save,
   Send,
-  Server,
   ShieldCheck,
   Trash2,
-  TriangleAlert,
 } from "lucide-react";
 import { Link } from "wouter";
 import { api } from "./api.js";
@@ -172,31 +174,79 @@ const projectScopeTone: Record<
   denied: "neutral",
 };
 
+import {
+  AdminTableScroll,
+  AdminHeader,
+  AdminMetrics,
+  AdminSearch,
+  AdminTabs,
+  AdminWorkspace,
+  AdminPagination,
+} from "./admin-workspace.js";
+
 export function AdminConsole() {
   const query = useQuery({
     queryKey: ["admin-overview"],
     queryFn: () => api<Overview>("/v1/admin/overview"),
     refetchInterval: 15_000,
   });
-  if (query.isLoading)
+  if (!query.data)
     return (
-      <div className="page-loading">
-        <RefreshCw className="spin" />
-        加载真实数据
-      </div>
-    );
-  if (query.isError)
-    return (
-      <div className="page">
+      <div className="page management-page">
+        <AdminHeader
+          title="运行总览"
+          icon={LayoutDashboard}
+          onRefresh={() => void query.refetch()}
+          refreshing={query.isFetching}
+        />
         <ErrorBanner error={query.error} />
+        {query.isLoading ? (
+          <div className="aw-loading" role="status">
+            <RefreshCw className="spin" size={18} />
+            加载运行总览
+          </div>
+        ) : (
+          <EmptyState
+            title="运行数据暂不可用"
+            action={
+              <button
+                className="aw-text-button"
+                onClick={() => void query.refetch()}
+              >
+                重试
+              </button>
+            }
+          />
+        )}
       </div>
     );
-  const data = query.data!;
-  return <Operations data={data} />;
+  return (
+    <Operations
+      data={query.data}
+      refreshing={query.isFetching}
+      error={query.error}
+    />
+  );
 }
 
-function Operations({ data }: { data: Overview }) {
+function Operations({
+  data,
+  refreshing,
+  error,
+}: {
+  data: Overview;
+  refreshing: boolean;
+  error: unknown;
+}) {
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState<"people" | "schedule">("people");
+  const [search, setSearch] = useState("");
+  const [pluginStatus, setPluginStatus] = useState("");
+  const [feishuStatus, setFeishuStatus] = useState("");
+  const [reviewStage, setReviewStage] = useState("");
+  const [page, setPage] = useState(1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [codeFor, setCodeFor] = useState<any | null>(null);
   const [scopeFor, setScopeFor] = useState<PartnerConnection | null>(null);
@@ -220,239 +270,479 @@ function Operations({ data }: { data: Overview }) {
     .filter((job) => job.status === "FAILED" || job.status === "RETRY_WAIT")
     .reduce((sum, job) => sum + job.count, 0);
   const openPeriod = selectCurrentOpenPeriod(data.periods);
+  const filtered = data.connections.filter(
+    (item) =>
+      (!pluginStatus || item.connectionState === pluginStatus) &&
+      (!feishuStatus || item.feishuConnectionState === feishuStatus) &&
+      (!reviewStage || item.reviewProgress.stage === reviewStage) &&
+      [item.partnerName, item.partnerEmail, item.deviceName]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase()),
+  );
+  const pageCount = Math.max(1, Math.ceil(filtered.length / 10));
+  const currentPage = Math.min(page, pageCount);
+  const visible = filtered.slice((currentPage - 1) * 10, currentPage * 10);
+  const selected =
+    visible.find((item) => item.partnerId === selectedId) ?? visible[0];
+  const partner = data.partners.find((item) => item.id === selected?.partnerId);
+  const codes = data.bindingCodes.filter(
+    (item) =>
+      item.partner_id === selected?.partnerId &&
+      ["active", "connecting", "claimed"].includes(item.status) &&
+      item.code_value,
+  );
+  const activeBindingCode =
+    codes.find((item) => ["active", "connecting"].includes(item.status)) ??
+    null;
+  const bindingCode = activeBindingCode ?? codes[0] ?? null;
+  const recoverableInstanceId =
+    selected?.connectionState === "expired" ? null : selected?.pluginInstanceId;
+  const resetSelection = () => {
+    setPage(1);
+    setSelectedId(null);
+    setDetailOpen(false);
+  };
+  const clearFilters = () => {
+    setSearch("");
+    setPluginStatus("");
+    setFeishuStatus("");
+    setReviewStage("");
+    resetSelection();
+  };
 
   return (
-    <div className="page admin-page">
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">ADMIN OPERATIONS</span>
-          <h1>运行总览</h1>
-          <p>
-            {openPeriod
-              ? `${openPeriod.period_key} · 下次聚合 ${formatFullTime(openPeriod.cutoff_at)}`
-              : "插件数据会在上传后实时更新"}
-          </p>
+    <div className="page admin-page management-page overview-page">
+      <AdminHeader
+        title="运行总览"
+        icon={LayoutDashboard}
+        onRefresh={() => void refresh()}
+        refreshing={refreshing}
+        context={
+          openPeriod ? (
+            <>
+              <span>{openPeriod.period_key}</span>
+              <span>下次聚合 {formatFullTime(openPeriod.cutoff_at)}</span>
+            </>
+          ) : (
+            "暂无开放周期"
+          )
+        }
+      >
+        <Button icon={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
+          新增人员
+        </Button>
+      </AdminHeader>
+      <ErrorBanner error={error} />
+      <AdminMetrics
+        items={[
+          {
+            label: "插件已连接",
+            value: `${connected} / ${data.connections.length}`,
+            tone: "success",
+            href: "/admin/plugin-logs",
+          },
+          {
+            label: "飞书已连接",
+            value: `${feishuConnected} / ${data.connections.length}`,
+            tone: "success",
+          },
+          {
+            label: "待审核人员",
+            value: pendingReviews,
+            tone: "warning",
+            href: "/admin/reviews",
+          },
+          {
+            label: "中台任务异常",
+            value: modelFailures,
+            tone: modelFailures ? "danger" : "",
+            href: "/admin/jobs",
+          },
+        ]}
+      />
+      <AdminTabs
+        label="运行总览视图"
+        value={tab}
+        onChange={setTab}
+        items={[
+          {
+            value: "people",
+            label: "人员管理",
+            icon: Users,
+            count: data.connections.length,
+          },
+          { value: "schedule", label: "生成设置", icon: Settings2 },
+        ]}
+      />
+      <div
+        id="aw-panel-people"
+        role="tabpanel"
+        aria-labelledby="aw-tab-people"
+        hidden={tab !== "people"}
+      >
+        <div className="aw-toolbar">
+          <AdminSearch
+            label="搜索人员"
+            placeholder="搜索姓名、邮箱或设备"
+            value={search}
+            onChange={(value) => {
+              setSearch(value);
+              resetSelection();
+            }}
+          />
+          <label className="aw-filter">
+            <span>插件</span>
+            <select
+              aria-label="插件连接状态"
+              value={pluginStatus}
+              onChange={(event) => {
+                setPluginStatus(event.target.value);
+                resetSelection();
+              }}
+            >
+              <option value="">全部状态</option>
+              {Object.entries(statusLabel).map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="aw-filter">
+            <span>飞书</span>
+            <select
+              aria-label="飞书连接状态"
+              value={feishuStatus}
+              onChange={(event) => {
+                setFeishuStatus(event.target.value);
+                resetSelection();
+              }}
+            >
+              <option value="">全部状态</option>
+              {Object.entries(feishuStatusLabel).map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="aw-filter">
+            <span>审核</span>
+            <select
+              aria-label="人员审核进度"
+              value={reviewStage}
+              onChange={(event) => {
+                setReviewStage(event.target.value);
+                resetSelection();
+              }}
+            >
+              <option value="">全部进度</option>
+              {Object.entries(reviewStageLabel).map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {(search || pluginStatus || feishuStatus || reviewStage) && (
+            <button className="aw-text-button" onClick={clearFilters}>
+              <X size={14} />
+              重置筛选
+            </button>
+          )}
         </div>
-      </header>
-      <div className="ops-metrics">
-        <Metric
-          icon={<Server size={18} />}
-          label="插件已连接"
-          value={`${connected}/${data.connections.length}`}
-        />
-        <Metric
-          icon={<MessageSquareText size={18} />}
-          label="飞书已连接"
-          value={`${feishuConnected}/${data.connections.length}`}
-        />
-        <Metric
-          icon={<ClipboardCheck size={18} />}
-          label="待审核人员"
-          value={pendingReviews}
-        />
-        <Metric
-          icon={<TriangleAlert size={18} />}
-          label="中台任务异常"
-          value={modelFailures}
-          tone={modelFailures ? "danger" : undefined}
-          href="/admin/jobs"
-        />
-      </div>
-
-      <ScheduleSettings team={data.team} openPeriod={openPeriod} />
-
-      <section className="section-block">
-        <div className="section-heading">
-          <div>
-            <h2>人员连接状态</h2>
-            <p>分别查看插件连接中台与中台连接飞书的状态</p>
-          </div>
-          <Button
-            variant="secondary"
-            icon={<Plus size={16} />}
-            onClick={() => setCreateOpen(true)}
-          >
-            新增人员
-          </Button>
-        </div>
-        {data.connections.length === 0 ? (
-          <EmptyState title="还没有人员" />
-        ) : (
-          <div className="plugin-table">
-            {data.connections.map((connection) => {
-              const partner = data.partners.find(
-                (candidate) => candidate.id === connection.partnerId,
-              );
-              const codes = data.bindingCodes.filter(
-                (code) =>
-                  code.partner_id === connection.partnerId &&
-                  ["active", "connecting", "claimed"].includes(code.status) &&
-                  code.code_value,
-              );
-              const activeBindingCode =
-                codes.find((code) =>
-                  ["active", "connecting"].includes(code.status),
-                ) ?? null;
-              const bindingCode = activeBindingCode ?? codes[0] ?? null;
-              const recoverableInstanceId =
-                connection.connectionState === "expired"
-                  ? null
-                  : connection.pluginInstanceId;
-              return (
-                <div className="plugin-status-row" key={connection.partnerId}>
-                  <span
-                    className={`health-dot health-${connection.connectionState}`}
-                  />
-                  <div className="plugin-person-cell">
-                    <div className="plugin-person-name">
-                      <strong title={connection.partnerName}>
-                        {connection.partnerName}
-                      </strong>
-                      <button
-                        className="icon-button partner-name-edit"
-                        type="button"
-                        title="编辑姓名"
-                        aria-label={`编辑 ${connection.partnerName} 的姓名`}
-                        disabled={!partner}
-                        onClick={() => setEditPartner(partner)}
+        <AdminWorkspace
+          label="人员详情"
+          selectionKey={selected?.partnerId}
+          open={detailOpen}
+          onBack={() => setDetailOpen(false)}
+          list={
+            <>
+              <div className="aw-section-heading">
+                <h2>
+                  人员连接状态 <span>{filtered.length}</span>
+                </h2>
+                <span>每 15 秒更新</span>
+              </div>
+              <AdminTableScroll
+                resetKey={JSON.stringify([
+                  currentPage,
+                  search,
+                  pluginStatus,
+                  feishuStatus,
+                  reviewStage,
+                ])}
+              >
+                <table className="aw-table aw-person-table">
+                  <thead>
+                    <tr>
+                      <th>人员</th>
+                      <th>插件连接</th>
+                      <th>飞书连接</th>
+                      <th>审核进度</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((item) => (
+                      <tr
+                        key={item.partnerId}
+                        className={
+                          item.partnerId === selected?.partnerId
+                            ? "is-selected"
+                            : ""
+                        }
                       >
-                        <Pencil size={14} />
+                        <td>
+                          <button
+                            className="aw-record-button"
+                            aria-label={`查看 ${item.partnerName} 的详情`}
+                            aria-pressed={
+                              item.partnerId === selected?.partnerId
+                            }
+                            onClick={() => {
+                              setSelectedId(item.partnerId);
+                              setDetailOpen(true);
+                            }}
+                          >
+                            <strong>{item.partnerName}</strong>
+                            <small>{item.partnerEmail}</small>
+                          </button>
+                        </td>
+                        <td>
+                          <Badge tone={statusTone[item.connectionState]}>
+                            {statusLabel[item.connectionState] ??
+                              item.connectionState}
+                          </Badge>
+                          <small>上传 {formatTime(item.lastUploadAt)}</small>
+                        </td>
+                        <td>
+                          <Badge
+                            tone={feishuStatusTone[item.feishuConnectionState]}
+                          >
+                            {feishuStatusLabel[item.feishuConnectionState] ??
+                              item.feishuConnectionState}
+                          </Badge>
+                          <small>{feishuStatusDetail(item)}</small>
+                        </td>
+                        <td>
+                          <div className="aw-progress">
+                            <strong>
+                              {item.reviewProgress.reviewed} /{" "}
+                              {item.reviewProgress.total}
+                            </strong>
+                            <progress
+                              aria-label={`${item.partnerName} 审核卡片进度`}
+                              max={Math.max(1, item.reviewProgress.total)}
+                              value={item.reviewProgress.reviewed}
+                            />
+                          </div>
+                          <small>
+                            {reviewStageLabel[item.reviewProgress.stage]}
+                          </small>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </AdminTableScroll>
+              {!visible.length && (
+                <EmptyState
+                  title={
+                    data.connections.length
+                      ? "没有符合条件的人员"
+                      : "还没有人员"
+                  }
+                  action={
+                    data.connections.length ? (
+                      <button className="aw-text-button" onClick={clearFilters}>
+                        重置筛选
                       </button>
-                    </div>
-                    <span>{connection.partnerEmail}</span>
-                  </div>
-                  <div className="binding-code-cell">
-                    <span className="cell-label">绑定码</span>
-                    {bindingCode ? (
-                      <button
-                        className="binding-code-copy"
-                        type="button"
-                        title="复制绑定码"
-                        aria-label={`复制 ${connection.partnerName} 的绑定码`}
-                        onClick={async () => {
-                          await copyText(bindingCode.code_value);
-                          setCopiedCodeId(bindingCode.id);
-                          window.setTimeout(() => setCopiedCodeId(null), 1600);
-                        }}
-                      >
-                        <code>{bindingCode.code_value}</code>
-                        {copiedCodeId === bindingCode.id ? (
-                          <Check size={13} />
-                        ) : (
-                          <Copy size={13} />
-                        )}
-                      </button>
-                    ) : (
-                      <strong>--</strong>
-                    )}
-                  </div>
-                  <div className="plugin-state-badges">
-                    <span className="cell-label">插件 → 中台</span>
-                    <Badge tone={statusTone[connection.connectionState]}>
-                      {statusLabel[connection.connectionState]}
-                    </Badge>
-                    <span className="plugin-tested-at">
-                      测试 {formatTime(connection.verifiedAt)}
-                    </span>
-                  </div>
-                  <div className="feishu-state-badges">
-                    <span className="cell-label">中台 → 飞书</span>
-                    <Badge
-                      tone={feishuStatusTone[connection.feishuConnectionState]}
-                    >
-                      {feishuStatusLabel[connection.feishuConnectionState]}
-                    </Badge>
-                    <span className="plugin-tested-at">
-                      {feishuStatusDetail(connection)}
-                    </span>
-                  </div>
-                  <div
-                    className="review-progress-cell"
-                    title={`通过 ${connection.reviewProgress.approved} · 忽略 ${connection.reviewProgress.excluded} · 待审核 ${connection.reviewProgress.pending}`}
-                  >
-                    <span className="cell-label">审核卡片</span>
-                    <div className="review-progress-value">
-                      <strong>
-                        {connection.reviewProgress.reviewed}/
-                        {connection.reviewProgress.total}
-                      </strong>
-                      <span>
-                        {reviewStageLabel[connection.reviewProgress.stage]}
-                      </span>
-                    </div>
-                    <progress
-                      aria-label={`${connection.partnerName} 审核卡片进度`}
-                      max={Math.max(1, connection.reviewProgress.total)}
-                      value={connection.reviewProgress.reviewed}
-                    />
-                    <span>
-                      {connection.reviewProgress.periodKey ?? "当前无周期"}
-                    </span>
-                  </div>
-                  <div className="plugin-upload-cell">
-                    <span className="cell-label">最近上传</span>
-                    <strong>{formatTime(connection.lastUploadAt)}</strong>
-                  </div>
-                  <div className="plugin-device-cell">
-                    <span className="cell-label">插件设备</span>
-                    <strong title={connection.deviceName ?? undefined}>
-                      {connection.deviceName ?? "--"}
-                    </strong>
-                    <span>
-                      {connection.version
-                        ? `v${connection.version}`
-                        : "尚未配置"}
-                    </span>
-                  </div>
-                  <div className="plugin-row-actions">
-                    <Button
-                      variant="secondary"
-                      icon={<ShieldCheck size={16} />}
-                      onClick={() => setScopeFor(connection)}
-                    >
-                      采集权限
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      icon={<KeyRound size={16} />}
-                      disabled={!partner}
-                      onClick={() =>
-                        setCodeFor({
-                          ...partner,
-                          existingCode: activeBindingCode,
-                          pluginInstanceId: recoverableInstanceId,
-                        })
-                      }
-                    >
-                      {activeBindingCode
-                        ? "查看绑定码"
-                        : recoverableInstanceId
-                          ? "恢复连接"
-                          : "生成绑定码"}
-                    </Button>
-                    <button
-                      className="icon-button danger"
-                      type="button"
-                      title="删除人员"
-                      aria-label={`删除 ${connection.partnerName}`}
-                      disabled={!partner}
-                      onClick={() => setRemovePartner(partner)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+                    ) : undefined
+                  }
+                />
+              )}
+              <AdminPagination
+                page={currentPage}
+                pageCount={pageCount}
+                total={filtered.length}
+                onChange={(value) => {
+                  setPage(value);
+                  setSelectedId(null);
+                  setDetailOpen(false);
+                }}
+              />
+            </>
+          }
+        >
+          {selected ? (
+            <>
+              <header className="aw-detail-header">
+                <div>
+                  <span className="aw-kicker">人员详情</span>
+                  <h2>{selected.partnerName}</h2>
+                  <p>{selected.partnerEmail}</p>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                <button
+                  className="icon-button"
+                  title="编辑姓名"
+                  aria-label={`编辑 ${selected.partnerName} 的姓名`}
+                  disabled={!partner}
+                  onClick={() => setEditPartner(partner)}
+                >
+                  <Pencil size={15} />
+                </button>
+              </header>
+              <section className="aw-detail-section">
+                <h3>
+                  <Laptop size={16} />
+                  设备与连接
+                </h3>
+                <dl className="aw-meta">
+                  <div>
+                    <dt>插件设备</dt>
+                    <dd>{selected.deviceName ?? "尚未配置"}</dd>
+                  </div>
+                  <div>
+                    <dt>插件版本</dt>
+                    <dd>{selected.version ? `v${selected.version}` : "--"}</dd>
+                  </div>
+                  <div>
+                    <dt>最近连接测试</dt>
+                    <dd>{formatTime(selected.verifiedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>最近上传</dt>
+                    <dd>{formatTime(selected.lastUploadAt)}</dd>
+                  </div>
+                  <div className="aw-meta-full">
+                    <dt>飞书连接</dt>
+                    <dd>
+                      <Badge
+                        tone={feishuStatusTone[selected.feishuConnectionState]}
+                      >
+                        {feishuStatusLabel[selected.feishuConnectionState]}
+                      </Badge>{" "}
+                      · {feishuStatusDetail(selected)}
+                    </dd>
+                  </div>
+                  <div className="aw-meta-full">
+                    <dt>绑定码</dt>
+                    <dd className="aw-binding-code">
+                      {bindingCode ? (
+                        <>
+                          <code>{bindingCode.code_value}</code>
+                          <button
+                            className="icon-button"
+                            title="复制绑定码"
+                            aria-label={`复制 ${selected.partnerName} 的绑定码`}
+                            onClick={async () => {
+                              await copyText(bindingCode.code_value);
+                              setCopiedCodeId(bindingCode.id);
+                              window.setTimeout(
+                                () => setCopiedCodeId(null),
+                                1600,
+                              );
+                            }}
+                          >
+                            {copiedCodeId === bindingCode.id ? (
+                              <Check size={14} />
+                            ) : (
+                              <Copy size={14} />
+                            )}
+                          </button>
+                        </>
+                      ) : (
+                        "暂无绑定码"
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+              <section className="aw-detail-section">
+                <h3>
+                  <ClipboardCheck size={16} />
+                  工作卡片审核{" "}
+                  <Badge>
+                    {selected.reviewProgress.periodKey ?? "暂无周期"}
+                  </Badge>
+                </h3>
+                <dl className="aw-meta">
+                  <div>
+                    <dt>当前进度</dt>
+                    <dd>
+                      {reviewStageLabel[selected.reviewProgress.stage]} ·{" "}
+                      {selected.reviewProgress.reviewed} /{" "}
+                      {selected.reviewProgress.total}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>卡片明细</dt>
+                    <dd>
+                      {selected.reviewProgress.pending} 待审 ·{" "}
+                      {selected.reviewProgress.approved} 通过 ·{" "}
+                      {selected.reviewProgress.excluded} 忽略
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+              <div className="aw-detail-actions">
+                <Button
+                  variant="secondary"
+                  icon={<ShieldCheck size={15} />}
+                  onClick={() => setScopeFor(selected)}
+                >
+                  采集权限
+                </Button>
+                <Button
+                  variant="secondary"
+                  icon={<KeyRound size={15} />}
+                  disabled={!partner}
+                  onClick={() =>
+                    setCodeFor({
+                      ...partner,
+                      existingCode: activeBindingCode,
+                      pluginInstanceId: recoverableInstanceId,
+                    })
+                  }
+                >
+                  {activeBindingCode
+                    ? "查看绑定码"
+                    : recoverableInstanceId
+                      ? "恢复连接"
+                      : "生成绑定码"}
+                </Button>
+                <button
+                  className="icon-button danger"
+                  title="删除人员"
+                  aria-label={`删除 ${selected.partnerName}`}
+                  disabled={!partner}
+                  onClick={() => setRemovePartner(partner)}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </>
+          ) : (
+            <EmptyState title="暂无人员详情" />
+          )}
+        </AdminWorkspace>
+      </div>
+      <div
+        id="aw-panel-schedule"
+        role="tabpanel"
+        aria-labelledby="aw-tab-schedule"
+        hidden={tab !== "schedule"}
+      >
+        <ScheduleSettings team={data.team} openPeriod={openPeriod} />
+      </div>
       {createOpen && (
         <CreatePartnerModal
           onClose={() => setCreateOpen(false)}
           onCreated={() => {
             setCreateOpen(false);
-            refresh();
+            void refresh();
           }}
         />
       )}
@@ -469,7 +759,7 @@ function Operations({ data }: { data: Overview }) {
           onClose={() => setEditPartner(null)}
           onUpdated={() => {
             setEditPartner(null);
-            refresh();
+            void refresh();
           }}
         />
       )}
@@ -485,7 +775,7 @@ function Operations({ data }: { data: Overview }) {
           onClose={() => setRemovePartner(null)}
           onRemoved={() => {
             setRemovePartner(null);
-            refresh();
+            void refresh();
           }}
         />
       )}
@@ -755,16 +1045,13 @@ function ScheduleSettings({
       queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
   });
   return (
-    <section className="schedule-settings-band">
-      <div className="section-heading">
-        <div>
-          <h2>报告生成时间</h2>
-          <p>
-            工作卡片按设定时间聚合，后续 Report 流程按审批自动推进，时区为
-            Asia/Shanghai
-          </p>
-        </div>
-        <CalendarClock size={19} />
+    <section className="aw-section">
+      <div className="aw-section-heading">
+        <h2>
+          <CalendarClock size={17} />
+          报告生成计划
+        </h2>
+        <span>Asia/Shanghai</span>
       </div>
       <div className="schedule-settings-grid">
         <div className="schedule-setting">
@@ -779,7 +1066,10 @@ function ScheduleSettings({
           <Field label="每周">
             <select
               value={cutoffDay}
-              onChange={(event) => setCutoffDay(event.target.value)}
+              onChange={(event) => {
+                setCutoffDay(event.target.value);
+                saveDefaults.reset();
+              }}
             >
               {weekdayOptions()}
             </select>
@@ -788,27 +1078,29 @@ function ScheduleSettings({
             <input
               type="time"
               value={cutoffTime}
-              onChange={(event) => setCutoffTime(event.target.value)}
+              onChange={(event) => {
+                setCutoffTime(event.target.value);
+                saveDefaults.reset();
+              }}
             />
           </Field>
-        </div>
-        <div className="schedule-setting">
-          <div className="schedule-setting-title">
-            <strong>自动生成链路</strong>
-            <span>
-              用户确认工作卡片后形成团队汇总素材，并在配置时间生成 Team Report
-            </span>
-          </div>
         </div>
         <Button
           variant="secondary"
           icon={<Save size={16} />}
           loading={saveDefaults.isPending}
+          disabled={!/^\d{2}:\d{2}$/.test(cutoffTime)}
           onClick={() => saveDefaults.mutate()}
         >
           保存生成时间
         </Button>
       </div>
+      {saveDefaults.isSuccess && (
+        <div className="aw-schedule-status" role="status">
+          <Check size={16} />
+          生成时间已保存
+        </div>
+      )}
       <ErrorBanner error={saveDefaults.error} />
     </section>
   );
@@ -824,36 +1116,6 @@ function weekdayOptions() {
   );
 }
 
-function Metric({
-  icon,
-  label,
-  value,
-  tone,
-  href,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string | number;
-  tone?: string | undefined;
-  href?: string | undefined;
-}) {
-  const content = (
-    <>
-      <span>{icon}</span>
-      <div>
-        <small>{label}</small>
-        <strong>{value}</strong>
-      </div>
-    </>
-  );
-  return href ? (
-    <Link className={`ops-metric ops-metric-link ${tone ?? ""}`} href={href}>
-      {content}
-    </Link>
-  ) : (
-    <div className={`ops-metric ${tone ?? ""}`}>{content}</div>
-  );
-}
 function formatTime(value: string | null) {
   return value
     ? new Date(value).toLocaleString("zh-CN", {

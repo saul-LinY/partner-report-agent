@@ -7,7 +7,10 @@
     "build": "vite build",
     "dev": "vite --host 0.0.0.0 --port 4311",
     "preview": "vite preview --host 0.0.0.0 --port 4311",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:monitoring": "playwright test system-monitoring.spec.ts",
+    "test:admin": "playwright test admin-pages.spec.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.81.0",
@@ -19,6 +22,7 @@
     "wouter": "3.10.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.6.0",

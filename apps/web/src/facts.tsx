@@ -1,8 +1,22 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Filter, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  TableProperties,
+  FolderKanban,
+  FileText,
+  GitBranch,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { api } from "./api.js";
-import { Button, EmptyState, ErrorBanner, Field } from "./components.js";
+import { Badge, EmptyState, ErrorBanner } from "./components.js";
+import {
+  AdminTableScroll,
+  AdminHeader,
+  AdminMetrics,
+  AdminWorkspace,
+  AdminPagination,
+} from "./admin-workspace.js";
 
 type FactPage = {
   items: Array<{
@@ -41,6 +55,8 @@ export function FactPreviewPage() {
   const [projectId, setProjectId] = useState("");
   const [sessionDate, setSessionDate] = useState("");
   const [page, setPage] = useState(1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const overview = useQuery({
     queryKey: ["admin-overview"],
     queryFn: () => api<Overview>("/v1/admin/overview"),
@@ -63,66 +79,120 @@ export function FactPreviewPage() {
       page,
     ],
     queryFn: () => api<FactPage>(`/v1/admin/session-facts?${params}`),
+    placeholderData: keepPreviousData,
   });
-  const data = overview.data;
+  const ready = facts.data && !facts.isPlaceholderData;
+  const items = ready ? facts.data.items : [];
   const pageCount = factsPageCount(facts.data?.total ?? 0);
+  const selected = items.find((item) => item.id === selectedId) ?? items[0];
+  const fact = selected?.payload;
+  const projectName = (row: FactPage["items"][number]) =>
+    row.payload.project?.name ??
+    facts.data?.projects?.find((item) => item.id === row.payload.projectId)
+      ?.name ??
+    row.payload.projectHint ??
+    "独立工作";
+  useEffect(() => {
+    if (ready && page > pageCount) {
+      setPage(pageCount);
+      setSelectedId(null);
+      setDetailOpen(false);
+    }
+  }, [ready, page, pageCount]);
   const resetPage = (update: () => void) => {
     update();
     setPage(1);
+    setSelectedId(null);
+    setDetailOpen(false);
   };
-
+  const clear = () =>
+    resetPage(() => {
+      setPartnerId("");
+      setPeriodId("");
+      setProjectId("");
+      setSessionDate("");
+    });
+  const busy = facts.isLoading || facts.isPlaceholderData;
   return (
-    <div className="page admin-page facts-page">
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">STRUCTURED INGESTION</span>
-          <h1>Session 贡献预览</h1>
-          <p>仅展示中台当前保留的结构化项目贡献</p>
-        </div>
-        <Button
-          variant="secondary"
-          icon={<RefreshCw size={16} />}
-          onClick={() => facts.refetch()}
-          loading={facts.isFetching}
-        >
-          刷新
-        </Button>
-      </header>
-
-      <section className="fact-filter-band" aria-label="Session 贡献筛选">
-        <Filter size={18} />
-        <Field label="用户">
+    <div className="page admin-page management-page facts-page">
+      <AdminHeader
+        title="贡献预览"
+        icon={TableProperties}
+        context="Session 项目贡献"
+        refreshing={facts.isFetching || overview.isFetching}
+        onRefresh={() => {
+          void facts.refetch();
+          void overview.refetch();
+        }}
+      />
+      <ErrorBanner error={overview.error} />
+      <ErrorBanner error={facts.error} />
+      <AdminMetrics
+        items={[
+          { label: "匹配贡献", value: ready ? facts.data.total : "--" },
+          { label: "本页贡献", value: ready ? items.length : "--" },
+          {
+            label: "本页项目",
+            value: ready
+              ? new Set(
+                  items.map(
+                    (item) => item.payload.projectId ?? projectName(item),
+                  ),
+                ).size
+              : "--",
+            tone: "success",
+          },
+          {
+            label: "本页含阻塞",
+            value: ready
+              ? items.filter(
+                  (item) =>
+                    contributionValues(item.payload, "blocker").length > 0,
+                ).length
+              : "--",
+            tone: "warning",
+          },
+        ]}
+      />
+      <div className="aw-toolbar" aria-label="Session 贡献筛选">
+        <label className="aw-filter">
+          <span>人员</span>
           <select
+            aria-label="贡献人员"
             value={partnerId}
             onChange={(event) =>
               resetPage(() => setPartnerId(event.target.value))
             }
           >
-            <option value="">全部用户</option>
-            {data?.partners?.map((partner) => (
-              <option key={partner.id} value={partner.id}>
-                {partner.display_name}
+            <option value="">全部人员</option>
+            {overview.data?.partners.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.display_name}
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="周期">
+        </label>
+        <label className="aw-filter">
+          <span>周期</span>
           <select
+            aria-label="贡献周期"
             value={periodId}
             onChange={(event) =>
               resetPage(() => setPeriodId(event.target.value))
             }
           >
             <option value="">全部周期</option>
-            {data?.periods?.map((period) => (
-              <option key={period.id} value={period.id}>
-                {period.period_key}
+            {overview.data?.periods.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.period_key}
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="项目">
+        </label>
+        <label className="aw-filter">
+          <span>项目</span>
           <select
+            aria-label="贡献项目"
             value={projectId}
             onChange={(event) =>
               resetPage(() => setProjectId(event.target.value))
@@ -132,109 +202,222 @@ export function FactPreviewPage() {
             {facts.data?.hasUnassigned && (
               <option value="unassigned">独立工作</option>
             )}
-            {facts.data?.projects?.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
+            {facts.data?.projects.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="会话日期">
+        </label>
+        <label className="aw-filter">
+          <span>会话日期</span>
           <input
+            aria-label="贡献会话日期"
             type="date"
             value={sessionDate}
             onChange={(event) =>
               resetPage(() => setSessionDate(event.target.value))
             }
           />
-        </Field>
-      </section>
-      <ErrorBanner error={overview.error ?? facts.error} />
-
-      {facts.isLoading ? (
-        <div className="page-loading">
-          <RefreshCw className="spin" />
-          加载 Session 贡献
-        </div>
-      ) : facts.data?.items.length === 0 ? (
-        <EmptyState title="当前筛选条件下没有 Session 贡献" />
-      ) : (
-        <section className="fact-list" aria-label="Fact 列表">
-          {facts.data?.items.map((row) => {
-            const fact = row.payload;
-            const project = facts.data.projects?.find(
-              (item) => item.id === fact.projectId,
-            );
-            const projectName =
-              fact.project?.name ??
-              project?.name ??
-              fact.projectHint ??
-              "独立工作";
-            return (
-              <article className="fact-row" key={row.id}>
-                <div className="fact-row-head">
-                  <div>
-                    <strong>{fact.title}</strong>
-                    <span>
-                      {row.partner_name} · {row.period_key} · {projectName}
-                    </span>
-                  </div>
-                </div>
-                <p className="fact-summary">{factSummary(fact)}</p>
-                <div className="fact-columns">
-                  <FactList
-                    title="成果"
-                    values={contributionValues(fact, "outcome")}
-                  />
-                  <FactList
-                    title="进展"
-                    values={contributionValues(fact, "progress")}
-                  />
-                  <FactList
-                    title="决策"
-                    values={contributionValues(fact, "decision")}
-                  />
-                  <FactList
-                    title="阻塞"
-                    values={contributionValues(fact, "blocker")}
-                  />
-                  <FactList
-                    title="下一步"
-                    values={contributionValues(fact, "next_step")}
-                  />
-                </div>
-                <div className="fact-lineage">
-                  <span>会话发生于 {formatTime(row.source_occurred_at)}</span>
-                  <span>
-                    Contribution <code>{shortId(row.external_fact_id)}</code>
-                  </span>
-                </div>
-              </article>
-            );
-          })}
-        </section>
-      )}
-      <div className="pagination">
-        <span>
-          共 {facts.data?.total ?? 0} 条 · 第 {page}/{pageCount} 页
-        </span>
-        <button
-          className="icon-button"
-          title="上一页"
-          disabled={page <= 1}
-          onClick={() => setPage((value) => value - 1)}
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <button
-          className="icon-button"
-          title="下一页"
-          disabled={page >= pageCount}
-          onClick={() => setPage((value) => value + 1)}
-        >
-          <ChevronRight size={18} />
-        </button>
+        </label>
+        {(partnerId || periodId || projectId || sessionDate) && (
+          <button className="aw-text-button" onClick={clear}>
+            <X size={14} />
+            重置筛选
+          </button>
+        )}
       </div>
+      <AdminWorkspace
+        label="贡献详情"
+        selectionKey={selected?.id}
+        open={detailOpen}
+        onBack={() => setDetailOpen(false)}
+        list={
+          <>
+            <div className="aw-section-heading">
+              <h2>
+                贡献记录 <span>{ready ? facts.data.total : "--"}</span>
+              </h2>
+              <span>按会话时间倒序 · Asia/Shanghai</span>
+            </div>
+            {busy ? (
+              <div className="aw-loading" role="status">
+                <RefreshCw className="spin" size={18} />
+                加载贡献记录
+              </div>
+            ) : !facts.data ? (
+              <EmptyState
+                title="贡献记录暂不可用"
+                action={
+                  <button
+                    className="aw-text-button"
+                    onClick={() => void facts.refetch()}
+                  >
+                    重试
+                  </button>
+                }
+              />
+            ) : items.length ? (
+              <AdminTableScroll resetKey={params.toString()}>
+                <table className="aw-table aw-fact-table">
+                  <thead>
+                    <tr>
+                      <th>贡献 / 项目</th>
+                      <th>人员 / 会话时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((row) => (
+                      <tr
+                        key={row.id}
+                        className={row.id === selected?.id ? "is-selected" : ""}
+                      >
+                        <td>
+                          <button
+                            className="aw-record-button"
+                            aria-pressed={row.id === selected?.id}
+                            onClick={() => {
+                              setSelectedId(row.id);
+                              setDetailOpen(true);
+                            }}
+                          >
+                            <span className="aw-fact-title">
+                              <FileText size={15} />
+                              <strong>
+                                {row.payload.title || "未命名贡献"}
+                              </strong>
+                            </span>
+                            <small>
+                              {projectName(row)} ·{" "}
+                              {row.period_key ?? "未归属周期"}
+                            </small>
+                            <small className="aw-clamp">
+                              {factSummary(row.payload)}
+                            </small>
+                          </button>
+                        </td>
+                        <td>
+                          <strong>{row.partner_name}</strong>
+                          <small>
+                            <time>{formatTime(row.source_occurred_at)}</time>
+                          </small>
+                          {contributionValues(row.payload, "blocker").length >
+                            0 && <Badge tone="warning">含阻塞</Badge>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </AdminTableScroll>
+            ) : (
+              <EmptyState
+                title="当前筛选条件下没有 Session 贡献"
+                action={
+                  partnerId || periodId || projectId || sessionDate ? (
+                    <button className="aw-text-button" onClick={clear}>
+                      重置筛选
+                    </button>
+                  ) : undefined
+                }
+              />
+            )}
+            <AdminPagination
+              page={page}
+              pageCount={pageCount}
+              total={ready ? facts.data.total : 0}
+              onChange={(value) => {
+                setPage(value);
+                setSelectedId(null);
+                setDetailOpen(false);
+              }}
+              loading={busy}
+            />
+          </>
+        }
+      >
+        {selected && fact ? (
+          <div className="aw-fact-detail">
+            <header className="aw-detail-header">
+              <div>
+                <span className="aw-kicker">
+                  贡献详情 · {selected.period_key ?? "未归属周期"}
+                </span>
+                <h2>{fact.title || "未命名贡献"}</h2>
+                <p>
+                  {selected.partner_name} · {projectName(selected)}
+                </p>
+              </div>
+            </header>
+            <section className="aw-detail-section">
+              <h3>
+                <FileText size={16} />
+                贡献摘要
+              </h3>
+              <p>{factSummary(fact)}</p>
+            </section>
+            <section className="aw-detail-section">
+              <h3>
+                <FolderKanban size={16} />
+                贡献明细
+              </h3>
+              <div className="aw-contributions">
+                <FactList
+                  title="成果"
+                  values={contributionValues(fact, "outcome")}
+                />
+                <FactList
+                  title="进展"
+                  values={contributionValues(fact, "progress")}
+                />
+                <FactList
+                  title="决策"
+                  values={contributionValues(fact, "decision")}
+                />
+                <FactList
+                  title="阻塞"
+                  values={contributionValues(fact, "blocker")}
+                />
+                <FactList
+                  title="下一步"
+                  values={contributionValues(fact, "next_step")}
+                />
+              </div>
+            </section>
+            <section className="aw-detail-section">
+              <h3>
+                <GitBranch size={16} />
+                来源记录
+              </h3>
+              <dl className="aw-meta">
+                <div className="aw-meta-full">
+                  <dt>会话时间</dt>
+                  <dd>{formatTime(selected.source_occurred_at)}</dd>
+                </div>
+                <div className="aw-meta-full">
+                  <dt>Contribution 编号</dt>
+                  <dd>
+                    <code>{selected.external_fact_id}</code>
+                  </dd>
+                </div>
+                <div className="aw-meta-full">
+                  <dt>Session 编号</dt>
+                  <dd>
+                    <code>{selected.session_id}</code>
+                  </dd>
+                </div>
+                <div className="aw-meta-full">
+                  <dt>来源校验值</dt>
+                  <dd>
+                    <code>{selected.source_hash}</code>
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+        ) : (
+          <EmptyState title={busy ? "等待贡献记录" : "暂无贡献详情"} />
+        )}
+      </AdminWorkspace>
     </div>
   );
 }
@@ -289,10 +472,6 @@ function FactList({ title, values }: { title: string; values?: string[] }) {
       )}
     </div>
   );
-}
-
-function shortId(value: string) {
-  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
 }
 
 function formatTime(value: string | null) {

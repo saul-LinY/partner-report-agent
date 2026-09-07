@@ -49,3 +49,20 @@ npm run build
 npm run db:migrate
 RUN_DB_TESTS=1 npm test
 ```
+
+系统监控页面的浏览器回归使用隔离的接口数据，覆盖查询、审查、模块测试和不同屏宽：
+
+```bash
+npx playwright install chromium
+npm run test:monitoring -w @partner-report/web
+```
+
+测试启动本地 4312 端口；截图与失败追踪保存在 `apps/web/test-results/`。
+
+运行总览、审核队列、贡献预览和报告归档的回归测试：
+
+```bash
+npm run test:admin -w @partner-report/web
+# 管理页面与系统监控的全部浏览器回归
+npm run test:e2e -w @partner-report/web
+```
