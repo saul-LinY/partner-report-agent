@@ -12,6 +12,19 @@ codex plugin list
 
 安装脚本会先构建插件、刷新 Codex cachebuster，再重新安装并校验运行产物。它只配置插件自带 MCP，不会修改 Codex 的全局权限模式。安装后重启 Codex，并新建对话验证。
 
+### 已安装成员更新到 2.1
+
+使用 Git 插件市场安装的成员，在本机执行：
+
+```bash
+codex plugin marketplace upgrade partner-report-marketplace
+codex plugin add partner-report@partner-report-marketplace
+```
+
+使用本地仓库安装的成员，在该仓库执行 `git pull --ff-only`、`npm ci` 和 `npm run plugin:install`。
+更新后重启 Codex 并新建对话，确认版本为 2.1.0。保留原设备绑定和数据目录，无需重新绑定。
+2.0 的源码和安装包继续保留，中台仍支持未更新的 2.0 插件。
+
 ## 2. 绑定
 
 在新的 Codex 对话中发送：

@@ -7,15 +7,21 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 const json = (path) => JSON.parse(read(path));
 
 describe("separate plugin editions", () => {
-  it("keeps the existing team marketplace on the legacy edition", () => {
+  it("offers 2.1 through the existing marketplace while retaining the 2.0 source", () => {
     const marketplace = json(".agents/plugins/marketplace.json");
     const source = marketplace.plugins.find(
       (plugin) => plugin.name === "partner-report",
     ).source.path;
-    expect(source).toBe("./plugins/partner-report");
-    expect(json(`${source}/package.json`).version).toBe("2.0.0");
+    expect(source).toBe("./plugins/v2/partner-report");
+    expect(json(`${source}/package.json`).version).toBe("2.1.0");
     expect(
       json(`${source}/.codex-plugin/plugin.json`).version.split("+")[0],
+    ).toBe("2.1.0");
+    expect(json("plugins/partner-report/package.json").version).toBe("2.0.0");
+    expect(
+      json("plugins/partner-report/.codex-plugin/plugin.json").version.split(
+        "+",
+      )[0],
     ).toBe("2.0.0");
   });
 

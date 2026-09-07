@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pluginArtifactMismatches } from "./plugin-artifact-integrity.mjs";
@@ -10,11 +10,22 @@ const explicitSelector = process.argv.find(
   (value, index) => index > 1 && !value.startsWith("--"),
 );
 const repositoryRoot = resolve(import.meta.dirname, "..");
-const sourcePluginPath = resolve(repositoryRoot, "plugins/partner-report");
 const marketplacePath = resolve(
   repositoryRoot,
   ".agents/plugins/marketplace.json",
 );
+const sourceEntry = JSON.parse(
+  readFileSync(marketplacePath, "utf8"),
+).plugins.find((plugin) => plugin.name === "partner-report");
+if (sourceEntry?.source?.source !== "local" || !sourceEntry.source.path) {
+  throw new Error(
+    "Partner Report marketplace must identify a local source directory.",
+  );
+}
+const sourcePluginPath = resolve(repositoryRoot, sourceEntry.source.path);
+const sourceWorkspace = JSON.parse(
+  readFileSync(resolve(sourcePluginPath, "package.json"), "utf8"),
+).name;
 const codexRoot =
   process.env.CODEX_HOME?.trim() || resolve(homedir(), ".codex");
 const pluginCreatorScripts = resolve(
@@ -56,7 +67,7 @@ let installedPath = null;
 
 if (!configureOnly) {
   if (!explicitSelector) {
-    execFileSync("npm", ["run", "build", "-w", "@partner-report/plugin"], {
+    execFileSync("npm", ["run", "build", "-w", sourceWorkspace], {
       cwd: repositoryRoot,
       stdio: "inherit",
     });
@@ -64,6 +75,13 @@ if (!configureOnly) {
       "python3",
       [pluginCreatorHelper("update_plugin_cachebuster.py"), sourcePluginPath],
       { cwd: repositoryRoot, stdio: "inherit" },
+    );
+    execFileSync(
+      "codex",
+      ["plugin", "marketplace", "add", repositoryRoot, "--json"],
+      {
+        stdio: "inherit",
+      },
     );
   }
   const separator = selector.lastIndexOf("@");

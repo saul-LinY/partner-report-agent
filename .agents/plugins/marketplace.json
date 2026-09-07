@@ -8,7 +8,7 @@
       "name": "partner-report",
       "source": {
         "source": "local",
-        "path": "./plugins/partner-report"
+        "path": "./plugins/v2/partner-report"
       },
       "policy": {
         "installation": "AVAILABLE",

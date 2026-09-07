@@ -9,16 +9,32 @@ schedule are not changed by this release.
 
 | Edition | Source | Workspace | Distribution |
 | --- | --- | --- | --- |
-| 2.0.0 | `plugins/partner-report` | `@partner-report/plugin` | Existing team marketplace and default installer |
-| 2.1.0 | `plugins/v2/partner-report` | `@partner-report/plugin-v2` | Separate opt-in release archive |
+| 2.0.0 | `plugins/partner-report` | `@partner-report/plugin` | Retained source and release archive; existing devices remain supported |
+| 2.1.0 | `plugins/v2/partner-report` | `@partner-report/plugin-v2` | Existing team marketplace and default installer |
 
-The existing marketplace remains pinned to the 2.0.0 source directory. Do not
-replace its manifest, skill or bundled runtime with v2 files. Build 2.1.0 with
-`npm run plugin:build:v2`; the default `npm run plugin:install` still selects
-2.0.0. Both editions retain the plugin name `partner-report` and the same stable
+The existing marketplace now points to the separate 2.1.0 source directory.
+The original 2.0.0 manifest, skill and bundled runtime remain intact. Build 2.1.0
+with `npm run plugin:build:v2`; `npm run plugin:install` reads the marketplace
+entry to select and build the published edition. Both editions retain the plugin
+name `partner-report` and the same stable
 data directory so an explicitly selected upgrade can retain the existing binding.
 They are alternative client editions, not two collectors to enable concurrently
 on the same machine. Keep their source trees and release archives separate.
+
+Members using the existing Git marketplace can update with the normal commands:
+
+```bash
+codex plugin marketplace upgrade partner-report-marketplace
+codex plugin add partner-report@partner-report-marketplace
+```
+
+For a local repository marketplace, pull the latest code, install dependencies
+with `npm ci`, and run `npm run plugin:install`. The installer registers that
+local repository before installing so it validates the same source it built.
+Restart Codex and open a new conversation after updating. Do not reconnect or
+delete the stable data directory. Publishing this entry does not run an update
+command on any member's device; devices remaining on 2.0 use the supported v1
+flow. There is no separate v2 marketplace or special v2 installer command.
 
 The server runs both API versions concurrently. Changing the source packaging
 does not change the deployed API or any member's current permissions.
@@ -67,6 +83,13 @@ administrative restore. Automatic resolution still preserves live decisions
 and never matches permissions by display name. A deleted/recreated non-Git
 project may have a new filesystem identity and require individual confirmation.
 
+The user later confirmed that three pairs in the restored snapshot were duplicate
+project detections. Those pairs were deduplicated while retaining each pair's
+newer reviewed key and decision. Swift now has 17 entries, 7 allowed, 10 denied,
+0 pending, policy version 23. The pre-cleanup snapshot is
+`85b0f260-f0f3-49d5-954e-cbccf6279d39`, and the cleaned snapshot is
+`fc06a8b6-8429-4bae-b8e6-ea9cd6dabf48`.
+
 The old plugin remains supported, but still has its original conflict behavior.
 Only upgrading that client enables v2 recovery. Rolling back the API requires
 rolling back v2 clients first; the additive database migration can remain.
@@ -89,7 +112,7 @@ Existing resolution tests cover backup recovery, missing local keys, conflicting
 identities, denial preservation, and authentication boundaries.
 
 Production API source hashes match the tested permission modules. The original
-2.0 source, marketplace entry, and default installer remain unchanged. Swift's
-production policy remains at 20 entries, and team minimum plugin versions remain
-unchanged. These checks do not constitute a collection run on Swift's computer;
-his optional 2.1 installation and device collection remain unverified.
+2.0 source and team minimum plugin versions remain unchanged. The marketplace
+and installer now select 2.1 for members who update. These checks do not constitute
+a collection run on Swift's computer; his 2.1 installation and device collection
+remain unverified.
