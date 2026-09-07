@@ -68,6 +68,10 @@ the plugin stops rather than falling back to destructive bootstrap.
 
 1. Back up the database and apply migration 0036.
 2. Deploy the API with both route versions.
+   Rebuild and deploy the web image as well: its Nginx gateway must forward both
+   `/v1/` and `/v2/` to the API. Checking port 4310 alone does not verify the
+   public route. Run `node scripts/check-public-api.mjs https://platform.laien.org`
+   after deployment; all checks must return API JSON, never the SPA HTML page.
 3. Verify v1 behavior and the team's unchanged minimum plugin version.
 4. Install 2.1 only for the affected member, retaining their stable data directory.
 5. Run ordinary collection (`force: false`). Do not reset the binding or schedule.
