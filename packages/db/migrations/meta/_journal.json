@@ -260,6 +260,20 @@
       "when": 1788771214716,
       "tag": "0036_project_scope_resolution",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788848122453,
+      "tag": "0037_project_participation_timeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788856989160,
+      "tag": "0038_project_scope_aliases",
+      "breakpoints": true
     }
   ]
 }

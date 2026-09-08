@@ -3,6 +3,12 @@ import { z } from "zod";
 import { sqlClient as defaultDatabase } from "@partner-report/db";
 import { ApiError } from "./common.js";
 import {
+  consolidateMemberProject,
+  deduplicateExistingScopes,
+  matchMemberProjectName,
+  rememberScopeAlias,
+} from "./project-scope-deduplication.js";
+import {
   loadProjectScopePolicy,
   registerProjectScopeCandidates,
   type ScopeIdentity,
@@ -50,8 +56,8 @@ export async function loadResolvableProjectScope(
   };
 }
 
-// Only exact anonymous keys are recoverable from legacy backups. Names never
-// establish identity, and a live decision (including pending) always wins.
+// After checking live member/name matches, backup recovery requires an exact
+// anonymous key. A live decision (including pending) always wins over backups.
 async function restoreExactScope(
   identity: ScopeIdentity,
   scopeKey: string,
@@ -102,6 +108,8 @@ export async function resolveProjectScopes(
     resolution: string;
   }> = [];
   await database.begin(async (tx) => {
+    // Serialize v2 resolution across devices belonging to the same member.
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`scope-member:${identity.tenantId}:${identity.partnerId}`},0))`;
     const policy = await loadResolvableProjectScope(
       identity,
       tx as unknown as Database,
@@ -118,26 +126,97 @@ export async function resolveProjectScopes(
         "项目权限已更新，请重新核对。",
         { currentVersion: versions[0]!.version },
       );
+    await deduplicateExistingScopes(tx, identity);
     const seen = new Set<string>();
+    const batchNames = new Map<string, string>();
     let restored = false;
     const candidates = [];
     for (const candidate of input.candidates) {
       if (seen.has(candidate.scopeKey))
         throw new ApiError(400, "DUPLICATE_SCOPE", "同一项目不能重复核对。");
       seen.add(candidate.scopeKey);
+      const named = await matchMemberProjectName(
+        tx,
+        identity,
+        candidate.displayName,
+      );
+      const namedKey = named
+        ? await consolidateMemberProject(tx, identity, named)
+        : batchNames.get(candidate.displayName);
+      if (namedKey) {
+        // Existing 2.1 clients already consume these bindings and replace their
+        // local entries from the returned policy, so no client update is needed.
+        await rememberScopeAlias(
+          tx,
+          identity,
+          "scope",
+          candidate.scopeKey,
+          namedKey,
+        );
+        if (candidate.identityKey)
+          await rememberScopeAlias(
+            tx,
+            identity,
+            "identity",
+            candidate.identityKey,
+            namedKey,
+          );
+        bindings.push({
+          requestedScopeKey: candidate.scopeKey,
+          scopeKey: namedKey,
+          resolution: "member_name_match",
+        });
+        candidates.push({
+          scopeKey: namedKey,
+          displayName: candidate.displayName,
+          sessionCount: candidate.sessionCount,
+        });
+        batchNames.set(candidate.displayName, namedKey);
+        continue;
+      }
+      const aliases = await tx`select scope_key from project_scope_aliases
+        where plugin_instance_id=${identity.pluginInstanceId} and
+          (alias_kind='identity' and alias_key=${candidate.identityKey ?? ""})
+        order by (alias_kind='identity') desc limit 1`;
+      if (aliases[0]) {
+        const live = await tx`select scope_key from project_scope_entries
+          where plugin_instance_id=${identity.pluginInstanceId} and scope_key=${aliases[0].scope_key}`;
+        if (live[0]) {
+          const canonicalKey = live[0].scope_key;
+          bindings.push({
+            requestedScopeKey: candidate.scopeKey,
+            scopeKey: canonicalKey,
+            resolution: "alias_match",
+          });
+          candidates.push({
+            scopeKey: canonicalKey,
+            displayName: candidate.displayName,
+            sessionCount: candidate.sessionCount,
+          });
+          batchNames.set(candidate.displayName, canonicalKey);
+          continue;
+        }
+      }
       const identities = await tx<
         Array<{ identity_key: string; scope_key: string }>
       >`
         select identity_key, scope_key from project_scope_identities
         where plugin_instance_id = ${identity.pluginInstanceId}
           and (scope_key = ${candidate.scopeKey} or identity_key = ${candidate.identityKey ?? ""})
+        union
+        select alias_key as identity_key,scope_key from project_scope_aliases
+        where plugin_instance_id=${identity.pluginInstanceId} and alias_kind='identity'
+          and (scope_key=${candidate.scopeKey} or alias_key=${candidate.identityKey ?? ""})
       `;
       const byIdentity = identities.find(
         (row) => row.identity_key === candidate.identityKey,
       );
-      const byKey = identities.find(
-        (row) => row.scope_key === candidate.scopeKey,
-      );
+      const byKey =
+        identities.find(
+          (row) =>
+            row.scope_key === candidate.scopeKey &&
+            row.identity_key === candidate.identityKey,
+        ) ?? identities.find((row) => row.scope_key === candidate.scopeKey);
       let contradiction =
         !candidate.identityKey ||
         Boolean(byKey && byKey.identity_key !== candidate.identityKey);
@@ -202,8 +281,13 @@ export async function resolveProjectScopes(
       let occupied = await tx<Array<{ identity_key: string }>>`
         select identity_key from project_scope_identities
         where plugin_instance_id = ${identity.pluginInstanceId} and scope_key = ${scopeKey}
+        union select alias_key as identity_key from project_scope_aliases
+        where plugin_instance_id=${identity.pluginInstanceId} and scope_key=${scopeKey} and alias_kind='identity'
       `;
-      if (occupied[0] && occupied[0].identity_key !== candidate.identityKey) {
+      if (
+        occupied.length &&
+        !occupied.some((row) => row.identity_key === candidate.identityKey)
+      ) {
         scopeKey = createHmac("sha256", policy.identitySalt)
           .update(
             `scope-conflict:${scopeKey}:${candidate.identityKey ?? "unknown"}`,
@@ -236,6 +320,7 @@ export async function resolveProjectScopes(
         displayName: candidate.displayName,
         sessionCount: candidate.sessionCount,
       });
+      batchNames.set(candidate.displayName, scopeKey);
     }
     if (restored) {
       await tx`update project_scope_policies set version = version + 1,

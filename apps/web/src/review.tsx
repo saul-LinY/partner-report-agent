@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useLocation, useRoute } from "wouter";
+import { ParticipationEditor } from "./project-progress.js";
 import { api } from "./api.js";
 import { Badge, Button, EmptyState, ErrorBanner, Field } from "./components.js";
 
@@ -107,6 +108,7 @@ export function ReviewPage() {
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["review", reviewId] });
       await queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+      await queryClient.invalidateQueries({ queryKey: ["project-progress"] });
       if (result.reportId) navigate("/admin/reviews");
       else if (result.ignored) {
         window.localStorage.removeItem("partner-report-simulated-partner");
@@ -126,6 +128,7 @@ export function ReviewPage() {
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["review", reviewId] });
       await queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+      await queryClient.invalidateQueries({ queryKey: ["project-progress"] });
       if (result.reportId) navigate("/admin/reviews");
       else if (result.ignored) {
         window.localStorage.removeItem("partner-report-simulated-partner");
@@ -156,6 +159,7 @@ export function ReviewPage() {
       setInstruction("");
       await queryClient.invalidateQueries({ queryKey: ["review", reviewId] });
       await queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+      await queryClient.invalidateQueries({ queryKey: ["project-progress"] });
     },
   });
 
@@ -297,6 +301,22 @@ export function ReviewPage() {
                   ))}
                 </ol>
               </section>
+
+              {selected.project_id && data.review.partner_id && (
+                <section className="pp-review-check">
+                  <h3>项目时间核查</h3>
+                  <p>
+                    结合本周每日进展，确认本人在此项目上的开始、暂停、恢复或完成日期。时间修改会同步到运行总览，通过周卡不会自动把整个项目标为完成。
+                  </p>
+                  <ParticipationEditor
+                    key={selected.project_id}
+                    partnerId={data.review.partner_id}
+                    projectId={selected.project_id}
+                    projectName={selected.project_name ?? selected.title}
+                    reviewId={reviewId}
+                  />
+                </section>
+              )}
 
               {selectedJob?.status === "FAILED" && (
                 <div className="card-generation-error">

@@ -1,0 +1,191 @@
+.pp-muted,
+.pp-explanation {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.pp-dialog {
+  width: min(800px, calc(100vw - 32px));
+  max-height: 90dvh;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  color: var(--ink);
+  box-shadow: 0 20px 80px #132b3933;
+}
+.pp-dialog::backdrop {
+  background: #11232c66;
+}
+.pp-dialog > header {
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.pp-dialog h2 {
+  font-size: 17px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.pp-dialog-body {
+  padding: 0 22px 22px;
+}
+.pp-dialog .field {
+  margin: 12px 0;
+}
+.pp-dialog .field input,
+.pp-dialog .field select,
+.pp-dialog .field textarea {
+  width: 100%;
+  min-width: 0;
+}
+.pp-events-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.pp-event-form {
+  display: grid;
+  grid-template-columns: 140px 115px minmax(0, 1fr) 28px;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pp-event-form .icon-button {
+  margin-top: 24px;
+}
+.pp-events-fieldset > .button {
+  margin-top: 12px;
+}
+.pp-preview-metrics {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  background: var(--surface-alt);
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 15px 0;
+  font-size: 12px;
+}
+.pp-preview-metrics span {
+  display: flex;
+  gap: 8px;
+  color: var(--muted);
+}
+.pp-preview-metrics b {
+  color: var(--ink);
+}
+.pp-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 15px;
+}
+.pp-history {
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.pp-history details {
+  padding: 10px 0;
+}
+.pp-notice {
+  background: #fff7e8;
+  color: #835b1d;
+  font-size: 12px;
+  line-height: 1.8;
+  padding: 12px;
+  border-radius: 6px;
+  margin: 14px 0;
+}
+.pp-notice .button {
+  margin: 8px 8px 0 0;
+}
+.pp-validation {
+  font-size: 12px;
+  color: var(--danger);
+}
+.pp-saved {
+  font-size: 11px;
+  color: var(--accent);
+}
+.pp-entry {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pp-entry > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.pp-entry p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.9;
+}
+.pp-entry small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+  display: block;
+}
+.pp-detail-event {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  font-size: 13px;
+  color: var(--accent);
+}
+.pp-review-check {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding: 18px 0;
+}
+.pp-review-check p {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+@media (max-width: 800px) {
+  .pp-event-form {
+    grid-template-columns: minmax(0, 1fr) 100px 28px;
+    gap: 8px;
+  }
+  .pp-event-form > .field:nth-child(3) {
+    grid-column: 1/3;
+    grid-row: 2;
+    margin-top: 0;
+  }
+  .pp-event-form > button {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .pp-dialog-body {
+    padding: 0 14px 18px;
+  }
+  .pp-dialog > header {
+    padding: 15px;
+  }
+  .pp-preview-metrics {
+    gap: 10px;
+  }
+}

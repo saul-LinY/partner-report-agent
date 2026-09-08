@@ -15,6 +15,7 @@ export const db = drizzle(sqlClient, { schema });
 export * from "./schema.js";
 export * from "./period.js";
 export * from "./config.js";
+export * from "./project-scope-projects.js";
 
 export async function closeDatabase() {
   await sqlClient.end();

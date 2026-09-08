@@ -6,6 +6,7 @@ import {
   sqlClient as sql,
   weeklyPeriodAt,
   weeklyPeriodKeyCandidates,
+  loadMemberProjectRedirects,
   type WeeklyPeriodRule,
 } from "@partner-report/db";
 
@@ -44,6 +45,7 @@ export function buildProjectBuckets(
     description_candidate?: string | null;
     description_candidate_source_fingerprint?: string | null;
   }>,
+  redirects = new Map<string, { id: string; name: string }>(),
 ) {
   const projectNames = new Map(
     projects.map((project) => [project.id, project.name]),
@@ -63,8 +65,9 @@ export function buildProjectBuckets(
   >();
 
   for (const fact of facts) {
-    const projectId =
+    const originalProjectId =
       fact.payload.projectId ?? fact.payload.project?.id ?? null;
+    const projectId = redirects.get(originalProjectId)?.id ?? originalProjectId;
     const fingerprint =
       fact.payload.projectRootFingerprint ??
       fact.payload.project?.rootFingerprint ??
@@ -250,7 +253,16 @@ export async function scheduleDueWeeklyReports(
             and period_id = ${period.id} and current = true and excluded = false
           order by source_occurred_at nulls last, created_at, id
         `;
-        const projectBuckets = buildProjectBuckets(facts, partnerProjects);
+        const redirects = await loadMemberProjectRedirects(tx, {
+          tenantId: period.tenant_id,
+          teamId: period.team_id,
+          partnerId,
+        });
+        const projectBuckets = buildProjectBuckets(
+          facts,
+          partnerProjects,
+          redirects,
+        );
         const coverageRows = await tx<any[]>`
           select payload from coverage_snapshots
           where tenant_id = ${period.tenant_id} and partner_id = ${partnerId}

@@ -14,6 +14,7 @@ import { jobRoutes } from "./routes/jobs.js";
 import { observabilityRoutes } from "./routes/observability.js";
 import { pluginRoutes } from "./routes/plugin.js";
 import { teamReportRoutes } from "./routes/team-reports.js";
+import { projectProgressRoutes } from "./routes/project-progress.js";
 import { reviewRoutes } from "./routes/reviews.js";
 import { loadFeishuConfig } from "./feishu/config.js";
 import {
@@ -136,6 +137,7 @@ export async function buildApp(
   await app.register(factRoutes);
   await app.register(jobRoutes);
   await app.register(reviewRoutes);
+  await app.register(projectProgressRoutes);
   await app.register(teamReportRoutes);
   return app;
 }

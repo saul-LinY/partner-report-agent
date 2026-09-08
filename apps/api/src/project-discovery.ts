@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ApiError } from "./common.js";
+import { loadMemberProjectRedirects } from "@partner-report/db";
 
 export type ProjectIdentity = {
   id: string | null;
@@ -116,6 +117,32 @@ export async function resolveProjectIdentity(
   actor: ActorScope,
   identity: ProjectIdentity,
 ) {
+  if (actor.pluginInstanceId && (identity.id || identity.scopeKey)) {
+    const plugins = await tx`select partner_id from plugin_instances
+      where id=${actor.pluginInstanceId} and tenant_id=${actor.tenantId} and team_id=${actor.teamId}`;
+    if (plugins[0]) {
+      const redirects = await loadMemberProjectRedirects(tx, {
+        ...actor,
+        partnerId: plugins[0].partner_id,
+      });
+      let target = identity.id ? redirects.get(identity.id) : undefined;
+      if (!identity.id && identity.scopeKey) {
+        const scopes =
+          await tx`select coalesce(a.scope_key,${identity.scopeKey}) as scope_key
+          from (select 1) seed left join project_scope_aliases a
+          on a.plugin_instance_id=${actor.pluginInstanceId} and a.alias_kind='scope'
+            and a.alias_key=${identity.scopeKey}`;
+        const projects = await tx`select p.id,p.name from projects p
+          where p.tenant_id=${actor.tenantId} and p.team_id=${actor.teamId} and p.status='active'
+            and p.external_ids @> ${JSON.stringify([scopeExternalId(actor.pluginInstanceId, scopes[0].scope_key)])}::jsonb
+            and exists (select 1 from project_scope_aliases a
+              where a.plugin_instance_id=${actor.pluginInstanceId} and a.alias_kind='project' and a.alias_key=p.id::text)
+          order by p.created_at,p.id limit 1`;
+        if (projects[0]) target = projects[0];
+      }
+      if (target) identity = { ...identity, id: target.id };
+    }
+  }
   if (identity.id) {
     const rows = await tx<ProjectRow[]>`
       select id, name, external_ids from projects

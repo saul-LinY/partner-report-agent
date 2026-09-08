@@ -599,6 +599,31 @@ export const projectScopeIdentities = pgTable(
   ],
 );
 
+export const projectScopeAliases = pgTable(
+  "project_scope_aliases",
+  {
+    id: uuid("id").primaryKey(),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id, { onDelete: "cascade" }),
+    aliasKind: text("alias_kind").notNull(),
+    aliasKey: text("alias_key").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("project_scope_alias_unique").on(
+      table.pluginInstanceId,
+      table.aliasKind,
+      table.aliasKey,
+    ),
+    index("project_scope_alias_target_idx").on(
+      table.pluginInstanceId,
+      table.scopeKey,
+    ),
+  ],
+);
+
 export const projectScopeBackupSnapshots = pgTable(
   "project_scope_backup_snapshots",
   {
@@ -1422,5 +1447,64 @@ export const outboxEvents = pgTable(
   },
   (table) => [
     index("outbox_unpublished_idx").on(table.publishedAt, table.createdAt),
+  ],
+);
+
+// Explicit lifecycle per member + project. Missing collection dates never create events.
+export const projectParticipations = pgTable(
+  "project_participations",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id),
+    version: integer("version").notNull().default(1),
+    events: jsonb("events").notNull().default([]),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_participation_member_project_unique").on(
+      table.tenantId,
+      table.teamId,
+      table.partnerId,
+      table.projectId,
+    ),
+  ],
+);
+
+export const projectParticipationVersions = pgTable(
+  "project_participation_versions",
+  {
+    id: uuid("id").primaryKey(),
+    participationId: uuid("participation_id")
+      .notNull()
+      .references(() => projectParticipations.id),
+    version: integer("version").notNull(),
+    events: jsonb("events").notNull(),
+    note: text("note").notNull(),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => users.id),
+    reviewId: uuid("review_id").references(() => reviews.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_participation_version_unique").on(
+      table.participationId,
+      table.version,
+    ),
   ],
 );

@@ -20,6 +20,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Link } from "wouter";
+import { ProjectProgress } from "./project-progress.js";
 import { api } from "./api.js";
 import { selectCurrentOpenPeriod } from "./period-selection.js";
 import {
@@ -239,7 +240,9 @@ function Operations({
   error: unknown;
 }) {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"people" | "schedule">("people");
+  const [tab, setTab] = useState<"progress" | "people" | "schedule">(
+    "progress",
+  );
   const [search, setSearch] = useState("");
   const [pluginStatus, setPluginStatus] = useState("");
   const [feishuStatus, setFeishuStatus] = useState("");
@@ -254,7 +257,10 @@ function Operations({
   const [removePartner, setRemovePartner] = useState<any | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
+      queryClient.invalidateQueries({ queryKey: ["project-progress"] }),
+    ]);
   const connected = data.connections.filter((item) =>
     ["active", "connected"].includes(item.connectionState),
   ).length;
@@ -320,7 +326,7 @@ function Operations({
         onRefresh={() => void refresh()}
         refreshing={refreshing}
         context={
-          openPeriod ? (
+          tab === "progress" ? null : openPeriod ? (
             <>
               <span>{openPeriod.period_key}</span>
               <span>下次聚合 {formatFullTime(openPeriod.cutoff_at)}</span>
@@ -330,43 +336,48 @@ function Operations({
           )
         }
       >
-        <Button icon={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
-          新增人员
-        </Button>
+        {tab === "people" && (
+          <Button icon={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
+            新增人员
+          </Button>
+        )}
       </AdminHeader>
       <ErrorBanner error={error} />
-      <AdminMetrics
-        items={[
-          {
-            label: "插件已连接",
-            value: `${connected} / ${data.connections.length}`,
-            tone: "success",
-            href: "/admin/plugin-logs",
-          },
-          {
-            label: "飞书已连接",
-            value: `${feishuConnected} / ${data.connections.length}`,
-            tone: "success",
-          },
-          {
-            label: "待审核人员",
-            value: pendingReviews,
-            tone: "warning",
-            href: "/admin/reviews",
-          },
-          {
-            label: "中台任务异常",
-            value: modelFailures,
-            tone: modelFailures ? "danger" : "",
-            href: "/admin/jobs",
-          },
-        ]}
-      />
+      {tab !== "progress" && (
+        <AdminMetrics
+          items={[
+            {
+              label: "插件已连接",
+              value: `${connected} / ${data.connections.length}`,
+              tone: "success",
+              href: "/admin/plugin-logs",
+            },
+            {
+              label: "飞书已连接",
+              value: `${feishuConnected} / ${data.connections.length}`,
+              tone: "success",
+            },
+            {
+              label: "待审核人员",
+              value: pendingReviews,
+              tone: "warning",
+              href: "/admin/reviews",
+            },
+            {
+              label: "中台任务异常",
+              value: modelFailures,
+              tone: modelFailures ? "danger" : "",
+              href: "/admin/jobs",
+            },
+          ]}
+        />
+      )}
       <AdminTabs
         label="运行总览视图"
         value={tab}
         onChange={setTab}
         items={[
+          { value: "progress", label: "项目进展", icon: LayoutDashboard },
           {
             value: "people",
             label: "人员管理",
@@ -376,6 +387,14 @@ function Operations({
           { value: "schedule", label: "生成设置", icon: Settings2 },
         ]}
       />
+      <div
+        id="aw-panel-progress"
+        role="tabpanel"
+        aria-labelledby="aw-tab-progress"
+        hidden={tab !== "progress"}
+      >
+        {tab === "progress" && <ProjectProgress />}
+      </div>
       <div
         id="aw-panel-people"
         role="tabpanel"

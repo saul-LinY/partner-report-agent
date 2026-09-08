@@ -29,6 +29,7 @@ ENV VITE_GOOGLE_LOGIN_ENABLED=$VITE_GOOGLE_LOGIN_ENABLED
 ENV VITE_LOCAL_LOGIN_ENABLED=$VITE_LOCAL_LOGIN_ENABLED
 
 COPY apps/web ./apps/web
+COPY packages/contracts ./packages/contracts
 
 RUN npm run build -w @partner-report/web
 

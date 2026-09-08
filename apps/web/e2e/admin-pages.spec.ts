@@ -201,6 +201,18 @@ async function setup(
           teamName: "产品研发团队",
         },
       });
+    if (url.pathname === "/v1/admin/project-progress")
+      return route.fulfill({
+        json: {
+          today: "2026-09-08",
+          timezone: "Asia/Shanghai",
+          from: "2026-08-26",
+          to: "2026-09-08",
+          generatedAt: date,
+          members: [],
+          projects: [],
+        },
+      });
     if (url.pathname === "/v1/admin/overview")
       return route.fulfill({
         json: options.empty
@@ -359,6 +371,8 @@ async function setup(
   });
   await page.goto(path);
   await expect(page.locator(".management-page")).toBeVisible();
+  if (path === "/admin" && !options.fail?.includes("/v1/admin/overview"))
+    await page.getByRole("tab", { name: "人员管理" }).click();
   return { data, calls };
 }
 
@@ -703,6 +717,8 @@ for (const width of [320, 390, 768, 1440, 1920]) {
       await expect(
         page.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
+      if (slug === "overview")
+        await page.getByRole("tab", { name: "人员管理" }).click();
       await expect(page.locator(".aw-table tbody tr").first()).toBeVisible();
       await noOverflow();
       await page.screenshot({

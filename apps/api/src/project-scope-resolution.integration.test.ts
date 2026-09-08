@@ -111,7 +111,7 @@ suite("project permission resolution and legacy compatibility", () => {
     const resolved = await resolve([{ ...candidate(1), scopeKey: k(101) }]);
     expect(resolved.bindings[0]).toMatchObject({
       scopeKey: k(1),
-      resolution: "identity_match",
+      resolution: "member_name_match",
     });
     expect(
       resolved.entries.filter((e) => e.displayName === "project-1"),
@@ -138,18 +138,20 @@ suite("project permission resolution and legacy compatibility", () => {
     ).toEqual(before);
   });
 
-  it("does not match projects by name", async () => {
+  it("matches an exact project name for the same member", async () => {
     const result = await resolve([candidate(4, "project-1")]);
-    expect(result.entries.find((e) => e.scopeKey === k(4))!.status).toBe(
-      "pending",
-    );
+    expect(result.entries.find((e) => e.scopeKey === k(4))).toBeUndefined();
+    expect(result.bindings[0]!.scopeKey).toBe(k(1));
     expect(result.entries.find((e) => e.scopeKey === k(1))!.status).toBe(
       "allowed",
     );
   });
 
   it("isolates a reused key with a different identity and recovers after explicit review", async () => {
-    const replacement = { ...candidate(1), identityKey: k(5001) };
+    const replacement = {
+      ...candidate(1, "different-project"),
+      identityKey: k(5001),
+    };
     const result = await resolve([replacement]);
     const newKey = result.bindings[0]!.scopeKey;
     expect(newKey).not.toBe(k(1));
@@ -169,7 +171,7 @@ suite("project permission resolution and legacy compatibility", () => {
 
   it("does not restore an allow when identity is unavailable", async () => {
     const result = await resolve([
-      { scopeKey: k(1), displayName: "project-1", sessionCount: 1 },
+      { scopeKey: k(1), displayName: "unknown-project", sessionCount: 1 },
     ]);
     expect(result.bindings[0]!.scopeKey).not.toBe(k(1));
     expect(
@@ -178,7 +180,7 @@ suite("project permission resolution and legacy compatibility", () => {
     ).toBe("pending");
   });
 
-  it("does not choose an allow from contradictory reviewed aliases", async () => {
+  it("uses the latest explicit decision for same-name duplicates", async () => {
     await registerProjectScopeCandidates(identity, {
       periodKey,
       candidates: [
@@ -191,11 +193,11 @@ suite("project permission resolution and legacy compatibility", () => {
     const result = await resolve([
       { ...candidate(11, "alias"), recoveryKeys: [k(12)] },
     ]);
-    expect(result.bindings[0]!.resolution).toBe("identity_conflict");
+    expect(result.bindings[0]!.resolution).toBe("member_name_match");
     expect(
       result.entries.find((e) => e.scopeKey === result.bindings[0]!.scopeKey)!
         .status,
-    ).toBe("pending");
+    ).toBe("denied");
   });
 
   it("rejects stale versions atomically", async () => {

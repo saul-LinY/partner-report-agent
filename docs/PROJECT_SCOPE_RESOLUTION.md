@@ -7,10 +7,10 @@ schedule are not changed by this release.
 
 ## Separate Plugin Editions
 
-| Edition | Source | Workspace | Distribution |
-| --- | --- | --- | --- |
-| 2.0.0 | `plugins/partner-report` | `@partner-report/plugin` | Retained source and release archive; existing devices remain supported |
-| 2.1.0 | `plugins/v2/partner-report` | `@partner-report/plugin-v2` | Existing team marketplace and default installer |
+| Edition | Source                      | Workspace                   | Distribution                                                           |
+| ------- | --------------------------- | --------------------------- | ---------------------------------------------------------------------- |
+| 2.0.0   | `plugins/partner-report`    | `@partner-report/plugin`    | Retained source and release archive; existing devices remain supported |
+| 2.1.0   | `plugins/v2/partner-report` | `@partner-report/plugin-v2` | Existing team marketplace and default installer                        |
 
 The existing marketplace now points to the separate 2.1.0 source directory.
 The original 2.0.0 manifest, skill and bundled runtime remain intact. Build 2.1.0
@@ -46,11 +46,26 @@ The plugin hashes the normalized Git remote, or the filesystem identity when
 no remote is available. Raw paths and Git remotes remain local. Its existing
 local salt and key algorithm remain available to match legacy records.
 
-The server resolves an existing key or a registered identity to the canonical
-permission key. New identities become pending. A reused key with a contradictory
-identity gets a separate deterministic pending record; unrelated grants remain
-unchanged. Pending records are reused without repeated candidate-change events.
-Name matching does not establish authorization.
+For v2 resolution, the server first matches the exact full display name within
+the authenticated tenant, team and member. This is an explicit business rule:
+one member cannot have two different projects with the same name. Paths, Git
+identities and anonymous keys may change without prompting another review for
+that name. Different members, case variants and similar names are not merged by
+name. Raw paths and Git remotes are not uploaded by existing 2.1 clients; the
+server uses the identity keys they already provide for subsequent matching.
+
+If no name matches, a registered anonymous identity or compatible existing key
+can still identify a renamed project. A reused key with a contradictory identity
+gets a separate deterministic pending record. Genuinely new projects remain
+pending until reviewed. Repeated discovery of the same pending project does not
+create additional candidate-change events.
+
+Duplicate live permissions retain the earliest local key and the latest explicit
+review decision, including its effective time. A tie between allow and deny
+keeps the denial. A newer administrative request for reapproval remains pending.
+The server snapshots permissions before removing duplicates and records
+`project_scope.name_deduplicated` audit events. Persistent scope and identity
+aliases prevent old keys from recreating the same-name duplicate.
 
 Historical backup recovery requires an exact anonymous key and a recorded
 decision. A current record, including an explicit pending review or denial,
@@ -66,14 +81,17 @@ the plugin stops rather than falling back to destructive bootstrap.
 
 ## Rollout
 
-1. Back up the database and apply migration 0036.
+1. Back up the database and apply the pending migrations, including
+   `0038_project_scope_aliases.sql` for member name deduplication.
 2. Deploy the API with both route versions.
    Rebuild and deploy the web image as well: its Nginx gateway must forward both
    `/v1/` and `/v2/` to the API. Checking port 4310 alone does not verify the
    public route. Run `node scripts/check-public-api.mjs https://platform.laien.org`
    after deployment; all checks must return API JSON, never the SPA HTML page.
 3. Verify v1 behavior and the team's unchanged minimum plugin version.
-4. Install 2.1 only for the affected member, retaining their stable data directory.
+4. Members already running 2.1 do not need another plugin update for member name
+   deduplication. Members on 2.0 retain the v1 flow. Installing 2.1 is only needed
+   when moving an old client to v2 recovery.
 5. Run ordinary collection (`force: false`). Do not reset the binding or schedule.
 
 Swift's September 7 review initially produced 15 entries. At the user's explicit
@@ -83,16 +101,41 @@ request, the platform subsequently restored the complete pre-conflict snapshot
 times match that snapshot exactly. The replaced 15 entries remain in rollback
 snapshot `66ddbd35-9f06-4481-947a-f3d33bef0ca2`; the restored state is also backed
 up as `6061d5e2-273f-411b-9cee-e877fcd21a56`. This was an explicitly requested
-administrative restore. Automatic resolution still preserves live decisions
-and never matches permissions by display name. A deleted/recreated non-Git
-project may have a new filesystem identity and require individual confirmation.
+administrative restore. At that time automatic resolution did not use names;
+the September 8 backend change adds the member-scoped rule above.
 
 The user later confirmed that three pairs in the restored snapshot were duplicate
 project detections. Those pairs were deduplicated while retaining each pair's
 newer reviewed key and decision. Swift now has 17 entries, 7 allowed, 10 denied,
-0 pending, policy version 23. The pre-cleanup snapshot is
+0 pending, policy version 23 at that point. The pre-cleanup snapshot is
 `85b0f260-f0f3-49d5-954e-cbccf6279d39`, and the cleaned snapshot is
 `fc06a8b6-8429-4bae-b8e6-ea9cd6dabf48`.
+
+## Backend-only deduplication, September 8
+
+Cleanup runs inside the v2 resolve transaction, including for projects outside
+the current incremental scan. GET requests do not remove keys underneath an
+ongoing collection. The returned full policy and existing `bindings` let the
+unchanged 2.1 plugin replace its local duplicate entries during the next normal
+collection. Users should not delete or edit `project-scope.json` for this rollout.
+
+This also handles a previously reviewed project that was never enrolled in the
+2.1 identity table before local data was lost. Same-name candidate batches
+produce a single permission entry and one review event only if the project is
+genuinely new. Version checks, rollback, and member isolation remain enforced.
+
+Where duplicate permissions already reference different formal projects, the
+server records member-scoped project redirects. Future uploads and future weekly
+card generation use one canonical project, including when grouping facts with
+old project IDs. Existing facts and previously generated or delivered cards are
+not rewritten. Deploy the API and worker together after the additive migration.
+
+Regression tests use an isolated PostgreSQL database and the unmodified 2.1
+`applyScopeResolution` and discovery functions. They cover local duplicate
+cleanup, repeated sync, missing legacy identity enrollment, denial preservation,
+new-project review, administrative reapproval, member isolation, rollback, and
+formal-project/card grouping. The v1 registrar and both plugin source trees are
+unchanged by this backend change.
 
 The old plugin remains supported, but still has its original conflict behavior.
 Only upgrading that client enables v2 recovery. Rolling back the API requires
