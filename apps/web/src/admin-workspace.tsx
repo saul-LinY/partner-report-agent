@@ -3,13 +3,62 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  ListFilter,
   RefreshCw,
   Search,
   X,
   type LucideIcon,
 } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { navigationGroupLabel } from "./navigation.js";
 import "./admin-workspace.css";
+
+export function AdminFilterBar({
+  children,
+  label = "筛选条件",
+}: {
+  children: ReactNode;
+  label?: string;
+}) {
+  return (
+    <section className="aw-filter-bar" aria-label={label}>
+      <div className="aw-filter-heading">
+        <ListFilter size={16} />
+        <strong>{label}</strong>
+      </div>
+      <div className="aw-toolbar">{children}</div>
+    </section>
+  );
+}
+
+export function WorkspaceHeader({
+  title,
+  icon: Icon,
+  context,
+  children,
+}: {
+  title: string;
+  icon: LucideIcon;
+  context?: ReactNode;
+  children?: ReactNode;
+}) {
+  const [location] = useLocation();
+  return (
+    <header className="aw-header">
+      <div className="aw-header-copy">
+        <span className="aw-breadcrumb">
+          管理台 / {navigationGroupLabel(location) ?? "团队运营"}
+        </span>
+        <h1>
+          <Icon size={24} />
+          {title}
+        </h1>
+        {context && <div className="aw-context">{context}</div>}
+      </div>
+      {children && <div className="aw-header-actions">{children}</div>}
+    </header>
+  );
+}
 
 export function AdminHeader({
   title,
@@ -27,27 +76,17 @@ export function AdminHeader({
   children?: ReactNode;
 }) {
   return (
-    <header className="aw-header">
-      <div>
-        <span className="aw-breadcrumb">管理台 / 团队运营</span>
-        <h1>
-          <Icon size={24} />
-          {title}
-        </h1>
-        {context && <div className="aw-context">{context}</div>}
-      </div>
-      <div className="aw-header-actions">
-        {children}
-        <button
-          className="icon-button"
-          title={`刷新${title}`}
-          disabled={refreshing}
-          onClick={onRefresh}
-        >
-          <RefreshCw size={17} className={refreshing ? "spin" : ""} />
-        </button>
-      </div>
-    </header>
+    <WorkspaceHeader title={title} icon={Icon} context={context}>
+      {children}
+      <button
+        className="icon-button"
+        title={`刷新${title}`}
+        disabled={refreshing}
+        onClick={onRefresh}
+      >
+        <RefreshCw size={17} className={refreshing ? "spin" : ""} />
+      </button>
+    </WorkspaceHeader>
   );
 }
 

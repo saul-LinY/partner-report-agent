@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, RefreshCw } from "lucide-react";
+import { Check, Copy, FileStack, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useRoute } from "wouter";
 import { api } from "./api.js";
+import { WorkspaceHeader } from "./admin-workspace.js";
 import { Button, EmptyState, ErrorBanner } from "./components.js";
 import { remarkReportLayout } from "./report-layout.js";
 
@@ -65,22 +66,19 @@ function TeamReportDetail({ id }: { id: string }) {
   const error = detail.error;
   return (
     <div className="page admin-page">
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">TEAM REPORT</span>
-          <h1>{report?.period_key ?? "Team Report"}</h1>
-          <p>
-            {report
-              ? `${statusLabel(report.status)} · 当前版本 v${report.current_version}`
-              : "加载中"}
-          </p>
-        </div>
-        <div className="header-actions">
-          <Link className="button button-ghost" href="/admin/reports">
-            返回归档
-          </Link>
-        </div>
-      </header>
+      <WorkspaceHeader
+        title={report?.period_key ?? "Team Report"}
+        icon={FileStack}
+        context={
+          report
+            ? `${statusLabel(report.status)} · 当前版本 v${report.current_version}`
+            : "加载中"
+        }
+      >
+        <Link className="button button-ghost" href="/admin/reports">
+          返回归档
+        </Link>
+      </WorkspaceHeader>
       <ErrorBanner error={error} />
       {detail.isLoading ? (
         <div className="page-loading">
@@ -91,7 +89,7 @@ function TeamReportDetail({ id }: { id: string }) {
         <EmptyState title="报告正在生成，完成后会自动出现" />
       ) : (
         <div className="team-report-layout">
-          <aside className="team-report-versions">
+          <aside className="team-report-versions" aria-label="报告版本">
             <strong>历史版本</strong>
             {detail.data?.versions.map((version) => (
               <button
@@ -114,6 +112,14 @@ function TeamReportDetail({ id }: { id: string }) {
           </aside>
           <section className="team-report-editor">
             <div className="team-report-document-toolbar">
+              <div className="team-report-meta">
+                <span>
+                  缺失用户 {viewed?.payload.missingPartnerIds?.length ?? 0}
+                </span>
+                <span>
+                  质量提醒 {viewed?.payload.qualityWarnings?.length ?? 0}
+                </span>
+              </div>
               <Button
                 type="button"
                 variant="secondary"
@@ -161,14 +167,6 @@ function TeamReportDetail({ id }: { id: string }) {
                 {withoutLegacyWeeklySummary(viewed?.markdown ?? "")}
               </ReactMarkdown>
             </article>
-            <div className="team-report-meta">
-              <span>
-                缺失用户 {viewed?.payload.missingPartnerIds?.length ?? 0}
-              </span>
-              <span>
-                质量提醒 {viewed?.payload.qualityWarnings?.length ?? 0}
-              </span>
-            </div>
           </section>
         </div>
       )}

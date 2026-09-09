@@ -1,0 +1,1119 @@
+/* Shared shell and layout rhythm. Feature styles own their content and states. */
+.app-shell {
+  --workspace-sidebar-width: 224px;
+  --workspace-gap: 20px;
+  --workspace-radius: 8px;
+}
+
+.app-shell .sidebar {
+  width: var(--workspace-sidebar-width);
+  padding: 24px 14px 16px;
+}
+
+.app-shell .brand {
+  padding: 0 8px 26px;
+}
+
+.app-shell .sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.nav-group-label {
+  display: block;
+  padding: 0 11px 9px;
+  color: #9fa9b0;
+  font-size: 11px;
+}
+
+.nav-group-links {
+  display: grid;
+  gap: 4px;
+}
+
+.app-shell .sidebar nav a {
+  min-height: 42px;
+  border-radius: 6px;
+}
+
+.app-shell .sidebar nav a.active {
+  box-shadow: inset 3px 0 0 #71b5a6;
+}
+
+.app-shell .sidebar-user {
+  flex-shrink: 0;
+}
+
+.app-shell .main-content {
+  min-width: 0;
+  margin-left: var(--workspace-sidebar-width);
+}
+
+.app-shell .page {
+  width: min(1800px, 100%);
+  max-width: 1800px;
+  padding: 28px 32px 48px;
+  font-size: 13px;
+}
+
+.app-shell .aw-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  min-height: 76px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.aw-header-copy {
+  min-width: 0;
+}
+
+.app-shell .aw-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 25px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.app-shell .aw-header h1 svg {
+  flex-shrink: 0;
+}
+
+.app-shell .aw-context {
+  margin-top: 8px;
+  line-height: 1.7;
+  font-size: 12px;
+}
+
+.app-shell .aw-header-actions {
+  gap: 8px;
+  margin-left: auto;
+}
+
+.app-shell .aw-header-actions .button {
+  min-height: 36px;
+  font-size: 12px;
+}
+
+.app-shell .aw-header-actions > .icon-button {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+/* Summary first; each view then owns its filters, records and inspection area. */
+.app-shell :is(.aw-metrics, .monitor-summary, .sm-overview) {
+  margin: 0 0 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--workspace-radius);
+  background: var(--surface);
+}
+.app-shell :is(.aw-metric, .monitor-summary > div, .sm-overall, .sm-stat) {
+  padding: 14px 20px;
+}
+.app-shell :is(.aw-metric strong, .monitor-summary strong, .sm-stat strong) {
+  margin-top: 8px;
+  font-size: 24px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.app-shell .sm-stat {
+  gap: 0;
+}
+.app-shell .aw-view {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--workspace-radius);
+  background: var(--surface);
+}
+.app-shell :is(.aw-tabs, .sm-navigation) {
+  margin: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+.app-shell :is(.aw-tabs, .sm-tabs) {
+  gap: 28px;
+  overflow-x: auto;
+}
+.app-shell :is(.aw-tabs, .sm-tabs) > button {
+  flex-shrink: 0;
+  min-height: 52px;
+  padding: 0 2px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.app-shell .aw-view > [role="tabpanel"] {
+  min-width: 0;
+}
+
+/* Labeled filters stay together and align with the result list below. */
+.aw-filter-bar {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+.aw-filter-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.app-shell .aw-filter-bar .aw-toolbar {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 12px;
+  align-items: flex-end;
+}
+.app-shell .aw-filter-bar .aw-search {
+  flex: 1 1 240px;
+  min-width: 160px;
+}
+.app-shell .aw-filter-bar .aw-filter {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 1 160px;
+  min-width: 100px;
+  height: auto;
+  padding: 0;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+}
+.app-shell .facts-page .aw-filter-bar .aw-filter {
+  flex: 1 1 140px;
+}
+.app-shell .aw-filter-bar .aw-filter :is(input, select) {
+  width: 100%;
+  max-width: none;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.app-shell .aw-filter-bar .aw-text-button {
+  min-height: 38px;
+}
+.app-shell .aw-search {
+  background: var(--surface);
+}
+
+/* List and detail panes have separate scrolling and clear reading priorities. */
+.app-shell .aw-workspace {
+  grid-template-columns: minmax(0, 1.6fr) minmax(330px, 1fr);
+  height: clamp(600px, calc(100dvh - 370px), 850px);
+  border: 0;
+  background: var(--surface);
+}
+.app-shell .facts-page .aw-workspace {
+  grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.15fr);
+}
+.app-shell .aw-detail {
+  container-type: inline-size;
+}
+.app-shell
+  :is(
+    .aw-records,
+    .aw-detail,
+    .agent-job-list,
+    .agent-job-detail,
+    .plugin-log-detail,
+    .item-list,
+    .item-detail
+  ) {
+  min-width: 0;
+}
+.app-shell .aw-view .aw-section {
+  border: 0;
+}
+.app-shell
+  :is(
+    .aw-section-heading,
+    .sm-section-heading,
+    .agent-job-list-heading,
+    .plugin-log-panel-title,
+    .plugin-log-section-title
+  ) {
+  min-height: 50px;
+  padding-inline: 20px;
+}
+.app-shell .aw-table td {
+  padding-block: 13px;
+}
+.app-shell .aw-table th {
+  padding-block: 12px;
+}
+.app-shell .aw-record-button strong {
+  font-size: 13px;
+}
+.app-shell .aw-detail-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 20px;
+  background: var(--surface-alt);
+}
+.app-shell .aw-detail-section {
+  padding: 20px;
+}
+.app-shell .aw-detail-section h3 {
+  margin-bottom: 16px;
+}
+.app-shell .aw-detail-section p {
+  font-size: 13px;
+}
+.app-shell .aw-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.app-shell .aw-inline-actions .button {
+  min-height: 34px;
+  font-size: 12px;
+}
+.app-shell .aw-person-maintenance {
+  justify-content: flex-end;
+}
+.app-shell .aw-person-maintenance .danger {
+  color: var(--danger);
+}
+.app-shell .aw-person-access {
+  background: #fafcfb;
+}
+.app-shell .aw-contributions {
+  gap: 12px;
+}
+.app-shell .aw-contributions > div {
+  display: block;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-alt);
+}
+.app-shell .aw-contributions > div > span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.app-shell .aw-contributions > div:nth-child(4) {
+  border-left: 3px solid #c49b48;
+}
+.app-shell .aw-contributions > div:last-child {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.aw-source-records summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aw-source-records summary svg {
+  vertical-align: middle;
+  margin-right: 5px;
+}
+.aw-source-records[open] summary {
+  margin-bottom: 18px;
+}
+@container (min-width: 510px) {
+  .app-shell .aw-contributions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .app-shell .aw-contributions > div:last-child {
+    grid-column: 1 / -1;
+  }
+}
+.app-shell .aw-queue-table th:first-child {
+  width: 23%;
+}
+.app-shell .aw-queue-table th:nth-child(4) {
+  width: 23%;
+}
+.app-shell .aw-queue-table th:last-child {
+  width: 14%;
+}
+.app-shell .aw-queue-table td:last-child {
+  background: var(--surface);
+}
+.app-shell .aw-queue-table td:last-child .button {
+  min-height: 36px;
+}
+.app-shell .aw-archive-card > summary {
+  padding: 20px;
+}
+.app-shell .aw-archive-card-content {
+  padding: 0 20px 20px;
+}
+.app-shell .aw-archive-card-content dl {
+  padding: 14px;
+  border-radius: 6px;
+  background: var(--surface-alt);
+}
+
+/* Project overview: compact calendar, project selection and stage history. */
+.app-shell .pc-dashboard {
+  padding: 20px;
+}
+.app-shell .pc-toolbar {
+  margin-bottom: 20px;
+  gap: 16px;
+}
+.app-shell .pc-toolbar h2 {
+  font-size: 16px;
+}
+.app-shell .pc-workspace {
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 20px;
+}
+.app-shell .pc-projects {
+  padding: 0;
+  min-width: 0;
+}
+.app-shell .pc-project-list {
+  max-height: 720px;
+  gap: 8px;
+}
+.app-shell .pc-project {
+  padding: 12px;
+  gap: 8px;
+}
+.app-shell .pc-day {
+  min-height: 108px;
+}
+.app-shell .pc-month-nav {
+  padding: 16px 18px;
+}
+.app-shell .pc-month-nav h3 {
+  font-size: 17px;
+}
+.app-shell .pc-weekdays span {
+  padding-block: 10px;
+}
+.app-shell .pc-project-overview {
+  padding: 20px;
+}
+.app-shell .management-page .schedule-settings-grid {
+  grid-template-columns: minmax(0, 720px);
+  gap: 20px;
+  padding: 28px;
+}
+.app-shell .management-page .schedule-setting {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-alt);
+}
+.app-shell .management-page .schedule-setting-title {
+  grid-column: 1 / -1;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.app-shell .management-page .schedule-settings-grid > .button {
+  justify-self: end;
+}
+
+/* Work card review keeps evidence and decisions visible together. */
+.app-shell .review-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: 640px;
+  overflow: visible;
+  border: 1px solid var(--line);
+  border-radius: var(--workspace-radius);
+  background: var(--surface);
+  align-items: start;
+}
+.app-shell .item-list {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100dvh - 40px);
+}
+.app-shell .project-card-detail {
+  padding: 0;
+}
+.review-card-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  align-items: start;
+}
+.review-card-content {
+  min-width: 0;
+  padding: 24px;
+}
+.review-card-content .project-card-heading h2 {
+  overflow-wrap: anywhere;
+}
+.review-card-actions {
+  position: sticky;
+  top: 20px;
+  min-width: 0;
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  padding: 20px;
+  border-left: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+.review-card-actions h3 {
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+.review-action-subject {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.review-action-subject .badge {
+  justify-self: start;
+}
+.app-shell .project-review-controls {
+  margin-top: 20px;
+  padding-top: 20px;
+}
+.app-shell .project-review-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.app-shell .project-review-actions > span {
+  display: block;
+  height: 1px;
+  background: var(--line);
+  margin-block: 6px;
+}
+.app-shell .project-review-actions .button {
+  width: 100%;
+}
+.app-shell .project-review-actions .button-primary {
+  order: 1;
+}
+.app-shell .project-review-actions .button-danger {
+  order: 2;
+}
+
+/* Exceptions: cause, execution context, audit data, then task handling. */
+.app-shell .agent-jobs-layout {
+  grid-template-columns: 280px minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: var(--workspace-radius);
+  background: var(--surface);
+}
+.app-shell .agent-job-list {
+  max-height: 850px;
+  overflow-y: auto;
+}
+.app-shell .agent-job-detail {
+  padding: 24px;
+  overflow-wrap: anywhere;
+}
+.app-shell .agent-job-detail-header > .badge {
+  flex-shrink: 0;
+}
+.app-shell .agent-job-error {
+  margin-top: 24px;
+  padding: 16px;
+  background: #fdf6f5;
+  border-radius: 0 6px 6px 0;
+}
+.app-shell .agent-job-context {
+  margin-top: 20px;
+}
+.agent-job-record {
+  margin-top: 24px;
+}
+.agent-job-record h3,
+.agent-job-detail-actions h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.app-shell .agent-job-technical {
+  margin-top: 14px;
+  padding: 16px;
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.app-shell .agent-job-detail-actions {
+  position: sticky;
+  bottom: 0;
+  margin-top: 24px;
+  padding: 18px 0 0;
+  flex-direction: column;
+  align-items: flex-start;
+  background: var(--surface);
+}
+
+/* Device and execution selection share the left rail; inspection stays on the right. */
+.app-shell .plugin-log-workspace {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+.plugin-selection-rail,
+.app-shell .plugin-log-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+.app-shell .plugin-log-instances {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.app-shell .plugin-log-panel-title {
+  background: var(--surface-alt);
+}
+.plugin-instance-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-height: clamp(400px, calc(100dvh - 330px), 720px);
+  overflow-y: auto;
+}
+.app-shell .plugin-instance-row {
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+}
+.app-shell .plugin-instance-select {
+  min-width: 0;
+  min-height: 94px;
+  padding: 14px 12px;
+}
+.app-shell .plugin-instance-recover {
+  position: static;
+  flex-shrink: 0;
+  min-height: 30px;
+}
+.app-shell .plugin-instance-copy small {
+  padding-right: 0;
+}
+.app-shell .plugin-instance-copy :is(strong, span, small) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.app-shell .plugin-instance-row.active {
+  background: #edf5f1;
+}
+.plugin-current-context {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.app-shell .plugin-log-summary {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(120px, 0.7fr);
+}
+.app-shell .plugin-log-summary > div {
+  padding: 16px 20px;
+}
+.app-shell .monitor-diagnosis {
+  padding: 16px 20px;
+  border-bottom: 0;
+}
+.app-shell .plugin-execution-list {
+  grid-column: 1;
+  max-height: 850px;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.app-shell .plugin-execution-detail {
+  grid-column: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.app-shell .plugin-execution-row {
+  min-height: 96px;
+  padding: 16px;
+}
+.app-shell .plugin-execution-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 16px 20px;
+  background: var(--surface);
+}
+.plugin-run-assessment {
+  padding: 20px;
+  background: #fafbfb;
+  border-bottom: 1px solid var(--line);
+}
+.app-shell .plugin-run-assessment .execution-diagnosis {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+}
+.app-shell .plugin-run-assessment .plugin-model-analysis {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.app-shell .plugin-execution-meta {
+  margin: 16px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.app-shell .plugin-execution-meta > div {
+  min-width: 0;
+  padding: 12px;
+}
+.app-shell .plugin-event-toolbar {
+  padding-inline: 20px;
+}
+.app-shell .plugin-event > summary {
+  padding-inline: 20px;
+}
+.app-shell .plugin-event-expanded {
+  margin-inline: 20px;
+}
+
+/* System views use the same control/list/detail hierarchy. */
+.app-shell .sm-log-query {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+.app-shell .sm-window-toolbar {
+  margin: 0 0 14px;
+}
+.app-shell .sm-filters {
+  padding: 0;
+  margin: 0;
+}
+.app-shell .sm-search {
+  background: var(--surface);
+}
+.app-shell .sm-log-workspace {
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  border: 0;
+  height: clamp(600px, calc(100dvh - 380px), 850px);
+}
+.app-shell .sm-detail-header {
+  padding: 20px;
+  background: var(--surface-alt);
+}
+.app-shell .sm-components {
+  margin: 0;
+  border: 0;
+}
+.sm-component-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 20px;
+}
+.app-shell .system-component-row {
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 14px;
+  align-content: start;
+  align-items: start;
+  min-height: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.app-shell .system-component-row:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.app-shell .system-component-actions {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.app-shell .system-probe-result {
+  grid-column: 1 / -1;
+}
+
+/* Version selection, report checks and document reading are distinct areas. */
+.app-shell .team-report-layout {
+  grid-template-columns: 200px minmax(0, 1fr);
+  border-radius: 8px;
+  align-items: start;
+}
+.app-shell .team-report-versions {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+}
+.app-shell .team-report-editor {
+  padding: 0;
+}
+.app-shell .team-report-document-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 16px 20px;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.app-shell .team-report-meta {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  gap: 20px;
+}
+.app-shell .team-report-editor > .report-document {
+  margin: 20px;
+  padding: 32px;
+  max-width: 1000px;
+}
+
+@media (max-width: 1250px) {
+  .app-shell .aw-workspace,
+  .app-shell .facts-page .aw-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .app-shell .aw-detail-header {
+    position: static;
+  }
+  .app-shell .aw-back {
+    margin: 16px 20px;
+  }
+}
+@media (max-width: 1150px) {
+  .app-shell .sm-log-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+}
+@media (max-width: 1100px) {
+  .app-shell .page {
+    padding: 24px;
+  }
+  .app-shell .pc-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-shell .pc-project-list {
+    max-height: 300px;
+  }
+  .app-shell .agent-jobs-layout,
+  .app-shell .review-layout {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .app-shell .agent-job-list,
+  .app-shell .item-list {
+    position: static;
+    max-height: 260px;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .review-card-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .review-card-actions {
+    position: static;
+    max-height: none;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .app-shell .project-review-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .app-shell .project-review-actions .button {
+    width: auto;
+    flex: 1 1 120px;
+  }
+  .app-shell .project-review-actions > span {
+    flex: 0 0 100%;
+  }
+  .app-shell .plugin-instance-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 360px;
+  }
+  .app-shell .plugin-log-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plugin-selection-rail,
+  .app-shell .plugin-log-detail {
+    display: contents;
+  }
+  .app-shell .plugin-log-instances {
+    grid-row: 1;
+  }
+  .app-shell .plugin-execution-detail,
+  .app-shell .plugin-execution-list {
+    grid-column: 1;
+  }
+  .app-shell .plugin-execution-detail {
+    grid-row: 4;
+  }
+  .app-shell .plugin-current-context {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .app-shell .plugin-execution-list {
+    grid-row: 3;
+    max-height: 300px;
+    min-height: 0;
+    border: 1px solid var(--line);
+  }
+  .sm-component-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 760px) {
+  .app-shell {
+    --workspace-gap: 16px;
+  }
+  .app-shell .sidebar {
+    position: static;
+    display: flex;
+    width: 100%;
+    padding: 16px;
+    gap: 16px;
+  }
+  .app-shell .brand {
+    padding: 0;
+    align-self: flex-start;
+  }
+  .app-shell .brand span {
+    display: block;
+  }
+  .app-shell .sidebar nav {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
+  .nav-group {
+    display: grid;
+    grid-template-columns: 70px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+  }
+  .nav-group-label {
+    padding: 10px 0;
+    line-height: 18px;
+  }
+  .nav-group-links {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .app-shell .sidebar nav a {
+    justify-content: center;
+    min-height: 38px;
+    padding: 6px;
+    gap: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .app-shell .sidebar nav a svg {
+    width: 15px;
+    flex-shrink: 0;
+  }
+  .app-shell .sidebar-user {
+    display: flex;
+    width: 100%;
+    margin: 0;
+    padding: 12px 0 0;
+  }
+  .app-shell .main-content {
+    margin-left: 0;
+  }
+  .app-shell .page {
+    padding: 20px 12px 36px;
+  }
+  .app-shell .aw-header {
+    align-items: flex-start;
+    gap: 12px;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+  }
+  .app-shell .aw-header h1 {
+    font-size: 22px;
+  }
+  .app-shell .aw-header-actions {
+    flex-wrap: wrap;
+  }
+  .app-shell :is(.aw-metric, .monitor-summary > div, .sm-overall, .sm-stat) {
+    padding: 14px;
+  }
+  .app-shell .sm-overview {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .app-shell :is(.aw-tabs, .sm-navigation) {
+    padding-inline: 12px;
+  }
+  .app-shell :is(.aw-tabs, .sm-tabs) {
+    gap: 14px;
+  }
+  .app-shell :is(.aw-tabs, .sm-tabs) > button {
+    font-size: 12px;
+  }
+  .app-shell .aw-filter-bar,
+  .app-shell .sm-log-query {
+    padding: 14px 12px;
+  }
+  .app-shell .aw-filter-bar .aw-toolbar {
+    gap: 10px;
+  }
+  .app-shell .aw-filter-bar .aw-search {
+    flex-basis: 100%;
+  }
+  .app-shell .aw-filter-bar .aw-filter,
+  .app-shell .facts-page .aw-filter-bar .aw-filter {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 0;
+  }
+  .app-shell .aw-filter-bar .aw-filter :is(input, select) {
+    font-size: 11px;
+    padding-inline: 6px;
+  }
+  .app-shell :is(.aw-section-heading, .sm-section-heading) {
+    padding-inline: 12px;
+  }
+  .app-shell .aw-archive-card > summary,
+  .app-shell .aw-archive-card-content {
+    padding-inline: 12px;
+  }
+  .app-shell .pc-dashboard {
+    padding: 16px 12px;
+  }
+  .app-shell .pc-day {
+    min-height: 76px;
+  }
+  .app-shell .pc-month-nav {
+    padding: 12px;
+  }
+  .app-shell .pc-project-overview {
+    padding: 14px;
+  }
+  .app-shell .management-page .schedule-settings-grid {
+    padding: 16px;
+  }
+  .app-shell .management-page .schedule-setting {
+    padding: 14px;
+  }
+  .app-shell .management-page .schedule-settings-grid > .button {
+    justify-self: stretch;
+  }
+  .app-shell .agent-job-detail {
+    padding: 20px 16px;
+  }
+  .review-card-content,
+  .review-card-actions {
+    padding: 20px 16px;
+  }
+  .app-shell .plugin-log-summary,
+  .app-shell .team-report-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-shell .plugin-execution-header {
+    position: static;
+    padding-inline: 14px;
+    flex-wrap: wrap;
+  }
+  .plugin-run-assessment {
+    padding: 12px;
+  }
+  .app-shell .plugin-log-summary > div {
+    min-height: 0;
+    padding: 12px 16px;
+  }
+  .app-shell .plugin-event-toolbar,
+  .app-shell .plugin-event > summary {
+    padding-inline: 12px;
+  }
+  .app-shell .plugin-event-expanded {
+    margin-inline: 12px;
+  }
+  .app-shell .monitor-diagnosis {
+    padding: 14px;
+  }
+  .sm-component-grid {
+    padding: 12px;
+    gap: 12px;
+  }
+  .app-shell .system-component-row {
+    padding: 16px;
+  }
+  .app-shell .team-report-versions {
+    position: static;
+    max-height: none;
+    padding: 12px;
+  }
+  .app-shell .team-report-document-toolbar {
+    position: static;
+    padding: 12px;
+  }
+  .app-shell .team-report-editor > .report-document {
+    margin: 0;
+    padding: 24px 16px;
+  }
+  .app-shell .scope-project-head > span,
+  .app-shell .scope-project-row > span {
+    display: block;
+  }
+  .app-shell .scope-project-head,
+  .app-shell .scope-project-row {
+    grid-template-columns: minmax(130px, 1fr) 88px 120px 120px 52px;
+    min-width: 570px;
+  }
+  .app-shell .scope-project-table {
+    overflow-x: auto;
+  }
+}
+@media (max-width: 480px) {
+  .nav-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .nav-group-label {
+    padding: 0 4px;
+  }
+  .app-shell .sidebar nav a {
+    font-size: 11px;
+  }
+  .app-shell .plugin-instance-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

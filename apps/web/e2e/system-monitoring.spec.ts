@@ -347,24 +347,6 @@ test("history date navigation and analysis retry polling work while auto refresh
   await expect(page.getByLabel("中台历史日志日期")).toHaveCount(0);
 });
 
-test("incident review retains details, filters and task links", async ({
-  page,
-}) => {
-  await setup(page);
-  await page.getByRole("tab", { name: "异常审查" }).click();
-  await page.getByLabel("异常级别").selectOption("critical");
-  await expect(page.locator(".sm-incident")).toHaveCount(1);
-  await page.getByRole("button", { name: /工作卡片生成失败/ }).click();
-  await expect(page.getByText("检查模型服务连接后重试任务。")).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "查看异常任务" }),
-  ).toHaveAttribute("href", "/admin/jobs");
-  await page.getByLabel("搜索异常").fill("no-match");
-  await expect(page.getByText("没有符合条件的异常")).toBeVisible();
-  await page.getByRole("button", { name: "重置筛选" }).click();
-  await expect(page.locator(".sm-incident")).toHaveCount(2);
-});
-
 test("all five module probes retain their results when switching tabs", async ({
   page,
 }) => {
@@ -410,8 +392,6 @@ test("empty, unknown and log failure states are explicit and recoverable", async
   const options = { empty: true, failLogs: false, unknown: false };
   await setup(page, options);
   await expect(page.getByText("最近 24 小时没有中台日志")).toBeVisible();
-  await page.getByRole("tab", { name: "异常审查" }).click();
-  await expect(page.getByText("当前没有待处理异常")).toBeVisible();
   options.empty = false;
   options.unknown = true;
   options.failLogs = true;
@@ -439,9 +419,14 @@ test("automatic refresh can be paused and resumed", async ({ page }) => {
 
 test("tabs support keyboard navigation", async ({ page }) => {
   await setup(page);
+  await expect(page.getByRole("tab")).toHaveCount(2);
   await page.getByRole("tab", { name: "运行日志", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab", { name: "异常审查" })).toBeFocused();
+  await expect(page.getByRole("tab", { name: "模块健康" })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    page.getByRole("tab", { name: "运行日志", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("End");
   await expect(page.getByRole("tab", { name: "模块健康" })).toHaveAttribute(
     "aria-selected",
@@ -552,16 +537,12 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
       await page.getByRole("button", { name: "返回运行记录" }).click();
       await expect(page.locator(".sm-record-button").first()).toBeVisible();
     }
-    for (const tab of ["异常审查", "模块健康"]) {
-      await page.getByRole("tab", { name: tab }).click();
-      await noOverflow();
-      await page.screenshot({
-        path: testInfo.outputPath(
-          `${tab === "异常审查" ? "incidents" : "components"}-${width}.png`,
-        ),
-        fullPage: true,
-      });
-    }
+    await page.getByRole("tab", { name: "模块健康" }).click();
+    await noOverflow();
+    await page.screenshot({
+      path: testInfo.outputPath(`components-${width}.png`),
+      fullPage: true,
+    });
     expect(errors).toEqual([]);
   });
 }

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { api } from "./api.js";
+import { WorkspaceHeader } from "./admin-workspace.js";
 import {
   Badge,
   Button,
@@ -128,27 +129,24 @@ export function AgentJobsPage() {
 
   return (
     <div className="page admin-page agent-jobs-page">
-      <header className="page-header agent-jobs-header">
-        <div>
-          <span className="eyebrow">ADMIN OPERATIONS</span>
-          <h1>异常任务</h1>
-          <p>定位中台或 Codex 插件的失败环节，并手动重新入队</p>
-        </div>
-        <div className="header-actions">
-          <Link className="button button-ghost" href="/admin">
-            <ArrowLeft size={16} />
-            <span>返回总览</span>
-          </Link>
-          <Button
-            variant="secondary"
-            icon={<RefreshCw size={16} />}
-            loading={query.isFetching}
-            onClick={() => query.refetch()}
-          >
-            刷新
-          </Button>
-        </div>
-      </header>
+      <WorkspaceHeader
+        title="异常任务"
+        icon={AlertTriangle}
+        context="定位中台或 Codex 插件的失败环节，并手动重新入队"
+      >
+        <Link className="button button-ghost" href="/admin">
+          <ArrowLeft size={16} />
+          <span>返回总览</span>
+        </Link>
+        <Button
+          variant="secondary"
+          icon={<RefreshCw size={16} />}
+          loading={query.isFetching}
+          onClick={() => query.refetch()}
+        >
+          刷新
+        </Button>
+      </WorkspaceHeader>
 
       {success && <SuccessBanner>{success}</SuccessBanner>}
       <ErrorBanner error={query.error ?? retry.error ?? clear.error} />
@@ -263,13 +261,20 @@ function AgentJobDetail({
     <>
       <div className="agent-job-detail-header">
         <div>
-          <span className="eyebrow">BLOCKED AT</span>
+          <span className="aw-kicker">异常详情</span>
           <h2>{meta?.label ?? job.type}</h2>
           <p>{meta?.stage ?? "任务执行过程中发生异常"}</p>
         </div>
         <Badge tone={job.status === "FAILED" ? "danger" : "warning"}>
           {job.status === "FAILED" ? "已失败" : "等待重试"}
         </Badge>
+      </div>
+
+      <div className="agent-job-error">
+        <span>阻塞原因</span>
+        <strong>{errorTitle}</strong>
+        <p>{job.error_message?.trim() || "任务未返回更详细的错误信息。"}</p>
+        {job.error_code && <code>{job.error_code}</code>}
       </div>
 
       <div className="agent-job-context">
@@ -295,23 +300,19 @@ function AgentJobDetail({
         />
       </div>
 
-      <div className="agent-job-error">
-        <span>阻塞原因</span>
-        <strong>{errorTitle}</strong>
-        <p>{job.error_message?.trim() || "任务未返回更详细的错误信息。"}</p>
-        {job.error_code && <code>{job.error_code}</code>}
-      </div>
-
-      <div className="agent-job-technical">
-        <span>任务 ID</span>
-        <code>{job.id}</code>
-        <span>任务类型</span>
-        <code>{job.type}</code>
-        <span>首次创建</span>
-        <strong>{formatFullTime(job.created_at)}</strong>
-      </div>
-
-      <div className="agent-job-detail-actions">
+      <section className="agent-job-record">
+        <h3>任务记录</h3>
+        <div className="agent-job-technical">
+          <span>任务 ID</span>
+          <code>{job.id}</code>
+          <span>任务类型</span>
+          <code>{job.type}</code>
+          <span>首次创建</span>
+          <strong>{formatFullTime(job.created_at)}</strong>
+        </div>
+      </section>
+      <section className="agent-job-detail-actions" aria-label="异常任务处理">
+        <h3>任务处理</h3>
         <div className="agent-job-detail-action-buttons">
           <Button
             icon={<RotateCw size={16} />}
@@ -330,7 +331,7 @@ function AgentJobDetail({
           </Button>
         </div>
         <span>重新入队后保留累计尝试次数，并开放至少 3 次执行机会。</span>
-      </div>
+      </section>
     </>
   );
 }

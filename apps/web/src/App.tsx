@@ -1,13 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ClipboardCheck,
-  FileStack,
-  HeartPulse,
-  LayoutDashboard,
-  LogOut,
-  PlugZap,
-  TableProperties,
-} from "lucide-react";
+import { LogOut } from "lucide-react";
 import { Link, Redirect, Route, Switch, useLocation } from "wouter";
 import { api } from "./api.js";
 import { ErrorBanner } from "./components.js";
@@ -21,6 +13,7 @@ import { ReportArchivePage } from "./report-archive.js";
 import { AgentJobsPage } from "./agent-jobs.js";
 import { PluginMonitoringPage } from "./plugin-logs.js";
 import { SystemMonitoringPage } from "./system-monitoring.js";
+import { isNavigationActive, navigationGroups } from "./navigation.js";
 
 export type Me = {
   userId: string;
@@ -73,8 +66,6 @@ function AuthenticatedApp({ me }: { me: Me }) {
       navigate("/");
     },
   });
-  const reviewing =
-    location === "/admin/reviews" || location.startsWith("/partner/review");
 
   return (
     <div className="app-shell">
@@ -86,55 +77,28 @@ function AuthenticatedApp({ me }: { me: Me }) {
             <span>{me.teamName}</span>
           </div>
         </div>
-        <nav>
-          <Link
-            className={
-              location === "/admin" || location === "/admin/jobs"
-                ? "active"
-                : ""
-            }
-            href="/admin"
-          >
-            <LayoutDashboard size={18} />
-            运行总览
-          </Link>
-          <Link className={reviewing ? "active" : ""} href="/admin/reviews">
-            <ClipboardCheck size={18} />
-            审核队列
-          </Link>
-          <Link
-            className={location === "/admin/facts" ? "active" : ""}
-            href="/admin/facts"
-          >
-            <TableProperties size={18} />
-            贡献预览
-          </Link>
-          <Link
-            className={
-              location.startsWith("/admin/reports") ||
-              location.startsWith("/admin/team-reports")
-                ? "active"
-                : ""
-            }
-            href="/admin/reports"
-          >
-            <FileStack size={18} />
-            报告归档
-          </Link>
-          <Link
-            className={location === "/admin/plugin-logs" ? "active" : ""}
-            href="/admin/plugin-logs"
-          >
-            <PlugZap size={18} />
-            插件监控
-          </Link>
-          <Link
-            className={location === "/admin/system-monitoring" ? "active" : ""}
-            href="/admin/system-monitoring"
-          >
-            <HeartPulse size={18} />
-            系统监控
-          </Link>
+        <nav aria-label="主导航">
+          {navigationGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <span className="nav-group-label">{group.label}</span>
+              <div className="nav-group-links">
+                {group.items.map(({ label, href, icon: Icon }) => {
+                  const active = isNavigationActive(location, href);
+                  return (
+                    <Link
+                      key={href}
+                      className={active ? "active" : ""}
+                      aria-current={active ? "page" : undefined}
+                      href={href}
+                    >
+                      <Icon size={18} />
+                      {label}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
         <div className="sidebar-user">
           <div>

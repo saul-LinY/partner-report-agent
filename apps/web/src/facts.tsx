@@ -12,6 +12,7 @@ import { api } from "./api.js";
 import { Badge, EmptyState, ErrorBanner } from "./components.js";
 import {
   AdminTableScroll,
+  AdminFilterBar,
   AdminHeader,
   AdminMetrics,
   AdminWorkspace,
@@ -154,270 +155,274 @@ export function FactPreviewPage() {
           },
         ]}
       />
-      <div className="aw-toolbar" aria-label="Session 贡献筛选">
-        <label className="aw-filter">
-          <span>人员</span>
-          <select
-            aria-label="贡献人员"
-            value={partnerId}
-            onChange={(event) =>
-              resetPage(() => setPartnerId(event.target.value))
-            }
-          >
-            <option value="">全部人员</option>
-            {overview.data?.partners.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.display_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="aw-filter">
-          <span>周期</span>
-          <select
-            aria-label="贡献周期"
-            value={periodId}
-            onChange={(event) =>
-              resetPage(() => setPeriodId(event.target.value))
-            }
-          >
-            <option value="">全部周期</option>
-            {overview.data?.periods.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.period_key}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="aw-filter">
-          <span>项目</span>
-          <select
-            aria-label="贡献项目"
-            value={projectId}
-            onChange={(event) =>
-              resetPage(() => setProjectId(event.target.value))
-            }
-          >
-            <option value="">全部项目</option>
-            {facts.data?.hasUnassigned && (
-              <option value="unassigned">独立工作</option>
-            )}
-            {facts.data?.projects.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="aw-filter">
-          <span>会话日期</span>
-          <input
-            aria-label="贡献会话日期"
-            type="date"
-            value={sessionDate}
-            onChange={(event) =>
-              resetPage(() => setSessionDate(event.target.value))
-            }
-          />
-        </label>
-        {(partnerId || periodId || projectId || sessionDate) && (
-          <button className="aw-text-button" onClick={clear}>
-            <X size={14} />
-            重置筛选
-          </button>
-        )}
-      </div>
-      <AdminWorkspace
-        label="贡献详情"
-        selectionKey={selected?.id}
-        open={detailOpen}
-        onBack={() => setDetailOpen(false)}
-        list={
-          <>
-            <div className="aw-section-heading">
-              <h2>
-                贡献记录 <span>{ready ? facts.data.total : "--"}</span>
-              </h2>
-              <span>按会话时间倒序 · Asia/Shanghai</span>
-            </div>
-            {busy ? (
-              <div className="aw-loading" role="status">
-                <RefreshCw className="spin" size={18} />
-                加载贡献记录
-              </div>
-            ) : !facts.data ? (
-              <EmptyState
-                title="贡献记录暂不可用"
-                action={
-                  <button
-                    className="aw-text-button"
-                    onClick={() => void facts.refetch()}
-                  >
-                    重试
-                  </button>
-                }
-              />
-            ) : items.length ? (
-              <AdminTableScroll resetKey={params.toString()}>
-                <table className="aw-table aw-fact-table">
-                  <thead>
-                    <tr>
-                      <th>贡献 / 项目</th>
-                      <th>人员 / 会话时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((row) => (
-                      <tr
-                        key={row.id}
-                        className={row.id === selected?.id ? "is-selected" : ""}
-                      >
-                        <td>
-                          <button
-                            className="aw-record-button"
-                            aria-pressed={row.id === selected?.id}
-                            onClick={() => {
-                              setSelectedId(row.id);
-                              setDetailOpen(true);
-                            }}
-                          >
-                            <span className="aw-fact-title">
-                              <FileText size={15} />
-                              <strong>
-                                {row.payload.title || "未命名贡献"}
-                              </strong>
-                            </span>
-                            <small>
-                              {projectName(row)} ·{" "}
-                              {row.period_key ?? "未归属周期"}
-                            </small>
-                            <small className="aw-clamp">
-                              {factSummary(row.payload)}
-                            </small>
-                          </button>
-                        </td>
-                        <td>
-                          <strong>{row.partner_name}</strong>
-                          <small>
-                            <time>{formatTime(row.source_occurred_at)}</time>
-                          </small>
-                          {contributionValues(row.payload, "blocker").length >
-                            0 && <Badge tone="warning">含阻塞</Badge>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </AdminTableScroll>
-            ) : (
-              <EmptyState
-                title="当前筛选条件下没有 Session 贡献"
-                action={
-                  partnerId || periodId || projectId || sessionDate ? (
-                    <button className="aw-text-button" onClick={clear}>
-                      重置筛选
-                    </button>
-                  ) : undefined
-                }
-              />
-            )}
-            <AdminPagination
-              page={page}
-              pageCount={pageCount}
-              total={ready ? facts.data.total : 0}
-              onChange={(value) => {
-                setPage(value);
-                setSelectedId(null);
-                setDetailOpen(false);
-              }}
-              loading={busy}
+      <section className="aw-view">
+        <AdminFilterBar label="Session 贡献筛选">
+          <label className="aw-filter">
+            <span>人员</span>
+            <select
+              aria-label="贡献人员"
+              value={partnerId}
+              onChange={(event) =>
+                resetPage(() => setPartnerId(event.target.value))
+              }
+            >
+              <option value="">全部人员</option>
+              {overview.data?.partners.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.display_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="aw-filter">
+            <span>周期</span>
+            <select
+              aria-label="贡献周期"
+              value={periodId}
+              onChange={(event) =>
+                resetPage(() => setPeriodId(event.target.value))
+              }
+            >
+              <option value="">全部周期</option>
+              {overview.data?.periods.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.period_key}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="aw-filter">
+            <span>项目</span>
+            <select
+              aria-label="贡献项目"
+              value={projectId}
+              onChange={(event) =>
+                resetPage(() => setProjectId(event.target.value))
+              }
+            >
+              <option value="">全部项目</option>
+              {facts.data?.hasUnassigned && (
+                <option value="unassigned">独立工作</option>
+              )}
+              {facts.data?.projects.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="aw-filter">
+            <span>会话日期</span>
+            <input
+              aria-label="贡献会话日期"
+              type="date"
+              value={sessionDate}
+              onChange={(event) =>
+                resetPage(() => setSessionDate(event.target.value))
+              }
             />
-          </>
-        }
-      >
-        {selected && fact ? (
-          <div className="aw-fact-detail">
-            <header className="aw-detail-header">
-              <div>
-                <span className="aw-kicker">
-                  贡献详情 · {selected.period_key ?? "未归属周期"}
-                </span>
-                <h2>{fact.title || "未命名贡献"}</h2>
-                <p>
-                  {selected.partner_name} · {projectName(selected)}
-                </p>
+          </label>
+          {(partnerId || periodId || projectId || sessionDate) && (
+            <button className="aw-text-button" onClick={clear}>
+              <X size={14} />
+              重置筛选
+            </button>
+          )}
+        </AdminFilterBar>
+        <AdminWorkspace
+          label="贡献详情"
+          selectionKey={selected?.id}
+          open={detailOpen}
+          onBack={() => setDetailOpen(false)}
+          list={
+            <>
+              <div className="aw-section-heading">
+                <h2>
+                  贡献记录 <span>{ready ? facts.data.total : "--"}</span>
+                </h2>
+                <span>按会话时间倒序 · Asia/Shanghai</span>
               </div>
-            </header>
-            <section className="aw-detail-section">
-              <h3>
-                <FileText size={16} />
-                贡献摘要
-              </h3>
-              <p>{factSummary(fact)}</p>
-            </section>
-            <section className="aw-detail-section">
-              <h3>
-                <FolderKanban size={16} />
-                贡献明细
-              </h3>
-              <div className="aw-contributions">
-                <FactList
-                  title="成果"
-                  values={contributionValues(fact, "outcome")}
-                />
-                <FactList
-                  title="进展"
-                  values={contributionValues(fact, "progress")}
-                />
-                <FactList
-                  title="决策"
-                  values={contributionValues(fact, "decision")}
-                />
-                <FactList
-                  title="阻塞"
-                  values={contributionValues(fact, "blocker")}
-                />
-                <FactList
-                  title="下一步"
-                  values={contributionValues(fact, "next_step")}
-                />
-              </div>
-            </section>
-            <section className="aw-detail-section">
-              <h3>
-                <GitBranch size={16} />
-                来源记录
-              </h3>
-              <dl className="aw-meta">
-                <div className="aw-meta-full">
-                  <dt>会话时间</dt>
-                  <dd>{formatTime(selected.source_occurred_at)}</dd>
+              {busy ? (
+                <div className="aw-loading" role="status">
+                  <RefreshCw className="spin" size={18} />
+                  加载贡献记录
                 </div>
-                <div className="aw-meta-full">
-                  <dt>Contribution 编号</dt>
-                  <dd>
-                    <code>{selected.external_fact_id}</code>
-                  </dd>
+              ) : !facts.data ? (
+                <EmptyState
+                  title="贡献记录暂不可用"
+                  action={
+                    <button
+                      className="aw-text-button"
+                      onClick={() => void facts.refetch()}
+                    >
+                      重试
+                    </button>
+                  }
+                />
+              ) : items.length ? (
+                <AdminTableScroll resetKey={params.toString()}>
+                  <table className="aw-table aw-fact-table">
+                    <thead>
+                      <tr>
+                        <th>贡献 / 项目</th>
+                        <th>人员 / 会话时间</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((row) => (
+                        <tr
+                          key={row.id}
+                          className={
+                            row.id === selected?.id ? "is-selected" : ""
+                          }
+                        >
+                          <td>
+                            <button
+                              className="aw-record-button"
+                              aria-pressed={row.id === selected?.id}
+                              onClick={() => {
+                                setSelectedId(row.id);
+                                setDetailOpen(true);
+                              }}
+                            >
+                              <span className="aw-fact-title">
+                                <FileText size={15} />
+                                <strong>
+                                  {row.payload.title || "未命名贡献"}
+                                </strong>
+                              </span>
+                              <small>
+                                {projectName(row)} ·{" "}
+                                {row.period_key ?? "未归属周期"}
+                              </small>
+                              <small className="aw-clamp">
+                                {factSummary(row.payload)}
+                              </small>
+                            </button>
+                          </td>
+                          <td>
+                            <strong>{row.partner_name}</strong>
+                            <small>
+                              <time>{formatTime(row.source_occurred_at)}</time>
+                            </small>
+                            {contributionValues(row.payload, "blocker").length >
+                              0 && <Badge tone="warning">含阻塞</Badge>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </AdminTableScroll>
+              ) : (
+                <EmptyState
+                  title="当前筛选条件下没有 Session 贡献"
+                  action={
+                    partnerId || periodId || projectId || sessionDate ? (
+                      <button className="aw-text-button" onClick={clear}>
+                        重置筛选
+                      </button>
+                    ) : undefined
+                  }
+                />
+              )}
+              <AdminPagination
+                page={page}
+                pageCount={pageCount}
+                total={ready ? facts.data.total : 0}
+                onChange={(value) => {
+                  setPage(value);
+                  setSelectedId(null);
+                  setDetailOpen(false);
+                }}
+                loading={busy}
+              />
+            </>
+          }
+        >
+          {selected && fact ? (
+            <div className="aw-fact-detail">
+              <header className="aw-detail-header">
+                <div>
+                  <span className="aw-kicker">
+                    贡献详情 · {selected.period_key ?? "未归属周期"}
+                  </span>
+                  <h2>{fact.title || "未命名贡献"}</h2>
+                  <p>
+                    {selected.partner_name} · {projectName(selected)}
+                  </p>
                 </div>
-                <div className="aw-meta-full">
-                  <dt>Session 编号</dt>
-                  <dd>
-                    <code>{selected.session_id}</code>
-                  </dd>
+              </header>
+              <section className="aw-detail-section">
+                <h3>
+                  <FileText size={16} />
+                  贡献摘要
+                </h3>
+                <p>{factSummary(fact)}</p>
+              </section>
+              <section className="aw-detail-section">
+                <h3>
+                  <FolderKanban size={16} />
+                  贡献明细
+                </h3>
+                <div className="aw-contributions">
+                  <FactList
+                    title="成果"
+                    values={contributionValues(fact, "outcome")}
+                  />
+                  <FactList
+                    title="进展"
+                    values={contributionValues(fact, "progress")}
+                  />
+                  <FactList
+                    title="决策"
+                    values={contributionValues(fact, "decision")}
+                  />
+                  <FactList
+                    title="阻塞"
+                    values={contributionValues(fact, "blocker")}
+                  />
+                  <FactList
+                    title="下一步"
+                    values={contributionValues(fact, "next_step")}
+                  />
                 </div>
-                <div className="aw-meta-full">
-                  <dt>来源校验值</dt>
-                  <dd>
-                    <code>{selected.source_hash}</code>
-                  </dd>
-                </div>
-              </dl>
-            </section>
-          </div>
-        ) : (
-          <EmptyState title={busy ? "等待贡献记录" : "暂无贡献详情"} />
-        )}
-      </AdminWorkspace>
+              </section>
+              <details className="aw-detail-section aw-source-records">
+                <summary>
+                  <GitBranch size={16} />
+                  来源记录
+                </summary>
+                <dl className="aw-meta">
+                  <div className="aw-meta-full">
+                    <dt>会话时间</dt>
+                    <dd>{formatTime(selected.source_occurred_at)}</dd>
+                  </div>
+                  <div className="aw-meta-full">
+                    <dt>Contribution 编号</dt>
+                    <dd>
+                      <code>{selected.external_fact_id}</code>
+                    </dd>
+                  </div>
+                  <div className="aw-meta-full">
+                    <dt>Session 编号</dt>
+                    <dd>
+                      <code>{selected.session_id}</code>
+                    </dd>
+                  </div>
+                  <div className="aw-meta-full">
+                    <dt>来源校验值</dt>
+                    <dd>
+                      <code>{selected.source_hash}</code>
+                    </dd>
+                  </div>
+                </dl>
+              </details>
+            </div>
+          ) : (
+            <EmptyState title={busy ? "等待贡献记录" : "暂无贡献详情"} />
+          )}
+        </AdminWorkspace>
+      </section>
     </div>
   );
 }

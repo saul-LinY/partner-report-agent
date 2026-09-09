@@ -10,6 +10,7 @@ import {
   CircleDot,
   Clock3,
   ListFilter,
+  PlugZap,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
@@ -19,6 +20,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { api } from "./api.js";
+import { WorkspaceHeader } from "./admin-workspace.js";
 import { Badge, Button, EmptyState, ErrorBanner, Modal } from "./components.js";
 import {
   pluginExecutionKindLabel,
@@ -394,36 +396,33 @@ export function PluginMonitoringPage() {
   const summary = monitoring.data?.summary;
   return (
     <div className="page admin-page plugin-logs-page">
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">PLUGIN HEALTH</span>
-          <h1>插件监控</h1>
-          <p>按插件命令或采集批次查看运行过程、返回结果和故障位置。</p>
-        </div>
-        <div className="header-actions">
-          <Button
-            type="button"
-            variant="secondary"
-            icon={<ShieldCheck size={16} />}
-            onClick={() => setBackupOpen(true)}
-          >
-            权限备份
-          </Button>
-          <button
-            className="icon-button"
-            title="刷新插件状态"
-            onClick={() => {
-              void monitoring.refetch();
-              void logs.refetch();
-            }}
-          >
-            <RefreshCw
-              size={17}
-              className={monitoring.isFetching || logs.isFetching ? "spin" : ""}
-            />
-          </button>
-        </div>
-      </header>
+      <WorkspaceHeader
+        title="插件监控"
+        icon={PlugZap}
+        context="按插件命令或采集批次查看运行过程、返回结果和故障位置。"
+      >
+        <Button
+          type="button"
+          variant="secondary"
+          icon={<ShieldCheck size={16} />}
+          onClick={() => setBackupOpen(true)}
+        >
+          权限备份
+        </Button>
+        <button
+          className="icon-button"
+          title="刷新插件状态"
+          onClick={() => {
+            void monitoring.refetch();
+            void logs.refetch();
+          }}
+        >
+          <RefreshCw
+            size={17}
+            className={monitoring.isFetching || logs.isFetching ? "spin" : ""}
+          />
+        </button>
+      </WorkspaceHeader>
       <ErrorBanner
         error={
           monitoring.error ??
@@ -456,65 +455,193 @@ export function PluginMonitoringPage() {
         <EmptyState title="还没有已连接的插件" />
       ) : (
         <div className="plugin-log-workspace">
-          <aside className="plugin-log-instances" aria-label="插件实例">
-            <div className="plugin-log-panel-title">
-              <Server size={16} />
-              <strong>使用人员</strong>
-              <span>{plugins.length}</span>
-            </div>
-            {plugins.map((plugin) => (
-              <div
-                key={plugin.id}
-                className={`plugin-instance-row ${selectedId === plugin.id ? "active" : ""}`}
-              >
-                <button
-                  type="button"
-                  className="plugin-instance-select"
-                  onClick={() => {
-                    setSelectedId(plugin.id);
-                    setExecutionId(null);
-                    setProblemsOnly(false);
-                  }}
-                >
-                  <span
-                    className={`plugin-instance-state ${plugin.status.severity}`}
-                  >
-                    <CircleDot size={15} />
-                  </span>
-                  <span className="plugin-instance-copy">
-                    <strong>{plugin.partnerName}</strong>
-                    <span>{plugin.deviceName}</span>
-                    <small>
-                      {plugin.status.label} · v{plugin.version}
-                    </small>
-                  </span>
-                  <ChevronRight size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="plugin-instance-recover"
-                  title={`恢复 ${plugin.partnerName} 的监控状态`}
-                  disabled={recoverPlugin.isPending}
-                  onClick={() => recoverPlugin.mutate(plugin.id)}
-                >
-                  <RotateCcw
-                    size={13}
-                    className={
-                      recoverPlugin.isPending &&
-                      recoverPlugin.variables === plugin.id
-                        ? "spin"
-                        : ""
-                    }
-                  />
-                  <span>恢复</span>
-                </button>
+          <div className="plugin-selection-rail">
+            <aside className="plugin-log-instances" aria-label="插件实例">
+              <div className="plugin-log-panel-title">
+                <Server size={16} />
+                <strong>使用人员</strong>
+                <span>{plugins.length}</span>
               </div>
-            ))}
-          </aside>
-
+              <div className="plugin-instance-grid">
+                {plugins.map((plugin) => (
+                  <div
+                    key={plugin.id}
+                    className={`plugin-instance-row ${selectedId === plugin.id ? "active" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="plugin-instance-select"
+                      onClick={() => {
+                        setSelectedId(plugin.id);
+                        setExecutionId(null);
+                        setProblemsOnly(false);
+                      }}
+                    >
+                      <span
+                        className={`plugin-instance-state ${plugin.status.severity}`}
+                      >
+                        <CircleDot size={15} />
+                      </span>
+                      <span className="plugin-instance-copy">
+                        <strong>{plugin.partnerName}</strong>
+                        <span>{plugin.deviceName}</span>
+                        <small>
+                          {plugin.status.label} · v{plugin.version}
+                        </small>
+                      </span>
+                      <ChevronRight size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="plugin-instance-recover"
+                      title={`恢复 ${plugin.partnerName} 的监控状态`}
+                      disabled={recoverPlugin.isPending}
+                      onClick={() => recoverPlugin.mutate(plugin.id)}
+                    >
+                      <RotateCcw
+                        size={13}
+                        className={
+                          recoverPlugin.isPending &&
+                          recoverPlugin.variables === plugin.id
+                            ? "spin"
+                            : ""
+                        }
+                      />
+                      <span>恢复</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </aside>
+            <aside
+              className="plugin-execution-list"
+              aria-label={logView === "recent" ? "最近运行" : "历史日志"}
+            >
+              <div className="plugin-log-section-title">
+                {logView === "recent" ? (
+                  <Clock3 size={17} />
+                ) : (
+                  <CalendarDays size={17} />
+                )}
+                <strong>
+                  {logView === "recent" ? "最近 24 小时" : "历史日志"}
+                </strong>
+                <span>{logs.data?.executions.length ?? 0}</span>
+                {logView === "recent" ? (
+                  <button
+                    className="plugin-history-link"
+                    onClick={() => {
+                      setLogView("history");
+                      selectHistoryDate(today);
+                    }}
+                  >
+                    <CalendarDays size={14} />
+                    历史日志
+                  </button>
+                ) : (
+                  <button
+                    className="plugin-history-link"
+                    onClick={() => {
+                      setLogView("recent");
+                      setExecutionId(null);
+                      setProblemsOnly(false);
+                    }}
+                  >
+                    <ArrowLeft size={14} />
+                    最近日志
+                  </button>
+                )}
+              </div>
+              {logView === "history" && (
+                <div className="plugin-history-toolbar">
+                  <button
+                    className="icon-button"
+                    title="前一天"
+                    onClick={() =>
+                      selectHistoryDate(shiftDateKey(historyDate, -1))
+                    }
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <input
+                    type="date"
+                    aria-label="历史日志日期"
+                    value={historyDate}
+                    max={today}
+                    onChange={(event) => {
+                      if (event.target.value)
+                        selectHistoryDate(event.target.value);
+                    }}
+                  />
+                  <button
+                    className="icon-button"
+                    title="后一天"
+                    disabled={historyDate >= today}
+                    onClick={() =>
+                      selectHistoryDate(shiftDateKey(historyDate, 1))
+                    }
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
+              {logs.isLoading ? (
+                <div className="plugin-log-loading">
+                  <RefreshCw size={16} className="spin" />
+                  加载运行记录
+                </div>
+              ) : logs.data?.executions.length ? (
+                logs.data.executions.map((execution) => (
+                  <button
+                    key={execution.executionId}
+                    className={`plugin-execution-row ${logs.data?.selectedExecutionId === execution.executionId ? "active" : ""}`}
+                    onClick={() => {
+                      setExecutionId(execution.executionId);
+                      setProblemsOnly(false);
+                    }}
+                  >
+                    <span
+                      className={`plugin-execution-state ${execution.diagnosis.severity}`}
+                    >
+                      {execution.diagnosis.severity === "critical" ? (
+                        <AlertTriangle size={15} />
+                      ) : (
+                        <CheckCircle2 size={15} />
+                      )}
+                    </span>
+                    <span className="plugin-execution-copy">
+                      <strong>{pluginExecutionLabel(execution)}</strong>
+                      <small>{formatTime(execution.startedAt)}</small>
+                      <small>
+                        {stateLabel[execution.diagnosis.state]} ·{" "}
+                        {execution.eventCount} 个事件
+                      </small>
+                      {execution.finalSummary && (
+                        <small className="plugin-execution-conclusion">
+                          {execution.finalSummary}
+                        </small>
+                      )}
+                    </span>
+                    <ChevronRight size={15} />
+                  </button>
+                ))
+              ) : (
+                <EmptyState
+                  title={
+                    logView === "recent"
+                      ? "最近 24 小时没有运行日志"
+                      : "这一天没有运行日志"
+                  }
+                />
+              )}
+            </aside>
+          </div>
           <section className="plugin-log-detail">
             {selectedPlugin && (
-              <>
+              <section
+                className="plugin-current-context"
+                aria-label="当前插件状态"
+              >
                 <div className="plugin-log-summary">
                   <div>
                     <span>当前插件</span>
@@ -565,181 +692,54 @@ export function PluginMonitoringPage() {
                     </div>
                   </dl>
                 </div>
-              </>
+              </section>
             )}
-
-            <div className="plugin-execution-browser">
-              <aside
-                className="plugin-execution-list"
-                aria-label={logView === "recent" ? "最近运行" : "历史日志"}
-              >
-                <div className="plugin-log-section-title">
-                  {logView === "recent" ? (
-                    <Clock3 size={17} />
-                  ) : (
-                    <CalendarDays size={17} />
-                  )}
-                  <strong>
-                    {logView === "recent" ? "最近 24 小时" : "历史日志"}
-                  </strong>
-                  <span>{logs.data?.executions.length ?? 0}</span>
-                  {logView === "recent" ? (
-                    <button
-                      className="plugin-history-link"
-                      onClick={() => {
-                        setLogView("history");
-                        selectHistoryDate(today);
-                      }}
-                    >
-                      <CalendarDays size={14} />
-                      历史日志
-                    </button>
-                  ) : (
-                    <button
-                      className="plugin-history-link"
-                      onClick={() => {
-                        setLogView("recent");
-                        setExecutionId(null);
-                        setProblemsOnly(false);
-                      }}
-                    >
-                      <ArrowLeft size={14} />
-                      最近日志
-                    </button>
-                  )}
-                </div>
-                {logView === "history" && (
-                  <div className="plugin-history-toolbar">
-                    <button
-                      className="icon-button"
-                      title="前一天"
-                      onClick={() =>
-                        selectHistoryDate(shiftDateKey(historyDate, -1))
-                      }
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <input
-                      type="date"
-                      aria-label="历史日志日期"
-                      value={historyDate}
-                      max={today}
-                      onChange={(event) => {
-                        if (event.target.value)
-                          selectHistoryDate(event.target.value);
-                      }}
-                    />
-                    <button
-                      className="icon-button"
-                      title="后一天"
-                      disabled={historyDate >= today}
-                      onClick={() =>
-                        selectHistoryDate(shiftDateKey(historyDate, 1))
-                      }
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                )}
-                {logs.isLoading ? (
-                  <div className="plugin-log-loading">
-                    <RefreshCw size={16} className="spin" />
-                    加载运行记录
-                  </div>
-                ) : logs.data?.executions.length ? (
-                  logs.data.executions.map((execution) => (
-                    <button
-                      key={execution.executionId}
-                      className={`plugin-execution-row ${logs.data?.selectedExecutionId === execution.executionId ? "active" : ""}`}
-                      onClick={() => {
-                        setExecutionId(execution.executionId);
-                        setProblemsOnly(false);
-                      }}
-                    >
-                      <span
-                        className={`plugin-execution-state ${execution.diagnosis.severity}`}
-                      >
-                        {execution.diagnosis.severity === "critical" ? (
-                          <AlertTriangle size={15} />
-                        ) : (
-                          <CheckCircle2 size={15} />
-                        )}
+            <section className="plugin-execution-detail">
+              {selectedExecution ? (
+                <>
+                  <header className="plugin-execution-header">
+                    <div>
+                      <span>
+                        {pluginExecutionKindLabel(selectedExecution.grouping)}
                       </span>
-                      <span className="plugin-execution-copy">
-                        <strong>{pluginExecutionLabel(execution)}</strong>
-                        <small>{formatTime(execution.startedAt)}</small>
-                        <small>
-                          {stateLabel[execution.diagnosis.state]} ·{" "}
-                          {execution.eventCount} 个事件
-                        </small>
-                        {execution.finalSummary && (
-                          <small className="plugin-execution-conclusion">
-                            {execution.finalSummary}
-                          </small>
-                        )}
-                      </span>
-                      <ChevronRight size={15} />
-                    </button>
-                  ))
-                ) : (
-                  <EmptyState
-                    title={
-                      logView === "recent"
-                        ? "最近 24 小时没有运行日志"
-                        : "这一天没有运行日志"
-                    }
-                  />
-                )}
-              </aside>
-
-              <section className="plugin-execution-detail">
-                {selectedExecution ? (
-                  <>
-                    <header className="plugin-execution-header">
-                      <div>
-                        <span>
-                          {pluginExecutionKindLabel(selectedExecution.grouping)}
-                        </span>
-                        <strong>
-                          {pluginExecutionLabel(selectedExecution)}
-                        </strong>
-                      </div>
-                      <Badge
-                        tone={
-                          severityTone[selectedExecution.diagnosis.severity]
+                      <strong>{pluginExecutionLabel(selectedExecution)}</strong>
+                    </div>
+                    <Badge
+                      tone={severityTone[selectedExecution.diagnosis.severity]}
+                    >
+                      {stateLabel[selectedExecution.diagnosis.state]}
+                    </Badge>
+                    {selectedExecution.grouping === "invocation" && (
+                      <button
+                        className="plugin-analysis-button"
+                        onClick={() =>
+                          requestAnalysis.mutate(selectedExecution.executionId)
                         }
-                      >
-                        {stateLabel[selectedExecution.diagnosis.state]}
-                      </Badge>
-                      {selectedExecution.grouping === "invocation" && (
-                        <button
-                          className="plugin-analysis-button"
-                          onClick={() =>
-                            requestAnalysis.mutate(
-                              selectedExecution.executionId,
-                            )
-                          }
-                          disabled={
-                            requestAnalysis.isPending ||
-                            ["PENDING", "LEASED"].includes(
-                              logs.data?.modelAnalysis?.status ?? "",
-                            )
-                          }
-                        >
-                          {requestAnalysis.isPending ||
+                        disabled={
+                          requestAnalysis.isPending ||
                           ["PENDING", "LEASED"].includes(
                             logs.data?.modelAnalysis?.status ?? "",
-                          ) ? (
-                            <LoaderCircle size={14} className="spin" />
-                          ) : (
-                            <Sparkles size={14} />
-                          )}
-                          {logs.data?.modelAnalysis?.status === "COMPLETED"
-                            ? "重新分析"
-                            : "模型分析"}
-                        </button>
-                      )}
-                    </header>
+                          )
+                        }
+                      >
+                        {requestAnalysis.isPending ||
+                        ["PENDING", "LEASED"].includes(
+                          logs.data?.modelAnalysis?.status ?? "",
+                        ) ? (
+                          <LoaderCircle size={14} className="spin" />
+                        ) : (
+                          <Sparkles size={14} />
+                        )}
+                        {logs.data?.modelAnalysis?.status === "COMPLETED"
+                          ? "重新分析"
+                          : "模型分析"}
+                      </button>
+                    )}
+                  </header>
+                  <section
+                    className="plugin-run-assessment"
+                    aria-label="运行诊断"
+                  >
                     <div
                       className={`execution-diagnosis execution-diagnosis-${selectedExecution.diagnosis.severity}`}
                     >
@@ -841,6 +841,11 @@ export function PluginMonitoringPage() {
                         </dd>
                       </div>
                     </dl>
+                  </section>
+                  <section
+                    className="plugin-run-events"
+                    aria-label="执行时间线"
+                  >
                     <div className="plugin-event-toolbar">
                       <div>
                         <TerminalSquare size={17} />
@@ -941,12 +946,12 @@ export function PluginMonitoringPage() {
                         />
                       )}
                     </div>
-                  </>
-                ) : (
-                  <EmptyState title="请选择一次运行" />
-                )}
-              </section>
-            </div>
+                  </section>
+                </>
+              ) : (
+                <EmptyState title="请选择一次运行" />
+              )}
+            </section>
           </section>
         </div>
       )}

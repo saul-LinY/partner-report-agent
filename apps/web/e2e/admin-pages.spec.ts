@@ -568,6 +568,10 @@ test("facts retain server filtering, pagination, legacy content and full provena
   await expect(page.locator(".aw-fact-table tbody tr")).toHaveCount(10);
   const detail = page.getByRole("region", { name: "贡献详情" });
   await expect(detail).toContainText("查询耗时降低 30%");
+  await detail.locator("summary").filter({ hasText: "来源记录" }).click();
+  await expect(
+    detail.getByText("source-checksum-0", { exact: true }),
+  ).toBeVisible();
   await expect(detail).toContainText("source-checksum-0");
   await page.getByRole("button", { name: /历史贡献格式兼容/ }).click();
   await expect(detail).toContainText("旧格式最后一条进展摘要");

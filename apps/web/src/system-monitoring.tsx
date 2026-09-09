@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   Activity,
-  ArrowUpRight,
   Search,
   X,
   Bot,
@@ -15,7 +14,6 @@ import {
   Clock3,
   Database,
   FileCheck2,
-  ListFilter,
   LoaderCircle,
   MessageSquare,
   RefreshCw,
@@ -24,9 +22,9 @@ import {
   TerminalSquare,
   TestTube2,
 } from "lucide-react";
-import { Link } from "wouter";
 import { api, ApiClientError } from "./api.js";
 import { Badge, EmptyState, ErrorBanner } from "./components.js";
+import { WorkspaceHeader } from "./admin-workspace.js";
 import "./system-monitoring.css";
 
 type Severity = "normal" | "warning" | "critical" | "unknown";
@@ -40,20 +38,6 @@ type SystemComponent = {
   count: number;
 };
 
-type Incident = {
-  id: string;
-  sourceId: string;
-  source: "generation" | "feishu" | "reports";
-  severity: Severity;
-  title: string;
-  message: string;
-  errorCode: string | null;
-  partnerName: string | null;
-  occurredAt: string;
-  action: string;
-  href: string | null;
-};
-
 type SystemMonitoring = {
   checkedAt: string;
   overallSeverity: Severity;
@@ -62,10 +46,8 @@ type SystemMonitoring = {
     normal: number;
     warning: number;
     critical: number;
-    openIncidents: number;
   };
   components: SystemComponent[];
-  incidents: Incident[];
 };
 
 type SystemProbeResult = {
@@ -145,12 +127,6 @@ const severityLabel = {
   warning: "需关注",
   critical: "异常",
   unknown: "未知",
-};
-
-const sourceLabel = {
-  generation: "内容生成",
-  feishu: "飞书消息",
-  reports: "报告生成",
 };
 
 function formatTime(value: string, timezone = "Asia/Shanghai") {
@@ -381,139 +357,141 @@ function SystemLogBrowser({
 
   return (
     <section className="sm-logs" aria-label="中台运行日志">
-      <div className="sm-window-toolbar">
-        <div className="sm-segment" aria-label="日志时间范围">
-          <button
-            aria-pressed={view === "recent"}
-            onClick={() => {
-              setView("recent");
-              resetSelection();
-            }}
-          >
-            <Clock3 size={15} />
-            最近 24 小时
-          </button>
-          <button
-            aria-pressed={view === "history"}
-            onClick={() => {
-              setView("history");
-              resetSelection();
-            }}
-          >
-            <CalendarDays size={15} />
-            历史日志
-          </button>
-        </div>
-        {view === "history" && (
-          <div className="sm-date-controls">
+      <div className="sm-log-query">
+        <div className="sm-window-toolbar">
+          <div className="sm-segment" aria-label="日志时间范围">
             <button
-              className="icon-button"
-              title="前一天"
-              onClick={() => selectDate(shiftDateKey(historyDate, -1))}
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <input
-              type="date"
-              aria-label="中台历史日志日期"
-              value={historyDate}
-              max={today}
-              onChange={(event) => selectDate(event.target.value)}
-            />
-            <button
-              className="icon-button"
-              title="后一天"
-              disabled={historyDate >= today}
-              onClick={() => selectDate(shiftDateKey(historyDate, 1))}
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        )}
-        <span className="sm-timezone">{timezone}</span>
-        <button
-          className="icon-button"
-          title="刷新中台日志"
-          disabled={logs.isFetching}
-          onClick={() => void logs.refetch()}
-        >
-          <RefreshCw size={16} className={logs.isFetching ? "spin" : ""} />
-        </button>
-      </div>
-      <div className="sm-filters">
-        <label className="sm-search">
-          <Search size={16} />
-          <input
-            aria-label="搜索运行记录"
-            placeholder="搜索任务、成员、记录编号或错误代码"
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              resetSelection();
-            }}
-          />
-          {search && (
-            <button
-              className="icon-button"
-              title="清除搜索"
+              aria-pressed={view === "recent"}
               onClick={() => {
-                setSearch("");
+                setView("recent");
                 resetSelection();
               }}
             >
-              <X size={14} />
+              <Clock3 size={15} />
+              最近 24 小时
             </button>
+            <button
+              aria-pressed={view === "history"}
+              onClick={() => {
+                setView("history");
+                resetSelection();
+              }}
+            >
+              <CalendarDays size={15} />
+              历史日志
+            </button>
+          </div>
+          {view === "history" && (
+            <div className="sm-date-controls">
+              <button
+                className="icon-button"
+                title="前一天"
+                onClick={() => selectDate(shiftDateKey(historyDate, -1))}
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <input
+                type="date"
+                aria-label="中台历史日志日期"
+                value={historyDate}
+                max={today}
+                onChange={(event) => selectDate(event.target.value)}
+              />
+              <button
+                className="icon-button"
+                title="后一天"
+                disabled={historyDate >= today}
+                onClick={() => selectDate(shiftDateKey(historyDate, 1))}
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
           )}
-        </label>
-        <label className="sm-select">
-          <span>来源</span>
-          <select
-            aria-label="日志来源"
-            value={source}
-            onChange={(event) => {
-              setSource(event.target.value);
-              resetSelection();
-            }}
+          <span className="sm-timezone">{timezone}</span>
+          <button
+            className="icon-button"
+            title="刷新中台日志"
+            disabled={logs.isFetching}
+            onClick={() => void logs.refetch()}
           >
-            <option value="all">全部来源</option>
-            {Object.entries(systemSourceLabel).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="sm-select">
-          <span>状态</span>
-          <select
-            aria-label="日志状态"
-            value={severity}
-            onChange={(event) => {
-              setSeverity(event.target.value);
-              resetSelection();
-            }}
-          >
-            <option value="all">全部状态</option>
-            <option value="critical">异常</option>
-            <option value="warning">需关注</option>
-            <option value="normal">正常</option>
-          </select>
-        </label>
-        <label className="sm-select">
-          <span>排序</span>
-          <select
-            aria-label="日志排序"
-            value={sort}
-            onChange={(event) => {
-              setSort(event.target.value);
-              resetSelection();
-            }}
-          >
-            <option value="latest">最近更新</option>
-            <option value="oldest">最早更新</option>
-            <option value="severity">异常优先</option>
-          </select>
-        </label>
+            <RefreshCw size={16} className={logs.isFetching ? "spin" : ""} />
+          </button>
+        </div>
+        <div className="sm-filters">
+          <label className="sm-search">
+            <Search size={16} />
+            <input
+              aria-label="搜索运行记录"
+              placeholder="搜索任务、成员、记录编号或错误代码"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                resetSelection();
+              }}
+            />
+            {search && (
+              <button
+                className="icon-button"
+                title="清除搜索"
+                onClick={() => {
+                  setSearch("");
+                  resetSelection();
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </label>
+          <label className="sm-select">
+            <span>来源</span>
+            <select
+              aria-label="日志来源"
+              value={source}
+              onChange={(event) => {
+                setSource(event.target.value);
+                resetSelection();
+              }}
+            >
+              <option value="all">全部来源</option>
+              {Object.entries(systemSourceLabel).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="sm-select">
+            <span>状态</span>
+            <select
+              aria-label="日志状态"
+              value={severity}
+              onChange={(event) => {
+                setSeverity(event.target.value);
+                resetSelection();
+              }}
+            >
+              <option value="all">全部状态</option>
+              <option value="critical">异常</option>
+              <option value="warning">需关注</option>
+              <option value="normal">正常</option>
+            </select>
+          </label>
+          <label className="sm-select">
+            <span>排序</span>
+            <select
+              aria-label="日志排序"
+              value={sort}
+              onChange={(event) => {
+                setSort(event.target.value);
+                resetSelection();
+              }}
+            >
+              <option value="latest">最近更新</option>
+              <option value="oldest">最早更新</option>
+              <option value="severity">异常优先</option>
+            </select>
+          </label>
+        </div>
       </div>
       <ErrorBanner error={logs.error} />
       <div
@@ -1020,176 +998,7 @@ function SystemComponentRow({ component }: { component: SystemComponent }) {
   );
 }
 
-type MonitorTab = "logs" | "incidents" | "components";
-
-function IncidentReview({ incidents }: { incidents: Incident[] }) {
-  const [search, setSearch] = useState("");
-  const [source, setSource] = useState("all");
-  const [severity, setSeverity] = useState("all");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const filtered = incidents
-    .filter(
-      (item) =>
-        (source === "all" || item.source === source) &&
-        (severity === "all" || item.severity === severity) &&
-        [
-          item.title,
-          item.partnerName,
-          item.sourceId,
-          item.errorCode,
-          item.message,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase()
-          .includes(search.trim().toLocaleLowerCase()),
-    )
-    .sort(
-      (a, b) =>
-        Number(b.severity === "critical") - Number(a.severity === "critical") ||
-        Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
-    );
-  return (
-    <section className="sm-incidents" aria-label="当前异常">
-      <div className="sm-filters">
-        <label className="sm-search">
-          <Search size={16} />
-          <input
-            aria-label="搜索异常"
-            placeholder="搜索异常、成员、记录编号或错误代码"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          {search && (
-            <button
-              className="icon-button"
-              title="清除异常搜索"
-              onClick={() => setSearch("")}
-            >
-              <X size={14} />
-            </button>
-          )}
-        </label>
-        <label className="sm-select">
-          <span>来源</span>
-          <select
-            aria-label="异常来源"
-            value={source}
-            onChange={(event) => setSource(event.target.value)}
-          >
-            <option value="all">全部来源</option>
-            {Object.entries(sourceLabel).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="sm-select">
-          <span>级别</span>
-          <select
-            aria-label="异常级别"
-            value={severity}
-            onChange={(event) => setSeverity(event.target.value)}
-          >
-            <option value="all">全部级别</option>
-            <option value="critical">异常</option>
-            <option value="warning">需关注</option>
-          </select>
-        </label>
-      </div>
-      <div className="sm-section-heading">
-        <h2>
-          待处理异常 <span>{filtered.length}</span>
-        </h2>
-        <span>异常优先 · 最近发生</span>
-      </div>
-      <div className="sm-incident-list">
-        {filtered.map((incident) => (
-          <article
-            key={incident.id}
-            className={`sm-incident sm-incident-${incident.severity}`}
-          >
-            <button
-              className="sm-incident-toggle"
-              aria-expanded={expandedId === incident.id}
-              aria-controls={`incident-${incident.id}`}
-              onClick={() =>
-                setExpandedId(expandedId === incident.id ? null : incident.id)
-              }
-            >
-              <AlertTriangle size={17} />
-              <span className="sm-incident-title">
-                <strong>{incident.title}</strong>
-                <small>
-                  {sourceLabel[incident.source]} ·{" "}
-                  {incident.partnerName ?? "团队级任务"}
-                </small>
-              </span>
-              <Badge tone={severityTone[incident.severity]}>
-                {severityLabel[incident.severity]}
-              </Badge>
-              <time dateTime={incident.occurredAt}>
-                {formatTime(incident.occurredAt)}
-              </time>
-              <ChevronRight size={16} />
-            </button>
-            {expandedId === incident.id && (
-              <div className="sm-incident-body" id={`incident-${incident.id}`}>
-                <p>{incident.message}</p>
-                <dl>
-                  <div>
-                    <dt>建议处理</dt>
-                    <dd>{incident.action}</dd>
-                  </div>
-                  <div>
-                    <dt>错误代码</dt>
-                    <dd>
-                      <code>{incident.errorCode ?? "无"}</code>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>记录编号</dt>
-                    <dd>
-                      <code>{incident.sourceId}</code>
-                    </dd>
-                  </div>
-                </dl>
-                {incident.href && (
-                  <Link className="sm-text-button" href={incident.href}>
-                    查看异常任务
-                    <ArrowUpRight size={15} />
-                  </Link>
-                )}
-              </div>
-            )}
-          </article>
-        ))}
-        {!filtered.length && (
-          <EmptyState
-            title={
-              incidents.length ? "没有符合条件的异常" : "当前没有待处理异常"
-            }
-            action={
-              incidents.length ? (
-                <button
-                  className="sm-text-button"
-                  onClick={() => {
-                    setSearch("");
-                    setSource("all");
-                    setSeverity("all");
-                  }}
-                >
-                  重置筛选
-                </button>
-              ) : undefined
-            }
-          />
-        )}
-      </div>
-    </section>
-  );
-}
+type MonitorTab = "logs" | "components";
 
 export function SystemMonitoringPage() {
   const [tab, setTab] = useState<MonitorTab>("logs");
@@ -1204,7 +1013,6 @@ export function SystemMonitoringPage() {
   const data = query.data;
   const tabs = [
     { key: "logs" as const, label: "运行日志", icon: TerminalSquare },
-    { key: "incidents" as const, label: "异常审查", icon: ListFilter },
     { key: "components" as const, label: "模块健康", icon: ServerCog },
   ];
   const refresh = () => {
@@ -1214,44 +1022,35 @@ export function SystemMonitoringPage() {
 
   return (
     <div className="page admin-page system-monitoring-page">
-      <header className="sm-page-header">
-        <div>
-          <span className="sm-breadcrumb">管理台 / 系统运维</span>
-          <h1>
-            <Activity size={25} />
-            系统监控
-          </h1>
+      <WorkspaceHeader title="系统监控" icon={Activity}>
+        <div className="sm-refresh-time">
+          <span className={`sm-live-dot ${autoRefresh ? "" : "is-paused"}`} />
+          <span>
+            {query.isError
+              ? "状态更新失败"
+              : data
+                ? `更新于 ${formatTime(data.checkedAt)}`
+                : "等待系统状态"}
+          </span>
         </div>
-        <div className="sm-header-actions">
-          <div className="sm-refresh-time">
-            <span className={`sm-live-dot ${autoRefresh ? "" : "is-paused"}`} />
-            <span>
-              {query.isError
-                ? "状态更新失败"
-                : data
-                  ? `更新于 ${formatTime(data.checkedAt)}`
-                  : "等待系统状态"}
-            </span>
-          </div>
-          <label className="sm-check">
-            <input
-              type="checkbox"
-              role="switch"
-              checked={autoRefresh}
-              onChange={(event) => setAutoRefresh(event.target.checked)}
-            />
-            自动刷新
-          </label>
-          <button
-            className="icon-button"
-            title="刷新系统状态"
-            disabled={query.isFetching}
-            onClick={refresh}
-          >
-            <RefreshCw size={17} className={query.isFetching ? "spin" : ""} />
-          </button>
-        </div>
-      </header>
+        <label className="sm-check">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={autoRefresh}
+            onChange={(event) => setAutoRefresh(event.target.checked)}
+          />
+          自动刷新
+        </label>
+        <button
+          className="icon-button"
+          title="刷新系统状态"
+          disabled={query.isFetching}
+          onClick={refresh}
+        >
+          <RefreshCw size={17} className={query.isFetching ? "spin" : ""} />
+        </button>
+      </WorkspaceHeader>
       <ErrorBanner error={query.error} />
       <section
         className="sm-overview"
@@ -1299,103 +1098,81 @@ export function SystemMonitoringPage() {
           <span>异常模块</span>
           <strong>{data?.summary.critical ?? "—"}</strong>
         </div>
-        <div className="sm-stat sm-tone-critical">
-          <span>待处理异常</span>
-          <strong>{data?.summary.openIncidents ?? "—"}</strong>
+      </section>
+      <section className="aw-view sm-view">
+        <div className="sm-navigation">
+          <div role="tablist" aria-label="系统监控视图" className="sm-tabs">
+            {tabs.map(({ key, label, icon: Icon }, index) => (
+              <button
+                key={key}
+                id={`sm-tab-${key}`}
+                role="tab"
+                aria-selected={tab === key}
+                aria-controls={`sm-panel-${key}`}
+                tabIndex={tab === key ? 0 : -1}
+                onClick={() => setTab(key)}
+                onKeyDown={(event) => {
+                  let next = index;
+                  if (event.key === "ArrowRight")
+                    next = (index + 1) % tabs.length;
+                  else if (event.key === "ArrowLeft")
+                    next = (index + tabs.length - 1) % tabs.length;
+                  else if (event.key === "Home") next = 0;
+                  else if (event.key === "End") next = tabs.length - 1;
+                  else return;
+                  event.preventDefault();
+                  const target = tabs[next]!;
+                  setTab(target.key);
+                  document.getElementById(`sm-tab-${target.key}`)?.focus();
+                }}
+              >
+                <Icon size={17} />
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="sm-refresh-label">
+            {autoRefresh ? "每 10 秒更新" : "自动刷新已暂停"}
+          </span>
+        </div>
+        <div
+          id="sm-panel-logs"
+          role="tabpanel"
+          aria-labelledby="sm-tab-logs"
+          hidden={tab !== "logs"}
+        >
+          <SystemLogBrowser active={tab === "logs"} autoRefresh={autoRefresh} />
+        </div>
+        <div
+          id="sm-panel-components"
+          role="tabpanel"
+          aria-labelledby="sm-tab-components"
+          hidden={tab !== "components"}
+        >
+          <section className="sm-components" aria-label="系统模块状态">
+            <div className="sm-section-heading">
+              <h2>
+                系统模块 <span>{data?.components.length ?? 0}</span>
+              </h2>
+              <span>最近状态 · 独立测试</span>
+            </div>
+            {data ? (
+              <div className="sm-component-grid">
+                {data.components.map((component) => (
+                  <SystemComponentRow
+                    key={component.key}
+                    component={component}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title={query.isLoading ? "加载模块状态" : "模块状态暂不可用"}
+              />
+            )}
+          </section>
         </div>
       </section>
-      <div className="sm-navigation">
-        <div role="tablist" aria-label="系统监控视图" className="sm-tabs">
-          {tabs.map(({ key, label, icon: Icon }, index) => (
-            <button
-              key={key}
-              id={`sm-tab-${key}`}
-              role="tab"
-              aria-selected={tab === key}
-              aria-controls={`sm-panel-${key}`}
-              tabIndex={tab === key ? 0 : -1}
-              onClick={() => setTab(key)}
-              onKeyDown={(event) => {
-                let next = index;
-                if (event.key === "ArrowRight")
-                  next = (index + 1) % tabs.length;
-                else if (event.key === "ArrowLeft")
-                  next = (index + tabs.length - 1) % tabs.length;
-                else if (event.key === "Home") next = 0;
-                else if (event.key === "End") next = tabs.length - 1;
-                else return;
-                event.preventDefault();
-                const target = tabs[next]!;
-                setTab(target.key);
-                document.getElementById(`sm-tab-${target.key}`)?.focus();
-              }}
-            >
-              <Icon size={17} />
-              {label}
-              {key === "incidents" && (
-                <span
-                  className={
-                    data?.summary.openIncidents
-                      ? "sm-tab-count has-incidents"
-                      : "sm-tab-count"
-                  }
-                >
-                  {data?.summary.openIncidents ?? "—"}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-        <span className="sm-refresh-label">
-          {autoRefresh ? "每 10 秒更新" : "自动刷新已暂停"}
-        </span>
-      </div>
-      <div
-        id="sm-panel-logs"
-        role="tabpanel"
-        aria-labelledby="sm-tab-logs"
-        hidden={tab !== "logs"}
-      >
-        <SystemLogBrowser active={tab === "logs"} autoRefresh={autoRefresh} />
-      </div>
-      <div
-        id="sm-panel-incidents"
-        role="tabpanel"
-        aria-labelledby="sm-tab-incidents"
-        hidden={tab !== "incidents"}
-      >
-        {data ? (
-          <IncidentReview incidents={data.incidents} />
-        ) : (
-          <EmptyState
-            title={query.isLoading ? "加载异常记录" : "异常记录暂不可用"}
-          />
-        )}
-      </div>
-      <div
-        id="sm-panel-components"
-        role="tabpanel"
-        aria-labelledby="sm-tab-components"
-        hidden={tab !== "components"}
-      >
-        <section className="sm-components" aria-label="系统模块状态">
-          <div className="sm-section-heading">
-            <h2>
-              系统模块 <span>{data?.components.length ?? 0}</span>
-            </h2>
-            <span>最近状态 · 独立测试</span>
-          </div>
-          {data ? (
-            data.components.map((component) => (
-              <SystemComponentRow key={component.key} component={component} />
-            ))
-          ) : (
-            <EmptyState
-              title={query.isLoading ? "加载模块状态" : "模块状态暂不可用"}
-            />
-          )}
-        </section>
-      </div>
     </div>
   );
 }

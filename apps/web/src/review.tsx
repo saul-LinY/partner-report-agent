@@ -12,6 +12,7 @@ import {
 import { useLocation, useRoute } from "wouter";
 import { ParticipationEditor } from "./project-progress.js";
 import { api } from "./api.js";
+import { WorkspaceHeader } from "./admin-workspace.js";
 import { Badge, Button, EmptyState, ErrorBanner, Field } from "./components.js";
 
 type ReviewData = {
@@ -196,15 +197,11 @@ export function ReviewPage() {
 
   return (
     <div className="page review-page">
-      <header className="page-header review-header">
-        <div>
-          <span className="eyebrow">PROJECT CARD REVIEW</span>
-          <h1>项目工作卡片</h1>
-          <p>
-            {data.items.length} 个项目 · {pending} 个待审核
-          </p>
-        </div>
-      </header>
+      <WorkspaceHeader
+        title="项目工作卡片"
+        icon={FolderKanban}
+        context={`${data.items.length} 个项目 · ${pending} 个待审核`}
+      />
       <ErrorBanner
         error={
           decisionMutation.error ??
@@ -227,6 +224,10 @@ export function ReviewPage() {
 
       <div className="review-layout project-card-review">
         <aside className="item-list">
+          <div className="aw-section-heading">
+            <h2>项目列表</h2>
+            <span>{data.items.length}</span>
+          </div>
           {data.items.map((item) => (
             <button
               key={item.id}
@@ -259,116 +260,136 @@ export function ReviewPage() {
             <EmptyState title="本期没有项目卡片" />
           ) : (
             <>
-              <div className="project-card-heading">
-                <div>
-                  <Badge tone="info">
-                    {statusLabels[selected.status] ?? selected.status}
-                  </Badge>
-                  <h2>{selected.project_name ?? selected.title}</h2>
+              <div className="review-card-workspace">
+                <div className="review-card-content">
+                  <div className="project-card-heading">
+                    <div>
+                      <Badge tone="info">
+                        {statusLabels[selected.status] ?? selected.status}
+                      </Badge>
+                      <h2>{selected.project_name ?? selected.title}</h2>
+                    </div>
+                  </div>
+
+                  <section className="project-overview">
+                    <h3>本周进展总览</h3>
+                    <p>
+                      {selected.payload.overview ?? selected.payload.summary}
+                    </p>
+                  </section>
+
+                  <section className="daily-progress">
+                    <div className="section-heading">
+                      <div>
+                        <h3>每日进展</h3>
+                      </div>
+                      <CalendarDays size={18} />
+                    </div>
+                    <ol>
+                      {dailyProgress.map((entry: any) => (
+                        <li key={entry.date}>
+                          <time>{formatDate(entry.date)}</time>
+                          <p>{entry.summary}</p>
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
+
+                  {selected.project_id && data.review.partner_id && (
+                    <section className="pp-review-check">
+                      <h3>项目时间核查</h3>
+                      <p>
+                        结合本周每日进展，确认本人在此项目上的开始、暂停、恢复或完成日期。时间修改会同步到运行总览，通过周卡不会自动把整个项目标为完成。
+                      </p>
+                      <ParticipationEditor
+                        key={selected.project_id}
+                        partnerId={data.review.partner_id}
+                        projectId={selected.project_id}
+                        projectName={selected.project_name ?? selected.title}
+                        reviewId={reviewId}
+                      />
+                    </section>
+                  )}
                 </div>
-                <Badge
-                  tone={
-                    selected.review_status === "approved"
-                      ? "success"
-                      : selected.review_status === "excluded"
-                        ? "neutral"
-                        : "warning"
-                  }
+                <aside
+                  className="review-card-actions"
+                  aria-label="工作卡审核操作"
                 >
-                  {decisionLabels[selected.review_status] ??
-                    selected.review_status}
-                </Badge>
+                  <h3>审核操作</h3>
+                  <div className="review-action-subject">
+                    <strong>{selected.project_name ?? selected.title}</strong>
+                    <Badge
+                      tone={
+                        selected.review_status === "approved"
+                          ? "success"
+                          : selected.review_status === "excluded"
+                            ? "neutral"
+                            : "warning"
+                      }
+                    >
+                      {decisionLabels[selected.review_status] ??
+                        selected.review_status}
+                    </Badge>
+                  </div>
+                  {selectedJob?.status === "FAILED" && (
+                    <div className="card-generation-error">
+                      <strong>重新生成失败</strong>
+                      <span>
+                        {selectedJob.error_message ?? selectedJob.error_code}
+                      </span>
+                    </div>
+                  )}
+
+                  {isEditable && selected.review_status === "pending" && (
+                    <div className="project-review-controls">
+                      <Field label="修改意见">
+                        <textarea
+                          rows={4}
+                          maxLength={1200}
+                          value={instruction}
+                          disabled={isRegenerating}
+                          onChange={(event) =>
+                            setInstruction(event.target.value)
+                          }
+                        />
+                      </Field>
+                      <div className="project-review-actions">
+                        <Button
+                          variant="secondary"
+                          icon={<RotateCcw size={16} />}
+                          loading={
+                            regenerateMutation.isPending || isRegenerating
+                          }
+                          disabled={
+                            instruction.trim().length < 2 || isRegenerating
+                          }
+                          onClick={() => regenerateMutation.mutate()}
+                        >
+                          {isRegenerating ? "正在重新生成" : "重新生成"}
+                        </Button>
+                        <span />
+                        <Button
+                          variant="danger"
+                          icon={<X size={16} />}
+                          loading={decisionMutation.isPending}
+                          disabled={isRegenerating}
+                          onClick={() => decisionMutation.mutate("exclude")}
+                        >
+                          拒绝并忽略
+                        </Button>
+                        <Button
+                          icon={<Check size={16} />}
+                          loading={decisionMutation.isPending}
+                          disabled={isRegenerating}
+                          onClick={() => decisionMutation.mutate("approve")}
+                        >
+                          通过
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </aside>
               </div>
-
-              <section className="project-overview">
-                <h3>本周进展总览</h3>
-                <p>{selected.payload.overview ?? selected.payload.summary}</p>
-              </section>
-
-              <section className="daily-progress">
-                <div className="section-heading">
-                  <div>
-                    <h3>每日进展</h3>
-                  </div>
-                  <CalendarDays size={18} />
-                </div>
-                <ol>
-                  {dailyProgress.map((entry: any) => (
-                    <li key={entry.date}>
-                      <time>{formatDate(entry.date)}</time>
-                      <p>{entry.summary}</p>
-                    </li>
-                  ))}
-                </ol>
-              </section>
-
-              {selected.project_id && data.review.partner_id && (
-                <section className="pp-review-check">
-                  <h3>项目时间核查</h3>
-                  <p>
-                    结合本周每日进展，确认本人在此项目上的开始、暂停、恢复或完成日期。时间修改会同步到运行总览，通过周卡不会自动把整个项目标为完成。
-                  </p>
-                  <ParticipationEditor
-                    key={selected.project_id}
-                    partnerId={data.review.partner_id}
-                    projectId={selected.project_id}
-                    projectName={selected.project_name ?? selected.title}
-                    reviewId={reviewId}
-                  />
-                </section>
-              )}
-
-              {selectedJob?.status === "FAILED" && (
-                <div className="card-generation-error">
-                  <strong>重新生成失败</strong>
-                  <span>
-                    {selectedJob.error_message ?? selectedJob.error_code}
-                  </span>
-                </div>
-              )}
-
-              {isEditable && selected.review_status === "pending" && (
-                <div className="project-review-controls">
-                  <Field label="修改意见">
-                    <textarea
-                      rows={4}
-                      maxLength={1200}
-                      value={instruction}
-                      disabled={isRegenerating}
-                      onChange={(event) => setInstruction(event.target.value)}
-                    />
-                  </Field>
-                  <div className="project-review-actions">
-                    <Button
-                      variant="secondary"
-                      icon={<RotateCcw size={16} />}
-                      loading={regenerateMutation.isPending || isRegenerating}
-                      disabled={instruction.trim().length < 2 || isRegenerating}
-                      onClick={() => regenerateMutation.mutate()}
-                    >
-                      {isRegenerating ? "正在重新生成" : "重新生成"}
-                    </Button>
-                    <span />
-                    <Button
-                      variant="danger"
-                      icon={<X size={16} />}
-                      loading={decisionMutation.isPending}
-                      disabled={isRegenerating}
-                      onClick={() => decisionMutation.mutate("exclude")}
-                    >
-                      拒绝并忽略
-                    </Button>
-                    <Button
-                      icon={<Check size={16} />}
-                      loading={decisionMutation.isPending}
-                      disabled={isRegenerating}
-                      onClick={() => decisionMutation.mutate("approve")}
-                    >
-                      通过
-                    </Button>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </section>
