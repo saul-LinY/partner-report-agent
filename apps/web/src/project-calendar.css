@@ -217,6 +217,12 @@
   color: white;
   font-weight: 600;
 }
+.pc-day-entries {
+  max-height: 140px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+}
 .pc-calendar-entry {
   display: flex;
   flex-direction: column;
@@ -259,14 +265,6 @@
 .pc-color-4 {
   --pc-color: #9b6250;
   --pc-bg: #fbf0ec;
-}
-.pc-more {
-  font-size: 10px;
-  color: var(--muted);
-  padding: 4px;
-  border: 0;
-  background: none;
-  cursor: pointer;
 }
 .pc-empty {
   font-size: 13px;
@@ -427,6 +425,9 @@
   .pc-calendar-entry {
     padding: 4px 2px;
     gap: 3px;
+  }
+  .pc-day-entries {
+    max-height: 110px;
   }
   .pc-calendar-entry strong {
     font-size: 9px;

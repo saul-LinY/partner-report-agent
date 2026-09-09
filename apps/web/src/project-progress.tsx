@@ -817,27 +817,20 @@ export function ProjectProgress() {
                         <time dateTime={date}>{Number(date.slice(-2))}</time>
                         {date === data.today && <small>今天</small>}
                       </button>
-                      {entries.slice(0, 4).map(({ project }) => (
-                        <button
-                          key={keyOf(project)}
-                          type="button"
-                          className={`pc-calendar-entry pc-color-${Math.max(0, projects.indexOf(project)) % 5}`}
-                          onClick={() => setDay(date)}
-                          title={project.projectName}
-                          aria-label={`${project.projectName} ${date} 的进展`}
-                        >
-                          <strong>{project.projectName}</strong>
-                        </button>
-                      ))}
-                      {entries.length > 4 && (
-                        <button
-                          type="button"
-                          className="pc-more"
-                          onClick={() => setDay(date)}
-                        >
-                          还有 {entries.length - 4} 个项目
-                        </button>
-                      )}
+                      <div className="pc-day-entries">
+                        {entries.map(({ project }) => (
+                          <button
+                            key={keyOf(project)}
+                            type="button"
+                            className={`pc-calendar-entry pc-color-${Math.max(0, projects.indexOf(project)) % 5}`}
+                            onClick={() => setDay(date)}
+                            title={project.projectName}
+                            aria-label={`${project.projectName} ${date} 的进展`}
+                          >
+                            <strong>{project.projectName}</strong>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   );
                 })}
