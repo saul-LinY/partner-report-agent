@@ -25,7 +25,7 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("reviewInstructions");
     expect(instructions).toContain("authoritative first-hand correction");
     expect(instructions).toContain("do not output a project description");
-    expect(instructions).toContain("2026-09-07.project-card.v8");
+    expect(instructions).toContain("2026-09-09.project-card.v9");
   });
 });
 
@@ -289,5 +289,49 @@ describe("Team Report normalization", () => {
         "- Partner Report：完成生成链路修复。\n2. 数据平台：完成验证。",
       ),
     ).toBe("Partner Report：完成生成链路修复。 数据平台：完成验证。");
+  });
+});
+
+describe("project status presets", () => {
+  it("preserves a user's selection when a regenerated model response proposes another status", () => {
+    const result = normalizeAggregation(
+      {
+        input_payload: {
+          currentCard: {
+            projectStatus: "paused",
+            projectStatusSource: "user",
+            projectStatusReason: "用户选择",
+          },
+          projectBuckets: [{ projectKey: "a", facts: [] }],
+        },
+      } as any,
+      {
+        schemaVersion: "1.0",
+        groups: [
+          {
+            projectKey: "a",
+            status: "in_progress",
+            projectStatus: "development",
+            projectStatusReason: "有修复记录",
+            overview: "本周修复问题",
+            dailyProgress: [],
+          },
+        ],
+        qualityWarnings: [],
+        production: {
+          skillVersion: "partner-report-platform/0.3.0",
+          promptVersion: "test",
+          schemaVersion: "1.0",
+          producer: "data-platform",
+        },
+      },
+      "test-model",
+    );
+    expect(result.groups[0]).toMatchObject({
+      projectStatus: "paused",
+      projectStatusSource: "user",
+      status: "in_progress",
+      overview: "本周修复问题",
+    });
   });
 });

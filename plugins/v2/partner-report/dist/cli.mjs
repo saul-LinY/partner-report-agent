@@ -4062,6 +4062,14 @@ var coerce = {
 };
 var NEVER = INVALID;
 
+// ../../../packages/contracts/src/project-status.ts
+var projectStatusSchema = external_exports.enum([
+  "research",
+  "development",
+  "delivery",
+  "paused"
+]);
+
 // ../../../packages/contracts/src/index.ts
 var idSchema = external_exports.string().uuid();
 var isoDateTimeSchema = external_exports.string().datetime({ offset: true });
@@ -4199,6 +4207,8 @@ var coverageSchema = external_exports.object({
 var aggregationGroupSchema = external_exports.object({
   projectKey: external_exports.string().default(""),
   status: workStatusSchema,
+  projectStatus: projectStatusSchema.optional(),
+  projectStatusReason: external_exports.string().trim().max(500).optional(),
   overview: external_exports.string().trim().min(1),
   dailyProgress: external_exports.array(
     external_exports.object({

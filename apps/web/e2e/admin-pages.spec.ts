@@ -599,6 +599,59 @@ test("facts retain server filtering, pagination, legacy content and full provena
   await expect(detail).toContainText("暂无贡献详情");
 });
 
+test("fact selection responds across the whole row without moving the list", async ({
+  page,
+}) => {
+  const { calls } = await setup(page, "/admin/facts");
+  const rows = page.locator(".aw-fact-table tbody tr");
+  const detail = page.getByRole("region", { name: "贡献详情" });
+  const list = page.locator(".facts-page .aw-table-scroll");
+  await expect(rows).toHaveCount(10);
+  const reads = calls.filter(
+    (call) => call.path === "/v1/admin/session-facts",
+  ).length;
+
+  await rows.nth(4).scrollIntoViewIfNeeded();
+  const scrollTop = await list.evaluate((element) => element.scrollTop);
+  await rows
+    .nth(4)
+    .locator("td")
+    .last()
+    .getByText("陈明", { exact: true })
+    .click();
+  await expect(
+    detail.getByRole("heading", { name: "项目贡献 4", exact: true }),
+  ).toBeVisible();
+  await expect(rows.nth(4).getByRole("button")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(await list.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+
+  for (const index of [3, 4, 3, 4]) {
+    await rows
+      .nth(index)
+      .locator("td")
+      .first()
+      .click({ position: { x: 5, y: 5 } });
+    await expect(
+      detail.getByRole("heading", { name: `项目贡献 ${index}`, exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".aw-fact-table .is-selected")).toHaveCount(1);
+  }
+  await rows.nth(3).locator("time").click();
+  await expect(
+    detail.getByRole("heading", { name: "项目贡献 3", exact: true }),
+  ).toBeVisible();
+  const button = rows.nth(4).getByRole("button");
+  await button.focus();
+  await page.keyboard.press("Enter");
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  expect(
+    calls.filter((call) => call.path === "/v1/admin/session-facts"),
+  ).toHaveLength(reads);
+});
+
 test("facts never show prior filter content while the next request is pending", async ({
   page,
 }) => {

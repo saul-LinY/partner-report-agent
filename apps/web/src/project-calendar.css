@@ -397,9 +397,6 @@
     width: auto;
     gap: 18px;
   }
-  .pc-project-summary {
-    -webkit-line-clamp: 1;
-  }
 }
 @media (max-width: 600px) {
   .pc-toolbar {

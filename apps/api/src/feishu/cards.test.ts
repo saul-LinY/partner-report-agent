@@ -578,3 +578,65 @@ describe("Feishu JSON 2.0 cards", () => {
     expect(cards.flatMap(callbackValues)).toEqual([]);
   });
 });
+
+describe("project status selection", () => {
+  it("keeps four compact buttons in two rows, on every page with the current version", () => {
+    const input = {
+      deliveryId: ids.deliveryId,
+      aggregateId: ids.aggregateId,
+      baseVersion: 7,
+      progress: { current: 1, total: 1, approved: 0, excluded: 0 },
+      item: {
+        id: ids.itemId,
+        title: "项目",
+        status: "in_progress",
+        projectStatus: "delivery" as const,
+        overview: "本周进展与待处理事项。".repeat(1800),
+        dailyProgress: [],
+      },
+    };
+    const card = renderReviewCard({ ...input, page: 1 });
+    const values = callbackValues(card).filter(
+      (value) => value.action === "review_project_status",
+    );
+    expect(values).toHaveLength(4);
+    expect(values.map((value) => value.projectStatus)).toEqual([
+      "research",
+      "development",
+      "delivery",
+      "paused",
+    ]);
+    expect(
+      values.every(
+        (value) =>
+          value.baseVersion === 7 &&
+          value.page === 1 &&
+          value.itemId === ids.itemId,
+      ),
+    ).toBe(true);
+    expect(findByElementId(card, "project_status_delivery")).toMatchObject({
+      type: "primary",
+      size: "small",
+      text: { content: "✓ 交付中" },
+    });
+    expect(findByElementId(card, "project_status_paused")).toMatchObject({
+      type: "default",
+    });
+    const rows = card.body.elements.filter(
+      (element: any) =>
+        element.tag === "column_set" &&
+        JSON.stringify(element).includes("review_project_status"),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row: any) => row.columns.length === 2)).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(card))).toBeLessThan(
+      FEISHU_CARD_MAX_JSON_BYTES,
+    );
+    expect(() =>
+      feishuActionValueSchema.parse({
+        ...values[0],
+        projectStatus: "completed",
+      }),
+    ).toThrow();
+  });
+});

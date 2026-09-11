@@ -103,6 +103,10 @@ describe("fixed project outcome inputs", () => {
           {
             ...bucket,
             projectDescription: "后来改动的介绍",
+            previousProjectStatus: {
+              value: "delivery",
+              periodKey: "last-week",
+            },
             facts: [{ secret: "raw fact" }],
           },
         ],
@@ -121,6 +125,7 @@ describe("fixed project outcome inputs", () => {
       projectName: bucket.projectName,
       projectDescription: bucket.projectDescription,
       outcomeMaterial: material(),
+      previousProjectStatus: { value: "delivery", periodKey: "last-week" },
     });
     expect(input.currentCard).toEqual(currentCard);
     expect(input.reviewInstructions).toEqual([

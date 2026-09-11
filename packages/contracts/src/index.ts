@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { projectStatusSchema } from "./project-status.js";
 
 export { buildTeamReportWorkCards } from "./team-report-source.js";
 export type { TeamReportSourceWorkCards } from "./team-report-source.js";
@@ -177,6 +178,8 @@ export const aggregationGroupSchema: z.ZodTypeAny = z
   .object({
     projectKey: z.string().default(""),
     status: workStatusSchema,
+    projectStatus: projectStatusSchema.optional(),
+    projectStatusReason: z.string().trim().max(500).optional(),
     overview: z.string().trim().min(1),
     dailyProgress: z
       .array(

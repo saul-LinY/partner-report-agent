@@ -4,6 +4,7 @@ import { sqlClient as defaultDatabase } from "@partner-report/db";
 import { ApiError, type DomainActor } from "../common.js";
 import {
   decideReviewWorkItem,
+  setReviewProjectStatus,
   regenerateReviewWorkItem,
 } from "../routes/reviews.js";
 import {
@@ -812,6 +813,35 @@ export class FeishuGateway {
           }),
         });
       }
+      return;
+    }
+
+    if (event.value.action === "review_project_status") {
+      const result = await setReviewProjectStatus(actor, {
+        reviewId: event.value.aggregateId,
+        workItemId: event.value.itemId,
+        baseVersion: event.value.baseVersion,
+        projectStatus: event.value.projectStatus,
+      });
+      await this.auditOnce(
+        row.event_id,
+        actor,
+        "project_card.status_selected",
+        "work_item",
+        event.value.itemId,
+        {
+          projectStatus: event.value.projectStatus,
+          version: result.version,
+          idempotent: !result.changed,
+        },
+      );
+      const refreshed = await this.deliveries.deliverReview({
+        ...scope,
+        reviewId: event.value.aggregateId,
+        page: event.value.page,
+      });
+      if (deliveryNeedsStatusRetry(refreshed))
+        throw new Error("FEISHU_REVIEW_PATCH_DEFERRED");
       return;
     }
 

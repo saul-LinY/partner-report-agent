@@ -1,3 +1,4 @@
+import { readProjectStatus } from "@partner-report/contracts/project-status";
 import {
   calculateProgress,
   progressDateSchema,
@@ -10,6 +11,7 @@ type Card = {
   partner_id: string;
   project_id: string;
   project_name: string;
+  project_description?: string | null;
   review_id: string;
   period_key: string;
   review_status: string;
@@ -20,6 +22,7 @@ type Participation = {
   partner_id: string;
   project_id: string;
   project_name: string;
+  project_description?: string | null;
   version: number;
   events: ProgressEvent[];
   updated_at: Date | string;
@@ -39,6 +42,7 @@ export function assembleProjectProgress(input: {
     partner_id: string;
     project_id: string;
     project_name: string;
+    project_description?: string | null;
     updated_at: Date | string;
   }) => {
     const key = `${row.partner_id}:${row.project_id}`;
@@ -48,6 +52,7 @@ export function assembleProjectProgress(input: {
         partnerId: row.partner_id,
         projectId: row.project_id,
         projectName: row.project_name,
+        projectDescription: row.project_description?.trim() || null,
         version: 0,
         events: [],
         metrics: calculateProgress([], input.today),
@@ -122,6 +127,21 @@ export function assembleProjectProgress(input: {
     const project = get(card);
     // Cards arrive newest first, so the link points to the latest approved weekly card.
     project.reviewId ??= card.review_id;
+    const status = readProjectStatus(card.payload);
+    if (status && !project.currentStatus)
+      project.currentStatus = {
+        value: status,
+        reason:
+          typeof card.payload.projectStatusReason === "string"
+            ? card.payload.projectStatusReason
+            : "",
+        confirmedAt:
+          card.payload.projectStatusConfirmedAt ??
+          new Date(card.updated_at).toISOString(),
+        periodKey: card.period_key,
+        reviewId: card.review_id,
+        source: "work_card",
+      };
     const entries = Array.isArray(card.payload.dailyProgress)
       ? card.payload.dailyProgress
       : [];
@@ -147,6 +167,23 @@ export function assembleProjectProgress(input: {
     project.events = row.events;
     project.version = row.version;
     project.metrics = calculateProgress(row.events, input.today);
+    for (const event of row.events) {
+      if (
+        event.type === "milestone" &&
+        event.projectStatus &&
+        event.statusConfirmedAt &&
+        (!project.currentStatus ||
+          event.statusConfirmedAt > project.currentStatus.confirmedAt)
+      )
+        project.currentStatus = {
+          value: event.projectStatus,
+          reason: event.reason,
+          confirmedAt: event.statusConfirmedAt,
+          periodKey: null,
+          reviewId: null,
+          source: "manual",
+        };
+    }
   }
   for (const [key, project] of projects) {
     const days = allDays.get(key)!;

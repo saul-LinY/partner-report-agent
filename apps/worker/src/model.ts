@@ -328,13 +328,24 @@ export async function generateStructured<T>({
         },
       }),
     };
-    // Short transport retries share one deadline; longer recovery belongs to the durable job queue.
+    // Short transport/empty-output retries share one deadline; longer recovery belongs to the job queue.
     for (let attempt = 1; attempt <= 3; attempt++) {
       let response;
+      let text;
       try {
         response = await readResponse(
           await fetch(responsesEndpoint(), request),
         );
+        text = responseText(response.payload);
+        if (!text)
+          throw new ModelGatewayError(
+            "MODEL_OUTPUT_MISSING",
+            "Model response did not contain structured output",
+            true,
+            undefined,
+            undefined,
+            response.requestId,
+          );
       } catch (cause) {
         if (controller.signal.aborted) throw cause;
         const error =
@@ -345,11 +356,13 @@ export async function generateStructured<T>({
                 true,
               )
             : cause;
-        const transportError =
+        const retryableError =
           error instanceof ModelGatewayError &&
           error.retryable &&
-          (error.status !== undefined || error.code === "MODEL_NETWORK_ERROR");
-        if (!transportError || attempt === 3) throw error;
+          (error.status !== undefined ||
+            error.code === "MODEL_NETWORK_ERROR" ||
+            error.code === "MODEL_OUTPUT_MISSING");
+        if (!retryableError || attempt === 3) throw error;
         const delayMs = Math.max(
           error.retryAfterMs ?? 0,
           1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 500),
@@ -368,16 +381,6 @@ export async function generateStructured<T>({
         await waitForRetry(delayMs, controller.signal);
         continue;
       }
-      const text = responseText(response.payload);
-      if (!text)
-        throw new ModelGatewayError(
-          "MODEL_OUTPUT_MISSING",
-          "Model response did not contain structured output",
-          true,
-          undefined,
-          undefined,
-          response.requestId,
-        );
       const parsed = schema.safeParse(
         parseStructuredText(text, plainTextField),
       );

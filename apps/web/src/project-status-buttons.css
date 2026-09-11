@@ -1,0 +1,38 @@
+.project-status-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 360px;
+  margin-top: 10px;
+}
+.project-status-buttons button {
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid var(--border, #dce1e8);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.project-status-buttons button[aria-pressed="true"] {
+  border-color: #3370ff;
+  color: #245bdb;
+  background: #eef4ff;
+}
+.project-status-buttons button:focus-visible {
+  outline: 2px solid #3370ff;
+  outline-offset: 2px;
+}
+.project-status-buttons button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.review-project-status {
+  padding-block: 12px;
+}
+.review-project-status p {
+  font-size: 12px;
+  line-height: 1.6;
+}

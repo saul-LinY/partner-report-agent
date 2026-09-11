@@ -5,7 +5,7 @@ import { z } from "zod";
 import { generateStructured, ModelGatewayError } from "./model.js";
 
 export const OUTCOME_PROMPT_VERSION = "2026-09-07.project-outcomes.v1";
-export const CARD_PROMPT_VERSION = "2026-09-07.project-card.v8";
+export const CARD_PROMPT_VERSION = "2026-09-09.project-card.v9";
 
 const outcomeSchema = z
   .object({
@@ -183,6 +183,8 @@ export function projectCardWritingInput(
         projectName: bucket.projectName,
         projectDescription: bucket.projectDescription ?? "",
         outcomeMaterial: draft.material,
+        previousProjectStatus:
+          input.projectBuckets?.[0]?.previousProjectStatus ?? null,
       },
     ],
     ...(input.currentCard ? { currentCard: input.currentCard } : {}),

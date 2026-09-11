@@ -376,4 +376,53 @@ suite("project participation API", () => {
         .elapsedDays,
     ).toBeNull();
   });
+  it("timestamps manual status confirmations on the server and preserves them on unrelated timeline edits", async () => {
+    const read = () =>
+      app.inject({ method: "GET", url: path(f.otherMember!), headers });
+    const before = (await read()).json();
+    const save = (version: number, events: unknown[]) =>
+      app.inject({
+        method: "POST",
+        url: path(f.otherMember!),
+        headers,
+        payload: { baseVersion: version, events, note: "核对项目状态" },
+      });
+    const saved = await save(before.version, [
+      ...before.events,
+      {
+        date: today,
+        type: "milestone",
+        projectStatus: "paused",
+        reason: "暂缓开发",
+        statusConfirmedAt: "2099-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(saved.statusCode).toBe(200);
+    const current = saved.json();
+    const confirmed = current.events.at(-1).statusConfirmedAt;
+    expect(confirmed).not.toContain("2099");
+    const edited = await save(current.version, [
+      ...current.events,
+      { date: today, type: "milestone", reason: "补充时间记录" },
+    ]);
+    expect(edited.statusCode).toBe(200);
+    expect(edited.json().events.at(-2).statusConfirmedAt).toBe(confirmed);
+    const body = (
+      await app.inject({
+        method: "GET",
+        url: "/v1/admin/project-progress",
+        headers,
+      })
+    ).json();
+    expect(
+      body.projects.find((p: any) => p.partnerId === f.otherMember),
+    ).toMatchObject({
+      currentStatus: {
+        value: "paused",
+        source: "manual",
+        confirmedAt: confirmed,
+      },
+      metrics: { state: "unknown" },
+    });
+  });
 });

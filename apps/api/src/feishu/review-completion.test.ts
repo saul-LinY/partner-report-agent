@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
 import type { DomainActor } from "../common.js";
-import { completeReview } from "../routes/reviews.js";
+import {
+  completeReview,
+  setReviewProjectStatus,
+  decideReviewWorkItem,
+} from "../routes/reviews.js";
 import { FeishuDeliveryService } from "./delivery.js";
 import { FeishuGateway } from "./gateway.js";
 
@@ -150,6 +154,109 @@ describe("review completion across Feishu cards", () => {
     await sql`delete from partners where tenant_id = ${f.tenant}`;
     await sql`delete from teams where tenant_id = ${f.tenant}`;
     await sql`delete from tenants where id = ${f.tenant}`;
+  });
+
+  it("changes the preset on the same Feishu card and confirms it only on approval", async () => {
+    const g = gateway();
+    const selection = {
+      ...callback(),
+      action: {
+        value: {
+          ...callback().action.value,
+          action: "review_project_status",
+          projectStatus: "paused",
+          page: 0,
+        },
+      },
+    };
+    await g.acceptCardAction(selection);
+    await expect(g.drainInbox()).resolves.toBe(1);
+    const [draft] =
+      await sql`select payload, review_status, status from work_items where id = ${f.item}`;
+    expect(draft).toMatchObject({
+      review_status: "pending",
+      status: "in_progress",
+      payload: { projectStatus: "paused", projectStatusSource: "user" },
+    });
+    expect(draft!.payload.projectStatusConfirmedAt).toBeUndefined();
+    expect(updateInteractiveCard.mock.calls.at(-1)?.[0]).toMatchObject({
+      messageId: f.messageId,
+    });
+    expect(JSON.stringify(updateInteractiveCard.mock.calls.at(-1))).toContain(
+      "✓ 已暂停",
+    );
+    // A callback retry must not increment the review version again.
+    expect(
+      await setReviewProjectStatus(actor(), {
+        reviewId: f.review,
+        workItemId: f.item,
+        baseVersion: 1,
+        projectStatus: "paused",
+      }),
+    ).toEqual({ version: 2, changed: false });
+    await expect(
+      setReviewProjectStatus(actor(), {
+        reviewId: f.review,
+        workItemId: f.item,
+        baseVersion: 1,
+        projectStatus: "research",
+      }),
+    ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await g.acceptCardAction({ ...callback(2), event_id: randomUUID() });
+    await expect(g.drainInbox()).resolves.toBe(1);
+    await expectCompleted();
+    const [approved] =
+      await sql`select payload, status from work_items where id = ${f.item}`;
+    expect(approved!.payload.projectStatus).toBe("paused");
+    expect(approved!.payload.projectStatusConfirmedAt).toMatch(/^\d{4}-/);
+    expect(approved!.status).toBe("in_progress");
+    const [snapshot] =
+      await sql`select payload from work_item_snapshots where review_id = ${f.review}`;
+    expect(JSON.stringify(snapshot!.payload)).toContain(
+      '"projectStatus":"paused"',
+    );
+  });
+
+  it("does not confirm a status when the work card is excluded", async () => {
+    await setReviewProjectStatus(actor(), {
+      reviewId: f.review,
+      workItemId: f.item,
+      baseVersion: 1,
+      projectStatus: "delivery",
+    });
+    await decideReviewWorkItem(actor(), {
+      reviewId: f.review,
+      workItemId: f.item,
+      baseVersion: 2,
+      decision: "exclude",
+    });
+    const [item] =
+      await sql`select payload, review_status from work_items where id = ${f.item}`;
+    expect(item!.review_status).toBe("excluded");
+    expect(item!.payload.projectStatusConfirmedAt).toBeUndefined();
+  });
+
+  it("rejects another partner and status edits during regeneration", async () => {
+    await expect(
+      setReviewProjectStatus(
+        { ...actor(), partnerId: randomUUID() },
+        {
+          reviewId: f.review,
+          workItemId: f.item,
+          baseVersion: 1,
+          projectStatus: "paused",
+        },
+      ),
+    ).rejects.toMatchObject({ code: "REVIEW_NOT_FOUND" });
+    await job({ reviewId: f.review, targetWorkItemId: f.item });
+    await expect(
+      setReviewProjectStatus(actor(), {
+        reviewId: f.review,
+        workItemId: f.item,
+        baseVersion: 1,
+        projectStatus: "paused",
+      }),
+    ).rejects.toMatchObject({ code: "REGENERATION_PENDING" });
   });
 
   it.each(["AGGREGATE_WORK_ITEMS", "REANALYZE_SESSIONS"])(

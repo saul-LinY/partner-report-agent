@@ -1,3 +1,10 @@
+import {
+  defaultProjectStatus,
+  readProjectStatus,
+  projectStatusLabels,
+  type ProjectStatus,
+} from "@partner-report/contracts/project-status";
+import { ProjectStatusButtons } from "./project-status-buttons.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -90,6 +97,19 @@ export function ReviewPage() {
   const isRegenerating = ["PENDING", "LEASED", "RETRY_WAIT"].includes(
     selectedJob?.status ?? "",
   );
+
+  const statusMutation = useMutation({
+    mutationFn: (projectStatus: ProjectStatus) =>
+      api(`/v1/reviews/${reviewId}/items/${selected.id}/project-status`, {
+        method: "POST",
+        body: JSON.stringify({
+          projectStatus,
+          baseVersion: query.data!.review.version,
+        }),
+      }),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["review", reviewId] }),
+  });
 
   const decisionMutation = useMutation({
     mutationFn: async (decision: Decision) => {
@@ -204,6 +224,7 @@ export function ReviewPage() {
       />
       <ErrorBanner
         error={
+          statusMutation.error ??
           decisionMutation.error ??
           regenerateMutation.error ??
           completionMutation.error
@@ -331,6 +352,40 @@ export function ReviewPage() {
                         selected.review_status}
                     </Badge>
                   </div>
+                  <section
+                    aria-label="当前项目状态"
+                    className="review-project-status"
+                  >
+                    <strong>当前项目状态</strong>
+                    {isEditable && selected.review_status === "pending" ? (
+                      <>
+                        <ProjectStatusButtons
+                          value={
+                            readProjectStatus(selected.payload) ??
+                            defaultProjectStatus(selected.status)
+                          }
+                          disabled={
+                            statusMutation.isPending ||
+                            decisionMutation.isPending ||
+                            regenerateMutation.isPending ||
+                            isRegenerating
+                          }
+                          onChange={(value) => statusMutation.mutate(value)}
+                        />
+                        <p className="muted">
+                          已预选，状态正确可直接点击“通过”。
+                        </p>
+                      </>
+                    ) : (
+                      <p>
+                        {readProjectStatus(selected.payload)
+                          ? projectStatusLabels[
+                              readProjectStatus(selected.payload)!
+                            ]
+                          : "未确认"}
+                      </p>
+                    )}
+                  </section>
                   {selectedJob?.status === "FAILED" && (
                     <div className="card-generation-error">
                       <strong>重新生成失败</strong>
@@ -347,7 +402,11 @@ export function ReviewPage() {
                           rows={4}
                           maxLength={1200}
                           value={instruction}
-                          disabled={isRegenerating}
+                          disabled={
+                            isRegenerating ||
+                            statusMutation.isPending ||
+                            regenerateMutation.isPending
+                          }
                           onChange={(event) =>
                             setInstruction(event.target.value)
                           }
@@ -361,7 +420,10 @@ export function ReviewPage() {
                             regenerateMutation.isPending || isRegenerating
                           }
                           disabled={
-                            instruction.trim().length < 2 || isRegenerating
+                            instruction.trim().length < 2 ||
+                            isRegenerating ||
+                            statusMutation.isPending ||
+                            decisionMutation.isPending
                           }
                           onClick={() => regenerateMutation.mutate()}
                         >
@@ -372,7 +434,11 @@ export function ReviewPage() {
                           variant="danger"
                           icon={<X size={16} />}
                           loading={decisionMutation.isPending}
-                          disabled={isRegenerating}
+                          disabled={
+                            isRegenerating ||
+                            statusMutation.isPending ||
+                            regenerateMutation.isPending
+                          }
                           onClick={() => decisionMutation.mutate("exclude")}
                         >
                           拒绝并忽略
@@ -380,7 +446,11 @@ export function ReviewPage() {
                         <Button
                           icon={<Check size={16} />}
                           loading={decisionMutation.isPending}
-                          disabled={isRegenerating}
+                          disabled={
+                            isRegenerating ||
+                            statusMutation.isPending ||
+                            regenerateMutation.isPending
+                          }
                           onClick={() => decisionMutation.mutate("approve")}
                         >
                           通过

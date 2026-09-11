@@ -69,7 +69,7 @@ export async function projectProgressRoutes(app: FastifyInstance) {
         >`select id, display_name as name, status from partners where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId} order by display_name`;
         const cards = await tx<any[]>`
         select wi.id, wi.partner_id, wi.project_id, p.name as project_name, wi.review_id,
-          rp.period_key, wi.review_status, wi.payload, wi.updated_at
+          p.description as project_description, rp.period_key, wi.review_status, wi.payload, wi.updated_at
         from work_items wi join projects p on p.id = wi.project_id and p.tenant_id = wi.tenant_id and p.team_id = wi.team_id
         join report_periods rp on rp.id = wi.period_id and rp.tenant_id = wi.tenant_id and rp.team_id = wi.team_id
         where wi.tenant_id = ${actor.tenantId} and wi.team_id = ${actor.teamId}
@@ -77,7 +77,7 @@ export async function projectProgressRoutes(app: FastifyInstance) {
         order by rp.starts_at desc, wi.updated_at desc
       `;
         const participations = await tx<any[]>`
-        select pp.partner_id, pp.project_id, p.name as project_name, pp.version, pp.events, pp.updated_at
+        select pp.partner_id, pp.project_id, p.name as project_name, p.description as project_description, pp.version, pp.events, pp.updated_at
         from project_participations pp join projects p on p.id = pp.project_id and p.tenant_id = pp.tenant_id and p.team_id = pp.team_id
         where pp.tenant_id = ${actor.tenantId} and pp.team_id = ${actor.teamId}
       `;
@@ -167,6 +167,24 @@ export async function projectProgressRoutes(app: FastifyInstance) {
             "VERSION_CONFLICT",
             "时间记录已被其他人修改，请重新载入后核查；当前草稿未覆盖服务器记录。",
           );
+        input.events = input.events.map((event) => {
+          if (!event.projectStatus) {
+            const { statusConfirmedAt, ...rest } = event;
+            return rest;
+          }
+          const previous = row?.events.find(
+            (old: any) =>
+              old.type === event.type &&
+              old.date === event.date &&
+              old.projectStatus === event.projectStatus &&
+              old.reason === event.reason,
+          );
+          return {
+            ...event,
+            statusConfirmedAt:
+              previous?.statusConfirmedAt ?? new Date().toISOString(),
+          };
+        });
         const id = row?.id ?? randomUUID();
         const version = input.baseVersion + 1;
         if (row)

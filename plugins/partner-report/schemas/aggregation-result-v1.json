@@ -29,6 +29,19 @@
                   "cancelled"
                 ]
               },
+              "projectStatus": {
+                "type": "string",
+                "enum": [
+                  "research",
+                  "development",
+                  "delivery",
+                  "paused"
+                ]
+              },
+              "projectStatusReason": {
+                "type": "string",
+                "maxLength": 500
+              },
               "overview": {
                 "type": "string",
                 "minLength": 1

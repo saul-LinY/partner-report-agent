@@ -584,6 +584,9 @@
   color: var(--muted);
   font-size: 10px;
 }
+.aw-fact-table tbody tr {
+  cursor: pointer;
+}
 .aw-fact-table th:first-child {
   width: 65%;
 }

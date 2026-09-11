@@ -118,7 +118,7 @@ describe("central structured model client", () => {
     expect(process.env.MODEL_REASONING_EFFORT).toBe("low");
   });
 
-  it.each(["json", "html", "network"])(
+  it.each(["json", "html", "network", "empty_output"])(
     "recovers from a temporary %s failure within the request budget",
     async (kind) => {
       vi.useFakeTimers();
@@ -128,6 +128,10 @@ describe("central structured model client", () => {
         .mockImplementationOnce(() => {
           if (kind === "network")
             return Promise.reject(new TypeError("fetch failed"));
+          if (kind === "empty_output")
+            return Promise.resolve(
+              new Response(JSON.stringify({ status: "completed", output: [] })),
+            );
           return Promise.resolve(
             new Response(
               kind === "html"
@@ -145,6 +149,30 @@ describe("central structured model client", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("bounds empty-output retries and keeps the diagnostic request ID", async () => {
+    vi.useFakeTimers();
+    process.env.MODEL_API_KEY = "test-only-key";
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "resp_empty",
+            status: "completed",
+            output: [{ type: "reasoning", summary: [] }],
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const request = expect(generate()).rejects.toMatchObject({
+      code: "MODEL_OUTPUT_MISSING",
+      retryable: true,
+      requestId: "resp_empty",
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    await request;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 
   it("bounds transport retries and preserves HTTP diagnostics without logging provider content", async () => {
     vi.useFakeTimers();

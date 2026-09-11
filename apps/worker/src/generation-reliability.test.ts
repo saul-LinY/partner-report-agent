@@ -46,6 +46,8 @@ const success = (projectKey: string) =>
           {
             projectKey,
             status: "in_progress",
+            projectStatus: "development",
+            projectStatusReason: "本周在实现功能。",
             overview: "Synthetic overview",
             dailyProgress: [
               { date: "2026-09-07", summary: "Synthetic progress" },

@@ -4,6 +4,7 @@ import { sqlClient as sql } from "@partner-report/db";
 import {
   regenerateReviewWorkItem,
   decideReviewWorkItem,
+  setReviewProjectStatus,
 } from "./routes/reviews.js";
 import { processNextGenerationJob } from "../../worker/src/generation.js";
 import { scheduleDueTeamReports } from "../../worker/src/weekly.js";
@@ -96,6 +97,8 @@ suite("fixed outcomes and Feishu instruction regeneration", () => {
                 {
                   projectKey: bucket.projectKey,
                   status: "in_progress",
+                  projectStatus: "development",
+                  projectStatusReason: "本周在实现功能。",
                   overview,
                   dailyProgress: [
                     { date: corrected ? "2026-09-02" : "2026-09-01", summary },
@@ -215,6 +218,14 @@ suite("fixed outcomes and Feishu instruction regeneration", () => {
       "实际在周三完成，另外已交付用户补充的培训材料",
       "保留上次修改，突出培训材料",
     ];
+    const [statusVersion] =
+      await sql`select version from reviews where id = ${review}`;
+    await setReviewProjectStatus(actor, {
+      reviewId: review,
+      workItemId: cards[0].id,
+      baseVersion: statusVersion!.version,
+      projectStatus: "paused",
+    });
     for (const instruction of instructions) {
       const [before] =
         await sql`select version from reviews where id = ${review}`;
@@ -259,6 +270,9 @@ suite("fixed outcomes and Feishu instruction regeneration", () => {
     const [changed] =
       await sql`select * from work_items where id = ${cards[0].id}`;
     expect(changed!.payload.overview).toContain("培训材料");
+    expect(changed!.payload.projectStatus).toBe("paused");
+    expect(changed!.payload.projectStatusSource).toBe("user");
+    expect(changed!.payload.projectStatusConfirmedAt).toBeUndefined();
     expect(changed!.payload.dailyProgress[0].date).toBe("2026-09-02");
     expect(changed!.payload).not.toHaveProperty("reviewInstructions");
     expect(

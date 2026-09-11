@@ -275,15 +275,16 @@ export function FactPreviewPage() {
                           className={
                             row.id === selected?.id ? "is-selected" : ""
                           }
+                          onClick={() => {
+                            setSelectedId(row.id);
+                            setDetailOpen(true);
+                          }}
                         >
                           <td>
                             <button
+                              type="button"
                               className="aw-record-button"
                               aria-pressed={row.id === selected?.id}
-                              onClick={() => {
-                                setSelectedId(row.id);
-                                setDetailOpen(true);
-                              }}
                             >
                               <span className="aw-fact-title">
                                 <FileText size={15} />

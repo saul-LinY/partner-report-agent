@@ -1,3 +1,8 @@
+import {
+  projectStatusLabels,
+  type ProjectStatus,
+} from "@partner-report/contracts/project-status";
+import { ProjectStatusButtons } from "./project-status-buttons.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -15,8 +20,6 @@ import {
   addProgressDays,
   calculateProgress,
   currentProjectStage,
-  projectStages,
-  type ProjectStage,
   type ProgressProject,
   progressEventLabels,
   validateProgressEvents,
@@ -31,6 +34,7 @@ import "./project-calendar.css";
 import {
   calendarMonthDays,
   calendarExcerpt,
+  projectIntroduction,
   shiftCalendarMonth,
 } from "./project-calendar.js";
 
@@ -451,6 +455,16 @@ function ParticipationForm({
   );
 }
 
+function displayProjectStatus(project: ProgressProject): ProjectStatus | null {
+  if (project.currentStatus) return project.currentStatus.value;
+  if (project.metrics.state === "paused") return "paused";
+  const stage = currentProjectStage(project.events);
+  if (stage === "discovery") return "research";
+  if (stage === "development" || stage === "validation") return "development";
+  if (stage === "delivery" || stage === "completed") return "delivery";
+  return null;
+}
+
 function StageEditor({
   project,
   onClose,
@@ -465,9 +479,8 @@ function StageEditor({
     queryFn: () => api<ParticipationResponse>(path),
     refetchOnWindowFocus: false,
   });
-  const existing = currentProjectStage(project.events);
-  const [stage, setStage] = useState<ProjectStage>(
-    existing && existing !== "completed" ? existing : "development",
+  const [stage, setStage] = useState<ProjectStatus>(
+    displayProjectStatus(project) ?? "development",
   );
   const [reason, setReason] = useState("");
   const mutation = useMutation({
@@ -482,11 +495,12 @@ function StageEditor({
             {
               date: data.today,
               type: "milestone",
-              stage,
-              reason: reason.trim() || `当前阶段：${projectStages[stage]}`,
+              projectStatus: stage,
+              reason:
+                reason.trim() || `当前项目状态：${projectStatusLabels[stage]}`,
             },
           ],
-          note: `确认项目阶段：${projectStages[stage]}`,
+          note: `确认项目状态：${projectStatusLabels[stage]}`,
         }),
       });
     },
@@ -499,7 +513,7 @@ function StageEditor({
     },
   });
   return (
-    <ProgressDialog title="更新项目阶段" onClose={onClose}>
+    <ProgressDialog title="更新项目状态" onClose={onClose}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -507,18 +521,12 @@ function StageEditor({
         }}
       >
         <p>{project.projectName}</p>
-        <Field label="当前阶段">
-          <select
-            aria-label="当前阶段"
+        <Field label="当前项目状态">
+          <ProjectStatusButtons
             value={stage}
-            onChange={(event) => setStage(event.target.value as ProjectStage)}
-          >
-            {Object.entries(projectStages).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
+            onChange={setStage}
+            disabled={mutation.isPending}
+          />
         </Field>
         <Field label="最近完成了什么">
           <textarea
@@ -540,7 +548,7 @@ function StageEditor({
             currentProjectStage(query.data.events) === "completed"
           }
         >
-          保存阶段
+          保存状态
         </Button>
         {!!mutation.error && (
           <p className="pp-muted">
@@ -589,18 +597,16 @@ export function ProjectProgress() {
   const memberName = (id: string) =>
     data?.members.find((m) => m.id === id)?.name ?? "";
   const dates = shownMonth ? calendarMonthDays(shownMonth) : [];
-  const phase = selected ? currentProjectStage(selected.events) : null;
-  const stageIndex =
-    phase === "completed"
-      ? 4
-      : phase
-        ? Object.keys(projectStages).indexOf(phase)
-        : -1;
-  const latestStage = selected?.events.filter((event) => event.stage).at(-1);
+  const phase = selected ? displayProjectStatus(selected) : null;
+  const stageIndex = phase
+    ? Object.keys(projectStatusLabels).indexOf(phase)
+    : -1;
+  const latestStage = selected?.events
+    .filter((event) => event.stage || event.projectStatus)
+    .at(-1);
   const phaseLabel = (p: ProgressProject) => {
-    if (p.metrics.state === "paused") return "暂停中";
-    const phase = currentProjectStage(p.events);
-    return phase === "completed" ? "已完成" : phase ? projectStages[phase] : "";
+    const status = displayProjectStatus(p);
+    return status ? projectStatusLabels[status] : "";
   };
   const entriesFor = (date: string) =>
     visible.flatMap((project) => {
@@ -678,12 +684,11 @@ export function ProjectProgress() {
                     {memberName(project.partnerId)}
                   </span>
                   <strong>{project.projectName}</strong>
-                  <span className="pc-project-summary">
-                    {calendarExcerpt(
-                      project.latestProgress?.summary ??
-                        "还没有可展示的项目进展",
-                      55,
-                    )}
+                  <span
+                    className="pc-project-summary"
+                    title={project.projectDescription?.trim() || undefined}
+                  >
+                    {projectIntroduction(project.projectDescription)}
                   </span>
                   <span className="pc-project-meta">
                     {phaseLabel(project) && <span>{phaseLabel(project)}</span>}
@@ -715,45 +720,42 @@ export function ProjectProgress() {
                 </div>
                 <div className="pc-phase-heading">
                   <strong>
-                    {selected.metrics.state === "paused"
-                      ? "项目暂停中"
-                      : phase
-                        ? `当前：${phase === "completed" ? "已完成" : projectStages[phase]}`
-                        : "阶段未设置"}
+                    {phase
+                      ? `当前：${projectStatusLabels[phase]}`
+                      : "状态未设置"}
                   </strong>
-                  {phase !== "completed" && (
+                  {selected.metrics.state !== "completed" && (
                     <button
                       type="button"
                       className="pc-text-button"
                       onClick={() => setEditingStage(true)}
                     >
-                      {phase ? "调整阶段" : "设置阶段"}
+                      {phase ? "调整状态" : "设置状态"}
                     </button>
                   )}
                 </div>
-                <ol className="pc-stages" aria-label="项目阶段">
-                  {[...Object.values(projectStages), "完成"].map(
-                    (label, index) => (
-                      <li
-                        key={label}
-                        className={`${index < stageIndex ? "passed" : ""} ${index === stageIndex ? "current" : ""}`}
-                        aria-current={index === stageIndex ? "step" : undefined}
-                      >
-                        <span>
-                          {index < stageIndex ? <Check size={12} /> : index + 1}
-                        </span>
-                        {label}
-                      </li>
-                    ),
-                  )}
+                <ol className="pc-stages" aria-label="项目状态">
+                  {Object.values(projectStatusLabels).map((label, index) => (
+                    <li
+                      key={label}
+                      className={index === stageIndex ? "current" : ""}
+                      aria-current={index === stageIndex ? "step" : undefined}
+                    >
+                      <span>
+                        {index === stageIndex ? <Check size={12} /> : index + 1}
+                      </span>
+                      {label}
+                    </li>
+                  ))}
                 </ol>
                 <p className="pc-latest">
                   {calendarExcerpt(
-                    latestStage &&
+                    selected.currentStatus?.reason ||
+                      (latestStage &&
                       latestStage.date >= (selected.latestProgress?.date ?? "")
-                      ? latestStage.reason
-                      : (selected.latestProgress?.summary ??
-                          "选择当前阶段，让团队知道项目走到了哪一步。"),
+                        ? latestStage.reason
+                        : (selected.latestProgress?.summary ??
+                          "每周通过工作卡片时确认当前项目状态。")),
                     180,
                   )}
                 </p>

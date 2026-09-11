@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  projectStatusSchema,
+  type ConfirmedProjectStatus,
+} from "./project-status.js";
 
 const DAY = 86_400_000;
 export const progressDateSchema = z
@@ -30,6 +34,8 @@ export const progressEventSchema = z
       "milestone",
     ]),
     reason: z.string().trim().max(500).default(""),
+    projectStatus: projectStatusSchema.optional(),
+    statusConfirmedAt: z.string().datetime().optional(),
     stage: z
       .enum(["discovery", "development", "validation", "delivery"])
       .optional(),
@@ -80,7 +86,7 @@ export function validateProgressEvents(
     if (event.date > today) return "只能核查今天及之前已发生的事件。";
     if (previous && event.date < previous.date)
       return "请按日期从早到晚排列事件。";
-    if (event.stage && event.type !== "milestone")
+    if ((event.stage || event.projectStatus) && event.type !== "milestone")
       return "项目阶段请记录为里程碑。";
     previous = event;
     if (event.type === "milestone") {
@@ -180,9 +186,11 @@ export type ProgressDay = {
   }>;
 };
 export type ProgressProject = {
+  currentStatus?: ConfirmedProjectStatus;
   partnerId: string;
   projectId: string;
   projectName: string;
+  projectDescription?: string | null;
   version: number;
   events: ProgressEvent[];
   metrics: ProgressMetrics;

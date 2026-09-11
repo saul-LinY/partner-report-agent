@@ -22,6 +22,8 @@ function fixture(): ProjectProgressResponse {
         partnerId: "member-a",
         projectId: "project-a",
         projectName: "Partner Report",
+        projectDescription:
+          "面向研发团队的项目贡献采集与周报系统。支持成员确认工作卡片。",
         version: 1,
         events: [
           { date: "2026-09-01", type: "start", reason: "确认启动" },
@@ -52,6 +54,7 @@ function fixture(): ProjectProgressResponse {
         partnerId: "member-a",
         projectId: "project-b",
         projectName: "数据服务",
+        projectDescription: "为业务应用提供统一的数据查询服务。",
         version: 1,
         events: [{ date: "2026-09-03", type: "start", reason: "并行推进" }],
         days: [
@@ -168,6 +171,18 @@ async function setup(
           });
         project.version++;
         project.events = input.events;
+        const status = project.events
+          .filter((event) => event.projectStatus)
+          .at(-1);
+        if (status?.projectStatus)
+          project.currentStatus = {
+            value: status.projectStatus,
+            reason: status.reason,
+            confirmedAt: `${today}T08:00:00Z`,
+            periodKey: null,
+            reviewId: null,
+            source: "manual",
+          };
         project.metrics = calculateProgress(project.events, today);
         return route.fulfill({
           json: { version: project.version, events: project.events },
@@ -261,20 +276,20 @@ test("sets the overall stage while preserving the project time history", async (
   await expect(
     page.getByRole("region", { name: "当前项目进度" }),
   ).toContainText("完成贡献采集接口");
-  await page.getByRole("button", { name: "设置阶段" }).click();
-  await page.getByLabel("当前阶段", { exact: true }).selectOption("validation");
+  await page.getByRole("button", { name: "设置状态" }).click();
+  await page.getByRole("button", { name: "开发中" }).click();
   await page.getByLabel("最近完成了什么").fill("核心功能完成，正在联调");
-  await page.getByRole("button", { name: "保存阶段" }).click();
+  await page.getByRole("button", { name: "保存状态" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "当前项目进度" }),
-  ).toContainText("当前：联调测试");
-  await expect(page.locator('.pc-stages [aria-current="step"]')).toHaveText(
-    "3联调测试",
+  ).toContainText("当前：开发中");
+  await expect(page.locator('.pc-stages [aria-current="step"]')).toContainText(
+    "开发中",
   );
   expect(writes[0].events).toHaveLength(4);
   expect(writes[0].events.at(-1)).toMatchObject({
-    stage: "validation",
+    projectStatus: "development",
     type: "milestone",
     reason: "核心功能完成，正在联调",
   });
@@ -286,9 +301,9 @@ test("sets the overall stage while preserving the project time history", async (
 test("keeps the stage draft on a concurrent update", async ({ page }) => {
   await setup(page, { conflict: true });
   await page.getByRole("button", { name: "查看 林安 的 客户门户" }).click();
-  await page.getByRole("button", { name: "设置阶段" }).click();
+  await page.getByRole("button", { name: "设置状态" }).click();
   await page.getByLabel("最近完成了什么").fill("已完成需求确认");
-  await page.getByRole("button", { name: "保存阶段" }).click();
+  await page.getByRole("button", { name: "保存状态" }).click();
   await expect(page.getByRole("alert")).toContainText("已被其他人修改");
   await expect(page.getByLabel("最近完成了什么")).toHaveValue("已完成需求确认");
 });
@@ -305,7 +320,7 @@ test("switches calendar months and filters by member without hiding latest proje
   ).toBeVisible();
   expect(reads.at(-1)).toBe("?from=2026-08-01&to=2026-08-31");
   await expect(page.locator(".pc-project-summary").first()).toContainText(
-    "完成贡献采集接口",
+    "面向研发团队的项目贡献采集与周报系统。",
   );
   await page.getByRole("button", { name: "本月", exact: true }).click();
   await expect(
@@ -355,6 +370,12 @@ test("refreshes new progress and recovers from unavailable data", async ({
   data.projects[0]!.latestProgress!.summary = "本日完成上线验证";
   await page.getByTitle("刷新运行总览").click();
   await expect(page.locator(".pc-project")).toHaveCount(3);
+  await expect(page.locator(".pc-project-summary").first()).toContainText(
+    "面向研发团队的项目贡献采集与周报系统。",
+  );
+  await page
+    .getByRole("button", { name: "查看 陈明 的 Partner Report", exact: true })
+    .click();
   await expect(
     page.getByText("本日完成上线验证", { exact: true }),
   ).toBeVisible();

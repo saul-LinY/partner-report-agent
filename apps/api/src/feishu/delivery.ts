@@ -41,6 +41,12 @@ export type FeishuDeliveryResult = {
     | "delivery_failed";
 };
 
+import {
+  defaultProjectStatus,
+  readProjectStatus,
+  type ProjectStatus,
+} from "@partner-report/contracts/project-status";
+
 export type ReviewDeliveryView = FeishuDeliveryScope & {
   reviewId: string;
   version: number;
@@ -60,6 +66,7 @@ export type ReviewDeliveryView = FeishuDeliveryScope & {
     status: string;
     overview: string;
     dailyProgress: Array<{ date: string; summary: string }>;
+    projectStatus?: ProjectStatus;
   };
 };
 
@@ -342,6 +349,8 @@ export class FeishuDeliveryService {
         id: item.id,
         title: item.title,
         status: item.status,
+        projectStatus:
+          readProjectStatus(payload) ?? defaultProjectStatus(item.status),
         overview:
           typeof payload.overview === "string"
             ? payload.overview
@@ -666,7 +675,9 @@ export class FeishuDeliveryService {
     );
   }
 
-  async deliverReview(input: FeishuDeliveryScope & { reviewId: string }) {
+  async deliverReview(
+    input: FeishuDeliveryScope & { reviewId: string; page?: number },
+  ) {
     const view = await this.loadReviewDeliveryView(input, input.reviewId);
     if (!view)
       return {
@@ -679,7 +690,8 @@ export class FeishuDeliveryService {
       input,
       input.reviewId,
       view.version,
-      (deliveryId) => this.renderReviewDeliveryCard(view, deliveryId),
+      (deliveryId) =>
+        this.renderReviewDeliveryCard(view, deliveryId, undefined, input.page),
     );
   }
 

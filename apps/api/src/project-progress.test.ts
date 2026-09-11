@@ -4,6 +4,7 @@ const scope = {
   partner_id: "member",
   project_id: "project",
   project_name: "项目 A",
+  project_description: "帮助团队汇总项目贡献并确认每周工作。",
   updated_at: "2026-09-04T00:00:00Z",
 };
 const card = {
@@ -29,6 +30,7 @@ describe("project progress sources", () => {
   it("uses the approved weekly card's exact daily text, date and review link", () => {
     const result = assembleProjectProgress({ ...defaults, cards: [card] });
     expect(result.projects[0]).toMatchObject({
+      projectDescription: "帮助团队汇总项目贡献并确认每周工作。",
       contributionDays: 1,
       reviewId: "review",
       metrics: { startDate: null },
@@ -156,5 +158,76 @@ describe("project progress sources", () => {
         source: "reviewed",
       },
     });
+  });
+});
+
+describe("confirmed project status", () => {
+  it("uses the latest reporting period rather than a later approval of an older card", () => {
+    const result = assembleProjectProgress({
+      ...defaults,
+      cards: [
+        {
+          ...card,
+          period_key: "new-week",
+          payload: {
+            projectStatus: "delivery",
+            projectStatusConfirmedAt: "2026-09-07T00:00:00Z",
+          },
+        },
+        {
+          ...card,
+          period_key: "old-week",
+          updated_at: "2026-09-08T00:00:00Z",
+          payload: { projectStatus: "research" },
+        },
+        {
+          ...card,
+          review_status: "pending",
+          payload: { projectStatus: "paused" },
+        },
+      ],
+    });
+    expect(result.projects[0]!.currentStatus).toMatchObject({
+      value: "delivery",
+      periodKey: "new-week",
+      source: "work_card",
+    });
+    expect(result.projects[0]!.metrics.state).toBe("unknown");
+  });
+
+  it("keeps a newer manual correction without treating later timing edits as a new status", () => {
+    const result = assembleProjectProgress({
+      ...defaults,
+      cards: [
+        {
+          ...card,
+          payload: {
+            projectStatus: "delivery",
+            projectStatusConfirmedAt: "2026-09-07T00:00:00Z",
+          },
+        },
+      ],
+      participations: [
+        {
+          ...scope,
+          version: 3,
+          updated_at: "2026-09-09T00:00:00Z",
+          events: [
+            {
+              date: "2026-09-08",
+              type: "milestone",
+              projectStatus: "paused",
+              reason: "暂缓",
+              statusConfirmedAt: "2026-09-08T00:00:00Z",
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.projects[0]!.currentStatus).toMatchObject({
+      value: "paused",
+      source: "manual",
+    });
+    expect(result.projects[0]!.metrics.state).toBe("unknown");
   });
 });

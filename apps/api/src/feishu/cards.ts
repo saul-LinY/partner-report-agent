@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  projectStatusSchema,
+  projectStatusLabels,
+  type ProjectStatus,
+} from "@partner-report/contracts/project-status";
 
 const opaqueIdSchema = z.string().trim().min(1).max(128);
 const baseVersionSchema = z.number().int().positive();
@@ -74,6 +79,20 @@ export const feishuActionValueSchema = z.discriminatedUnion("action", [
   recoveryActionValueSchema,
   reviewActionValueSchema,
   reviewPageActionValueSchema,
+  z
+    .object({
+      ...actionBase,
+      action: z.literal("review_project_status"),
+      itemId: opaqueIdSchema,
+      projectStatus: projectStatusSchema,
+      page: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(Number.MAX_SAFE_INTEGER)
+        .default(0),
+    })
+    .strict(),
   scopeItemActionValueSchema,
   scopeAllActionValueSchema,
   scopeSubmitActionValueSchema,
@@ -150,6 +169,7 @@ export const reviewCardInputSchema = z
         title: z.string().trim().min(1).max(2_000),
         status: z.string().trim().min(1).max(120),
         overview: z.string(),
+        projectStatus: projectStatusSchema.optional(),
         dailyProgress: z.array(dailyProgressSchema).max(366).default([]),
       })
       .strict(),
@@ -861,6 +881,38 @@ function renderReviewPage(
           markdown(
             `**处理失败，请重试**\n${safeMarkdownText(input.actionError, 1_200)}`,
             "review_action_error",
+          ),
+        ]
+      : []),
+    ...(input.item.projectStatus
+      ? [
+          notation(
+            "当前项目状态 · 已预选，可直接通过确认",
+            "project_status_hint",
+          ),
+          ...(
+            [
+              ["research", "development"],
+              ["delivery", "paused"],
+            ] as ProjectStatus[][]
+          ).map((row) =>
+            buttonRow(
+              row.map((value) => ({
+                ...callbackButton({
+                  elementId: `project_status_${value}`,
+                  label: `${input.item.projectStatus === value ? "✓ " : ""}${projectStatusLabels[value]}`,
+                  type:
+                    input.item.projectStatus === value ? "primary" : "default",
+                  value: {
+                    ...baseValue,
+                    action: "review_project_status",
+                    projectStatus: value,
+                    page,
+                  },
+                }),
+                size: "small",
+              })),
+            ),
           ),
         ]
       : []),

@@ -50,6 +50,12 @@ suite("synthetic report generation pipeline", () => {
             JSON.stringify({
               output_text: JSON.stringify({
                 summary: (nextOutput as any).summary,
+                partnerSummaries: Object.fromEntries(
+                  Object.keys(
+                    request.text.format.schema.properties.partnerSummaries
+                      .properties,
+                  ).map((ref) => [ref, "本周完成合成项目成果验证。"]),
+                ),
                 blockers: [],
               }),
             }),
@@ -229,6 +235,8 @@ suite("synthetic report generation pipeline", () => {
         {
           projectKey: "unassigned",
           status: "in_progress",
+          projectStatus: "development",
+          projectStatusReason: "本周在实现功能。",
           overview: "完成本地非敏感链路验证。",
           dailyProgress: [
             { date: "2026-08-04", summary: "完成聚合任务验证。" },
@@ -365,7 +373,10 @@ suite("synthetic report generation pipeline", () => {
     expect(lastTeamReportInstructions).toContain("完整工作卡片");
     expect(teamReports[0].payload.projectProgress).toHaveLength(1);
     expect(teamReports[0].payload.production.promptVersion).toBe(
-      "2026-09-07.team.v19",
+      "2026-09-11.team.v20",
+    );
+    expect(teamReports[0].payload.markdown).toContain(
+      "**本周总结：** 本周完成合成项目成果验证。",
     );
     expect(teamReports[0].payload.markdown).toContain(
       "| 项目负责人 | 项目名称 | 较上周进展 |",
@@ -541,6 +552,8 @@ suite("synthetic report generation pipeline", () => {
         {
           projectKey: "regeneration-project",
           status: "in_progress",
+          projectStatus: "development",
+          projectStatusReason: "本周在实现功能。",
           overview:
             "本周完善了飞书审核卡片的更新流程，让用户提交修改意见后能够看到处理状态，并在生成完成后继续审核。当前链路已经完成验证。",
           dailyProgress: [
@@ -683,6 +696,8 @@ suite("synthetic report generation pipeline", () => {
         {
           projectKey: "unassigned",
           status: "in_progress",
+          projectStatus: "development",
+          projectStatusReason: "本周在实现功能。",
           overview: "系统按截止时间使用现有贡献生成待审核卡片。",
           dailyProgress: [
             { date: "2026-08-11", summary: "完成现有贡献的汇总。" },

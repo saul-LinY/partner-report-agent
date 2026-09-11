@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import {
+  defaultProjectStatus,
+  readProjectStatus,
+  projectStatusSchema,
+  type ProjectStatus,
+} from "@partner-report/contracts/project-status";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -31,6 +37,7 @@ function patchWorkItem(item: WorkItemRow, operation: string, value: unknown) {
   switch (operation) {
     case "approve":
       after.review_status = "approved";
+      after.payload = confirmedStatusPayload(after.payload, after.status);
       break;
     case "exclude":
       after.review_status = "excluded";
@@ -616,6 +623,9 @@ export async function regenerateReviewWorkItem(
           reviewInstructions: [...previousInstructions, instruction],
           currentCard: {
             status: item.status,
+            projectStatus: item.payload.projectStatus,
+            projectStatusReason: item.payload.projectStatusReason,
+            projectStatusSource: item.payload.projectStatusSource,
             overview: item.payload.overview,
             dailyProgress: item.payload.dailyProgress ?? [],
           },
@@ -623,6 +633,97 @@ export async function regenerateReviewWorkItem(
       )
     `;
     return { jobId, status: "PENDING" as const, version: completion.version };
+  });
+}
+
+function confirmedStatusPayload(
+  payload: Record<string, unknown>,
+  workStatus: string,
+) {
+  return {
+    ...payload,
+    projectStatus:
+      readProjectStatus(payload) ?? defaultProjectStatus(workStatus),
+    projectStatusConfirmedAt: new Date().toISOString(),
+  };
+}
+
+export async function setReviewProjectStatus(
+  actor: DomainActor,
+  command: {
+    reviewId: string;
+    workItemId: string;
+    baseVersion: number;
+    projectStatus: ProjectStatus;
+  },
+) {
+  const input = z
+    .object({
+      reviewId: z.string().uuid(),
+      workItemId: z.string().uuid(),
+      baseVersion: z.number().int().positive(),
+      projectStatus: projectStatusSchema,
+    })
+    .strict()
+    .parse(command);
+  return sql.begin(async (tx) => {
+    const review = await loadReviewForUpdate(tx, actor, input.reviewId);
+    if (review.team_id !== actor.teamId)
+      throw new ApiError(404, "REVIEW_NOT_FOUND", "审核不存在。");
+    if (review.state !== "IN_PROGRESS")
+      throw new ApiError(409, "REVIEW_NOT_EDITABLE", "当前审核不能修改。");
+    const [item] = await tx<
+      any[]
+    >`select * from work_items where id = ${input.workItemId}
+      and review_id = ${input.reviewId} and tenant_id = ${actor.tenantId} for update`;
+    if (!item)
+      throw new ApiError(404, "WORK_ITEM_NOT_FOUND", "工作卡片不存在。");
+    if (item.review_status !== "pending")
+      throw new ApiError(
+        409,
+        "WORK_ITEM_NOT_PENDING",
+        "这张工作卡片已经处理。",
+      );
+    // A retry of the same selection must also refresh its card without creating a new version.
+    if (
+      item.payload.projectStatus === input.projectStatus &&
+      item.payload.projectStatusSource === "user"
+    )
+      return { version: review.version, changed: false };
+    if (review.version !== input.baseVersion)
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "审核内容已更新，请刷新后重试。",
+      );
+    const [pendingJob] =
+      await tx`select id from agent_jobs where tenant_id = ${actor.tenantId}
+      and type = 'AGGREGATE_WORK_ITEMS' and input_payload->>'targetWorkItemId' = ${input.workItemId}
+      and status in ('PENDING', 'LEASED', 'RETRY_WAIT') limit 1`;
+    if (pendingJob)
+      throw new ApiError(
+        409,
+        "REGENERATION_PENDING",
+        "这张卡片正在重新生成，请稍后选择状态。",
+      );
+    const payload = {
+      ...item.payload,
+      projectStatus: input.projectStatus,
+      projectStatusSource: "user",
+      projectStatusReason: "用户在工作卡片中选择。",
+    };
+    delete payload.projectStatusConfirmedAt;
+    await tx`update work_items set payload = ${JSON.stringify(payload)}::jsonb, updated_at = now() where id = ${item.id}`;
+    const completion = await recalculateReview(
+      tx,
+      actor,
+      input.reviewId,
+      review.version,
+    );
+    await tx`insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+      values (${randomUUID()}, ${actor.tenantId}, 'work_item.review.changed', 'review', ${input.reviewId},
+        ${JSON.stringify({ itemId: item.id, projectStatus: input.projectStatus, version: completion.version })}::jsonb)`;
+    return { version: completion.version, changed: true };
   });
 }
 
@@ -706,7 +807,9 @@ export async function decideReviewWorkItem(
 
     const updated = await tx<{ id: string }[]>`
       update work_items set
-        review_status = ${targetStatus}, updated_at = now()
+        review_status = ${targetStatus},
+        payload = ${JSON.stringify(decision === "approve" ? confirmedStatusPayload(item.payload, item.status) : item.payload)}::jsonb,
+        updated_at = now()
       where id = ${workItemId} and review_id = ${reviewId}
         and tenant_id = ${actor.tenantId} and review_status = 'pending'
       returning id
@@ -889,6 +992,38 @@ export async function reviewRoutes(app: FastifyInstance) {
     );
     return result;
   });
+
+  app.post(
+    "/v1/reviews/:id/items/:workItemId/project-status",
+    async (request) => {
+      const actor = await requireWebActor(request, "partner");
+      const { id, workItemId } = z
+        .object({ id: z.string().uuid(), workItemId: z.string().uuid() })
+        .parse(request.params);
+      const input = z
+        .object({
+          projectStatus: projectStatusSchema,
+          baseVersion: z.number().int().positive(),
+        })
+        .strict()
+        .parse(request.body);
+      const result = await setReviewProjectStatus(actor, {
+        reviewId: id,
+        workItemId,
+        ...input,
+      });
+      if (result.changed)
+        await audit(
+          request,
+          actor,
+          "project_card.status_selected",
+          "work_item",
+          workItemId,
+          { projectStatus: input.projectStatus },
+        );
+      return result;
+    },
+  );
 
   app.post("/v1/reviews/:id/items/:workItemId/decision", async (request) => {
     const actor = await requireWebActor(request, "partner");

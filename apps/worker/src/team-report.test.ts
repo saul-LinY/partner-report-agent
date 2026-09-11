@@ -153,9 +153,12 @@ describe("project writing followed by team summary", () => {
   it("preserves long output, uses the selected model and sends full cards to both stages", async () => {
     const progress = "完整成果。".repeat(100);
     const summary = "团队成果。".repeat(100);
-    model
-      .mockResolvedValueOnce({ progress })
-      .mockResolvedValueOnce({ summary, blockers: [] });
+    const personalSummary = "个人成果。".repeat(100);
+    model.mockResolvedValueOnce({ progress }).mockResolvedValueOnce({
+      summary,
+      partnerSummaries: { "person-1": personalSummary },
+      blockers: [],
+    });
     const input = {
       workCards: [card()],
       previousTeamReport: legacy(["| saul | AI_novel | 上周初版。 |"]),
@@ -198,6 +201,7 @@ describe("project writing followed by team summary", () => {
     );
     expect(report.sections).toHaveLength(1);
     expect(report.markdown).toContain(progress);
+    expect(report.markdown).toContain(`**本周总结：** ${personalSummary}`);
     expect(report.summary).toBe(summary);
     expect(report.projectProgress[0].progress).toBe(progress);
     expect(report.sections[0].claims[0].workCardSnapshotIds).toEqual([
@@ -211,6 +215,7 @@ describe("project writing followed by team summary", () => {
       .mockResolvedValueOnce({ progress: "已支持 A|B。" })
       .mockResolvedValueOnce({
         summary: "本周成果。",
+        partnerSummaries: { "person-1": "已支持 A|B。" },
         blockers: [
           {
             projectRef: "project-1",
@@ -241,6 +246,69 @@ describe("project writing followed by team summary", () => {
         previousTeamReport: { payload: report },
       })[0]!.previousWeek,
     ).toBe("已支持 A|B。");
+  });
+
+  it("summarizes all projects per identity and keeps same-name members and evidence separate", async () => {
+    const secondSnapshot = "22222222-2222-4222-8222-222222222222";
+    const thirdSnapshot = "33333333-3333-4333-8333-333333333333";
+    const workCards = [
+      card("a", "research", "调研"),
+      { ...card("b", "product", "产品"), snapshotId: thirdSnapshot },
+      { ...card("a", "delivery", "交付"), snapshotId: secondSnapshot },
+      { ...card("empty"), noReportableActivity: true },
+    ].map((item) => ({ ...item, partnerName: "同名" }));
+    model
+      .mockResolvedValueOnce({ progress: "确定用户需求。" })
+      .mockResolvedValueOnce({ progress: "完成产品测试。" })
+      .mockResolvedValueOnce({ progress: "交付可用初版。" })
+      .mockResolvedValueOnce({
+        summary: "完成需求验证与产品交付。",
+        partnerSummaries: {
+          "person-1": "从需求验证推进到初版交付，<成果>涵盖调研与交付。",
+          "person-2": "完善产品并完成测试。",
+        },
+        blockers: [],
+      });
+    const report = await generateTeamReport({ workCards }, "test-model");
+    const summaryCall = model.mock.calls[3]![0];
+    expect((summaryCall.input as any).people).toEqual([
+      {
+        ref: "person-1",
+        partnerId: "a",
+        partnerName: "同名",
+        projectRefs: ["project-1", "project-3"],
+      },
+      {
+        ref: "person-2",
+        partnerId: "b",
+        partnerName: "同名",
+        projectRefs: ["project-2"],
+      },
+    ]);
+    const section = report.sections[0];
+    const [, firstPerson, secondPerson] = section.markdown.split("### 同名\n");
+    expect(firstPerson).toContain(
+      "**本周总结：** 从需求验证推进到初版交付，&lt;成果&gt;涵盖调研与交付。",
+    );
+    expect(firstPerson).toContain("| 同名 | 调研 | 确定用户需求。 |");
+    expect(firstPerson).toContain("| 同名 | 交付 | 交付可用初版。 |");
+    expect(firstPerson).not.toContain("完成产品测试。");
+    expect(secondPerson).toContain("**本周总结：** 完善产品并完成测试。");
+    expect(secondPerson).toContain("| 同名 | 产品 | 完成产品测试。 |");
+    expect(section.claims.slice(3)).toEqual([
+      {
+        claim: "从需求验证推进到初版交付，<成果>涵盖调研与交付。",
+        workCardSnapshotIds: [snapshotId, secondSnapshot],
+      },
+      { claim: "完善产品并完成测试。", workCardSnapshotIds: [thirdSnapshot] },
+    ]);
+    expect(
+      summaryCall.schema.safeParse({
+        summary: "总览",
+        partnerSummaries: { "person-1": "少了一个人" },
+        blockers: [],
+      }).success,
+    ).toBe(false);
   });
 
   it("makes no calls or invented blocker rows without project evidence", async () => {

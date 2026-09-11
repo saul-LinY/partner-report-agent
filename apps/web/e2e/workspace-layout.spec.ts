@@ -4,6 +4,9 @@ const date = "2026-09-08T09:00:00Z";
 
 async function setup(page: Page, path: string, longReview = false) {
   const calls: Array<{ path: string; method: string; body: unknown }> = [];
+  let reviewVersion = 6;
+  let projectStatus = "development";
+
   await page.route("**/v1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -23,6 +26,13 @@ async function setup(page: Page, path: string, longReview = false) {
         displayName: "管理员",
         teamName: "产品研发团队",
       });
+    if (
+      request.method() === "POST" &&
+      url.pathname.endsWith("/project-status")
+    ) {
+      projectStatus = request.postDataJSON().projectStatus;
+      return send({ version: ++reviewVersion, changed: true });
+    }
     if (request.method() === "POST") return send({ ok: true, version: 7 });
     if (url.pathname === "/v1/admin/agent-jobs")
       return send(
@@ -143,7 +153,11 @@ async function setup(page: Page, path: string, longReview = false) {
       return send({ plugins: [] });
     if (url.pathname === "/v1/reviews/review-1")
       return send({
-        review: { id: "review-1", state: "IN_PROGRESS", version: 6 },
+        review: {
+          id: "review-1",
+          state: "IN_PROGRESS",
+          version: reviewVersion,
+        },
         regenerationJobs: [],
         items: [
           {
@@ -155,6 +169,7 @@ async function setup(page: Page, path: string, longReview = false) {
             created_at: date,
             payload: {
               overview: "完成项目权限与贡献上传验证。",
+              projectStatus,
               dailyProgress: longReview
                 ? Array.from({ length: 7 }, (_, i) => ({
                     date: `2026-09-${String(i + 1).padStart(2, "0")}`,
@@ -347,5 +362,51 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
       )
       .toContainEqual({ decision: "exclude", baseVersion: 6 });
     expect(errors).toEqual([]);
+  });
+}
+
+for (const width of [390, 1440]) {
+  test(`confirms a preset project status on the existing work card at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const calls = await setup(page, "/partner/review/review-1");
+    const buttons = page.getByRole("group", { name: "选择项目状态" });
+    await expect(buttons.getByRole("button")).toHaveCount(4);
+    await expect(
+      buttons.getByRole("button", { name: "✓ 开发中" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const boxes = await buttons.getByRole("button").evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return { y: box.y, height: box.height };
+      }),
+    );
+    expect(boxes[0]!.y).toBe(boxes[1]!.y);
+    expect(boxes[2]!.y).toBe(boxes[3]!.y);
+    expect(boxes[2]!.y).toBeGreaterThan(boxes[0]!.y);
+    expect(boxes.every((box) => box.height <= 40)).toBe(true);
+    await buttons.getByRole("button", { name: "已暂停" }).click();
+    await expect(
+      buttons.getByRole("button", { name: "✓ 已暂停" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      calls.find((call) => call.path.endsWith("/project-status"))?.body,
+    ).toEqual({ projectStatus: "paused", baseVersion: 6 });
+    expect(
+      calls.filter((call) => call.path.endsWith("/decision")),
+    ).toHaveLength(0);
+    await page.reload();
+    await expect(
+      buttons.getByRole("button", { name: "✓ 已暂停" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await noOverflow(page);
+    await page
+      .getByRole("complementary", { name: "工作卡审核操作" })
+      .screenshot({ path: testInfo.outputPath(`project-status-${width}.png`) });
+    await page.getByRole("button", { name: "通过", exact: true }).click();
+    await expect
+      .poll(() => calls.find((call) => call.path.endsWith("/decision"))?.body)
+      .toEqual({ decision: "approve", baseVersion: 7 });
   });
 }
