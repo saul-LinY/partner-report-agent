@@ -59,6 +59,26 @@ const systemHealthJobTypes = [
 ] as const;
 
 const modelHealthSchema = z.object({ ok: z.literal(true) });
+const projectProgressBackfillSchema = z.object({
+  groups: z.array(
+    z.object({
+      projectKey: z.string().min(1),
+      currentFocus: z.string().trim().max(240).nullable().optional(),
+      keyEvents: z
+        .array(
+          z.object({
+            date: z.string(),
+            type: z.string(),
+            title: z.string(),
+            detail: z.string(),
+          }),
+        )
+        .nullable()
+        .optional(),
+    }),
+  ),
+});
+const projectProgressBackfillInstructions = `根据每个项目提供的历史 Session 事实，补充项目进展预览字段。只返回 groups，不要返回周报、每日进展或项目状态。currentFocus 是当前最值得继续推进的一件事；没有足够证据时返回 null。keyEvents 只保留会长期影响项目方向的变化，类型只能是 goal_change、milestone、decision、blocker、stage_change，最多 5 条；普通日常工作不要写入。所有内容必须来自事实，不要猜测。使用简短、通俗的简体中文。`;
 const pluginLogAnalysisResultSchema = z.object({
   summary: z.string().min(1).max(300),
   failedStep: z.string().min(1).max(120),
@@ -155,6 +175,9 @@ export function projectAggregationInputs(inputPayload: any) {
     : [];
   return projectBuckets.map((projectBucket: any) => ({
     ...inputPayload,
+    ...(inputPayload.currentCards?.[projectBucket.projectKey]
+      ? { currentCard: inputPayload.currentCards[projectBucket.projectKey] }
+      : {}),
     projectBuckets: [projectBucket],
   }));
 }
@@ -217,6 +240,8 @@ export async function loadPreviousProjectStatus(job: Job, bucket: any) {
 export async function generateAggregationByProject(job: Job, model: string) {
   const projectInputs = projectAggregationInputs(job.input_payload);
   if (projectInputs.length === 0) throw new Error("PROJECT_BUCKETS_REQUIRED");
+  const isBackfill =
+    job.input_payload.aggregationMode === "project_progress_backfill";
 
   const results: any[] = [];
   for (
@@ -230,6 +255,51 @@ export async function generateAggregationByProject(job: Job, model: string) {
         .slice(start, start + PROJECT_GENERATION_CONCURRENCY)
         .map(async (input: any) => {
           const bucket = input.projectBuckets[0];
+          if (isBackfill) {
+            const facts = (bucket.facts ?? []).map(
+              (fact: any, index: number) => {
+                const payload = fact.payload ?? {};
+                const occurred =
+                  fact.source_occurred_at ?? payload.activity?.endedAt;
+                return {
+                  ref: `F${index + 1}`,
+                  date:
+                    (occurred instanceof Date
+                      ? occurred.toISOString()
+                      : String(occurred ?? "")
+                    ).match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? null,
+                  title: payload.title ?? "",
+                  summary: payload.summary ?? "",
+                  contributions: payload.contributions ?? [],
+                };
+              },
+            );
+            const result = await generateStructured<any>({
+              name: "partner_project_progress_backfill",
+              schema: projectProgressBackfillSchema,
+              instructions: projectProgressBackfillInstructions,
+              input: {
+                projectName: bucket.projectName,
+                projectDescription: bucket.projectDescription ?? "",
+                currentCard: input.currentCard ?? null,
+                facts,
+              },
+              model,
+            });
+            const generatedGroup =
+              result.groups.find(
+                (group: any) => group.projectKey === bucket.projectKey,
+              ) ?? result.groups[0];
+            if (!generatedGroup)
+              throw new ModelGatewayError(
+                "MODEL_PROJECT_PROGRESS_EMPTY",
+                "Backfill output did not contain a project result",
+                true,
+              );
+            return {
+              groups: [{ ...generatedGroup, projectKey: bucket.projectKey }],
+            };
+          }
           const draft = await loadProjectOutcomeDraft(job, bucket, model);
           Object.assign(bucket, draft.source_payload.bucket, {
             outcomeDraftId: draft.id,
@@ -455,6 +525,67 @@ export function normalizeAggregation(job: Job, output: unknown, model: string) {
   };
 }
 
+function normalizeProjectProgressBackfill(
+  job: Job,
+  output: unknown,
+  model: string,
+) {
+  const result = projectProgressBackfillSchema.parse(output);
+  const sourceGroups = new Map(
+    result.groups.map((group) => [group.projectKey, group]),
+  );
+  const buckets = Array.isArray(job.input_payload.projectBuckets)
+    ? job.input_payload.projectBuckets
+    : [];
+  const allowedTypes = new Set([
+    "goal_change",
+    "milestone",
+    "decision",
+    "blocker",
+    "stage_change",
+  ]);
+  return {
+    schemaVersion: "1.0",
+    groups: buckets.map((bucket: any) => {
+      const group = sourceGroups.get(bucket.projectKey);
+      const focus =
+        typeof group?.currentFocus === "string"
+          ? group.currentFocus.trim().slice(0, 240)
+          : "";
+      const keyEvents = (Array.isArray(group?.keyEvents) ? group.keyEvents : [])
+        .filter(
+          (event: any) =>
+            typeof event?.date === "string" &&
+            typeof event?.type === "string" &&
+            allowedTypes.has(event.type) &&
+            typeof event?.title === "string" &&
+            typeof event?.detail === "string",
+        )
+        .map((event: any) => ({
+          date: event.date.trim(),
+          type: event.type,
+          title: event.title.trim().slice(0, 160),
+          detail: event.detail.trim().slice(0, 500),
+        }))
+        .filter((event: any) => event.date && event.title && event.detail)
+        .slice(0, 5);
+      return {
+        projectKey: bucket.projectKey,
+        currentFocus: focus || null,
+        keyEvents,
+      };
+    }),
+    qualityWarnings: [],
+    production: {
+      skillVersion: "partner-report-platform/0.3.0",
+      promptVersion: "2026-09-24.project-progress-backfill.v1",
+      schemaVersion: "1.0",
+      producer: "data-platform",
+      modelVersion: model,
+    },
+  };
+}
+
 export function bucketHasCompletionSupport(bucket: {
   facts?: Array<{ payload?: Record<string, unknown> }>;
 }) {
@@ -510,10 +641,64 @@ function projectCardPayload(group: any, bucket: any) {
 }
 
 async function applyAggregation(job: Job, output: unknown, model: string) {
-  const result = normalizeAggregation(job, output, model);
+  const result =
+    job.input_payload.aggregationMode === "project_progress_backfill"
+      ? normalizeProjectProgressBackfill(job, output, model)
+      : normalizeAggregation(job, output, model);
   const reviewId = job.input_payload.reviewId as string;
   const targetWorkItemId = job.input_payload.targetWorkItemId as
     string | undefined;
+  if (job.input_payload.aggregationMode === "project_progress_backfill") {
+    const groups = new Map<string, any>(
+      result.groups.map((group: any) => [group.projectKey, group]),
+    );
+    const buckets = Array.isArray(job.input_payload.projectBuckets)
+      ? job.input_payload.projectBuckets
+      : [];
+    await sql.begin(async (tx) => {
+      for (const bucket of buckets) {
+        const group = groups.get(bucket.projectKey);
+        const targetId = bucket.backfillWorkItemId;
+        if (!group || typeof targetId !== "string") continue;
+        const [item] = await tx<any[]>`
+          select id, tenant_id, team_id, partner_id, period_id, review_id,
+            title, status, review_status, payload
+          from work_items
+          where id = ${targetId} and tenant_id = ${job.tenant_id}
+          for update
+        `;
+        if (!item || item.review_status !== "approved") continue;
+        const payload = {
+          ...item.payload,
+          currentFocus: group.currentFocus,
+          keyEvents: group.keyEvents,
+        };
+        const versionRows = await tx<Array<{ version: number }>>`
+          select coalesce(max(version), 0)::int as version
+          from work_item_versions
+          where tenant_id = ${job.tenant_id} and work_item_id = ${targetId}
+        `;
+        const nextVersion = (versionRows[0]?.version ?? 0) + 1;
+        await tx`
+          update work_items set payload = ${JSON.stringify(payload)}::jsonb,
+            updated_at = now()
+          where id = ${targetId} and tenant_id = ${job.tenant_id}
+        `;
+        await tx`
+          insert into work_item_versions (
+            id, tenant_id, team_id, partner_id, period_id, review_id,
+            work_item_id, version, title, status, payload, source
+          ) values (
+            ${randomUUID()}, ${item.tenant_id}, ${item.team_id}, ${item.partner_id},
+            ${item.period_id}, ${item.review_id}, ${targetId}, ${nextVersion},
+            ${item.title}, ${item.status}, ${JSON.stringify(payload)}::jsonb,
+            'progress_backfill'
+          )
+        `;
+      }
+    });
+    return result;
+  }
   if (targetWorkItemId) {
     const group = result.groups[0];
     const bucket = job.input_payload.projectBuckets[0];

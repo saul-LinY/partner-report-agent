@@ -127,7 +127,8 @@ export async function loadProjectOutcomeDraft(
   bucket: any,
   model: string,
 ): Promise<ProjectOutcomeDraft> {
-  const reviewId = job.input_payload.reviewId;
+  const reviewId = bucket.reviewId ?? job.input_payload.reviewId;
+  if (typeof reviewId !== "string") throw new Error("REVIEW_ID_REQUIRED");
   const read = () => sql<ProjectOutcomeDraft[]>`
     select id, source_payload, material from project_outcome_drafts
     where tenant_id = ${job.tenant_id} and review_id = ${reviewId}
@@ -140,7 +141,10 @@ export async function loadProjectOutcomeDraft(
       material: projectOutcomeMaterialSchema.parse(existing.material),
     };
 
-  const source = { bucket, period: job.input_payload.period };
+  const source = {
+    bucket,
+    period: bucket.period ?? job.input_payload.period,
+  };
   const input = projectOutcomeInput(bucket, source.period);
   const material = validateOutcomeReferences(
     await generateStructured<ProjectOutcomeMaterial>({
