@@ -28,6 +28,7 @@ const card = (
       description: "小说创作工具",
       payload: {
         projectKey,
+        projectDescription: "帮助团队创作和发布小说内容。",
         overview: "完成创作流程测试。",
         dailyProgress: [{ date: "2026-09-04", summary: "完成全面测试。" }],
       },
@@ -62,6 +63,9 @@ describe("weekly report baselines", () => {
       null,
     ]);
     expect(projects[0]!.thisWeek).toEqual(workCards[0]!.workItems);
+    expect(projects[0]!.projectDescription).toBe(
+      "帮助团队创作和发布小说内容。",
+    );
   });
 
   it("parses escaped table cells and refuses ambiguous historical records", () => {
@@ -147,6 +151,19 @@ describe("weekly report baselines", () => {
       }),
     ).toBe(4);
   });
+
+  it("compacts long product descriptions to the report limit", () => {
+    const source = card();
+    source.workItems[0]!.payload.projectDescription =
+      "这是一个帮助团队整理产品需求、协作设计页面、验证方案并持续跟踪交付结果的产品。".repeat(
+        3,
+      );
+    const [project] = teamReportProjects({ workCards: [source] });
+    expect(Array.from(project!.projectDescription).length).toBeLessThanOrEqual(
+      100,
+    );
+    expect(project!.projectDescription).toContain("产品");
+  });
 });
 
 describe("project writing followed by team summary", () => {
@@ -204,6 +221,12 @@ describe("project writing followed by team summary", () => {
     expect(report.markdown).toContain(`**本周总结：** ${personalSummary}`);
     expect(report.summary).toBe(summary);
     expect(report.projectProgress[0].progress).toBe(progress);
+    expect(report.projectProgress[0].projectDescription).toBe(
+      "帮助团队创作和发布小说内容。",
+    );
+    expect(report.markdown).toContain(
+      "| 项目负责人 | 项目名称 | 项目说明 | 较上周进展 |",
+    );
     expect(report.sections[0].claims[0].workCardSnapshotIds).toEqual([
       snapshotId,
     ]);
@@ -290,11 +313,17 @@ describe("project writing followed by team summary", () => {
     expect(firstPerson).toContain(
       "**本周总结：** 从需求验证推进到初版交付，&lt;成果&gt;涵盖调研与交付。",
     );
-    expect(firstPerson).toContain("| 同名 | 调研 | 确定用户需求。 |");
-    expect(firstPerson).toContain("| 同名 | 交付 | 交付可用初版。 |");
+    expect(firstPerson).toContain(
+      "| 同名 | 调研 | 帮助团队创作和发布小说内容。 | 确定用户需求。 |",
+    );
+    expect(firstPerson).toContain(
+      "| 同名 | 交付 | 帮助团队创作和发布小说内容。 | 交付可用初版。 |",
+    );
     expect(firstPerson).not.toContain("完成产品测试。");
     expect(secondPerson).toContain("**本周总结：** 完善产品并完成测试。");
-    expect(secondPerson).toContain("| 同名 | 产品 | 完成产品测试。 |");
+    expect(secondPerson).toContain(
+      "| 同名 | 产品 | 帮助团队创作和发布小说内容。 | 完成产品测试。 |",
+    );
     expect(section.claims.slice(3)).toEqual([
       {
         claim: "从需求验证推进到初版交付，<成果>涵盖调研与交付。",

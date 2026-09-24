@@ -797,7 +797,8 @@
 .app-shell .team-report-editor > .report-document {
   margin: 20px;
   padding: 32px;
-  max-width: 1000px;
+  width: calc(100% - 40px);
+  max-width: none;
 }
 
 @media (max-width: 1250px) {
@@ -1088,6 +1089,7 @@
   .app-shell .team-report-editor > .report-document {
     margin: 0;
     padding: 24px 16px;
+    width: 100%;
   }
   .app-shell .scope-project-head > span,
   .app-shell .scope-project-row > span {

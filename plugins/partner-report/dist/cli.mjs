@@ -4253,6 +4253,7 @@ var teamReportProjectProgressSchema = external_exports.object({
   partnerName: external_exports.string(),
   projectKey: external_exports.string().nullable(),
   projectName: external_exports.string(),
+  projectDescription: external_exports.string().max(100).default(""),
   progress: external_exports.string(),
   workCardSnapshotIds: external_exports.array(external_exports.string())
 });

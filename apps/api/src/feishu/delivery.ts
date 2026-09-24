@@ -6,6 +6,7 @@ import {
   renderReviewCard,
   renderScopeCard,
   renderScopeStatusCard,
+  renderStaleCard,
   renderStatusCard,
   type FeishuCard,
 } from "./cards.js";
@@ -652,6 +653,64 @@ export class FeishuDeliveryService {
     );
   }
 
+  async deliverScopeFollowup(
+    input: FeishuDeliveryScope & {
+      pluginInstanceId: string;
+      periodKey?: string;
+    },
+  ) {
+    const view = await this.loadScopeDeliveryView(
+      input,
+      input.pluginInstanceId,
+      input.periodKey,
+    );
+    if (!view)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "not_reviewable",
+      } satisfies FeishuDeliveryResult;
+
+    const previous = await this.database<
+      Array<{ id: string; message_id: string | null }>
+    >`
+      select id, message_id
+      from feishu_deliveries
+      where tenant_id = ${input.tenantId} and team_id = ${input.teamId}
+        and partner_id = ${input.partnerId} and kind = 'scope'
+        and aggregate_type = 'project_scope' and aggregate_id = ${view.aggregateId}
+        and status not in ('expired', 'cancelled')
+      order by updated_at desc, id desc
+    `;
+    const expiredCard = renderStaleCard({
+      title: "项目权限卡片已过期",
+      message:
+        "这张项目权限卡片已超过 24 小时未处理，已停止操作。管理员已发送新的权限卡片，请在新卡片中继续选择。",
+    });
+    for (const delivery of previous) {
+      if (delivery.message_id)
+        await this.messageClient.updateInteractiveCard({
+          messageId: delivery.message_id,
+          card: expiredCard,
+        });
+      await this.database`
+        update feishu_deliveries set
+          status = 'expired', next_retry_at = null, updated_at = now(),
+          idempotency_key = idempotency_key || ':expired:' || id
+        where id = ${delivery.id} and tenant_id = ${input.tenantId}
+          and team_id = ${input.teamId} and partner_id = ${input.partnerId}
+          and status not in ('expired', 'cancelled')
+      `;
+    }
+    return this.deliverAggregate(
+      "scope",
+      input,
+      view.aggregateId,
+      view.version,
+      (deliveryId) => this.renderScopeDeliveryCard(view, deliveryId),
+    );
+  }
+
   async deliverRecovery(
     input: FeishuDeliveryScope & {
       authorizationId: string;
@@ -692,6 +751,57 @@ export class FeishuDeliveryService {
       view.version,
       (deliveryId) =>
         this.renderReviewDeliveryCard(view, deliveryId, undefined, input.page),
+    );
+  }
+
+  async deliverReviewReminder(
+    input: FeishuDeliveryScope & { reviewId: string },
+  ) {
+    const view = await this.loadReviewDeliveryView(input, input.reviewId);
+    if (!view)
+      return {
+        outcome: "skipped",
+        deliveryId: null,
+        reason: "not_reviewable",
+      } satisfies FeishuDeliveryResult;
+
+    const previous = await this.database<
+      Array<{ id: string; message_id: string | null }>
+    >`
+      select id, message_id
+      from feishu_deliveries
+      where tenant_id = ${input.tenantId} and team_id = ${input.teamId}
+        and partner_id = ${input.partnerId} and kind = 'review'
+        and aggregate_type = 'review' and aggregate_id = ${input.reviewId}
+        and status not in ('expired', 'cancelled')
+      order by updated_at desc, id desc
+    `;
+    const expiredCard = renderStaleCard({
+      title: "审核卡片已过期",
+      message:
+        "这张审核卡片已超过 24 小时未处理，已停止操作。管理员已发送新的审核卡片，请在新卡片中继续审核。",
+    });
+    for (const delivery of previous) {
+      if (delivery.message_id)
+        await this.messageClient.updateInteractiveCard({
+          messageId: delivery.message_id,
+          card: expiredCard,
+        });
+      await this.database`
+        update feishu_deliveries set
+          status = 'expired', next_retry_at = null, updated_at = now(),
+          idempotency_key = idempotency_key || ':expired:' || id
+        where id = ${delivery.id} and tenant_id = ${input.tenantId}
+          and team_id = ${input.teamId} and partner_id = ${input.partnerId}
+          and status not in ('expired', 'cancelled')
+      `;
+    }
+    return this.deliverAggregate(
+      "review",
+      input,
+      input.reviewId,
+      view.version,
+      (deliveryId) => this.renderReviewDeliveryCard(view, deliveryId),
     );
   }
 
@@ -872,6 +982,7 @@ export class FeishuDeliveryService {
         and d.kind = ${input.expectedKind}
         and d.aggregate_type = ${expectedAggregateType}
         and d.aggregate_id = ${input.aggregateId}
+        and (d.kind not in ('review', 'scope') or d.status = 'sent')
       limit 1
     `;
     const row = rows[0];

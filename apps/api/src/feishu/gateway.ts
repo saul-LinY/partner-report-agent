@@ -497,6 +497,8 @@ export class FeishuGateway {
                 'work_items.all_dismissed',
                 'review.change.applied',
                 'review.reopened',
+                'review.reminder.requested',
+                'project_scope.reminder.requested',
                 'project_scope.candidates.changed',
                 'project_scope.period.review_ready'
               )
@@ -1500,6 +1502,36 @@ export class FeishuGateway {
               ...scope,
               reviewId: event.aggregate_id,
             });
+      return !deliveryNeedsStatusRetry(result);
+    }
+
+    if (event.event_type === "review.reminder.requested") {
+      const scope = await this.loadReviewScope(
+        event.tenant_id,
+        event.aggregate_id,
+      );
+      if (!scope) return true;
+      const result = await this.deliveries.deliverReviewReminder({
+        ...scope,
+        reviewId: event.aggregate_id,
+      });
+      return !deliveryNeedsStatusRetry(result);
+    }
+
+    if (event.event_type === "project_scope.reminder.requested") {
+      const scope = await this.loadPluginScope(
+        event.tenant_id,
+        event.aggregate_id,
+      );
+      if (!scope) return true;
+      const payload = safeRecord(event.payload);
+      const periodKey =
+        typeof payload.periodKey === "string" ? payload.periodKey : undefined;
+      const result = await this.deliveries.deliverScopeFollowup({
+        ...scope,
+        pluginInstanceId: event.aggregate_id,
+        ...(periodKey ? { periodKey } : {}),
+      });
       return !deliveryNeedsStatusRetry(result);
     }
 

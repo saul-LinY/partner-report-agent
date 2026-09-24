@@ -8,7 +8,7 @@ import { gfmTable } from "micromark-extension-gfm-table";
 import { z } from "zod";
 import { generateStructured } from "./model.js";
 
-export const TEAM_REPORT_PROMPT_VERSION = "2026-09-11.team.v20";
+export const TEAM_REPORT_PROMPT_VERSION = "2026-09-21.team.v23";
 const PROJECT_CONCURRENCY = 2;
 type Progress = z.infer<typeof teamReportProjectProgressSchema>;
 type Project = Omit<Progress, "progress"> & {
@@ -33,7 +33,7 @@ type ReportInput = {
 
 export const projectProgressInstructions = `为团队周报写一个项目的“较上周进展”单元格。读者不懂软件开发，需要从项目整体理解本周主要做成了什么、比上周推进了什么、现在到哪一步。用通俗、直接的简体中文输出一段话。
 
-强约束：整段约200字，目标180至220字。用四至五句完整句子写清楚，不用小标题或列表。不要重复项目名称、负责人和冗长项目介绍，这些已有独立列。字数靠写作时选择重点控制，不逐字计数，不反复推算。只保留一至两个主要成果方向，以及必要的比较和当前边界；删去实现步骤、枝节、重复说明和笼统建议。
+强约束：整段约200字，目标180至220字。用四至五句完整句子写清楚，不用小标题或列表。不要重复项目名称、负责人和项目说明，这些已有独立列。项目说明是单独展示的产品简介，只用于帮助理解产品用途，不要把它改写成周报成果。字数靠写作时选择重点控制，不逐字计数，不反复推算。只保留一至两个主要成果方向，以及必要的比较和当前边界；删去实现步骤、枝节、重复说明和笼统建议。
 
 thisWeek是本周已确认的完整工作卡片，本周事实只来自这里。项目描述用于理解用途，不能当成本周交付。previousWeek是已按同一负责人和同一项目匹配的上周记录；为空时明确写“上周无同项目记录可供比较”，不能推断上周没做、本周新立项或虚构上周状态。非空时，以确有依据的新增能力、完善的使用流程或交付阶段变化说明较上周进展。不能把上周成果搬作本周成果。目的不等于实际收益，不补造反馈、商业效果、速度或统计。
 
@@ -83,6 +83,36 @@ function markdownText(value: string) {
     .replace(/([\\`*_{}\[\]#|])/g, "\\$1");
 }
 
+function projectDescription(item: Record<string, any>) {
+  const values = [
+    item.payload?.projectDescription,
+    item.projectDescription,
+    item.description,
+  ];
+  return (
+    values
+      .find(
+        (value): value is string =>
+          typeof value === "string" && value.trim().length > 0,
+      )
+      ?.trim() ?? ""
+  );
+}
+
+function compactProjectDescription(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (Array.from(normalized).length <= 100) return normalized;
+  const sentences = normalized.split(/(?<=[。！？；])\s*/u);
+  let compact = "";
+  for (const sentence of sentences) {
+    const candidate = `${compact}${sentence}`;
+    if (Array.from(candidate).length > 100) break;
+    compact = candidate;
+  }
+  if (compact) return compact;
+  return `${Array.from(normalized).slice(0, 99).join("")}…`;
+}
+
 // Parse historical GFM tables, including escaped pipes and formatted names.
 function legacyProgress(payload: any) {
   const markdown =
@@ -111,15 +141,16 @@ function legacyProgress(payload: any) {
       ![
         ["成员", "项目", "本周工作明细"],
         ["项目负责人", "项目名称", "较上周进展"],
+        ["项目负责人", "项目名称", "项目说明", "较上周进展"],
       ].some((expected) =>
         expected.every((label, i) => labels[i]?.trim() === label),
       )
     )
       continue;
     for (const row of rows) {
-      const [owner, project, progress] = row.children.map((cell) =>
-        plain(cell).trim(),
-      );
+      const cells = row.children.map((cell) => plain(cell).trim());
+      const [owner, project] = cells;
+      const progress = labels[2] === "项目说明" ? cells[3] : cells[2];
       if (owner && project && progress)
         result.push({ owner, project, progress });
     }
@@ -156,11 +187,19 @@ export function teamReportProjects(input: ReportInput): Project[] {
           partnerName: card.partnerName || card.partnerId,
           projectKey,
           projectName,
+          projectDescription: compactProjectDescription(
+            projectDescription(item),
+          ),
           workCardSnapshotIds: [],
           thisWeek: [],
           previousWeek: null,
         };
         groups.set(key, group);
+      }
+      if (!group.projectDescription) {
+        const description = projectDescription(item);
+        if (description)
+          group.projectDescription = compactProjectDescription(description);
       }
       group.thisWeek.push(item);
       if (!group.workCardSnapshotIds.includes(card.snapshotId))
@@ -322,13 +361,13 @@ export async function generateTeamReport(input: ReportInput, model: string) {
             "",
             `**本周总结：** ${markdownText(overview.partnerSummaries[person.ref]!)}`,
             "",
-            "| 项目负责人 | 项目名称 | 较上周进展 |",
-            "| --- | --- | --- |",
+            "| 项目负责人 | 项目名称 | 项目说明 | 较上周进展 |",
+            "| --- | --- | --- | --- |",
             ...rows
               .filter((row) => row.partnerId === person.partnerId)
               .map(
                 (row) =>
-                  `| ${markdownText(row.partnerName)} | ${markdownText(row.projectName)} | ${markdownText(row.progress)} |`,
+                  `| ${markdownText(row.partnerName)} | ${markdownText(row.projectName)} | ${markdownText(row.projectDescription)} | ${markdownText(row.progress)} |`,
               ),
           ].join("\n"),
         )

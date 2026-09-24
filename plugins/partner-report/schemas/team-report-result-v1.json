@@ -86,6 +86,11 @@
               "projectName": {
                 "type": "string"
               },
+              "projectDescription": {
+                "type": "string",
+                "maxLength": 100,
+                "default": ""
+              },
               "progress": {
                 "type": "string"
               },

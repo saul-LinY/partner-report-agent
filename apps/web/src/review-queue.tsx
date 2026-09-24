@@ -1,9 +1,15 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, RefreshCw, X, Clock3 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bell, ClipboardCheck, RefreshCw, X, Clock3 } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { api } from "./api.js";
-import { Badge, Button, EmptyState, ErrorBanner } from "./components.js";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorBanner,
+  SuccessBanner,
+} from "./components.js";
 import {
   AdminTableScroll,
   AdminFilterBar,
@@ -25,6 +31,7 @@ type QueueItem = {
   approved_count: number;
   excluded_count: number;
   updated_at: string;
+  last_reminded_at?: string | null;
   report_id?: string;
 };
 type QueueData = {
@@ -32,20 +39,64 @@ type QueueData = {
   reviewQueue: QueueItem[];
 };
 
+type ReminderResponse = {
+  accepted: boolean;
+  scopeReminderCount?: number;
+};
+
+function formatReminderAge(value: string | null | undefined, now: number) {
+  if (!value) return "尚未提醒";
+  const elapsed = Math.max(0, now - Date.parse(value));
+  if (!Number.isFinite(elapsed)) return "时间未知";
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "刚刚提醒";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时 ${minutes % 60} 分钟前`;
+  const days = Math.floor(hours / 24);
+  return `${days} 天 ${hours % 24} 小时前`;
+}
+
 export function ReviewQueuePage() {
   const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
   const [partnerId, setPartnerId] = useState("");
   const [period, setPeriod] = useState("");
   const [search, setSearch] = useState("");
   const [state, setState] = useState<"all" | "IN_PROGRESS" | "PENDING">("all");
   const [sort, setSort] = useState("priority");
   const [page, setPage] = useState(1);
+  const [remindingReviewId, setRemindingReviewId] = useState<string | null>(
+    null,
+  );
+  const [reminderFeedback, setReminderFeedback] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const query = useQuery({
     queryKey: ["admin-overview"],
     queryFn: () => api<QueueData>("/v1/admin/overview"),
     refetchInterval: 15_000,
   });
   const queue = query.data?.reviewQueue ?? [];
+  const reminder = useMutation({
+    mutationFn: (reviewId: string) =>
+      api<ReminderResponse>(`/v1/admin/reviews/${reviewId}/remind`, {
+        method: "POST",
+      }),
+    onSuccess: (result) => {
+      const scopeCount = result.scopeReminderCount ?? 0;
+      setReminderFeedback(
+        scopeCount > 0
+          ? `提醒已发送，同时重新发送了 ${scopeCount} 个项目权限卡片。`
+          : "提醒已发送，新的审核卡片正在发送给用户。",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+    },
+    onSettled: () => setRemindingReviewId(null),
+  });
   const pending = queue.filter((item) => item.review_state === "IN_PROGRESS");
   const generating = queue.filter((item) => item.review_state === "PENDING");
   const filtered = queue
@@ -98,6 +149,10 @@ export function ReviewQueuePage() {
         onRefresh={() => void query.refetch()}
       />
       <ErrorBanner error={query.error} />
+      <ErrorBanner error={reminder.error} />
+      {reminderFeedback ? (
+        <SuccessBanner>{reminderFeedback}</SuccessBanner>
+      ) : null}
       <AdminMetrics
         items={[
           {
@@ -321,16 +376,38 @@ export function ReviewQueuePage() {
                                 },
                               )}
                             </time>
+                            {item.review_state === "IN_PROGRESS" ? (
+                              <small className="aw-reminder-age">
+                                距上次提醒：
+                                {formatReminderAge(item.last_reminded_at, now)}
+                              </small>
+                            ) : null}
                           </td>
                           <td>
                             {item.review_state === "IN_PROGRESS" ? (
-                              <Button
-                                variant="secondary"
-                                icon={<ClipboardCheck size={15} />}
-                                onClick={() => open(item)}
-                              >
-                                审核项目卡
-                              </Button>
+                              <div className="aw-inline-actions">
+                                <Button
+                                  variant="secondary"
+                                  icon={<ClipboardCheck size={15} />}
+                                  onClick={() => open(item)}
+                                >
+                                  审核项目卡
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  icon={<Bell size={15} />}
+                                  loading={remindingReviewId === item.review_id}
+                                  disabled={reminder.isPending}
+                                  onClick={() => {
+                                    reminder.reset();
+                                    setReminderFeedback(null);
+                                    setRemindingReviewId(item.review_id);
+                                    reminder.mutate(item.review_id);
+                                  }}
+                                >
+                                  提醒审核
+                                </Button>
+                              </div>
                             ) : item.review_state === "PENDING" ? (
                               <span className="aw-kicker">
                                 <Clock3 size={13} /> 生成中

@@ -240,6 +240,7 @@ export const teamReportProjectProgressSchema = z.object({
   partnerName: z.string(),
   projectKey: z.string().nullable(),
   projectName: z.string(),
+  projectDescription: z.string().max(100).default(""),
   progress: z.string(),
   workCardSnapshotIds: z.array(z.string()),
 });

@@ -569,12 +569,23 @@
   min-height: 32px;
   padding-inline: 9px;
 }
+.aw-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .aw-queue-table .aw-progress {
   max-width: 170px;
 }
 .aw-queue-table time {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+.aw-reminder-age {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
 }
 .aw-queue-counts {
   display: flex;

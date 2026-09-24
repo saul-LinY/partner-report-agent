@@ -385,11 +385,21 @@ export async function adminRoutes(app: FastifyInstance) {
       sql<any[]>`
         select r.id as review_id, r.state as review_state, r.version as review_version,
           r.pending_count, r.approved_count, r.excluded_count, r.updated_at,
+          reminder.last_reminded_at,
           p.id as partner_id, p.display_name as partner_name, p.email as partner_email,
           rp.period_key
         from reviews r
         join partners p on p.id = r.partner_id and p.tenant_id = r.tenant_id
         join report_periods rp on rp.id = r.period_id and rp.tenant_id = r.tenant_id
+        left join lateral (
+          select ae.created_at as last_reminded_at
+          from audit_events ae
+          where ae.tenant_id = r.tenant_id and ae.team_id = r.team_id
+            and ae.action = 'review.reminder_requested'
+            and ae.target_type = 'review' and ae.target_id = r.id::text
+          order by ae.created_at desc
+          limit 1
+        ) reminder on true
         where r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
           and r.state in ('PENDING', 'IN_PROGRESS')
         order by r.updated_at desc limit 100
@@ -491,6 +501,93 @@ export async function adminRoutes(app: FastifyInstance) {
       jobs: jobRows,
       bindingCodes: bindingRows,
       reviewQueue: queueRows,
+    };
+  });
+
+  app.post("/v1/admin/reviews/:id/remind", async (request) => {
+    const actor = await requireWebActor(request, "admin");
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const reviews = await sql<
+      Array<{
+        id: string;
+        partner_id: string;
+        state: string;
+        pending_count: number;
+      }>
+    >`
+      select id, partner_id, state, pending_count
+      from reviews
+      where id = ${id} and tenant_id = ${actor.tenantId}
+        and team_id = ${actor.teamId}
+      limit 1
+    `;
+    const review = reviews[0];
+    if (!review)
+      throw new ApiError(404, "REVIEW_NOT_FOUND", "审核记录不存在。");
+    if (review.state !== "IN_PROGRESS" || review.pending_count < 1)
+      throw new ApiError(
+        409,
+        "REVIEW_NOT_PENDING",
+        "当前审核记录没有待处理的项目卡片。",
+      );
+
+    const eventIds = await sql.begin(async (tx) => {
+      const scopeRows = await tx<
+        Array<{ plugin_instance_id: string; period_key: string }>
+      >`
+        select psp.plugin_instance_id, rp.period_key
+        from project_scope_policies psp
+        join plugin_instances pi
+          on pi.id = psp.plugin_instance_id and pi.tenant_id = psp.tenant_id
+            and pi.team_id = psp.team_id and pi.partner_id = psp.partner_id
+            and pi.status = 'active'
+        join lateral (
+          select period_key
+          from report_periods
+          where tenant_id = psp.tenant_id and team_id = psp.team_id
+          order by
+            case when starts_at <= now() and ends_at >= now() then 0 else 1 end,
+            starts_at desc
+          limit 1
+        ) rp on true
+        where psp.tenant_id = ${actor.tenantId}
+          and psp.team_id = ${actor.teamId} and psp.partner_id = ${review.partner_id}
+          and exists (
+            select 1 from project_scope_entries pse
+            where pse.plugin_instance_id = psp.plugin_instance_id
+              and pse.tenant_id = psp.tenant_id and pse.status = 'pending'
+          )
+      `;
+      const ids = [randomUUID(), ...scopeRows.map(() => randomUUID())];
+      await tx`
+        insert into outbox_events (
+          id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+        ) values (
+          ${ids[0]!}, ${actor.tenantId}, 'review.reminder.requested',
+          'review', ${id}, ${JSON.stringify({ source: "admin" })}::jsonb
+        )
+      `;
+      for (const [index, scopeRow] of scopeRows.entries()) {
+        await tx`
+          insert into outbox_events (
+            id, tenant_id, event_type, aggregate_type, aggregate_id, payload
+          ) values (
+            ${ids[index + 1]!}, ${actor.tenantId}, 'project_scope.reminder.requested',
+            'project_scope', ${scopeRow.plugin_instance_id},
+            ${JSON.stringify({ source: "admin", periodKey: scopeRow.period_key })}::jsonb
+          )
+        `;
+      }
+      return ids;
+    });
+    await audit(request, actor, "review.reminder_requested", "review", id, {
+      scopeReminderCount: eventIds.length - 1,
+    });
+    return {
+      accepted: true,
+      eventId: eventIds[0],
+      scopeEventIds: eventIds.slice(1),
+      scopeReminderCount: eventIds.length - 1,
     };
   });
 

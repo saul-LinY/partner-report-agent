@@ -293,6 +293,53 @@ describe("Team Report normalization", () => {
 });
 
 describe("project status presets", () => {
+  it("carries the last confirmed choice into a new card before considering model output", () => {
+    const result = normalizeAggregation(
+      {
+        input_payload: {
+          projectBuckets: [
+            {
+              projectKey: "a",
+              facts: [],
+              previousProjectStatus: {
+                value: "delivery",
+                reason: "用户上次确认项目已进入交付",
+                periodKey: "2026-W36",
+              },
+            },
+          ],
+        },
+      } as any,
+      {
+        schemaVersion: "1.0",
+        groups: [
+          {
+            projectKey: "a",
+            status: "in_progress",
+            projectStatus: "paused",
+            projectStatusReason: "本周没有新的记录",
+            overview: "本周继续处理交付事项",
+            dailyProgress: [],
+          },
+        ],
+        qualityWarnings: [],
+        production: {
+          skillVersion: "partner-report-platform/0.3.0",
+          promptVersion: "test",
+          schemaVersion: "1.0",
+          producer: "data-platform",
+        },
+      },
+      "test-model",
+    );
+
+    expect(result.groups[0]).toMatchObject({
+      projectStatus: "delivery",
+      projectStatusReason: "用户上次确认项目已进入交付",
+      projectStatusSource: "user",
+    });
+  });
+
   it("preserves a user's selection when a regenerated model response proposes another status", () => {
     const result = normalizeAggregation(
       {

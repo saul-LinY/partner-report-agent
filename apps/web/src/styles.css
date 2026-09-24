@@ -1054,9 +1054,11 @@ td {
   margin-top: 0;
 }
 .report-document table {
+  width: 100%;
   min-width: 680px;
   margin: 14px 0 28px;
   font-size: 13px;
+  table-layout: fixed;
 }
 .report-document th {
   font-size: 12px;
@@ -1067,19 +1069,24 @@ td {
 .report-document td {
   vertical-align: top;
   line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 .report-document th:first-child,
 .report-document td:first-child {
-  width: 16%;
+  width: 11%;
   font-weight: 600;
 }
 .report-document th:nth-child(2),
 .report-document td:nth-child(2) {
-  width: 24%;
+  width: 17%;
+}
+.report-document th:nth-child(3),
+.report-document td:nth-child(3) {
+  width: 27%;
 }
 .report-document th:last-child,
 .report-document td:last-child {
-  width: auto;
+  width: 45%;
 }
 .report-source-cards {
   margin: -18px 0 30px;

@@ -19,6 +19,7 @@ function mergeOwners(table: Table, identities: ProjectIdentity[]) {
   if (
     !labels ||
     ![
+      ["项目负责人", "项目名称", "项目说明", "较上周进展"],
       ["项目负责人", "项目名称", "较上周进展"],
       ["成员", "项目", "本周工作明细"],
     ].some((expected) =>

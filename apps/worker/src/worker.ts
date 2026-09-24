@@ -1,10 +1,17 @@
 import { closeDatabase, sqlClient as sql } from "@partner-report/db";
+import { autoApproveExpiredReviews } from "./review-timeout.js";
 import { scheduleDueWeeklyReports } from "./weekly.js";
 import { processNextGenerationJob } from "./generation.js";
 
 let stopping = false;
 
 async function tick() {
+  const reviewTimeout = await autoApproveExpiredReviews();
+  if (reviewTimeout.approvedReviews > 0) {
+    console.log(
+      `Auto-approved ${reviewTimeout.approvedItems} work card(s) in ${reviewTimeout.approvedReviews} expired review(s).`,
+    );
+  }
   const weekly = await scheduleDueWeeklyReports();
   if (weekly.closedPeriods > 0) {
     console.log(

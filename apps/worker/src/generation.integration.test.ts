@@ -373,13 +373,13 @@ suite("synthetic report generation pipeline", () => {
     expect(lastTeamReportInstructions).toContain("完整工作卡片");
     expect(teamReports[0].payload.projectProgress).toHaveLength(1);
     expect(teamReports[0].payload.production.promptVersion).toBe(
-      "2026-09-11.team.v20",
+      "2026-09-21.team.v23",
     );
     expect(teamReports[0].payload.markdown).toContain(
       "**本周总结：** 本周完成合成项目成果验证。",
     );
     expect(teamReports[0].payload.markdown).toContain(
-      "| 项目负责人 | 项目名称 | 较上周进展 |",
+      "| 项目负责人 | 项目名称 | 项目说明 | 较上周进展 |",
     );
     expect(teamReports[0].payload.markdown).toContain(
       "| Synthetic Partner | 未识别项目 |",

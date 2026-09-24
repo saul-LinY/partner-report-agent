@@ -32,6 +32,7 @@ type Version = {
       partnerId: string;
       partnerName: string;
       projectName: string;
+      projectDescription?: string;
     }>;
   };
   created_at: string;
