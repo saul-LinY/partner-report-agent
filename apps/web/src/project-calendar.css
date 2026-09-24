@@ -365,82 +365,6 @@
   color: var(--ink);
   font-weight: 600;
 }
-.pc-all-overview {
-  margin-bottom: 16px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-}
-.pc-all-overview-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.pc-all-overview-heading div {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-.pc-all-overview-heading strong {
-  font-size: 14px;
-}
-.pc-all-overview-heading span {
-  color: var(--muted);
-  font-size: 11px;
-}
-.pc-focus-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-.pc-focus-card {
-  display: block;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-alt);
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-.pc-focus-card:hover {
-  border-color: var(--accent);
-}
-.pc-focus-owner {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--accent);
-  font-size: 10px;
-}
-.pc-focus-card > strong {
-  display: block;
-  overflow: hidden;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pc-focus-card p {
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 7px 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.55;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-.pc-focus-card p b {
-  color: var(--ink);
-  font-weight: 600;
-}
-.pc-focus-card small {
-  color: var(--muted);
-  font-size: 10px;
-}
 .pc-ai-evidence {
   margin-top: 7px;
   color: var(--muted);
@@ -560,9 +484,6 @@
   }
 }
 @media (max-width: 1100px) {
-  .pc-focus-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .pc-workspace {
     grid-template-columns: 1fr;
   }
@@ -581,14 +502,6 @@
   }
 }
 @media (max-width: 600px) {
-  .pc-all-overview-heading div {
-    align-items: start;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .pc-focus-grid {
-    grid-template-columns: 1fr;
-  }
   .pc-toolbar {
     align-items: start;
     flex-direction: column;
