@@ -819,9 +819,9 @@ export function ProjectProgress() {
                   {selected.aiEvidence.periodCount} 个周期
                 </div>
                 {selected.keyEvents.length > 0 && (
-                  <section className="pc-key-events" aria-label="项目关键节点">
+                  <section className="pc-key-events" aria-label="项目时间线">
                     <div className="pc-key-events-heading">
-                      <strong>项目关键节点</strong>
+                      <strong>项目时间线</strong>
                       <span>AI 只保留会影响项目方向的变化</span>
                     </div>
                     <div className="pc-key-events-list">
