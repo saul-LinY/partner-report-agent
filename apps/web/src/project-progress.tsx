@@ -614,6 +614,14 @@ export function ProjectProgress() {
   const latestStage = selected?.events
     .filter((event) => event.stage || event.projectStatus)
     .at(-1);
+  const projectFocus = (project: ProgressProject) =>
+    project.currentFocus?.text ||
+    calendarExcerpt(
+      project.currentStatus?.reason ||
+        (project.latestProgress?.summary ??
+          "等待 AI 从新的 Session 中提取项目重点。"),
+      150,
+    );
   const phaseLabel = (p: ProgressProject) => {
     const status = displayProjectStatus(p);
     return status ? projectStatusLabels[status] : "";
@@ -714,6 +722,40 @@ export function ProjectProgress() {
             )}
           </aside>
           <div className="pc-main">
+            {!selected && projects.length > 0 && (
+              <section className="pc-all-overview" aria-label="项目重点预览">
+                <div className="pc-all-overview-heading">
+                  <div>
+                    <strong>项目重点预览</strong>
+                    <span>点击项目卡片查看完整关键节点</span>
+                  </div>
+                  <span>共 {projects.length} 个项目</span>
+                </div>
+                <div className="pc-focus-grid">
+                  {projects.slice(0, 6).map((project) => (
+                    <button
+                      type="button"
+                      className="pc-focus-card"
+                      key={keyOf(project)}
+                      onClick={() => setSelectedKey(keyOf(project))}
+                    >
+                      <span className="pc-focus-owner">
+                        {memberName(project.partnerId)}
+                      </span>
+                      <strong>{project.projectName}</strong>
+                      <p>
+                        <b>当前重点：</b>
+                        {projectFocus(project)}
+                      </p>
+                      <small>
+                        AI 已分析 {project.aiEvidence.sessionCount} 个
+                        Session，覆盖 {project.aiEvidence.periodCount} 个周期
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
             {selected && (
               <section
                 className="pc-project-overview"
