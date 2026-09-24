@@ -153,6 +153,15 @@ describe("work card model output normalization", () => {
           {
             projectKey: "project-a",
             status: "in_progress",
+            currentFocus: "补齐接口测试",
+            keyEvents: [
+              {
+                date: "2026-08-27",
+                type: "milestone",
+                title: "接口联调完成",
+                detail: "主要链路已跑通。",
+              },
+            ],
             overview: "概".repeat(121),
             dailyProgress: [
               { date: "2026-08-27", summary: "进".repeat(61) },
@@ -173,6 +182,15 @@ describe("work card model output normalization", () => {
 
     expect(result.groups).toHaveLength(2);
     expect(result.groups[0].projectDescription).toBe("已审核的项目简介。");
+    expect(result.groups[0].currentFocus).toBe("补齐接口测试");
+    expect(result.groups[0].keyEvents).toEqual([
+      {
+        date: "2026-08-27",
+        type: "milestone",
+        title: "接口联调完成",
+        detail: "主要链路已跑通。",
+      },
+    ]);
     expect(
       result.groups[0].dailyProgress.map(
         (entry: { date: string }) => entry.date,

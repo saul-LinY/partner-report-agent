@@ -324,13 +324,22 @@ describe("session value screening contract", () => {
 });
 
 describe("project card aggregation contract", () => {
-  it("accepts only overview and ordered daily progress for each project", () => {
+  it("accepts project focus and durable key events alongside the card", () => {
     const result = {
       schemaVersion: "1.0",
       groups: [
         {
           projectKey: "project:11111111-1111-4111-8111-111111111111",
           status: "in_progress",
+          currentFocus: "补齐异常测试。",
+          keyEvents: [
+            {
+              date: "2026-08-04",
+              type: "milestone",
+              title: "完成项目分桶",
+              detail: "已确认项目归属。",
+            },
+          ],
           overview: "本周完成插件主链路收敛。",
           dailyProgress: [
             { date: "2026-08-03", summary: "完成项目分桶。" },

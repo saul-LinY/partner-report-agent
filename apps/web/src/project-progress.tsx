@@ -44,6 +44,16 @@ const stateLabels = {
   paused: "已暂停",
   completed: "已完成",
 };
+const keyEventTypeLabels: Record<
+  ProgressProject["keyEvents"][number]["type"],
+  string
+> = {
+  goal_change: "目标调整",
+  milestone: "里程碑",
+  decision: "重要决定",
+  blocker: "问题阻塞",
+  stage_change: "阶段切换",
+};
 const countDays = (value: number | null) =>
   value === null ? "待核查" : `${value} 天`;
 function timestamp(value: string | null, timezone: string) {
@@ -625,14 +635,14 @@ export function ProjectProgress() {
     setMonth(target === currentMonth ? "" : target);
   };
   return (
-    <section className="pc-dashboard" aria-label="项目日历">
+    <section className="pc-dashboard" aria-label="项目进展">
       <div className="pc-toolbar">
         <div>
           <h2>
             <CalendarDays size={20} />
-            项目日历
+            项目进展
           </h2>
-          <p>看每天做了什么，也看项目走到了哪一步。</p>
+          <p>AI 从 Session 中提取关键变化，帮助你看清项目走到了哪一步。</p>
         </div>
         <select
           aria-label="成员"
@@ -749,19 +759,49 @@ export function ProjectProgress() {
                   ))}
                 </ol>
                 <p className="pc-latest">
-                  {calendarExcerpt(
-                    selected.currentStatus?.reason ||
-                      (latestStage &&
-                      latestStage.date >= (selected.latestProgress?.date ?? "")
-                        ? latestStage.reason
-                        : (selected.latestProgress?.summary ??
-                          "每周通过工作卡片时确认当前项目状态。")),
-                    180,
-                  )}
+                  <strong>当前重点：</strong>
+                  {selected.currentFocus?.text ||
+                    calendarExcerpt(
+                      selected.currentStatus?.reason ||
+                        (latestStage &&
+                        latestStage.date >=
+                          (selected.latestProgress?.date ?? "")
+                          ? latestStage.reason
+                          : (selected.latestProgress?.summary ??
+                            "等待 AI 从新的 Session 中提取项目重点。")),
+                      180,
+                    )}
                 </p>
+                <div className="pc-ai-evidence">
+                  AI 已分析 {selected.aiEvidence.sessionCount} 个 Session，覆盖
+                  {selected.aiEvidence.periodCount} 个周期
+                </div>
+                {selected.keyEvents.length > 0 && (
+                  <section className="pc-key-events" aria-label="项目关键节点">
+                    <div className="pc-key-events-heading">
+                      <strong>项目关键节点</strong>
+                      <span>AI 只保留会影响项目方向的变化</span>
+                    </div>
+                    <div className="pc-key-events-list">
+                      {selected.keyEvents.slice(0, 5).map((event) => (
+                        <article
+                          className={`pc-key-event pc-key-event-${event.type}`}
+                          key={`${event.date}:${event.title}:${event.detail}`}
+                        >
+                          <time>{event.date.slice(5).replace("-", "/")}</time>
+                          <span>{keyEventTypeLabels[event.type]}</span>
+                          <div>
+                            <strong>{event.title}</strong>
+                            <p>{event.detail}</p>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                )}
               </section>
             )}
-            <section className="pc-calendar" aria-label="月历">
+            <section className="pc-calendar" aria-label="每日明细">
               <div className="pc-month-nav">
                 <h3>
                   {shownMonth.slice(0, 4)} 年 {Number(shownMonth.slice(5))} 月

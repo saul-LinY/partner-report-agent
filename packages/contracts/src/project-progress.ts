@@ -185,6 +185,20 @@ export type ProgressDay = {
     periodKey: string | null;
   }>;
 };
+export type ProjectKeyEvent = {
+  date: string;
+  type: "goal_change" | "milestone" | "decision" | "blocker" | "stage_change";
+  title: string;
+  detail: string;
+  periodKey: string | null;
+  reviewId: string | null;
+};
+export type ProjectAiEvidence = {
+  sessionCount: number;
+  periodCount: number;
+  workCardCount: number;
+  lastAnalyzedAt: string | null;
+};
 export type ProgressProject = {
   currentStatus?: ConfirmedProjectStatus;
   partnerId: string;
@@ -200,6 +214,13 @@ export type ProgressProject = {
   conflictingDays: string[];
   reviewId: string | null;
   lastUpdatedAt: string | null;
+  currentFocus: {
+    text: string;
+    periodKey: string | null;
+    reviewId: string | null;
+  } | null;
+  keyEvents: ProjectKeyEvent[];
+  aiEvidence: ProjectAiEvidence;
   latestProgress?: {
     date: string;
     summary: string;

@@ -3,6 +3,7 @@ import {
   calculateProgress,
   progressDateSchema,
   type ProgressEvent,
+  type ProjectKeyEvent,
   type ProgressProject,
 } from "@partner-report/contracts/project-progress";
 
@@ -16,6 +17,7 @@ type Card = {
   period_key: string;
   review_status: string;
   payload: Record<string, any>;
+  session_ids?: string[];
   updated_at: Date | string;
 };
 type Participation = {
@@ -37,7 +39,16 @@ export function assembleProjectProgress(input: {
   const projects = new Map<string, ProgressProject>();
   const allDays = new Map<string, Set<string>>();
   const memberDays = new Map<string, Set<string>>();
+  const projectSessionKeys = new Map<string, Set<string>>();
+  const projectPeriods = new Map<string, Set<string>>();
   const latestSourceTimes = new Map<string, number>();
+  const keyEventTypes = new Set<ProjectKeyEvent["type"]>([
+    "goal_change",
+    "milestone",
+    "decision",
+    "blocker",
+    "stage_change",
+  ]);
   const get = (row: {
     partner_id: string;
     project_id: string;
@@ -62,10 +73,20 @@ export function assembleProjectProgress(input: {
         conflictingDays: [],
         reviewId: null,
         lastUpdatedAt: null,
+        currentFocus: null,
+        keyEvents: [],
+        aiEvidence: {
+          sessionCount: 0,
+          periodCount: 0,
+          workCardCount: 0,
+          lastAnalyzedAt: null,
+        },
         latestProgress: null,
       };
       projects.set(key, project);
       allDays.set(key, new Set());
+      projectSessionKeys.set(key, new Set());
+      projectPeriods.set(key, new Set());
     }
     const updated = new Date(row.updated_at).toISOString();
     if (!project.lastUpdatedAt || project.lastUpdatedAt < updated)
@@ -125,6 +146,61 @@ export function assembleProjectProgress(input: {
   for (const card of input.cards) {
     if (card.review_status !== "approved") continue;
     const project = get(card);
+    const projectKey = `${project.partnerId}:${project.projectId}`;
+    const sessionKeys = projectSessionKeys.get(projectKey)!;
+    for (const sessionId of card.session_ids ?? []) {
+      if (typeof sessionId === "string" && sessionId)
+        sessionKeys.add(sessionId);
+    }
+    if (card.period_key) projectPeriods.get(projectKey)!.add(card.period_key);
+    project.aiEvidence.workCardCount += 1;
+    if (
+      !project.currentFocus &&
+      typeof card.payload.currentFocus === "string"
+    ) {
+      const text = card.payload.currentFocus.trim();
+      if (text)
+        project.currentFocus = {
+          text,
+          periodKey: card.period_key ?? null,
+          reviewId: card.review_id ?? null,
+        };
+    }
+    const keyEvents = Array.isArray(card.payload.keyEvents)
+      ? card.payload.keyEvents
+      : [];
+    for (const event of keyEvents) {
+      if (
+        typeof event?.date !== "string" ||
+        !progressDateSchema.safeParse(event.date).success ||
+        event.date > input.today ||
+        typeof event?.type !== "string" ||
+        !keyEventTypes.has(event.type as ProjectKeyEvent["type"]) ||
+        typeof event?.title !== "string" ||
+        typeof event?.detail !== "string"
+      )
+        continue;
+      const title = event.title.trim();
+      const detail = event.detail.trim();
+      if (!title || !detail) continue;
+      if (
+        project.keyEvents.some(
+          (existing) =>
+            existing.date === event.date &&
+            existing.title === title &&
+            existing.detail === detail,
+        )
+      )
+        continue;
+      project.keyEvents.push({
+        date: event.date,
+        type: event.type as ProjectKeyEvent["type"],
+        title,
+        detail,
+        periodKey: card.period_key ?? null,
+        reviewId: card.review_id ?? null,
+      });
+    }
     // Cards arrive newest first, so the link points to the latest approved weekly card.
     project.reviewId ??= card.review_id;
     const status = readProjectStatus(card.payload);
@@ -188,6 +264,11 @@ export function assembleProjectProgress(input: {
   for (const [key, project] of projects) {
     const days = allDays.get(key)!;
     project.contributionDays = days.size;
+    project.aiEvidence.sessionCount = projectSessionKeys.get(key)!.size;
+    project.aiEvidence.periodCount = projectPeriods.get(key)!.size;
+    project.aiEvidence.lastAnalyzedAt = project.lastUpdatedAt;
+    project.keyEvents.sort((a, b) => b.date.localeCompare(a.date));
+    project.keyEvents = project.keyEvents.slice(0, 20);
     project.days.sort((a, b) => a.date.localeCompare(b.date));
     if (project.metrics.startDate)
       project.conflictingDays = [...days]

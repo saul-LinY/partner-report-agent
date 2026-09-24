@@ -4209,6 +4209,21 @@ var aggregationGroupSchema = external_exports.object({
   status: workStatusSchema,
   projectStatus: projectStatusSchema.optional(),
   projectStatusReason: external_exports.string().trim().max(500).optional(),
+  currentFocus: external_exports.string().trim().min(1).max(240).optional(),
+  keyEvents: external_exports.array(
+    external_exports.object({
+      date: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      type: external_exports.enum([
+        "goal_change",
+        "milestone",
+        "decision",
+        "blocker",
+        "stage_change"
+      ]),
+      title: external_exports.string().trim().min(1).max(160),
+      detail: external_exports.string().trim().min(1).max(500)
+    }).strict()
+  ).max(5).default([]),
   overview: external_exports.string().trim().min(1),
   dailyProgress: external_exports.array(
     external_exports.object({

@@ -92,6 +92,14 @@ function fixture(): ProjectProgressResponse {
       },
     ].map((project) => ({
       ...project,
+      currentFocus: null,
+      keyEvents: [],
+      aiEvidence: {
+        sessionCount: 0,
+        periodCount: 0,
+        workCardCount: 0,
+        lastAnalyzedAt: null,
+      },
       latestProgress: project.days[0]
         ? {
             date: project.days[0].date,
@@ -244,7 +252,7 @@ test("shows a familiar month calendar and actual daily achievements", async ({
   page,
 }) => {
   await setup(page);
-  await expect(page.getByRole("heading", { name: "项目日历" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目进展" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "2026 年 9 月" }),
   ).toBeVisible();
@@ -376,9 +384,7 @@ test("refreshes new progress and recovers from unavailable data", async ({
   await page
     .getByRole("button", { name: "查看 陈明 的 Partner Report", exact: true })
     .click();
-  await expect(
-    page.getByText("本日完成上线验证", { exact: true }),
-  ).toBeVisible();
+  await expect(page.locator(".pc-latest")).toContainText("本日完成上线验证");
 });
 
 for (const width of [390, 768, 1440])

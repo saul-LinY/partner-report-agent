@@ -69,7 +69,13 @@ export async function projectProgressRoutes(app: FastifyInstance) {
         >`select id, display_name as name, status from partners where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId} order by display_name`;
         const cards = await tx<any[]>`
         select wi.id, wi.partner_id, wi.project_id, p.name as project_name, wi.review_id,
-          p.description as project_description, rp.period_key, wi.review_status, wi.payload, wi.updated_at
+          p.description as project_description, rp.period_key, wi.review_status, wi.payload, wi.updated_at,
+          coalesce((
+            select array_agg(distinct sf.session_id)
+            from work_item_facts wif
+            join session_facts sf on sf.id = wif.fact_id
+            where wif.work_item_id = wi.id
+          ), array[]::text[]) as session_ids
         from work_items wi join projects p on p.id = wi.project_id and p.tenant_id = wi.tenant_id and p.team_id = wi.team_id
         join report_periods rp on rp.id = wi.period_id and rp.tenant_id = wi.tenant_id and rp.team_id = wi.team_id
         where wi.tenant_id = ${actor.tenantId} and wi.team_id = ${actor.teamId}

@@ -626,6 +626,8 @@ export async function regenerateReviewWorkItem(
             projectStatus: item.payload.projectStatus,
             projectStatusReason: item.payload.projectStatusReason,
             projectStatusSource: item.payload.projectStatusSource,
+            currentFocus: item.payload.currentFocus,
+            keyEvents: item.payload.keyEvents ?? [],
             overview: item.payload.overview,
             dailyProgress: item.payload.dailyProgress ?? [],
           },

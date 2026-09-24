@@ -13,7 +13,17 @@ const card = {
   review_id: "review",
   period_key: "custom-week",
   review_status: "approved",
+  session_ids: ["session-a", "session-b"],
   payload: {
+    currentFocus: "补齐接口异常测试",
+    keyEvents: [
+      {
+        date: "2026-09-04",
+        type: "milestone",
+        title: "核心接口联调完成",
+        detail: "主要数据链路已经跑通。",
+      },
+    ],
     dailyProgress: [
       { date: "2026-09-01", summary: "已核查的周卡进展\n保留原文与换行" },
     ],
@@ -31,6 +41,22 @@ describe("project progress sources", () => {
     const result = assembleProjectProgress({ ...defaults, cards: [card] });
     expect(result.projects[0]).toMatchObject({
       projectDescription: "帮助团队汇总项目贡献并确认每周工作。",
+      currentFocus: {
+        text: "补齐接口异常测试",
+        periodKey: "custom-week",
+        reviewId: "review",
+      },
+      keyEvents: [
+        {
+          date: "2026-09-04",
+          type: "milestone",
+          title: "核心接口联调完成",
+          detail: "主要数据链路已经跑通。",
+          periodKey: "custom-week",
+          reviewId: "review",
+        },
+      ],
+      aiEvidence: { sessionCount: 2, periodCount: 1, workCardCount: 1 },
       contributionDays: 1,
       reviewId: "review",
       metrics: { startDate: null },

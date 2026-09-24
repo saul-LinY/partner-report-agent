@@ -180,6 +180,26 @@ export const aggregationGroupSchema: z.ZodTypeAny = z
     status: workStatusSchema,
     projectStatus: projectStatusSchema.optional(),
     projectStatusReason: z.string().trim().max(500).optional(),
+    currentFocus: z.string().trim().min(1).max(240).optional(),
+    keyEvents: z
+      .array(
+        z
+          .object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            type: z.enum([
+              "goal_change",
+              "milestone",
+              "decision",
+              "blocker",
+              "stage_change",
+            ]),
+            title: z.string().trim().min(1).max(160),
+            detail: z.string().trim().min(1).max(500),
+          })
+          .strict(),
+      )
+      .max(5)
+      .default([]),
     overview: z.string().trim().min(1),
     dailyProgress: z
       .array(
