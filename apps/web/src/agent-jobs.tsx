@@ -130,13 +130,13 @@ export function AgentJobsPage() {
   return (
     <div className="page admin-page agent-jobs-page">
       <WorkspaceHeader
-        title="异常任务"
+        title="异常任务处理"
         icon={AlertTriangle}
         context="定位中台或 Codex 插件的失败环节，并手动重新入队"
       >
         <Link className="button button-ghost" href="/admin">
           <ArrowLeft size={16} />
-          <span>返回总览</span>
+          <span>返回项目进展</span>
         </Link>
         <Button
           variant="secondary"

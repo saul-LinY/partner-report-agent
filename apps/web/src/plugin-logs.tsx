@@ -393,11 +393,10 @@ export function PluginMonitoringPage() {
       </div>
     );
 
-  const summary = monitoring.data?.summary;
   return (
     <div className="page admin-page plugin-logs-page">
       <WorkspaceHeader
-        title="插件监控"
+        title="插件状态与日志"
         icon={PlugZap}
         context="按插件命令或采集批次查看运行过程、返回结果和故障位置。"
       >
@@ -431,25 +430,6 @@ export function PluginMonitoringPage() {
           recoverPlugin.error
         }
       />
-
-      <div className="monitor-summary" aria-label="插件状态汇总">
-        <div>
-          <span>插件总数</span>
-          <strong>{summary?.total ?? 0}</strong>
-        </div>
-        <div className="monitor-summary-normal">
-          <span>正常运行</span>
-          <strong>{summary?.normal ?? 0}</strong>
-        </div>
-        <div className="monitor-summary-warning">
-          <span>需要关注</span>
-          <strong>{summary?.warning ?? 0}</strong>
-        </div>
-        <div className="monitor-summary-critical">
-          <span>当前异常</span>
-          <strong>{summary?.critical ?? 0}</strong>
-        </div>
-      </div>
 
       {plugins.length === 0 ? (
         <EmptyState title="还没有已连接的插件" />

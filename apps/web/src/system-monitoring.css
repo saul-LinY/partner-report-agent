@@ -104,64 +104,9 @@
   height: 15px;
   margin: 0;
 }
-.sm-overview {
-  display: grid;
-  grid-template-columns: minmax(190px, 1.5fr) repeat(3, minmax(0, 1fr));
-  border-block: 1px solid var(--line);
-  background: #fff;
-}
-.sm-overall,
-.sm-stat {
-  min-width: 0;
-  padding: 20px 24px;
-  border-right: 1px solid var(--line);
-}
-.sm-overall {
-  display: grid;
-  align-content: center;
-  gap: 7px;
-}
-.sm-kicker,
-.sm-stat > span {
+.sm-kicker {
   color: var(--muted);
   font-size: 12px;
-}
-.sm-overall strong {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 17px;
-}
-.sm-overall small {
-  color: var(--muted);
-  font-size: 11px;
-}
-.sm-stat {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 12px;
-}
-.sm-stat:last-child {
-  border-right: 0;
-}
-.sm-stat strong {
-  font-size: 27px;
-  font-weight: 650;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-.sm-tone-normal strong {
-  color: var(--accent);
-}
-.sm-tone-warning strong {
-  color: var(--warning);
-}
-.sm-tone-critical strong {
-  color: var(--danger);
-}
-.sm-tone-unknown strong {
-  color: var(--muted);
 }
 .sm-navigation {
   display: flex;
@@ -796,10 +741,6 @@
     display: inline-flex;
     margin: 12px 20px;
   }
-  .sm-overall,
-  .sm-stat {
-    padding: 18px 16px;
-  }
   .sm-header-actions {
     gap: 10px;
   }
@@ -829,33 +770,6 @@
   }
   .sm-refresh-time > span:last-child {
     max-width: 136px;
-  }
-  .sm-overview {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .sm-overall {
-    grid-column: 1 / -1;
-    grid-template-columns: auto 1fr;
-    align-items: center;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .sm-overall > strong {
-    justify-self: end;
-    font-size: 15px;
-  }
-  .sm-overall > small {
-    grid-column: 1 / -1;
-  }
-  .sm-stat {
-    padding: 16px 10px;
-    gap: 10px;
-  }
-  .sm-stat > span {
-    font-size: 11px;
-  }
-  .sm-stat strong {
-    font-size: 23px;
   }
   .sm-tabs {
     gap: 18px;
@@ -977,9 +891,6 @@
 @media (max-width: 480px) {
   .sm-select > span {
     display: none;
-  }
-  .sm-stat > span {
-    min-height: 28px;
   }
 }
 

@@ -2,11 +2,9 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarClock,
-  LayoutDashboard,
   Users,
   Settings2,
   Laptop,
-  X,
   Check,
   ClipboardCheck,
   Copy,
@@ -177,27 +175,35 @@ const projectScopeTone: Record<
 
 import {
   AdminTableScroll,
-  AdminFilterBar,
   AdminHeader,
-  AdminMetrics,
-  AdminSearch,
   AdminTabs,
   AdminWorkspace,
   AdminPagination,
 } from "./admin-workspace.js";
 
-export function AdminConsole() {
+export function TeamSettingsPage() {
+  return <AdminConsole page="settings" />;
+}
+
+export function AdminConsole({
+  page = "overview",
+}: {
+  page?: "overview" | "settings";
+}) {
+  const title = "团队管理";
   const query = useQuery({
     queryKey: ["admin-overview"],
+    enabled: page === "settings",
     queryFn: () => api<Overview>("/v1/admin/overview"),
     refetchInterval: 15_000,
   });
+  if (page === "overview") return <ProgressOverview />;
   if (!query.data)
     return (
       <div className="page management-page">
         <AdminHeader
-          title="运行总览"
-          icon={LayoutDashboard}
+          title={title}
+          icon={Settings2}
           onRefresh={() => void query.refetch()}
           refreshing={query.isFetching}
         />
@@ -205,11 +211,11 @@ export function AdminConsole() {
         {query.isLoading ? (
           <div className="aw-loading" role="status">
             <RefreshCw className="spin" size={18} />
-            加载运行总览
+            加载{title}
           </div>
         ) : (
           <EmptyState
-            title="运行数据暂不可用"
+            title={`${title}数据暂不可用`}
             action={
               <button
                 className="aw-text-button"
@@ -223,7 +229,7 @@ export function AdminConsole() {
       </div>
     );
   return (
-    <Operations
+    <TeamSettingsContent
       data={query.data}
       refreshing={query.isFetching}
       error={query.error}
@@ -231,7 +237,17 @@ export function AdminConsole() {
   );
 }
 
-function Operations({
+function ProgressOverview() {
+  return (
+    <div className="page admin-page management-page overview-page">
+      <section className="aw-view aw-operations-view">
+        <ProjectProgress />
+      </section>
+    </div>
+  );
+}
+
+function TeamSettingsContent({
   data,
   refreshing,
   error,
@@ -241,13 +257,7 @@ function Operations({
   error: unknown;
 }) {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"progress" | "people" | "schedule">(
-    "progress",
-  );
-  const [search, setSearch] = useState("");
-  const [pluginStatus, setPluginStatus] = useState("");
-  const [feishuStatus, setFeishuStatus] = useState("");
-  const [reviewStage, setReviewStage] = useState("");
+  const [tab, setTab] = useState<"people" | "schedule">("people");
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -262,35 +272,13 @@ function Operations({
       queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
       queryClient.invalidateQueries({ queryKey: ["project-progress"] }),
     ]);
-  const connected = data.connections.filter((item) =>
-    ["active", "connected"].includes(item.connectionState),
-  ).length;
-  const feishuConnected = data.connections.filter(
-    (item) => item.feishuConnectionState === "connected",
-  ).length;
-  const pendingReviews = new Set(
-    data.reviewQueue
-      .filter((item) => item.review_state === "IN_PROGRESS")
-      .map((item) => item.partner_id),
-  ).size;
-  const modelFailures = data.jobs
-    .filter((job) => job.status === "FAILED" || job.status === "RETRY_WAIT")
-    .reduce((sum, job) => sum + job.count, 0);
   const openPeriod = selectCurrentOpenPeriod(data.periods);
-  const filtered = data.connections.filter(
-    (item) =>
-      (!pluginStatus || item.connectionState === pluginStatus) &&
-      (!feishuStatus || item.feishuConnectionState === feishuStatus) &&
-      (!reviewStage || item.reviewProgress.stage === reviewStage) &&
-      [item.partnerName, item.partnerEmail, item.deviceName]
-        .filter(Boolean)
-        .join(" ")
-        .toLocaleLowerCase()
-        .includes(search.trim().toLocaleLowerCase()),
-  );
-  const pageCount = Math.max(1, Math.ceil(filtered.length / 10));
+  const pageCount = Math.max(1, Math.ceil(data.connections.length / 10));
   const currentPage = Math.min(page, pageCount);
-  const visible = filtered.slice((currentPage - 1) * 10, currentPage * 10);
+  const visible = data.connections.slice(
+    (currentPage - 1) * 10,
+    currentPage * 10,
+  );
   const selected =
     visible.find((item) => item.partnerId === selectedId) ?? visible[0];
   const partner = data.partners.find((item) => item.id === selected?.partnerId);
@@ -306,24 +294,12 @@ function Operations({
   const bindingCode = activeBindingCode ?? codes[0] ?? null;
   const recoverableInstanceId =
     selected?.connectionState === "expired" ? null : selected?.pluginInstanceId;
-  const resetSelection = () => {
-    setPage(1);
-    setSelectedId(null);
-    setDetailOpen(false);
-  };
-  const clearFilters = () => {
-    setSearch("");
-    setPluginStatus("");
-    setFeishuStatus("");
-    setReviewStage("");
-    resetSelection();
-  };
 
   return (
-    <div className="page admin-page management-page overview-page">
+    <div className="page admin-page management-page team-settings-page">
       <AdminHeader
-        title="运行总览"
-        icon={LayoutDashboard}
+        title="团队管理"
+        icon={Settings2}
         onRefresh={() => void refresh()}
         refreshing={refreshing}
         context={
@@ -344,40 +320,12 @@ function Operations({
         )}
       </AdminHeader>
       <ErrorBanner error={error} />
-      <AdminMetrics
-        items={[
-          {
-            label: "插件已连接",
-            value: `${connected} / ${data.connections.length}`,
-            tone: "success",
-            href: "/admin/plugin-logs",
-          },
-          {
-            label: "飞书已连接",
-            value: `${feishuConnected} / ${data.connections.length}`,
-            tone: "success",
-          },
-          {
-            label: "待审核人员",
-            value: pendingReviews,
-            tone: "warning",
-            href: "/admin/reviews",
-          },
-          {
-            label: "中台任务异常",
-            value: modelFailures,
-            tone: modelFailures ? "danger" : "",
-            href: "/admin/jobs",
-          },
-        ]}
-      />
       <section className="aw-view aw-operations-view">
         <AdminTabs
-          label="运行总览视图"
+          label="团队管理视图"
           value={tab}
           onChange={setTab}
           items={[
-            { value: "progress", label: "项目进展", icon: LayoutDashboard },
             {
               value: "people",
               label: "人员管理",
@@ -388,90 +336,11 @@ function Operations({
           ]}
         />
         <div
-          id="aw-panel-progress"
-          role="tabpanel"
-          aria-labelledby="aw-tab-progress"
-          hidden={tab !== "progress"}
-        >
-          {tab === "progress" && <ProjectProgress />}
-        </div>
-        <div
           id="aw-panel-people"
           role="tabpanel"
           aria-labelledby="aw-tab-people"
           hidden={tab !== "people"}
         >
-          <AdminFilterBar label="人员筛选">
-            <AdminSearch
-              label="搜索人员"
-              placeholder="搜索姓名、邮箱或设备"
-              value={search}
-              onChange={(value) => {
-                setSearch(value);
-                resetSelection();
-              }}
-            />
-            <label className="aw-filter">
-              <span>插件</span>
-              <select
-                aria-label="插件连接状态"
-                value={pluginStatus}
-                onChange={(event) => {
-                  setPluginStatus(event.target.value);
-                  resetSelection();
-                }}
-              >
-                <option value="">全部状态</option>
-                {Object.entries(statusLabel).map(([value, label]) => (
-                  <option value={value} key={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="aw-filter">
-              <span>飞书</span>
-              <select
-                aria-label="飞书连接状态"
-                value={feishuStatus}
-                onChange={(event) => {
-                  setFeishuStatus(event.target.value);
-                  resetSelection();
-                }}
-              >
-                <option value="">全部状态</option>
-                {Object.entries(feishuStatusLabel).map(([value, label]) => (
-                  <option value={value} key={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="aw-filter">
-              <span>审核</span>
-              <select
-                aria-label="人员审核进度"
-                value={reviewStage}
-                onChange={(event) => {
-                  setReviewStage(event.target.value);
-                  resetSelection();
-                }}
-              >
-                <option value="">全部进度</option>
-                {Object.entries(reviewStageLabel).map(([value, label]) => (
-                  <option value={value} key={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {(search || pluginStatus || feishuStatus || reviewStage) && (
-              <button className="aw-text-button" onClick={clearFilters}>
-                <X size={14} />
-                重置筛选
-              </button>
-            )}
-          </AdminFilterBar>
           <AdminWorkspace
             label="人员详情"
             selectionKey={selected?.partnerId}
@@ -481,19 +350,11 @@ function Operations({
               <>
                 <div className="aw-section-heading">
                   <h2>
-                    人员连接状态 <span>{filtered.length}</span>
+                    人员连接状态 <span>{data.connections.length}</span>
                   </h2>
                   <span>每 15 秒更新</span>
                 </div>
-                <AdminTableScroll
-                  resetKey={JSON.stringify([
-                    currentPage,
-                    search,
-                    pluginStatus,
-                    feishuStatus,
-                    reviewStage,
-                  ])}
-                >
+                <AdminTableScroll resetKey={String(currentPage)}>
                   <table className="aw-table aw-person-table">
                     <thead>
                       <tr>
@@ -568,29 +429,11 @@ function Operations({
                     </tbody>
                   </table>
                 </AdminTableScroll>
-                {!visible.length && (
-                  <EmptyState
-                    title={
-                      data.connections.length
-                        ? "没有符合条件的人员"
-                        : "还没有人员"
-                    }
-                    action={
-                      data.connections.length ? (
-                        <button
-                          className="aw-text-button"
-                          onClick={clearFilters}
-                        >
-                          重置筛选
-                        </button>
-                      ) : undefined
-                    }
-                  />
-                )}
+                {!visible.length && <EmptyState title="还没有人员" />}
                 <AdminPagination
                   page={currentPage}
                   pageCount={pageCount}
-                  total={filtered.length}
+                  total={data.connections.length}
                   onChange={(value) => {
                     setPage(value);
                     setSelectedId(null);

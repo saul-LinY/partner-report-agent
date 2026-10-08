@@ -1,9 +1,5 @@
 import { z } from "zod";
-import {
-  projectStatusSchema,
-  projectStatusLabels,
-  type ProjectStatus,
-} from "@partner-report/contracts/project-status";
+import { projectStatusSchema } from "@partner-report/contracts/project-status";
 
 const opaqueIdSchema = z.string().trim().min(1).max(128);
 const baseVersionSchema = z.number().int().positive();
@@ -881,38 +877,6 @@ function renderReviewPage(
           markdown(
             `**处理失败，请重试**\n${safeMarkdownText(input.actionError, 1_200)}`,
             "review_action_error",
-          ),
-        ]
-      : []),
-    ...(input.item.projectStatus
-      ? [
-          notation(
-            "当前项目状态 · 已预选，可直接通过确认",
-            "project_status_hint",
-          ),
-          ...(
-            [
-              ["research", "development"],
-              ["delivery", "paused"],
-            ] as ProjectStatus[][]
-          ).map((row) =>
-            buttonRow(
-              row.map((value) => ({
-                ...callbackButton({
-                  elementId: `project_status_${value}`,
-                  label: `${input.item.projectStatus === value ? "✓ " : ""}${projectStatusLabels[value]}`,
-                  type:
-                    input.item.projectStatus === value ? "primary" : "default",
-                  value: {
-                    ...baseValue,
-                    action: "review_project_status",
-                    projectStatus: value,
-                    page,
-                  },
-                }),
-                size: "small",
-              })),
-            ),
           ),
         ]
       : []),

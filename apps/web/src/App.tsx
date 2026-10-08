@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut } from "lucide-react";
+import { LogOut, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Link, Redirect, Route, Switch, useLocation } from "wouter";
 import { api } from "./api.js";
 import { ErrorBanner } from "./components.js";
 import { Login } from "./auth-pages.js";
-import { AdminConsole } from "./admin.js";
+import { AdminConsole, TeamSettingsPage } from "./admin.js";
 import { ReviewPage } from "./review.js";
 import { FactPreviewPage } from "./facts.js";
 import { TeamReportPage } from "./team-reports.js";
@@ -56,6 +57,28 @@ export function App() {
 }
 
 function AuthenticatedApp({ me }: { me: Me }) {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return (
+        window.localStorage.getItem("partner-report-sidebar-collapsed") ===
+        "true"
+      );
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = () => {
+    const collapsed = !sidebarCollapsed;
+    setSidebarCollapsed(collapsed);
+    try {
+      window.localStorage.setItem(
+        "partner-report-sidebar-collapsed",
+        String(collapsed),
+      );
+    } catch {
+      // Keep the toggle usable when browser storage is unavailable.
+    }
+  };
   const [location, navigate] = useLocation();
   const queryClient = useQueryClient();
   const logout = useMutation({
@@ -68,16 +91,35 @@ function AuthenticatedApp({ me }: { me: Me }) {
   });
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">PR</div>
-          <div>
-            <strong>Partner Report</strong>
-            <span>{me.teamName}</span>
+        <div className="sidebar-heading">
+          <div className="brand">
+            <div className="brand-mark" title="Partner Report">
+              PR
+            </div>
+            <div className="brand-copy">
+              <strong>Partner Report</strong>
+              <span>{me.teamName}</span>
+            </div>
           </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            aria-label={sidebarCollapsed ? "展开导航栏" : "收拢导航栏"}
+            title={sidebarCollapsed ? "展开导航栏" : "收拢导航栏"}
+            aria-expanded={!sidebarCollapsed}
+            aria-controls="main-navigation"
+            onClick={toggleSidebar}
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen size={18} />
+            ) : (
+              <PanelLeftClose size={18} />
+            )}
+          </button>
         </div>
-        <nav aria-label="主导航">
+        <nav id="main-navigation" aria-label="主导航">
           {navigationGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               <span className="nav-group-label">{group.label}</span>
@@ -89,10 +131,12 @@ function AuthenticatedApp({ me }: { me: Me }) {
                       key={href}
                       className={active ? "active" : ""}
                       aria-current={active ? "page" : undefined}
+                      aria-label={label}
+                      title={label}
                       href={href}
                     >
                       <Icon size={18} />
-                      {label}
+                      <span className="nav-item-label">{label}</span>
                     </Link>
                   );
                 })}
@@ -140,6 +184,9 @@ function AuthenticatedApp({ me }: { me: Me }) {
           </Route>
           <Route path="/admin/reports">
             <ReportArchivePage />
+          </Route>
+          <Route path="/admin/team-settings">
+            <TeamSettingsPage />
           </Route>
           <Route path="/admin">
             <AdminConsole />

@@ -579,64 +579,48 @@ describe("Feishu JSON 2.0 cards", () => {
   });
 });
 
-describe("project status selection", () => {
-  it("keeps four compact buttons in two rows, on every page with the current version", () => {
-    const input = {
-      deliveryId: ids.deliveryId,
-      aggregateId: ids.aggregateId,
-      baseVersion: 7,
-      progress: { current: 1, total: 1, approved: 0, excluded: 0 },
-      item: {
-        id: ids.itemId,
-        title: "项目",
-        status: "in_progress",
-        projectStatus: "delivery" as const,
-        overview: "本周进展与待处理事项。".repeat(1800),
-        dailyProgress: [],
-      },
-    };
-    const card = renderReviewCard({ ...input, page: 1 });
-    const values = callbackValues(card).filter(
-      (value) => value.action === "review_project_status",
-    );
-    expect(values).toHaveLength(4);
-    expect(values.map((value) => value.projectStatus)).toEqual([
-      "research",
-      "development",
-      "delivery",
-      "paused",
-    ]);
-    expect(
-      values.every(
-        (value) =>
-          value.baseVersion === 7 &&
-          value.page === 1 &&
-          value.itemId === ids.itemId,
-      ),
-    ).toBe(true);
-    expect(findByElementId(card, "project_status_delivery")).toMatchObject({
-      type: "primary",
-      size: "small",
-      text: { content: "✓ 交付中" },
-    });
-    expect(findByElementId(card, "project_status_paused")).toMatchObject({
-      type: "default",
-    });
-    const rows = card.body.elements.filter(
-      (element: any) =>
-        element.tag === "column_set" &&
-        JSON.stringify(element).includes("review_project_status"),
-    );
-    expect(rows).toHaveLength(2);
-    expect(rows.every((row: any) => row.columns.length === 2)).toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(card))).toBeLessThan(
-      FEISHU_CARD_MAX_JSON_BYTES,
-    );
-    expect(() =>
-      feishuActionValueSchema.parse({
-        ...values[0],
-        projectStatus: "completed",
-      }),
-    ).toThrow();
-  });
+describe("work content review", () => {
+  it.each([0, 1])(
+    "omits project status selection on page %s while keeping review actions",
+    (page) => {
+      const card = renderReviewCard({
+        deliveryId: ids.deliveryId,
+        aggregateId: ids.aggregateId,
+        baseVersion: 7,
+        progress: { current: 1, total: 1, approved: 0, excluded: 0 },
+        item: {
+          id: ids.itemId,
+          title: "项目",
+          status: "in_progress",
+          projectStatus: "delivery",
+          overview: "本周进展与待处理事项。".repeat(1800),
+          dailyProgress: [],
+        },
+        page,
+      });
+      const values = callbackValues(card);
+      expect(
+        values.filter((value) => value.action === "review_project_status"),
+      ).toHaveLength(0);
+      expect(JSON.stringify(card)).not.toContain("当前项目状态");
+      expect(values).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            action: "review_approve",
+            baseVersion: 7,
+            itemId: ids.itemId,
+          }),
+          expect.objectContaining({
+            action: "review_exclude",
+            baseVersion: 7,
+            itemId: ids.itemId,
+          }),
+        ]),
+      );
+      expect(findByElementId(card, "review_regen_input")).toBeDefined();
+      expect(Buffer.byteLength(JSON.stringify(card))).toBeLessThan(
+        FEISHU_CARD_MAX_JSON_BYTES,
+      );
+    },
+  );
 });

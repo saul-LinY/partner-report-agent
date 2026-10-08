@@ -14,7 +14,6 @@ import {
   AdminTableScroll,
   AdminFilterBar,
   AdminHeader,
-  AdminMetrics,
   AdminWorkspace,
   AdminPagination,
 } from "./admin-workspace.js";
@@ -117,7 +116,7 @@ export function FactPreviewPage() {
   return (
     <div className="page admin-page management-page facts-page">
       <AdminHeader
-        title="贡献预览"
+        title="贡献记录"
         icon={TableProperties}
         context="Session 项目贡献"
         refreshing={facts.isFetching || overview.isFetching}
@@ -128,33 +127,6 @@ export function FactPreviewPage() {
       />
       <ErrorBanner error={overview.error} />
       <ErrorBanner error={facts.error} />
-      <AdminMetrics
-        items={[
-          { label: "匹配贡献", value: ready ? facts.data.total : "--" },
-          { label: "本页贡献", value: ready ? items.length : "--" },
-          {
-            label: "本页项目",
-            value: ready
-              ? new Set(
-                  items.map(
-                    (item) => item.payload.projectId ?? projectName(item),
-                  ),
-                ).size
-              : "--",
-            tone: "success",
-          },
-          {
-            label: "本页含阻塞",
-            value: ready
-              ? items.filter(
-                  (item) =>
-                    contributionValues(item.payload, "blocker").length > 0,
-                ).length
-              : "--",
-            tone: "warning",
-          },
-        ]}
-      />
       <section className="aw-view">
         <AdminFilterBar label="Session 贡献筛选">
           <label className="aw-filter">

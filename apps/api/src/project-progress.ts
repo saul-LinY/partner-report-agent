@@ -54,6 +54,7 @@ export function assembleProjectProgress(input: {
     project_id: string;
     project_name: string;
     project_description?: string | null;
+    payload?: Record<string, any>;
     updated_at: Date | string;
   }) => {
     const key = `${row.partner_id}:${row.project_id}`;
@@ -63,12 +64,19 @@ export function assembleProjectProgress(input: {
         partnerId: row.partner_id,
         projectId: row.project_id,
         projectName: row.project_name,
-        projectDescription: row.project_description?.trim() || null,
+        projectDescription:
+          (typeof row.payload?.projectDescription === "string"
+            ? row.payload.projectDescription.trim()
+            : "") ||
+          row.project_description?.trim() ||
+          null,
         version: 0,
         events: [],
         metrics: calculateProgress([], input.today),
         days: [],
         contributionDays: 0,
+        firstContributionDate: null,
+        lastContributionDate: null,
         undatedCount: 0,
         conflictingDays: [],
         reviewId: null,
@@ -264,11 +272,13 @@ export function assembleProjectProgress(input: {
   for (const [key, project] of projects) {
     const days = allDays.get(key)!;
     project.contributionDays = days.size;
+    const sortedDays = [...days].sort();
+    project.firstContributionDate = sortedDays[0] ?? null;
+    project.lastContributionDate = sortedDays.at(-1) ?? null;
     project.aiEvidence.sessionCount = projectSessionKeys.get(key)!.size;
     project.aiEvidence.periodCount = projectPeriods.get(key)!.size;
     project.aiEvidence.lastAnalyzedAt = project.lastUpdatedAt;
     project.keyEvents.sort((a, b) => b.date.localeCompare(a.date));
-    project.keyEvents = project.keyEvents.slice(0, 20);
     project.days.sort((a, b) => a.date.localeCompare(b.date));
     if (project.metrics.startDate)
       project.conflictingDays = [...days]

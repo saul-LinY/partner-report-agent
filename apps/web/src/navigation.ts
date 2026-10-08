@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ListTodo,
   PlugZap,
+  Settings2,
   TableProperties,
 } from "lucide-react";
 
@@ -12,23 +13,30 @@ import {
 // with the existing router and API.
 export const navigationGroups = [
   {
-    label: "团队运营",
-    items: [{ label: "运行总览", href: "/admin", icon: LayoutDashboard }],
-  },
-  {
-    label: "贡献与报告",
+    label: "进展与成果",
     items: [
-      { label: "贡献预览", href: "/admin/facts", icon: TableProperties },
-      { label: "审核队列", href: "/admin/reviews", icon: ClipboardCheck },
-      { label: "报告归档", href: "/admin/reports", icon: FileStack },
+      { label: "项目进展", href: "/admin", icon: LayoutDashboard },
+      { label: "周报与工作卡", href: "/admin/reports", icon: FileStack },
     ],
   },
   {
-    label: "系统运维",
+    label: "采集与管理",
     items: [
-      { label: "插件监控", href: "/admin/plugin-logs", icon: PlugZap },
-      { label: "异常任务", href: "/admin/jobs", icon: ListTodo },
-      { label: "系统监控", href: "/admin/system-monitoring", icon: HeartPulse },
+      { label: "贡献记录", href: "/admin/facts", icon: TableProperties },
+      { label: "工作卡审核", href: "/admin/reviews", icon: ClipboardCheck },
+      { label: "团队管理", href: "/admin/team-settings", icon: Settings2 },
+    ],
+  },
+  {
+    label: "监控与排障",
+    items: [
+      { label: "插件状态与日志", href: "/admin/plugin-logs", icon: PlugZap },
+      { label: "异常任务处理", href: "/admin/jobs", icon: ListTodo },
+      {
+        label: "系统状态与日志",
+        href: "/admin/system-monitoring",
+        icon: HeartPulse,
+      },
     ],
   },
 ];

@@ -162,7 +162,7 @@ function fixture() {
 
 async function setup(
   page: Page,
-  path = "/admin",
+  path = "/admin/team-settings",
   options: { fail?: string[]; empty?: boolean } = {},
 ) {
   const data = fixture();
@@ -371,12 +371,66 @@ async function setup(
   });
   await page.goto(path);
   await expect(page.locator(".management-page")).toBeVisible();
-  if (path === "/admin" && !options.fail?.includes("/v1/admin/overview"))
-    await page.getByRole("tab", { name: "人员管理" }).click();
   return { data, calls };
 }
 
-test("overview filters, pagination and member selection", async ({ page }) => {
+test("team settings appears after reviews and supports direct entry", async ({
+  page,
+}) => {
+  const { calls } = await setup(page);
+  const navigation = page.getByRole("navigation", { name: "主导航" });
+  const teamGroup = navigation
+    .locator(".nav-group")
+    .filter({ hasText: "进展与成果" });
+  await expect(teamGroup.getByRole("link")).toHaveText([
+    "项目进展",
+    "周报与工作卡",
+  ]);
+  const contributionGroup = navigation
+    .locator(".nav-group")
+    .filter({ hasText: "采集与管理" });
+  await expect(contributionGroup.getByRole("link")).toHaveText([
+    "贡献记录",
+    "工作卡审核",
+    "团队管理",
+  ]);
+  await expect(
+    navigation.getByRole("link", { name: "团队管理", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.getByRole("tab", { name: "人员管理" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("tab", { name: "生成设置" })).toBeVisible();
+  expect(calls.some((call) => call.path === "/v1/admin/project-progress")).toBe(
+    false,
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "团队管理", exact: true }),
+  ).toBeVisible();
+  await navigation.getByRole("link", { name: "项目进展", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin$/);
+  await expect(
+    page.getByRole("heading", { name: "项目进展", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "新增人员" })).toHaveCount(0);
+  await expect(
+    navigation.getByRole("link", { name: "项目进展", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    navigation.getByRole("link", { name: "团队管理", exact: true }),
+  ).not.toHaveAttribute("aria-current");
+  await navigation.getByRole("link", { name: "团队管理", exact: true }).click();
+  await page.getByRole("tab", { name: "生成设置" }).click();
+  await expect(
+    page.getByRole("button", { name: "保存生成时间" }),
+  ).toBeVisible();
+});
+
+test("team settings pagination and member selection", async ({ page }) => {
   await setup(page);
   await expect(page.locator(".aw-person-table tbody tr")).toHaveCount(10);
   await page.locator(".aw-table-scroll").evaluate((element) => {
@@ -389,17 +443,14 @@ test("overview filters, pagination and member selection", async ({ page }) => {
       .locator(".aw-table-scroll")
       .evaluate((element) => element.scrollTop),
   ).toBe(0);
-  await page.getByRole("textbox", { name: "搜索人员" }).fill("林安");
-  await expect(page.locator(".aw-person-table tbody tr")).toHaveCount(1);
+  await page.getByTitle("上一页", { exact: true }).click();
+  await expect(page.locator(".aw-person-table tbody tr")).toHaveCount(10);
+  await page
+    .getByRole("button", { name: "查看 林安 的详情", exact: true })
+    .click();
   await expect(page.getByRole("region", { name: "人员详情" })).toContainText(
     "开发设备 1",
   );
-  await page.getByRole("button", { name: "重置筛选" }).click();
-  await page.getByLabel("插件连接状态").selectOption("failed");
-  await expect(page.locator(".aw-person-table tbody tr")).toHaveCount(2);
-  await page.getByLabel("飞书连接状态").selectOption("connected");
-  await expect(page.getByText("没有符合条件的人员")).toBeVisible();
-  await expect(page.getByText("暂无人员详情")).toBeVisible();
 });
 
 test("create, edit and delete retain their original API contracts", async ({
@@ -678,35 +729,39 @@ test("facts never show prior filter content while the next request is pending", 
   await expect(page.locator(".aw-fact-table tbody tr")).toHaveCount(5);
 });
 
-test("archive filters, waiting reports, work card snapshots and report versions", async ({
+test("archive pagination, waiting reports, work card snapshots and report versions", async ({
   page,
   context,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await setup(page, "/admin/reports");
+  await expect(page.locator(".reports-page .aw-filter-bar")).toHaveCount(0);
   await expect(page.locator(".aw-archive-table tbody tr")).toHaveCount(12);
   await page.getByTitle("下一页", { exact: true }).click();
   await expect(page.locator(".aw-archive-table tbody tr")).toHaveCount(2);
-  await page.getByLabel("周报归档状态").selectOption("waiting");
-  await expect(page.locator(".aw-archive-table tbody tr")).toHaveCount(5);
-  await expect(page.getByRole("link", { name: "查看报告" })).toHaveCount(0);
+  const waitingReport = page.locator(".aw-archive-table tbody tr").filter({
+    hasText: "等待周报",
+  });
+  await expect(waitingReport).toHaveCount(1);
+  await expect(
+    waitingReport.getByRole("link", { name: "查看报告" }),
+  ).toHaveCount(0);
   await page.getByRole("tab", { name: "项目工作卡" }).click();
-  await page.getByLabel("归档周期", { exact: true }).selectOption("period-1");
-  await page.getByLabel("归档人员", { exact: true }).selectOption("partner-1");
-  await page.getByLabel("工作卡确认状态").selectOption("excluded");
-  await expect(page.locator(".aw-archive-card")).toHaveCount(1);
-  await page.locator(".aw-archive-card summary").click();
+  await expect(page.locator(".aw-archive-card")).toHaveCount(12);
+  await page
+    .locator(".aw-archive-card")
+    .filter({ hasText: "项目交付 1-1" })
+    .locator("summary")
+    .click();
   await expect(
     page.getByText("归档完整摘要 1-1：完成接口优化、权限边界验证与上线检查。"),
   ).toBeVisible();
   await expect(page.getByText("work-1-1", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "重置筛选" }).click();
-  await page.getByLabel("归档周期", { exact: true }).selectOption("period-0");
   await expect(
     page.getByText("没有已确认的项目工作卡", { exact: true }),
   ).toBeVisible();
   await page.getByRole("tab", { name: "团队周报" }).click();
-  await page.getByRole("link", { name: "查看报告" }).click();
+  await page.getByRole("link", { name: "查看报告" }).first().click();
   await expect(page).toHaveURL(/\/admin\/team-reports\/report-0$/);
   await expect(
     page.getByRole("heading", { name: "团队报告版本 2" }),
@@ -724,10 +779,10 @@ test("archive filters, waiting reports, work card snapshots and report versions"
 });
 
 for (const [path, title, endpoint] of [
-  ["/admin", "运行总览", "/v1/admin/overview"],
-  ["/admin/reviews", "审核队列", "/v1/admin/overview"],
-  ["/admin/facts", "贡献预览", "/v1/admin/session-facts"],
-  ["/admin/reports", "报告归档", "/v1/admin/report-archive"],
+  ["/admin/team-settings", "团队管理", "/v1/admin/overview"],
+  ["/admin/reviews", "工作卡审核", "/v1/admin/overview"],
+  ["/admin/facts", "贡献记录", "/v1/admin/session-facts"],
+  ["/admin/reports", "周报与工作卡", "/v1/admin/report-archive"],
 ]) {
   test(`${title} handles empty data and recoverable request failures`, async ({
     page,
@@ -762,10 +817,10 @@ for (const width of [320, 390, 768, 1440, 1920]) {
         ),
       ).toBeTruthy();
     for (const [name, slug] of [
-      ["运行总览", "overview"],
-      ["审核队列", "reviews"],
-      ["贡献预览", "facts"],
-      ["报告归档", "archive"],
+      ["团队管理", "settings"],
+      ["工作卡审核", "reviews"],
+      ["贡献记录", "facts"],
+      ["周报与工作卡", "archive"],
     ]) {
       await page
         .locator(".sidebar nav")
@@ -774,19 +829,17 @@ for (const width of [320, 390, 768, 1440, 1920]) {
       await expect(
         page.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
-      if (slug === "overview")
-        await page.getByRole("tab", { name: "人员管理" }).click();
       await expect(page.locator(".aw-table tbody tr").first()).toBeVisible();
       await noOverflow();
       await page.screenshot({
         path: testInfo.outputPath(`${slug}-${width}.png`),
         fullPage: true,
       });
-      if (slug === "overview" || slug === "facts") {
+      if (slug === "settings" || slug === "facts") {
         await page.locator(".aw-record-button").first().click();
         await expect(
           page.getByRole("region", {
-            name: slug === "overview" ? "人员详情" : "贡献详情",
+            name: slug === "settings" ? "人员详情" : "贡献详情",
           }),
         ).toBeVisible();
         await noOverflow();

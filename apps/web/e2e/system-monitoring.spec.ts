@@ -267,8 +267,11 @@ async function setup(
   });
   await page.goto("/admin/system-monitoring");
   await expect(
-    page.getByRole("heading", { name: "系统监控", exact: true }),
+    page.getByRole("heading", { name: "系统状态与日志", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("region", { name: "系统状态汇总" })).toHaveCount(
+    0,
+  );
   return { calls, analyses };
 }
 
@@ -383,7 +386,12 @@ test("health failures do not block log review and manual refresh recovers", asyn
   options.failHealth = false;
   await page.getByTitle("刷新系统状态", { exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByText("存在异常", { exact: true })).toBeVisible();
+  await expect(page.locator(".sm-refresh-time")).toContainText("更新于");
+  await page.getByRole("tab", { name: "模块健康" }).click();
+  await expect(page.locator(".system-component-row")).toHaveCount(5);
+  await expect(page.locator(".system-component-critical")).toContainText(
+    "内容生成",
+  );
 });
 
 test("empty, unknown and log failure states are explicit and recoverable", async ({
@@ -398,7 +406,9 @@ test("empty, unknown and log failure states are explicit and recoverable", async
   await page.getByRole("tab", { name: "运行日志", exact: true }).click();
   await page.getByTitle("刷新系统状态", { exact: true }).click();
   await page.clock.fastForward(2000);
-  await expect(page.getByText("状态未知", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "运行日志", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("alert")).toContainText("日志查询失败");
   options.failLogs = false;
   await page.getByTitle("刷新中台日志", { exact: true }).click();

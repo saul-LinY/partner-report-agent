@@ -14,6 +14,78 @@
   padding: 0 8px 26px;
 }
 
+.sidebar-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 26px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.app-shell .sidebar-heading .brand {
+  padding: 0;
+  min-width: 0;
+  flex: 1;
+}
+.sidebar-heading .brand-copy {
+  min-width: 0;
+}
+.sidebar-heading .brand-copy :is(strong, span) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #465159;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sidebar-text);
+  cursor: pointer;
+}
+.sidebar-toggle:hover {
+  background: #394249;
+  color: white;
+}
+.sidebar-toggle:focus-visible {
+  outline: 2px solid #71b5a6;
+  outline-offset: 3px;
+}
+
+@media (min-width: 761px) {
+  .app-shell.sidebar-collapsed {
+    --workspace-sidebar-width: 72px;
+  }
+  .app-shell.sidebar-collapsed .sidebar {
+    padding-inline: 12px;
+  }
+  .sidebar-collapsed .sidebar-heading {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sidebar-collapsed
+    :is(.brand-copy, .nav-group-label, .nav-item-label, .sidebar-user > div) {
+    display: none;
+  }
+  .app-shell.sidebar-collapsed .sidebar nav a {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .sidebar-collapsed .nav-group + .nav-group {
+    border-top: 1px solid #3a4146;
+    padding-top: 16px;
+  }
+  .app-shell.sidebar-collapsed .sidebar-user {
+    justify-content: center;
+    padding-inline: 0;
+  }
+}
+
 .app-shell .sidebar nav {
   display: flex;
   flex-direction: column;
@@ -113,23 +185,20 @@
 }
 
 /* Summary first; each view then owns its filters, records and inspection area. */
-.app-shell :is(.aw-metrics, .monitor-summary, .sm-overview) {
+.app-shell .aw-metrics {
   margin: 0 0 20px;
   border: 1px solid var(--line);
   border-radius: var(--workspace-radius);
   background: var(--surface);
 }
-.app-shell :is(.aw-metric, .monitor-summary > div, .sm-overall, .sm-stat) {
+.app-shell .aw-metric {
   padding: 14px 20px;
 }
-.app-shell :is(.aw-metric strong, .monitor-summary strong, .sm-stat strong) {
+.app-shell .aw-metric strong {
   margin-top: 8px;
   font-size: 24px;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
-}
-.app-shell .sm-stat {
-  gap: 0;
 }
 .app-shell .aw-view {
   min-width: 0;
@@ -372,10 +441,29 @@
 }
 
 /* Project overview: compact calendar, project selection and stage history. */
+.app-shell .overview-page {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding-bottom: 24px;
+}
+.app-shell .overview-page > .aw-operations-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
 .app-shell .pc-dashboard {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 20px;
 }
 .app-shell .pc-toolbar {
+  align-items: flex-start;
+  flex-direction: row;
+  flex-shrink: 0;
   margin-bottom: 20px;
   gap: 16px;
 }
@@ -383,20 +471,49 @@
   font-size: 16px;
 }
 .app-shell .pc-workspace {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
   grid-template-columns: 230px minmax(0, 1fr);
   gap: 20px;
 }
-.app-shell .pc-projects {
+.app-shell .pc-people {
+  display: flex;
+  flex-direction: column;
   padding: 0;
   min-width: 0;
+  min-height: 0;
 }
-.app-shell .pc-project-list {
-  max-height: 720px;
+.app-shell .pc-member-list {
+  min-height: 0;
+  max-height: 100%;
+  align-content: start;
+  overscroll-behavior-y: contain;
   gap: 8px;
 }
-.app-shell .pc-project {
-  padding: 12px;
-  gap: 8px;
+.app-shell .pc-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.app-shell .pc-project-picker {
+  flex-shrink: 0;
+  max-height: 30%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 2px;
+}
+.app-shell .pc-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  border-radius: 10px;
+}
+.app-shell .pc-content:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .app-shell .pc-day {
   min-height: 108px;
@@ -826,9 +943,10 @@
   }
   .app-shell .pc-workspace {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
-  .app-shell .pc-project-list {
-    max-height: 300px;
+  .app-shell .pc-member-list {
+    max-height: min(160px, 20dvh);
   }
   .app-shell .agent-jobs-layout,
   .app-shell .review-layout {
@@ -913,6 +1031,13 @@
     padding: 0;
     align-self: flex-start;
   }
+  .sidebar-heading {
+    width: 100%;
+    margin-bottom: 0;
+  }
+  .app-shell.sidebar-collapsed .sidebar :is(nav, .sidebar-user) {
+    display: none;
+  }
   .app-shell .brand span {
     display: block;
   }
@@ -963,6 +1088,13 @@
   .app-shell .page {
     padding: 20px 12px 36px;
   }
+  .app-shell .overview-page {
+    height: auto;
+  }
+  .app-shell .overview-page > .aw-operations-view {
+    flex: none;
+    height: calc(100dvh - 32px);
+  }
   .app-shell .aw-header {
     align-items: flex-start;
     gap: 12px;
@@ -975,11 +1107,8 @@
   .app-shell .aw-header-actions {
     flex-wrap: wrap;
   }
-  .app-shell :is(.aw-metric, .monitor-summary > div, .sm-overall, .sm-stat) {
+  .app-shell .aw-metric {
     padding: 14px;
-  }
-  .app-shell .sm-overview {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .app-shell :is(.aw-tabs, .sm-navigation) {
     padding-inline: 12px;

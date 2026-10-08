@@ -202,6 +202,67 @@ async function noOverflow(page: Page) {
   ).toBe(true);
 }
 
+for (const width of [390, 768, 1440]) {
+  test(`navigation collapses, stays usable and remembers the choice at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await setup(page, "/admin/jobs");
+    const sidebar = page.locator(".sidebar");
+    const main = page.locator(".main-content");
+    const navigation = page.getByRole("navigation", { name: "主导航" });
+    const expandedSidebar = await sidebar.boundingBox();
+    const expandedMain = await main.boundingBox();
+    await page.getByRole("button", { name: "收拢导航栏" }).click();
+    const expand = page.getByRole("button", { name: "展开导航栏" });
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    if (width > 760) {
+      expect((await sidebar.boundingBox())!.width).toBeLessThan(
+        expandedSidebar!.width,
+      );
+      expect((await main.boundingBox())!.width).toBeGreaterThan(
+        expandedMain!.width,
+      );
+      await expect(navigation.getByRole("link")).toHaveCount(8);
+      const plugins = navigation.getByRole("link", {
+        name: "插件状态与日志",
+        exact: true,
+      });
+      await expect(plugins).toHaveAttribute("title", "插件状态与日志");
+      await plugins.click();
+      await expect(plugins).toHaveAttribute("aria-current", "page");
+      await expect(expand).toBeVisible();
+    } else {
+      await expect(navigation).toBeHidden();
+      expect((await sidebar.boundingBox())!.height).toBeLessThan(
+        expandedSidebar!.height,
+      );
+    }
+    await noOverflow(page);
+    await page.reload();
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    await page.screenshot({
+      path: testInfo.outputPath(`navigation-collapsed-${width}.png`),
+    });
+    await expand.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "收拢导航栏" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      navigation.getByRole("link", { name: "项目进展", exact: true }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(
+      page.getByRole("button", { name: "收拢导航栏" }),
+    ).toBeVisible();
+    await noOverflow(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`navigation-expanded-${width}.png`),
+    });
+  });
+}
+
 test("review decisions stay available while reading a long work card", async ({
   page,
 }, testInfo) => {
@@ -229,9 +290,9 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
     page.on("pageerror", (error) => errors.push(error.message));
     const calls = await setup(page, "/admin/plugin-logs");
     const navigation = page.getByRole("navigation", { name: "主导航" });
-    await expect(navigation.getByRole("link")).toHaveCount(7);
+    await expect(navigation.getByRole("link")).toHaveCount(8);
     await expect(
-      navigation.getByRole("link", { name: "插件监控" }),
+      navigation.getByRole("link", { name: "插件状态与日志" }),
     ).toHaveAttribute("aria-current", "page");
     await expect(
       page.getByText("上传超时，贡献已保留", { exact: true }),
@@ -251,9 +312,9 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
       page.getByText("上传超时，贡献已保留", { exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "模型分析", exact: true }).click();
-    expect(
-      calls.find((c) => c.path.endsWith("/plugin-logs/analyze"))?.body,
-    ).toEqual({ pluginInstanceId: "plugin-7", executionId: "execution-1" });
+    await expect
+      .poll(() => calls.find((c) => c.path.endsWith("/plugin-logs/analyze"))?.body)
+      .toEqual({ pluginInstanceId: "plugin-7", executionId: "execution-1" });
     await page.getByRole("button", { name: "历史日志", exact: true }).click();
     await expect(page.getByLabel("历史日志日期")).toBeVisible();
     await page.getByRole("button", { name: "权限备份", exact: true }).click();
@@ -277,16 +338,16 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
       .toBe(true);
 
     await navigation
-      .getByRole("link", { name: "异常任务", exact: true })
+      .getByRole("link", { name: "异常任务处理", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "异常任务", exact: true }),
+      page.getByRole("heading", { name: "异常任务处理", exact: true }),
     ).toBeVisible();
     await expect(
-      navigation.getByRole("link", { name: "异常任务" }),
+      navigation.getByRole("link", { name: "异常任务处理" }),
     ).toHaveAttribute("aria-current", "page");
     await expect(
-      navigation.getByRole("link", { name: "运行总览" }),
+      navigation.getByRole("link", { name: "项目进展" }),
     ).not.toHaveAttribute("aria-current");
     await expect(page.getByRole("button", { name: "手动重试" })).toBeVisible();
     await noOverflow(page);
@@ -327,7 +388,7 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
       page.getByRole("heading", { name: "项目工作卡片" }),
     ).toBeVisible();
     await expect(
-      navigation.getByRole("link", { name: "审核队列" }),
+      navigation.getByRole("link", { name: "工作卡审核" }),
     ).toHaveAttribute("aria-current", "page");
     await noOverflow(page);
     expect(
@@ -366,47 +427,27 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
 }
 
 for (const width of [390, 1440]) {
-  test(`confirms a preset project status on the existing work card at ${width}px`, async ({
+  test(`reviews work directly without project status selection at ${width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     const calls = await setup(page, "/partner/review/review-1");
-    const buttons = page.getByRole("group", { name: "选择项目状态" });
-    await expect(buttons.getByRole("button")).toHaveCount(4);
-    await expect(
-      buttons.getByRole("button", { name: "✓ 开发中" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    const boxes = await buttons.getByRole("button").evaluateAll((elements) =>
-      elements.map((element) => {
-        const box = element.getBoundingClientRect();
-        return { y: box.y, height: box.height };
-      }),
+    await expect(page.getByRole("group", { name: "选择项目状态" })).toHaveCount(
+      0,
     );
-    expect(boxes[0]!.y).toBe(boxes[1]!.y);
-    expect(boxes[2]!.y).toBe(boxes[3]!.y);
-    expect(boxes[2]!.y).toBeGreaterThan(boxes[0]!.y);
-    expect(boxes.every((box) => box.height <= 40)).toBe(true);
-    await buttons.getByRole("button", { name: "已暂停" }).click();
-    await expect(
-      buttons.getByRole("button", { name: "✓ 已暂停" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(
-      calls.find((call) => call.path.endsWith("/project-status"))?.body,
-    ).toEqual({ projectStatus: "paused", baseVersion: 6 });
-    expect(
-      calls.filter((call) => call.path.endsWith("/decision")),
-    ).toHaveLength(0);
-    await page.reload();
-    await expect(
-      buttons.getByRole("button", { name: "✓ 已暂停" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByLabel("当前项目状态", { exact: true })).toHaveCount(
+      0,
+    );
     await noOverflow(page);
     await page
       .getByRole("complementary", { name: "工作卡审核操作" })
-      .screenshot({ path: testInfo.outputPath(`project-status-${width}.png`) });
+      .screenshot({ path: testInfo.outputPath(`work-review-${width}.png`) });
     await page.getByRole("button", { name: "通过", exact: true }).click();
     await expect
       .poll(() => calls.find((call) => call.path.endsWith("/decision"))?.body)
-      .toEqual({ decision: "approve", baseVersion: 7 });
+      .toEqual({ decision: "approve", baseVersion: 6 });
+    expect(
+      calls.filter((call) => call.path.endsWith("/project-status")),
+    ).toHaveLength(0);
   });
 }

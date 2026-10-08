@@ -1022,7 +1022,7 @@ export function SystemMonitoringPage() {
 
   return (
     <div className="page admin-page system-monitoring-page">
-      <WorkspaceHeader title="系统监控" icon={Activity}>
+      <WorkspaceHeader title="系统状态与日志" icon={Activity}>
         <div className="sm-refresh-time">
           <span className={`sm-live-dot ${autoRefresh ? "" : "is-paused"}`} />
           <span>
@@ -1052,56 +1052,13 @@ export function SystemMonitoringPage() {
         </button>
       </WorkspaceHeader>
       <ErrorBanner error={query.error} />
-      <section
-        className="sm-overview"
-        aria-label="系统状态汇总"
-        aria-busy={query.isLoading}
-      >
-        <div
-          className={`sm-overall sm-tone-${data?.overallSeverity ?? "unknown"}`}
-        >
-          <span className="sm-kicker">整体状态</span>
-          <strong>
-            {data?.overallSeverity === "normal" ? (
-              <CheckCircle2 size={19} />
-            ) : data?.overallSeverity === "unknown" || !data ? (
-              <Activity size={19} />
-            ) : (
-              <AlertTriangle size={19} />
-            )}
-            {query.isLoading
-              ? "检查中"
-              : !data
-                ? "暂不可用"
-                : {
-                    normal: "运行正常",
-                    warning: "需要关注",
-                    critical: "存在异常",
-                    unknown: "状态未知",
-                  }[data.overallSeverity]}
-          </strong>
-          <small>
-            {data
-              ? `共 ${data.summary.componentCount} 个监控模块`
-              : "等待状态数据"}
-          </small>
-        </div>
-        <div className="sm-stat sm-tone-normal">
-          <span>正常模块</span>
-          <strong>{data?.summary.normal ?? "—"}</strong>
-        </div>
-        <div className="sm-stat sm-tone-warning">
-          <span>需关注模块</span>
-          <strong>{data?.summary.warning ?? "—"}</strong>
-        </div>
-        <div className="sm-stat sm-tone-critical">
-          <span>异常模块</span>
-          <strong>{data?.summary.critical ?? "—"}</strong>
-        </div>
-      </section>
       <section className="aw-view sm-view">
         <div className="sm-navigation">
-          <div role="tablist" aria-label="系统监控视图" className="sm-tabs">
+          <div
+            role="tablist"
+            aria-label="系统状态与日志视图"
+            className="sm-tabs"
+          >
             {tabs.map(({ key, label, icon: Icon }, index) => (
               <button
                 key={key}

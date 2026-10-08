@@ -1460,51 +1460,6 @@ select:focus {
   font-size: 12px;
 }
 
-.monitor-summary {
-  margin-bottom: 16px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.monitor-summary > div {
-  min-height: 72px;
-  padding: 13px 16px;
-  display: grid;
-  align-content: center;
-  gap: 5px;
-  border-right: 1px solid var(--line);
-}
-
-.monitor-summary > div:last-child {
-  border-right: 0;
-}
-
-.monitor-summary span {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.monitor-summary strong {
-  font-size: 23px;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.monitor-summary-normal strong {
-  color: #1f7658;
-}
-
-.monitor-summary-warning strong {
-  color: #8b5c12;
-}
-
-.monitor-summary-critical strong {
-  color: #a13c37;
-}
-
 .plugin-logs-page .modal {
   width: min(960px, 100%);
 }
@@ -4279,15 +4234,6 @@ select:focus {
 }
 
 @media (max-width: 760px) {
-  .monitor-summary {
-    grid-template-columns: 1fr 1fr;
-  }
-  .monitor-summary > div:nth-child(2) {
-    border-right: 0;
-  }
-  .monitor-summary > div:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--line);
-  }
   .system-health-banner {
     grid-template-columns: 24px minmax(0, 1fr);
   }

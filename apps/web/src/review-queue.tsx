@@ -14,7 +14,6 @@ import {
   AdminTableScroll,
   AdminFilterBar,
   AdminHeader,
-  AdminMetrics,
   AdminSearch,
   AdminTabs,
   AdminPagination,
@@ -138,11 +137,10 @@ export function ReviewQueuePage() {
     );
     navigate(`/partner/review/${item.review_id}`);
   };
-  const ready = Boolean(query.data);
   return (
     <div className="page admin-page management-page review-queue-page">
       <AdminHeader
-        title="审核队列"
+        title="工作卡审核"
         icon={ClipboardCheck}
         context="项目工作卡片"
         refreshing={query.isFetching}
@@ -153,29 +151,6 @@ export function ReviewQueuePage() {
       {reminderFeedback ? (
         <SuccessBanner>{reminderFeedback}</SuccessBanner>
       ) : null}
-      <AdminMetrics
-        items={[
-          {
-            label: "待审核记录",
-            value: ready ? pending.length : "--",
-            tone: "warning",
-          },
-          {
-            label: "待审核卡片",
-            value: ready
-              ? pending.reduce((sum, item) => sum + item.pending_count, 0)
-              : "--",
-            tone: "warning",
-          },
-          { label: "生成中记录", value: ready ? generating.length : "--" },
-          {
-            label: "涉及人员",
-            value: ready
-              ? new Set(queue.map((item) => item.partner_id)).size
-              : "--",
-          },
-        ]}
-      />
       <section className="aw-view">
         <AdminTabs
           label="审核状态"
@@ -278,11 +253,11 @@ export function ReviewQueuePage() {
             {query.isLoading ? (
               <div className="aw-loading" role="status">
                 <RefreshCw className="spin" size={18} />
-                加载审核队列
+                加载工作卡审核
               </div>
             ) : !query.data ? (
               <EmptyState
-                title="审核队列暂不可用"
+                title="工作卡审核暂不可用"
                 action={
                   <button
                     className="aw-text-button"

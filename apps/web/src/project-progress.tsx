@@ -1,25 +1,18 @@
-import {
-  projectStatusLabels,
-  type ProjectStatus,
-} from "@partner-report/contracts/project-status";
-import { ProjectStatusButtons } from "./project-status-buttons.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   CalendarDays,
-  Check,
   ChevronLeft,
   ChevronRight,
   Flag,
   Plus,
-  RotateCcw,
+  RefreshCw,
   X,
 } from "lucide-react";
 import {
   addProgressDays,
   calculateProgress,
-  currentProjectStage,
   type ProgressProject,
   progressEventLabels,
   validateProgressEvents,
@@ -31,19 +24,8 @@ import { api } from "./api.js";
 import { Button, EmptyState, ErrorBanner, Field } from "./components.js";
 import "./project-progress.css";
 import "./project-calendar.css";
-import {
-  calendarMonthDays,
-  calendarExcerpt,
-  projectIntroduction,
-  shiftCalendarMonth,
-} from "./project-calendar.js";
+import { calendarMonthDays, shiftCalendarMonth } from "./project-calendar.js";
 
-const stateLabels = {
-  unknown: "时间待核查",
-  active: "推进中",
-  paused: "已暂停",
-  completed: "已完成",
-};
 const keyEventTypeLabels: Record<
   ProgressProject["keyEvents"][number]["type"],
   string
@@ -465,119 +447,12 @@ function ParticipationForm({
   );
 }
 
-function displayProjectStatus(project: ProgressProject): ProjectStatus | null {
-  if (project.currentStatus) return project.currentStatus.value;
-  if (project.metrics.state === "paused") return "paused";
-  const stage = currentProjectStage(project.events);
-  if (stage === "discovery") return "research";
-  if (stage === "development" || stage === "validation") return "development";
-  if (stage === "delivery" || stage === "completed") return "delivery";
-  return null;
-}
-
-function StageEditor({
-  project,
-  onClose,
-}: {
-  project: ProgressProject;
-  onClose: () => void;
-}) {
-  const client = useQueryClient();
-  const path = `/v1/project-progress/participations/${project.partnerId}/${project.projectId}`;
-  const query = useQuery({
-    queryKey: ["participation", project.partnerId, project.projectId],
-    queryFn: () => api<ParticipationResponse>(path),
-    refetchOnWindowFocus: false,
-  });
-  const [stage, setStage] = useState<ProjectStatus>(
-    displayProjectStatus(project) ?? "development",
-  );
-  const [reason, setReason] = useState("");
-  const mutation = useMutation({
-    mutationFn: () => {
-      const data = query.data!;
-      return api(path, {
-        method: "POST",
-        body: JSON.stringify({
-          baseVersion: data.version,
-          events: [
-            ...data.events,
-            {
-              date: data.today,
-              type: "milestone",
-              projectStatus: stage,
-              reason:
-                reason.trim() || `当前项目状态：${projectStatusLabels[stage]}`,
-            },
-          ],
-          note: `确认项目状态：${projectStatusLabels[stage]}`,
-        }),
-      });
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["project-progress"] }),
-        client.invalidateQueries({ queryKey: ["participation"] }),
-      ]);
-      onClose();
-    },
-  });
-  return (
-    <ProgressDialog title="更新项目状态" onClose={onClose}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          mutation.mutate();
-        }}
-      >
-        <p>{project.projectName}</p>
-        <Field label="当前项目状态">
-          <ProjectStatusButtons
-            value={stage}
-            onChange={setStage}
-            disabled={mutation.isPending}
-          />
-        </Field>
-        <Field label="最近完成了什么">
-          <textarea
-            rows={3}
-            maxLength={500}
-            placeholder="例如：核心功能已完成，正在进行接口联调"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </Field>
-        <ErrorBanner error={query.error ?? mutation.error} />
-        <Button
-          type="submit"
-          loading={mutation.isPending}
-          disabled={
-            !query.isFetchedAfterMount ||
-            !query.data ||
-            !!query.error ||
-            currentProjectStage(query.data.events) === "completed"
-          }
-        >
-          保存状态
-        </Button>
-        {!!mutation.error && (
-          <p className="pp-muted">
-            若记录已被更新，请关闭后重新打开，再确认阶段。
-          </p>
-        )}
-      </form>
-    </ProgressDialog>
-  );
-}
-
 export function ProjectProgress() {
   const [, navigate] = useLocation();
   const [memberId, setMemberId] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
   const [month, setMonth] = useState("");
   const [day, setDay] = useState<string | null>(null);
-  const [details, setDetails] = useState(false);
-  const [editingStage, setEditingStage] = useState(false);
   const query = useQuery({
     queryKey: ["project-progress", "calendar", month],
     queryFn: async () => {
@@ -594,30 +469,39 @@ export function ProjectProgress() {
   const data = query.data;
   const currentMonth = data?.today.slice(0, 7) ?? "";
   const shownMonth = month || currentMonth;
-  const projects = (data?.projects ?? [])
-    .filter((p) => !memberId || p.partnerId === memberId)
-    .sort((a, b) =>
-      (b.latestProgress?.date ?? b.events.at(-1)?.date ?? "").localeCompare(
-        a.latestProgress?.date ?? a.events.at(-1)?.date ?? "",
-      ),
-    );
+  const projects = [...(data?.projects ?? [])].sort((a, b) =>
+    (b.latestProgress?.date ?? b.events.at(-1)?.date ?? "").localeCompare(
+      a.latestProgress?.date ?? a.events.at(-1)?.date ?? "",
+    ),
+  );
   const keyOf = (p: ProgressProject) => `${p.partnerId}:${p.projectId}`;
-  const selected = projects.find((p) => keyOf(p) === selectedKey);
-  const visible = selected ? [selected] : projects;
+  const groups = (data?.members ?? [])
+    .map((member) => ({
+      ...member,
+      projects: projects.filter((project) => project.partnerId === member.id),
+    }))
+    .filter((member) => member.projects.length > 0);
+  const activeMember =
+    groups.find((member) => member.id === memberId) ?? groups[0];
+  const memberProjects = activeMember?.projects ?? [];
+  const selected =
+    memberProjects.find((project) => keyOf(project) === selectedKey) ??
+    memberProjects[0];
+  const activeKey = selected ? keyOf(selected) : "";
+  const activeMemberId = activeMember?.id ?? "";
+  useEffect(() => {
+    if (activeKey) setSelectedKey(activeKey);
+    if (activeMemberId) setMemberId(activeMemberId);
+  }, [activeKey, activeMemberId]);
+  const visible = selected ? [selected] : [];
+  const focusText =
+    selected?.currentFocus?.text ||
+    selected?.latestProgress?.summary ||
+    "暂无已审核的工作进展。";
+  const totalDays = selected?.contributionDays ?? 0;
   const memberName = (id: string) =>
     data?.members.find((m) => m.id === id)?.name ?? "";
   const dates = shownMonth ? calendarMonthDays(shownMonth) : [];
-  const phase = selected ? displayProjectStatus(selected) : null;
-  const stageIndex = phase
-    ? Object.keys(projectStatusLabels).indexOf(phase)
-    : -1;
-  const latestStage = selected?.events
-    .filter((event) => event.stage || event.projectStatus)
-    .at(-1);
-  const phaseLabel = (p: ProgressProject) => {
-    const status = displayProjectStatus(p);
-    return status ? projectStatusLabels[status] : "";
-  };
   const entriesFor = (date: string) =>
     visible.flatMap((project) => {
       const entries = project.days.find((d) => d.date === date)?.entries ?? [];
@@ -642,23 +526,21 @@ export function ProjectProgress() {
             <CalendarDays size={20} />
             项目进展
           </h2>
-          <p>AI 从 Session 中提取关键变化，帮助你看清项目走到了哪一步。</p>
+          <p>按人员查看项目，依据已审核的工作内容统计研发日期和天数。</p>
         </div>
-        <select
-          aria-label="成员"
-          value={memberId}
-          onChange={(event) => {
-            setMemberId(event.target.value);
-            setSelectedKey("");
-          }}
+        <button
+          type="button"
+          className="icon-button"
+          title="刷新项目进展"
+          aria-label="刷新项目进展"
+          disabled={query.isFetching}
+          onClick={() => void query.refetch()}
         >
-          {<option value="">全部成员</option>}
-          {data?.members.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
+          <RefreshCw
+            size={17}
+            className={query.isFetching ? "spin" : undefined}
+          />
+        </button>
       </div>
       <ErrorBanner error={query.error} />
       {!data ? (
@@ -672,40 +554,24 @@ export function ProjectProgress() {
         )
       ) : (
         <div className="pc-workspace">
-          <aside className="pc-projects" aria-label="项目列表">
-            <button
-              type="button"
-              className={`pc-all ${!selected ? "selected" : ""}`}
-              onClick={() => setSelectedKey("")}
-            >
-              <span>全部项目</span>
-              <small>{projects.length}</small>
-            </button>
-            <div className="pc-project-list">
-              {projects.map((project, index) => (
+          <aside className="pc-people" aria-label="人员列表">
+            <div className="pc-member-list">
+              {groups.map((member) => (
                 <button
-                  key={keyOf(project)}
+                  key={member.id}
                   type="button"
-                  className={`pc-project ${selected === project ? "selected" : ""}`}
-                  onClick={() => setSelectedKey(keyOf(project))}
-                  aria-label={`查看 ${memberName(project.partnerId)} 的 ${project.projectName}`}
+                  className={`pc-member-button ${member.id === activeMemberId ? "selected" : ""}`}
+                  aria-pressed={member.id === activeMemberId}
+                  aria-controls="pc-project-picker"
+                  onClick={() => {
+                    if (member.id !== activeMemberId) {
+                      setMemberId(member.id);
+                      setSelectedKey("");
+                    }
+                    setDay(null);
+                  }}
                 >
-                  <span className={`pc-project-owner pc-color-${index % 5}`}>
-                    {memberName(project.partnerId)}
-                  </span>
-                  <strong>{project.projectName}</strong>
-                  <span
-                    className="pc-project-summary"
-                    title={project.projectDescription?.trim() || undefined}
-                  >
-                    {projectIntroduction(project.projectDescription)}
-                  </span>
-                  <span className="pc-project-meta">
-                    {phaseLabel(project) && <span>{phaseLabel(project)}</span>}
-                    <time>
-                      {project.latestProgress?.date.slice(5).replace("-", "/")}
-                    </time>
-                  </span>
+                  {member.name}
                 </button>
               ))}
             </div>
@@ -714,170 +580,197 @@ export function ProjectProgress() {
             )}
           </aside>
           <div className="pc-main">
-            {selected && (
-              <section
-                className="pc-project-overview"
-                aria-label="当前项目进度"
+            {activeMember && (
+              <div
+                id="pc-project-picker"
+                className="pc-project-picker"
+                role="group"
+                aria-label={`${activeMember.name}的项目`}
               >
-                <div className="pc-project-title">
-                  <div>
-                    <span>{memberName(selected.partnerId)}</span>
-                    <h3>{selected.projectName}</h3>
-                  </div>
-                  <Button variant="ghost" onClick={() => setDetails(true)}>
-                    项目详情
-                  </Button>
-                </div>
-                <div className="pc-phase-heading">
-                  <strong>
-                    {phase
-                      ? `当前：${projectStatusLabels[phase]}`
-                      : "状态未设置"}
-                  </strong>
-                  {selected.metrics.state !== "completed" && (
-                    <button
-                      type="button"
-                      className="pc-text-button"
-                      onClick={() => setEditingStage(true)}
-                    >
-                      {phase ? "调整状态" : "设置状态"}
-                    </button>
-                  )}
-                </div>
-                <ol className="pc-stages" aria-label="项目状态">
-                  {Object.values(projectStatusLabels).map((label, index) => (
-                    <li
-                      key={label}
-                      className={index === stageIndex ? "current" : ""}
-                      aria-current={index === stageIndex ? "step" : undefined}
-                    >
-                      <span>
-                        {index === stageIndex ? <Check size={12} /> : index + 1}
-                      </span>
-                      {label}
-                    </li>
-                  ))}
-                </ol>
-                <p className="pc-latest">
-                  <strong>当前重点：</strong>
-                  {selected.currentFocus?.text ||
-                    calendarExcerpt(
-                      selected.currentStatus?.reason ||
-                        (latestStage &&
-                        latestStage.date >=
-                          (selected.latestProgress?.date ?? "")
-                          ? latestStage.reason
-                          : (selected.latestProgress?.summary ??
-                            "等待 AI 从新的 Session 中提取项目重点。")),
-                      180,
-                    )}
-                </p>
-                <div className="pc-ai-evidence">
-                  AI 已分析 {selected.aiEvidence.sessionCount} 个 Session，覆盖
-                  {selected.aiEvidence.periodCount} 个周期
-                </div>
-                {selected.keyEvents.length > 0 && (
-                  <section className="pc-key-events" aria-label="项目时间线">
-                    <div className="pc-key-events-heading">
-                      <strong>项目时间线</strong>
-                      <span>AI 只保留会影响项目方向的变化</span>
-                    </div>
-                    <div className="pc-key-events-list">
-                      {selected.keyEvents.slice(0, 5).map((event) => (
-                        <article
-                          className={`pc-key-event pc-key-event-${event.type}`}
-                          key={`${event.date}:${event.title}:${event.detail}`}
-                        >
-                          <time>{event.date.slice(5).replace("-", "/")}</time>
-                          <span>{keyEventTypeLabels[event.type]}</span>
-                          <div>
-                            <strong>{event.title}</strong>
-                            <p>{event.detail}</p>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                )}
-              </section>
+                {memberProjects.map((project) => (
+                  <button
+                    type="button"
+                    key={keyOf(project)}
+                    className={`pc-project-choice ${project === selected ? "selected" : ""}`}
+                    aria-pressed={project === selected}
+                    aria-controls="pc-selected-project"
+                    aria-label={`查看 ${activeMember.name} 的 ${project.projectName}`}
+                    onClick={() => {
+                      setSelectedKey(keyOf(project));
+                      setDay(null);
+                    }}
+                  >
+                    {project.projectName}
+                  </button>
+                ))}
+              </div>
             )}
-            <section className="pc-calendar" aria-label="每日明细">
-              <div className="pc-month-nav">
-                <h3>
-                  {shownMonth.slice(0, 4)} 年 {Number(shownMonth.slice(5))} 月
-                </h3>
-                <div>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label="上个月"
-                    onClick={() => goMonth(-1)}
-                  >
-                    <ChevronLeft size={18} />
-                  </button>
-                  <button
-                    type="button"
-                    className="pc-text-button"
-                    onClick={() => setMonth("")}
-                  >
-                    本月
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label="下个月"
-                    disabled={shownMonth >= currentMonth}
-                    onClick={() => goMonth(1)}
-                  >
-                    <ChevronRight size={18} />
-                  </button>
-                </div>
-              </div>
-              <div className="pc-weekdays" aria-hidden="true">
-                {["周一", "周二", "周三", "周四", "周五", "周六", "周日"].map(
-                  (name) => (
-                    <span key={name}>{name}</span>
-                  ),
-                )}
-              </div>
-              <div className="pc-month-grid">
-                {dates.map((date) => {
-                  const inside = date.startsWith(shownMonth);
-                  const entries = inside ? entriesFor(date) : [];
-                  return (
-                    <div
-                      key={date}
-                      className={`pc-day ${inside ? "" : "outside"} ${date === data.today ? "today" : ""}`}
-                    >
-                      <button
-                        type="button"
-                        className="pc-day-number"
-                        disabled={!inside || date > data.today}
-                        aria-label={`查看 ${date} 的进展`}
-                        onClick={() => setDay(date)}
-                      >
-                        <time dateTime={date}>{Number(date.slice(-2))}</time>
-                        {date === data.today && <small>今天</small>}
-                      </button>
-                      <div className="pc-day-entries">
-                        {entries.map(({ project }) => (
-                          <button
-                            key={keyOf(project)}
-                            type="button"
-                            className={`pc-calendar-entry pc-color-${Math.max(0, projects.indexOf(project)) % 5}`}
-                            onClick={() => setDay(date)}
-                            title={project.projectName}
-                            aria-label={`${project.projectName} ${date} 的进展`}
+            <div
+              key={activeKey}
+              className="pc-content"
+              role="region"
+              aria-label="项目内容"
+              tabIndex={0}
+            >
+              {selected && (
+                <section
+                  key={activeKey}
+                  id="pc-selected-project"
+                  className="pc-project-overview"
+                  aria-label="当前项目进度"
+                >
+                  <div className="pc-project-title">
+                    <h3>{selected.projectName}</h3>
+                    <span className="pc-project-days" aria-label="累计研发天数">
+                      已开发 <strong>{totalDays}</strong> 天
+                    </span>
+                  </div>
+                  <div className="pc-focus">
+                    <div className="pc-focus-heading">
+                      <strong>当前重点</strong>
+                    </div>
+                    <p className="pc-latest">{focusText}</p>
+                  </div>
+                  <p className="pc-project-description">
+                    {selected.projectDescription?.trim() || "暂无项目说明"}
+                  </p>
+                  {selected.keyEvents.length > 0 && (
+                    <section className="pc-key-events" aria-label="项目时间线">
+                      <div className="pc-key-events-heading">
+                        <strong>项目进展</strong>
+                      </div>
+                      <div className="pc-key-events-list">
+                        {selected.keyEvents.map((event) => (
+                          <article
+                            className={`pc-key-event pc-key-event-${event.type}`}
+                            key={`${activeKey}:${event.date}:${event.title}:${event.detail}`}
                           >
-                            <strong>{project.projectName}</strong>
-                          </button>
+                            <div className="pc-event-heading">
+                              <time dateTime={event.date}>{event.date}</time>
+                              <span className="pc-event-type">
+                                {keyEventTypeLabels[event.type]}
+                              </span>
+                              <strong>{event.title}</strong>
+                            </div>
+                            <p>{event.detail}</p>
+                          </article>
                         ))}
                       </div>
+                    </section>
+                  )}
+                  <p className="pc-count-note">
+                    研发天数按已审核工作内容的日期统计，同一天多条记录计 1 天。
+                  </p>
+                  {selected.undatedCount > 0 && (
+                    <p className="pc-count-note">
+                      另有 {selected.undatedCount}{" "}
+                      条记录缺少有效日期，未计入研发天数。
+                    </p>
+                  )}
+                </section>
+              )}
+              {selected && (
+                <section className="pc-calendar" aria-label="研发日历">
+                  <div className="pc-month-nav">
+                    <h3>
+                      研发日历
+                      <span className="pc-calendar-month">
+                        {shownMonth.slice(0, 4)} 年{" "}
+                        {Number(shownMonth.slice(5))} 月
+                      </span>
+                    </h3>
+                    <div>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label="上个月"
+                        onClick={() => goMonth(-1)}
+                      >
+                        <ChevronLeft size={18} />
+                      </button>
+                      <button
+                        type="button"
+                        className="pc-text-button"
+                        onClick={() => setMonth("")}
+                      >
+                        本月
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label="下个月"
+                        disabled={shownMonth >= currentMonth}
+                        onClick={() => goMonth(1)}
+                      >
+                        <ChevronRight size={18} />
+                      </button>
                     </div>
-                  );
-                })}
-              </div>
-            </section>
+                  </div>
+                  <div className="pc-weekdays" aria-hidden="true">
+                    {[
+                      "周一",
+                      "周二",
+                      "周三",
+                      "周四",
+                      "周五",
+                      "周六",
+                      "周日",
+                    ].map((name) => (
+                      <span key={name}>{name}</span>
+                    ))}
+                  </div>
+                  <div className="pc-month-grid">
+                    {dates.map((date) => {
+                      const inside = date.startsWith(shownMonth);
+                      const entries = inside ? entriesFor(date) : [];
+                      return (
+                        <div
+                          key={date}
+                          className={`pc-day ${inside ? "" : "outside"} ${date === data.today ? "today" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            className="pc-day-number"
+                            disabled={!inside || date > data.today}
+                            aria-label={`查看 ${date} 的进展`}
+                            onClick={() => setDay(date)}
+                          >
+                            <time dateTime={date}>
+                              {Number(date.slice(-2))}
+                            </time>
+                            {date === data.today && <small>今天</small>}
+                          </button>
+                          <div className="pc-day-entries">
+                            {entries.map(
+                              ({ project, entries: workEntries }) => (
+                                <button
+                                  key={keyOf(project)}
+                                  type="button"
+                                  className={`pc-calendar-entry pc-color-${Math.max(0, projects.indexOf(project)) % 5}`}
+                                  onClick={() => setDay(date)}
+                                  title={
+                                    workEntries.length
+                                      ? project.projectName
+                                      : "历史时间记录，不计入研发天数"
+                                  }
+                                  aria-label={`${project.projectName} ${date} 的进展`}
+                                >
+                                  <strong>
+                                    {workEntries.length
+                                      ? project.projectName
+                                      : "时间记录"}
+                                  </strong>
+                                </button>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -921,69 +814,9 @@ export function ProjectProgress() {
                     )}
                 </article>
               ))}
-              <button
-                type="button"
-                className="pc-text-button"
-                onClick={() => {
-                  setSelectedKey(keyOf(project));
-                  setDay(null);
-                }}
-              >
-                查看项目整体进展
-              </button>
             </section>
           ))}
         </ProgressDialog>
-      )}
-      {data && selected && details && (
-        <ProgressDialog
-          title={`${selected.projectName} · 项目详情`}
-          onClose={() => setDetails(false)}
-        >
-          <p>{memberName(selected.partnerId)}</p>
-          <p>{selected.latestProgress?.summary ?? "暂无进展摘要"}</p>
-          <div className="pp-preview-metrics">
-            <span>
-              项目跨度 <b>{countDays(selected.metrics.elapsedDays)}</b>
-            </span>
-            <span>
-              暂停 <b>{countDays(selected.metrics.pausedDays)}</b>
-            </span>
-            <span>
-              贡献记录 <b>{selected.contributionDays} 天</b>
-            </span>
-          </div>
-          <p className="pp-muted">
-            项目跨度按确认的开始和完成日期计算，包含首尾及周末。并行项目分别统计，不相加为个人工时。
-          </p>
-          {selected.conflictingDays.length > 0 && (
-            <p className="pp-notice">
-              有 {selected.conflictingDays.length}{" "}
-              天的贡献不在确认的推进区间内，可在时间记录中核对。
-            </p>
-          )}
-          <ParticipationEditor
-            partnerId={selected.partnerId}
-            projectId={selected.projectId}
-            projectName={selected.projectName}
-          />
-          <details className="pp-history">
-            <summary>时间记录与里程碑</summary>
-            {selected.events.map((event, index) => (
-              <p key={index}>
-                {event.date} · {progressEventLabels[event.type]} ·{" "}
-                {event.reason}
-              </p>
-            ))}
-            {!selected.events.length && <p>暂无时间记录</p>}
-          </details>
-        </ProgressDialog>
-      )}
-      {selected && editingStage && (
-        <StageEditor
-          project={selected}
-          onClose={() => setEditingStage(false)}
-        />
       )}
     </section>
   );

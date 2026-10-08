@@ -37,6 +37,37 @@ const defaults = {
   to: "2026-09-08",
 };
 describe("project progress sources", () => {
+  it("returns the complete approved project timeline without a twenty-event cutoff", () => {
+    const keyEvents = Array.from({ length: 25 }, (_, index) => ({
+      date: "2026-09-01",
+      type: "milestone",
+      title: `进展 ${index + 1}`,
+      detail: `已完成工作 ${index + 1}`,
+    }));
+    const result = assembleProjectProgress({
+      ...defaults,
+      cards: [{ ...card, payload: { ...card.payload, keyEvents } }],
+    });
+    expect(result.projects[0]?.keyEvents).toHaveLength(25);
+    expect(result.projects[0]?.keyEvents.at(-1)?.detail).toBe("已完成工作 25");
+  });
+  it("uses the approved card's project description shared with the weekly report", () => {
+    const result = assembleProjectProgress({
+      ...defaults,
+      cards: [
+        {
+          ...card,
+          payload: {
+            ...card.payload,
+            projectDescription: "为团队提供项目贡献采集、工作审核和周报汇总。",
+          },
+        },
+      ],
+    });
+    expect(result.projects[0]?.projectDescription).toBe(
+      "为团队提供项目贡献采集、工作审核和周报汇总。",
+    );
+  });
   it("uses the approved weekly card's exact daily text, date and review link", () => {
     const result = assembleProjectProgress({ ...defaults, cards: [card] });
     expect(result.projects[0]).toMatchObject({
@@ -95,6 +126,8 @@ describe("project progress sources", () => {
       days: [],
       latestProgress: null,
       contributionDays: 0,
+      firstContributionDate: null,
+      lastContributionDate: null,
       undatedCount: 1,
     });
   });
@@ -112,7 +145,45 @@ describe("project progress sources", () => {
       from: "2026-09-06",
       cards: [card],
     });
-    expect(result.projects[0]).toMatchObject({ days: [], contributionDays: 1 });
+    expect(result.projects[0]).toMatchObject({
+      days: [],
+      contributionDays: 1,
+      firstContributionDate: "2026-09-01",
+      lastContributionDate: "2026-09-01",
+    });
+  });
+  it("counts distinct approved dates per person and project across months", () => {
+    const dailyProgress = [
+      { date: "2026-09-07", summary: "联调" },
+      { date: "2026-08-20", summary: "实现接口" },
+      { date: "2026-09-07", summary: "补充测试" },
+      { date: "2026-09-09", summary: "未来记录" },
+      { date: "2026-02-30", summary: "无效日期" },
+    ];
+    const result = assembleProjectProgress({
+      ...defaults,
+      cards: [
+        { ...card, payload: { dailyProgress } },
+        { ...card, id: "duplicate", payload: { dailyProgress } },
+        { ...card, id: "other-member", partner_id: "other" },
+        { ...card, id: "pending", review_status: "pending" },
+      ],
+    });
+    expect(
+      result.projects.find((project) => project.partnerId === "member"),
+    ).toMatchObject({
+      contributionDays: 2,
+      firstContributionDate: "2026-08-20",
+      lastContributionDate: "2026-09-07",
+      days: [{ date: "2026-09-07" }],
+    });
+    expect(
+      result.projects.find((project) => project.partnerId === "other"),
+    ).toMatchObject({
+      contributionDays: 1,
+      firstContributionDate: "2026-09-01",
+      lastContributionDate: "2026-09-01",
+    });
   });
   it("does not invent dates and flags contributions outside confirmed active intervals", () => {
     const result = assembleProjectProgress({

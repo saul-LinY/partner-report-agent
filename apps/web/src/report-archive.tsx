@@ -5,7 +5,6 @@ import {
   FileStack,
   FolderKanban,
   RefreshCw,
-  X,
   ArrowUpRight,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -13,10 +12,7 @@ import { api } from "./api.js";
 import { Badge, EmptyState, ErrorBanner } from "./components.js";
 import {
   AdminTableScroll,
-  AdminFilterBar,
   AdminHeader,
-  AdminMetrics,
-  AdminSearch,
   AdminTabs,
   AdminPagination,
 } from "./admin-workspace.js";
@@ -55,11 +51,6 @@ type ArchiveView = "team-report" | "work-cards";
 
 export function ReportArchivePage() {
   const [view, setView] = useState<ArchiveView>("team-report");
-  const [search, setSearch] = useState("");
-  const [periodId, setPeriodId] = useState("");
-  const [partnerId, setPartnerId] = useState("");
-  const [reviewStatus, setReviewStatus] = useState("");
-  const [reportState, setReportState] = useState("");
   const [page, setPage] = useState(1);
   const archive = useQuery({
     queryKey: ["report-archive"],
@@ -68,104 +59,32 @@ export function ReportArchivePage() {
   const periods = [...(archive.data?.periods ?? [])].sort(
     (a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt),
   );
-  const people = [
-    ...new Map(
-      periods.flatMap((period) =>
-        period.people.map((person) => [person.id, person] as const),
-      ),
-    ).values(),
-  ].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
-  const cardCount = periods.reduce(
-    (total, period) =>
-      total +
-      period.people.reduce((sum, person) => sum + person.workItems.length, 0),
-    0,
+  const cards = periods.flatMap((period) =>
+    period.people.flatMap((person) => {
+      const items: Array<FinalWorkItem | null> = person.workItems.length
+        ? person.workItems
+        : [null];
+      return items.map((item) => ({ period, person, item }));
+    }),
   );
-  const text = search.trim().toLocaleLowerCase();
-  const matches = (values: Array<string | null | undefined>) =>
-    values.filter(Boolean).join(" ").toLocaleLowerCase().includes(text);
-  const reportPeriods = periods.filter(
-    (period) =>
-      (!periodId || period.id === periodId) &&
-      (!reportState ||
-        (reportState === "archived"
-          ? Boolean(period.teamReport)
-          : !period.teamReport)) &&
-      matches([
-        period.periodKey,
-        period.teamReport?.title,
-        period.teamReport?.summary,
-      ]),
-  );
-  const cards = periods
-    .filter((period) => !periodId || period.id === periodId)
-    .flatMap((period) =>
-      period.people
-        .filter((person) => !partnerId || person.id === partnerId)
-        .flatMap((person) => {
-          const items: Array<FinalWorkItem | null> = person.workItems.length
-            ? person.workItems
-            : [null];
-          return items
-            .filter(
-              (item) =>
-                (!reviewStatus || item?.reviewStatus === reviewStatus) &&
-                matches([
-                  period.periodKey,
-                  person.name,
-                  person.email,
-                  item?.title,
-                  item?.overview,
-                ]),
-            )
-            .map((item) => ({ period, person, item }));
-        }),
-    );
-  const total = view === "team-report" ? reportPeriods.length : cards.length;
+  const total = view === "team-report" ? periods.length : cards.length;
   const pageCount = Math.max(1, Math.ceil(total / 12));
   const currentPage = Math.min(page, pageCount);
-  const visiblePeriods = reportPeriods.slice(
+  const visiblePeriods = periods.slice(
     (currentPage - 1) * 12,
     currentPage * 12,
   );
   const visibleCards = cards.slice((currentPage - 1) * 12, currentPage * 12);
-  const clear = () => {
-    setSearch("");
-    setPeriodId("");
-    setPartnerId("");
-    setReviewStatus("");
-    setReportState("");
-    setPage(1);
-  };
-  const hasFilters =
-    search ||
-    periodId ||
-    (view === "team-report" ? reportState : partnerId || reviewStatus);
-  const ready = Boolean(archive.data);
   return (
     <div className="page admin-page management-page reports-page">
       <AdminHeader
-        title="报告归档"
+        title="周报与工作卡"
         icon={FileStack}
         context="团队周报与最终确认的项目工作卡"
         refreshing={archive.isFetching}
         onRefresh={() => void archive.refetch()}
       />
       <ErrorBanner error={archive.error} />
-      <AdminMetrics
-        items={[
-          { label: "归档周期", value: ready ? periods.length : "--" },
-          {
-            label: "团队周报",
-            value: ready
-              ? periods.filter((period) => period.teamReport).length
-              : "--",
-            tone: "success",
-          },
-          { label: "项目工作卡", value: ready ? cardCount : "--" },
-          { label: "归档人员", value: ready ? people.length : "--" },
-        ]}
-      />
       <section className="aw-view">
         <AdminTabs
           label="归档内容"
@@ -184,98 +103,6 @@ export function ReportArchivePage() {
           role="tabpanel"
           aria-labelledby={`aw-tab-${view}`}
         >
-          <AdminFilterBar>
-            <AdminSearch
-              label="搜索归档"
-              placeholder={
-                view === "team-report"
-                  ? "搜索周期、报告标题或摘要"
-                  : "搜索人员、工作卡标题或摘要"
-              }
-              value={search}
-              onChange={(value) => {
-                setSearch(value);
-                setPage(1);
-              }}
-            />
-            <label className="aw-filter">
-              <span>周期</span>
-              <select
-                aria-label="归档周期"
-                value={periodId}
-                onChange={(event) => {
-                  setPeriodId(event.target.value);
-                  setPage(1);
-                }}
-              >
-                <option value="">全部周期</option>
-                {periods.map((period) => (
-                  <option value={period.id} key={period.id}>
-                    {period.periodKey}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {view === "team-report" ? (
-              <label className="aw-filter">
-                <span>状态</span>
-                <select
-                  aria-label="周报归档状态"
-                  value={reportState}
-                  onChange={(event) => {
-                    setReportState(event.target.value);
-                    setPage(1);
-                  }}
-                >
-                  <option value="">全部状态</option>
-                  <option value="archived">已归档</option>
-                  <option value="waiting">等待周报</option>
-                </select>
-              </label>
-            ) : (
-              <>
-                <label className="aw-filter">
-                  <span>人员</span>
-                  <select
-                    aria-label="归档人员"
-                    value={partnerId}
-                    onChange={(event) => {
-                      setPartnerId(event.target.value);
-                      setPage(1);
-                    }}
-                  >
-                    <option value="">全部人员</option>
-                    {people.map((person) => (
-                      <option value={person.id} key={person.id}>
-                        {person.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="aw-filter">
-                  <span>确认</span>
-                  <select
-                    aria-label="工作卡确认状态"
-                    value={reviewStatus}
-                    onChange={(event) => {
-                      setReviewStatus(event.target.value);
-                      setPage(1);
-                    }}
-                  >
-                    <option value="">全部状态</option>
-                    <option value="approved">已确认</option>
-                    <option value="excluded">已忽略</option>
-                  </select>
-                </label>
-              </>
-            )}
-            {hasFilters && (
-              <button className="aw-text-button" onClick={clear}>
-                <X size={14} />
-                重置筛选
-              </button>
-            )}
-          </AdminFilterBar>
           <section
             className="aw-section"
             aria-label={
@@ -292,11 +119,11 @@ export function ReportArchivePage() {
             {archive.isLoading ? (
               <div className="aw-loading" role="status">
                 <RefreshCw className="spin" size={18} />
-                加载报告归档
+                加载周报与工作卡
               </div>
             ) : !archive.data ? (
               <EmptyState
-                title="报告归档暂不可用"
+                title="周报与工作卡暂不可用"
                 action={
                   <button
                     className="aw-text-button"
@@ -309,28 +136,11 @@ export function ReportArchivePage() {
             ) : !total ? (
               <EmptyState
                 title={
-                  periods.length ? "没有符合条件的归档记录" : "还没有每周归档"
-                }
-                action={
-                  hasFilters ? (
-                    <button className="aw-text-button" onClick={clear}>
-                      重置筛选
-                    </button>
-                  ) : undefined
+                  view === "team-report" ? "还没有每周归档" : "还没有归档工作卡"
                 }
               />
             ) : view === "team-report" ? (
-              <AdminTableScroll
-                resetKey={JSON.stringify([
-                  currentPage,
-                  search,
-                  periodId,
-                  view,
-                  partnerId,
-                  reviewStatus,
-                  reportState,
-                ])}
-              >
+              <AdminTableScroll resetKey={JSON.stringify([currentPage, view])}>
                 <table className="aw-table aw-archive-table">
                   <thead>
                     <tr>

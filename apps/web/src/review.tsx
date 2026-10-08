@@ -1,10 +1,3 @@
-import {
-  defaultProjectStatus,
-  readProjectStatus,
-  projectStatusLabels,
-  type ProjectStatus,
-} from "@partner-report/contracts/project-status";
-import { ProjectStatusButtons } from "./project-status-buttons.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -97,19 +90,6 @@ export function ReviewPage() {
   const isRegenerating = ["PENDING", "LEASED", "RETRY_WAIT"].includes(
     selectedJob?.status ?? "",
   );
-
-  const statusMutation = useMutation({
-    mutationFn: (projectStatus: ProjectStatus) =>
-      api(`/v1/reviews/${reviewId}/items/${selected.id}/project-status`, {
-        method: "POST",
-        body: JSON.stringify({
-          projectStatus,
-          baseVersion: query.data!.review.version,
-        }),
-      }),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["review", reviewId] }),
-  });
 
   const decisionMutation = useMutation({
     mutationFn: async (decision: Decision) => {
@@ -224,7 +204,6 @@ export function ReviewPage() {
       />
       <ErrorBanner
         error={
-          statusMutation.error ??
           decisionMutation.error ??
           regenerateMutation.error ??
           completionMutation.error
@@ -320,7 +299,7 @@ export function ReviewPage() {
                     <section className="pp-review-check">
                       <h3>项目时间核查</h3>
                       <p>
-                        结合本周每日进展，确认本人在此项目上的开始、暂停、恢复或完成日期。时间修改会同步到运行总览，通过周卡不会自动把整个项目标为完成。
+                        结合本周每日进展，确认本人在此项目上的开始、暂停、恢复或完成日期。时间修改会同步到项目进展，通过周卡不会自动把整个项目标为完成。
                       </p>
                       <ParticipationEditor
                         key={selected.project_id}
@@ -352,40 +331,6 @@ export function ReviewPage() {
                         selected.review_status}
                     </Badge>
                   </div>
-                  <section
-                    aria-label="当前项目状态"
-                    className="review-project-status"
-                  >
-                    <strong>当前项目状态</strong>
-                    {isEditable && selected.review_status === "pending" ? (
-                      <>
-                        <ProjectStatusButtons
-                          value={
-                            readProjectStatus(selected.payload) ??
-                            defaultProjectStatus(selected.status)
-                          }
-                          disabled={
-                            statusMutation.isPending ||
-                            decisionMutation.isPending ||
-                            regenerateMutation.isPending ||
-                            isRegenerating
-                          }
-                          onChange={(value) => statusMutation.mutate(value)}
-                        />
-                        <p className="muted">
-                          已预选，状态正确可直接点击“通过”。
-                        </p>
-                      </>
-                    ) : (
-                      <p>
-                        {readProjectStatus(selected.payload)
-                          ? projectStatusLabels[
-                              readProjectStatus(selected.payload)!
-                            ]
-                          : "未确认"}
-                      </p>
-                    )}
-                  </section>
                   {selectedJob?.status === "FAILED" && (
                     <div className="card-generation-error">
                       <strong>重新生成失败</strong>
@@ -403,9 +348,7 @@ export function ReviewPage() {
                           maxLength={1200}
                           value={instruction}
                           disabled={
-                            isRegenerating ||
-                            statusMutation.isPending ||
-                            regenerateMutation.isPending
+                            isRegenerating || regenerateMutation.isPending
                           }
                           onChange={(event) =>
                             setInstruction(event.target.value)
@@ -422,7 +365,6 @@ export function ReviewPage() {
                           disabled={
                             instruction.trim().length < 2 ||
                             isRegenerating ||
-                            statusMutation.isPending ||
                             decisionMutation.isPending
                           }
                           onClick={() => regenerateMutation.mutate()}
@@ -435,9 +377,7 @@ export function ReviewPage() {
                           icon={<X size={16} />}
                           loading={decisionMutation.isPending}
                           disabled={
-                            isRegenerating ||
-                            statusMutation.isPending ||
-                            regenerateMutation.isPending
+                            isRegenerating || regenerateMutation.isPending
                           }
                           onClick={() => decisionMutation.mutate("exclude")}
                         >
@@ -447,9 +387,7 @@ export function ReviewPage() {
                           icon={<Check size={16} />}
                           loading={decisionMutation.isPending}
                           disabled={
-                            isRegenerating ||
-                            statusMutation.isPending ||
-                            regenerateMutation.isPending
+                            isRegenerating || regenerateMutation.isPending
                           }
                           onClick={() => decisionMutation.mutate("approve")}
                         >

@@ -210,6 +210,8 @@ export type ProgressProject = {
   metrics: ProgressMetrics;
   days: ProgressDay[];
   contributionDays: number;
+  firstContributionDate: string | null;
+  lastContributionDate: string | null;
   undatedCount: number;
   conflictingDays: string[];
   reviewId: string | null;

@@ -47,7 +47,7 @@ export function WorkspaceHeader({
     <header className="aw-header">
       <div className="aw-header-copy">
         <span className="aw-breadcrumb">
-          管理台 / {navigationGroupLabel(location) ?? "团队运营"}
+          管理台 / {navigationGroupLabel(location) ?? "进展与成果"}
         </span>
         <h1>
           <Icon size={24} />
