@@ -174,6 +174,26 @@ export const coverageSchema: z.ZodTypeAny = z.object({
   lastSyncAt: isoDateTimeSchema.optional(),
 });
 
+/** A manager-facing picture of where the whole project is heading and where it stands. */
+export const projectOutlookSchema = z
+  .object({
+    goal: z.string().trim().min(1).max(200),
+    roadmap: z
+      .array(
+        z
+          .object({
+            name: z.string().trim().min(1).max(40),
+            state: z.enum(["done", "current", "todo"]),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(6),
+    position: z.string().trim().min(1).max(200),
+  })
+  .strict();
+export type ProjectOutlook = z.infer<typeof projectOutlookSchema>;
+
 export const aggregationGroupSchema: z.ZodTypeAny = z
   .object({
     projectKey: z.string().default(""),
@@ -181,6 +201,7 @@ export const aggregationGroupSchema: z.ZodTypeAny = z
     projectStatus: projectStatusSchema.optional(),
     projectStatusReason: z.string().trim().max(500).optional(),
     currentFocus: z.string().trim().min(1).max(240).optional(),
+    projectOutlook: projectOutlookSchema.optional(),
     keyEvents: z
       .array(
         z
@@ -195,6 +216,7 @@ export const aggregationGroupSchema: z.ZodTypeAny = z
             ]),
             title: z.string().trim().min(1).max(160),
             detail: z.string().trim().min(1).max(500),
+            step: z.string().trim().max(40).optional(),
           })
           .strict(),
       )

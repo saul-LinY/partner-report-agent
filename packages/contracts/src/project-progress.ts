@@ -190,6 +190,18 @@ export type ProjectKeyEvent = {
   type: "goal_change" | "milestone" | "decision" | "blocker" | "stage_change";
   title: string;
   detail: string;
+  step: string | null;
+  periodKey: string | null;
+  reviewId: string | null;
+};
+export type ProjectOutlookStep = {
+  name: string;
+  state: "done" | "current" | "todo";
+};
+export type ProjectOutlook = {
+  goal: string;
+  roadmap: ProjectOutlookStep[];
+  position: string;
   periodKey: string | null;
   reviewId: string | null;
 };
@@ -221,6 +233,7 @@ export type ProgressProject = {
     periodKey: string | null;
     reviewId: string | null;
   } | null;
+  outlook: ProjectOutlook | null;
   keyEvents: ProjectKeyEvent[];
   aiEvidence: ProjectAiEvidence;
   latestProgress?: {

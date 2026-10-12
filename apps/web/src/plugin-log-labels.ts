@@ -33,3 +33,20 @@ export function pluginExecutionKindLabel(grouping: PluginExecutionGrouping) {
   if (grouping === "legacy") return "历史日志";
   return "本次插件命令";
 }
+
+const stageLabels: Record<string, string> = {
+  collect_start: "启动采集",
+  collect_next: "读取并分析会话",
+  collect_review: "检查采集结果",
+  collect_submit: "上传贡献",
+  collection: "采集会话",
+  upload: "上传贡献",
+  sync: "同步状态",
+  validation: "校验数据",
+  codex_app_server: "连接 Codex",
+  codex_thread_list: "读取 Codex 会话列表",
+};
+
+export function pluginStageLabel(stage: string) {
+  return stageLabels[stage] ?? stage;
+}

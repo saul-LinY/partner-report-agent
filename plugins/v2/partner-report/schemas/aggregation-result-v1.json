@@ -47,6 +47,55 @@
                 "minLength": 1,
                 "maxLength": 240
               },
+              "projectOutlook": {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "roadmap": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "done",
+                            "current",
+                            "todo"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "state"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 2,
+                    "maxItems": 6
+                  },
+                  "position": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "goal",
+                  "roadmap",
+                  "position"
+                ],
+                "additionalProperties": false
+              },
               "keyEvents": {
                 "type": "array",
                 "items": {
@@ -75,6 +124,10 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 500
+                    },
+                    "step": {
+                      "type": "string",
+                      "maxLength": 40
                     }
                   },
                   "required": [

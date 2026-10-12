@@ -1,3 +1,4 @@
+import { projectOutlookSchema } from "@partner-report/contracts";
 import { readProjectStatus } from "@partner-report/contracts/project-status";
 import {
   calculateProgress,
@@ -82,6 +83,7 @@ export function assembleProjectProgress(input: {
         reviewId: null,
         lastUpdatedAt: null,
         currentFocus: null,
+        outlook: null,
         keyEvents: [],
         aiEvidence: {
           sessionCount: 0,
@@ -174,6 +176,13 @@ export function assembleProjectProgress(input: {
           reviewId: card.review_id ?? null,
         };
     }
+    const outlook = projectOutlookSchema.safeParse(card.payload.projectOutlook);
+    if (!project.outlook && outlook.success)
+      project.outlook = {
+        ...outlook.data,
+        periodKey: card.period_key ?? null,
+        reviewId: card.review_id ?? null,
+      };
     const keyEvents = Array.isArray(card.payload.keyEvents)
       ? card.payload.keyEvents
       : [];
@@ -205,6 +214,10 @@ export function assembleProjectProgress(input: {
         type: event.type as ProjectKeyEvent["type"],
         title,
         detail,
+        step:
+          typeof event.step === "string" && event.step.trim()
+            ? event.step.trim()
+            : null,
         periodKey: card.period_key ?? null,
         reviewId: card.review_id ?? null,
       });

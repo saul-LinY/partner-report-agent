@@ -126,6 +126,7 @@ describe("fixed project outcome inputs", () => {
       projectDescription: bucket.projectDescription,
       outcomeMaterial: material(),
       previousProjectStatus: { value: "delivery", periodKey: "last-week" },
+      previousProjectOutlook: null,
     });
     expect(input.currentCard).toEqual(currentCard);
     expect(input.reviewInstructions).toEqual([

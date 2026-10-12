@@ -61,12 +61,19 @@ export async function autoApproveExpiredReviews(
       first_delivery.first_sent_at
     from reviews r
     join lateral (
+      -- The review window restarts when cards are regenerated, counted from the
+      -- first message that carried the new content; reminders do not restart it.
       select min(d.sent_at) as first_sent_at
       from feishu_deliveries d
       where d.tenant_id = r.tenant_id and d.team_id = r.team_id
         and d.partner_id = r.partner_id and d.kind = 'review'
         and d.aggregate_type = 'review' and d.aggregate_id = r.id::text
         and d.sent_at is not null
+        and d.sent_at >= coalesce((
+          select max(v.created_at) from work_item_versions v
+          where v.tenant_id = r.tenant_id and v.review_id = r.id
+            and v.source in ('generated', 'regenerated')
+        ), '-infinity'::timestamptz)
     ) first_delivery on true
     where r.state = 'IN_PROGRESS' and r.pending_count > 0
       and first_delivery.first_sent_at <= ${deadline.toISOString()}

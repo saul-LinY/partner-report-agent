@@ -757,6 +757,26 @@ export class FeishuDeliveryService {
   async deliverReviewReminder(
     input: FeishuDeliveryScope & { reviewId: string },
   ) {
+    return this.resendReview(
+      input,
+      "这张审核卡片已超过 24 小时未处理，已停止操作。管理员已发送新的审核卡片，请在新卡片中继续审核。",
+    );
+  }
+
+  /** Regenerated content must arrive as a new message: Feishu does not notify on edits. */
+  async deliverRegeneratedReview(
+    input: FeishuDeliveryScope & { reviewId: string },
+  ) {
+    return this.resendReview(
+      input,
+      "工作卡片已重新生成，这张卡片已停止操作。请在最新收到的审核卡片中继续审核。",
+    );
+  }
+
+  private async resendReview(
+    input: FeishuDeliveryScope & { reviewId: string },
+    staleMessage: string,
+  ) {
     const view = await this.loadReviewDeliveryView(input, input.reviewId);
     if (!view)
       return {
@@ -778,8 +798,7 @@ export class FeishuDeliveryService {
     `;
     const expiredCard = renderStaleCard({
       title: "审核卡片已过期",
-      message:
-        "这张审核卡片已超过 24 小时未处理，已停止操作。管理员已发送新的审核卡片，请在新卡片中继续审核。",
+      message: staleMessage,
     });
     for (const delivery of previous) {
       if (delivery.message_id)

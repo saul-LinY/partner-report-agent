@@ -51,6 +51,42 @@ describe("project progress sources", () => {
     expect(result.projects[0]?.keyEvents).toHaveLength(25);
     expect(result.projects[0]?.keyEvents.at(-1)?.detail).toBe("已完成工作 25");
   });
+  it("shows the newest valid outlook and each event's roadmap step", () => {
+    const outlook = {
+      goal: "做成能自动汇总周报的团队工具",
+      roadmap: [
+        { name: "采集可用", state: "done" },
+        { name: "审核流程", state: "current" },
+        { name: "全员试用", state: "todo" },
+      ],
+      position: "正在打磨审核流程，完成后开始全员试用。",
+    };
+    const result = assembleProjectProgress({
+      ...defaults,
+      cards: [
+        {
+          ...card,
+          payload: {
+            ...card.payload,
+            projectOutlook: outlook,
+            keyEvents: [{ ...card.payload.keyEvents[0], step: "采集可用" }],
+          },
+        },
+        {
+          ...card,
+          id: "older",
+          period_key: "older-week",
+          payload: { ...card.payload, projectOutlook: { goal: "旧目标" } },
+        },
+      ],
+    });
+    expect(result.projects[0]?.outlook).toEqual({
+      ...outlook,
+      periodKey: "custom-week",
+      reviewId: "review",
+    });
+    expect(result.projects[0]?.keyEvents[0]?.step).toBe("采集可用");
+  });
   it("uses the approved card's project description shared with the weekly report", () => {
     const result = assembleProjectProgress({
       ...defaults,

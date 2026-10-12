@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   RefreshCw,
   RotateCcw,
+  Search,
   Server,
   ShieldCheck,
   Sparkles,
@@ -25,6 +26,7 @@ import { Badge, Button, EmptyState, ErrorBanner, Modal } from "./components.js";
 import {
   pluginExecutionKindLabel,
   pluginExecutionLabel,
+  pluginStageLabel,
   type PluginExecutionGrouping,
 } from "./plugin-log-labels.js";
 
@@ -251,6 +253,46 @@ const backupReasonLabel: Record<string, string> = {
   admin_reapproval: "管理员重新审核前",
 };
 
+const severityOrder: Record<Severity, number> = {
+  critical: 0,
+  warning: 1,
+  unknown: 2,
+  normal: 3,
+};
+
+type SeverityFilter = "all" | "critical" | "warning" | "normal";
+
+const severityFilters: Array<{ value: SeverityFilter; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "critical", label: "异常" },
+  { value: "warning", label: "需关注" },
+  { value: "normal", label: "正常" },
+];
+
+function formatRelative(value: string | null, now: number) {
+  if (!value) return "暂无活动";
+  const minutes = Math.floor((now - new Date(value).getTime()) / 60_000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
+
+function compareVersions(left: string, right: string) {
+  const a = left.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const b = right.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+function lastActivity(plugin: Plugin) {
+  return plugin.latestEventAt ?? plugin.lastHeartbeatAt;
+}
+
 function shortId(value: string) {
   return value.slice(0, 8);
 }
@@ -261,13 +303,13 @@ function formatDuration(durationMs: number) {
   return `${Math.floor(durationMs / 60_000)} 分 ${Math.round((durationMs % 60_000) / 1000)} 秒`;
 }
 
-function dateKeyInTimezone(timezone: string) {
+function dateKeyInTimezone(timezone: string, date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const value = Object.fromEntries(
     parts.map((part) => [part.type, part.value]),
   );
@@ -286,6 +328,9 @@ export function PluginMonitoringPage() {
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [problemsOnly, setProblemsOnly] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
+  const [search, setSearch] = useState("");
+  const [recoverTarget, setRecoverTarget] = useState<Plugin | null>(null);
   const [logView, setLogView] = useState<"recent" | "history">("recent");
   const [historyDate, setHistoryDate] = useState(() =>
     dateKeyInTimezone("Asia/Shanghai"),
@@ -295,7 +340,35 @@ export function PluginMonitoringPage() {
     queryFn: () => api<PluginMonitoring>("/v1/admin/plugin-monitoring"),
     refetchInterval: 10_000,
   });
-  const plugins = monitoring.data?.plugins ?? [];
+  const plugins = useMemo(
+    () =>
+      [...(monitoring.data?.plugins ?? [])].sort(
+        (left, right) =>
+          severityOrder[left.status.severity] -
+          severityOrder[right.status.severity],
+      ),
+    [monitoring.data?.plugins],
+  );
+  const latestVersion = plugins.reduce<string | null>(
+    (latest, plugin) =>
+      !latest || compareVersions(plugin.version, latest) > 0
+        ? plugin.version
+        : latest,
+    null,
+  );
+  const keyword = search.trim().toLowerCase();
+  const visiblePlugins = plugins.filter(
+    (plugin) =>
+      (severityFilter === "all" ||
+        plugin.status.severity === severityFilter) &&
+      (!keyword ||
+        `${plugin.partnerName} ${plugin.deviceName}`
+          .toLowerCase()
+          .includes(keyword)),
+  );
+  const checkedAt = monitoring.data
+    ? new Date(monitoring.data.checkedAt).getTime()
+    : Date.now();
   const permissionBackup = useQuery({
     queryKey: ["admin-project-scope-backup"],
     queryFn: () =>
@@ -355,6 +428,7 @@ export function PluginMonitoringPage() {
         method: "POST",
       }),
     onSuccess: async () => {
+      setRecoverTarget(null);
       await queryClient.invalidateQueries({
         queryKey: ["admin-plugin-monitoring"],
       });
@@ -384,6 +458,19 @@ export function PluginMonitoringPage() {
     setExecutionId(null);
     setProblemsOnly(false);
   };
+  const selectedActivity = selectedPlugin ? lastActivity(selectedPlugin) : null;
+  const selectedActivityDate = selectedActivity
+    ? dateKeyInTimezone(timezone, new Date(selectedActivity))
+    : null;
+  const openHistory = (value: string) => {
+    setLogView("history");
+    selectHistoryDate(value);
+  };
+  const selectPlugin = (pluginId: string) => {
+    setSelectedId(pluginId);
+    setExecutionId(null);
+    setProblemsOnly(false);
+  };
 
   if (monitoring.isLoading)
     return (
@@ -398,7 +485,7 @@ export function PluginMonitoringPage() {
       <WorkspaceHeader
         title="插件状态与日志"
         icon={PlugZap}
-        context="按插件命令或采集批次查看运行过程、返回结果和故障位置。"
+        context={`每天 ${monitoring.data?.schedule.time ?? "16:00"} 计划采集；先处理异常成员，再按运行记录定位故障位置。`}
       >
         <Button
           type="button"
@@ -431,6 +518,32 @@ export function PluginMonitoringPage() {
         }
       />
 
+      {plugins.length > 0 && monitoring.data && (
+        <section className="plugin-overview" aria-label="插件状态总览">
+          {severityFilters.map((filter) => {
+            const count =
+              filter.value === "all"
+                ? monitoring.data.summary.total
+                : monitoring.data.summary[filter.value];
+            return (
+              <button
+                key={filter.value}
+                type="button"
+                className={`plugin-overview-item ${filter.value}`}
+                aria-pressed={severityFilter === filter.value}
+                onClick={() => setSeverityFilter(filter.value)}
+              >
+                <span>{filter.label}</span>
+                <strong>{count}</strong>
+              </button>
+            );
+          })}
+          <span className="plugin-overview-checked">
+            更新于 {formatTime(monitoring.data.checkedAt)} · 每 10 秒自动刷新
+          </span>
+        </section>
+      )}
+
       {plugins.length === 0 ? (
         <EmptyState title="还没有已连接的插件" />
       ) : (
@@ -440,57 +553,88 @@ export function PluginMonitoringPage() {
               <div className="plugin-log-panel-title">
                 <Server size={16} />
                 <strong>使用人员</strong>
-                <span>{plugins.length}</span>
+                <span>
+                  {visiblePlugins.length === plugins.length
+                    ? plugins.length
+                    : `${visiblePlugins.length} / ${plugins.length}`}
+                </span>
               </div>
+              <label className="plugin-instance-search">
+                <Search size={14} />
+                <input
+                  type="search"
+                  aria-label="搜索使用人员"
+                  placeholder="搜索姓名或设备"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
               <div className="plugin-instance-grid">
-                {plugins.map((plugin) => (
-                  <div
-                    key={plugin.id}
-                    className={`plugin-instance-row ${selectedId === plugin.id ? "active" : ""}`}
-                  >
-                    <button
-                      type="button"
-                      className="plugin-instance-select"
-                      onClick={() => {
-                        setSelectedId(plugin.id);
-                        setExecutionId(null);
-                        setProblemsOnly(false);
-                      }}
+                {visiblePlugins.length ? (
+                  visiblePlugins.map((plugin) => (
+                    <div
+                      key={plugin.id}
+                      className={`plugin-instance-row ${selectedId === plugin.id ? "active" : ""}`}
                     >
-                      <span
-                        className={`plugin-instance-state ${plugin.status.severity}`}
+                      <button
+                        type="button"
+                        className="plugin-instance-select"
+                        onClick={() => selectPlugin(plugin.id)}
                       >
-                        <CircleDot size={15} />
-                      </span>
-                      <span className="plugin-instance-copy">
-                        <strong>{plugin.partnerName}</strong>
-                        <span>{plugin.deviceName}</span>
-                        <small>
-                          {plugin.status.label} · v{plugin.version}
-                        </small>
-                      </span>
-                      <ChevronRight size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className="plugin-instance-recover"
-                      title={`恢复 ${plugin.partnerName} 的监控状态`}
-                      disabled={recoverPlugin.isPending}
-                      onClick={() => recoverPlugin.mutate(plugin.id)}
-                    >
-                      <RotateCcw
-                        size={13}
-                        className={
-                          recoverPlugin.isPending &&
-                          recoverPlugin.variables === plugin.id
-                            ? "spin"
-                            : ""
-                        }
-                      />
-                      <span>恢复</span>
-                    </button>
-                  </div>
-                ))}
+                        <span
+                          className={`plugin-instance-state ${plugin.status.severity}`}
+                        >
+                          <CircleDot size={15} />
+                        </span>
+                        <span className="plugin-instance-copy">
+                          <strong>{plugin.partnerName}</strong>
+                          <span>{plugin.deviceName}</span>
+                          <small
+                            className={`plugin-instance-status ${plugin.status.severity}`}
+                          >
+                            {plugin.status.label} ·{" "}
+                            {formatRelative(lastActivity(plugin), checkedAt)}
+                          </small>
+                          {latestVersion &&
+                            compareVersions(plugin.version, latestVersion) <
+                              0 && (
+                              <small className="plugin-instance-outdated">
+                                旧版本 v{plugin.version}
+                              </small>
+                            )}
+                        </span>
+                        <ChevronRight size={16} />
+                      </button>
+                      {plugin.status.severity === "critical" && (
+                        <button
+                          type="button"
+                          className="plugin-instance-recover"
+                          title={`恢复 ${plugin.partnerName} 的监控状态`}
+                          disabled={recoverPlugin.isPending}
+                          onClick={() => setRecoverTarget(plugin)}
+                        >
+                          <RotateCcw size={13} />
+                          <span>恢复</span>
+                        </button>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState
+                    title="没有符合条件的成员"
+                    action={
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setSearch("");
+                          setSeverityFilter("all");
+                        }}
+                      >
+                        清除筛选
+                      </Button>
+                    }
+                  />
+                )}
               </div>
             </aside>
             <aside
@@ -510,10 +654,7 @@ export function PluginMonitoringPage() {
                 {logView === "recent" ? (
                   <button
                     className="plugin-history-link"
-                    onClick={() => {
-                      setLogView("history");
-                      selectHistoryDate(today);
-                    }}
+                    onClick={() => openHistory(today)}
                   >
                     <CalendarDays size={14} />
                     历史日志
@@ -612,6 +753,21 @@ export function PluginMonitoringPage() {
                       ? "最近 24 小时没有运行日志"
                       : "这一天没有运行日志"
                   }
+                  action={
+                    selectedActivityDate &&
+                    !(
+                      logView === "history" &&
+                      historyDate === selectedActivityDate
+                    ) ? (
+                      <Button
+                        variant="ghost"
+                        icon={<CalendarDays size={14} />}
+                        onClick={() => openHistory(selectedActivityDate)}
+                      >
+                        查看最近活动当天
+                      </Button>
+                    ) : undefined
+                  }
                 />
               )}
             </aside>
@@ -632,10 +788,10 @@ export function PluginMonitoringPage() {
                   <div>
                     <span>最近一次活动</span>
                     <strong>
-                      {formatTime(
-                        selectedPlugin.latestEventAt ??
-                          selectedPlugin.lastHeartbeatAt,
-                      )}
+                      {formatTime(selectedActivity)}
+                      <small>
+                        {formatRelative(selectedActivity, checkedAt)}
+                      </small>
                     </strong>
                   </div>
                   <div>
@@ -658,6 +814,32 @@ export function PluginMonitoringPage() {
                   <div>
                     <strong>{selectedPlugin.status.reason}</strong>
                     <p>{selectedPlugin.status.action}</p>
+                    {selectedPlugin.latestMessage && (
+                      <p className="monitor-diagnosis-message">
+                        最后一条日志：{selectedPlugin.latestMessage}
+                      </p>
+                    )}
+                    {selectedPlugin.status.severity === "critical" && (
+                      <div className="monitor-diagnosis-actions">
+                        {selectedActivityDate && (
+                          <Button
+                            variant="secondary"
+                            icon={<CalendarDays size={14} />}
+                            onClick={() => openHistory(selectedActivityDate)}
+                          >
+                            查看故障当天日志
+                          </Button>
+                        )}
+                        <Button
+                          variant="secondary"
+                          icon={<RotateCcw size={14} />}
+                          disabled={recoverPlugin.isPending}
+                          onClick={() => setRecoverTarget(selectedPlugin)}
+                        >
+                          已处理，恢复监控
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <dl>
                     <div>
@@ -668,7 +850,36 @@ export function PluginMonitoringPage() {
                     </div>
                     <div>
                       <dt>最后位置</dt>
-                      <dd>{selectedPlugin.latestStage ?? "暂无运行记录"}</dd>
+                      <dd title={selectedPlugin.latestStage ?? undefined}>
+                        {selectedPlugin.latestStage
+                          ? pluginStageLabel(selectedPlugin.latestStage)
+                          : "暂无运行记录"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>最近心跳</dt>
+                      <dd>
+                        {formatRelative(
+                          selectedPlugin.lastHeartbeatAt,
+                          checkedAt,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>本地待上传</dt>
+                      <dd>{selectedPlugin.pendingLocalJobs} 项</dd>
+                    </div>
+                    <div>
+                      <dt>插件版本</dt>
+                      <dd>
+                        v{selectedPlugin.version}
+                        {latestVersion &&
+                          compareVersions(
+                            selectedPlugin.version,
+                            latestVersion,
+                          ) < 0 &&
+                          `（最新 v${latestVersion}）`}
+                      </dd>
                     </div>
                   </dl>
                 </div>
@@ -876,7 +1087,8 @@ export function PluginMonitoringPage() {
                                   <strong>{event.message}</strong>
                                 </span>
                                 <small>
-                                  {event.stage} · {event.event_code}
+                                  {pluginStageLabel(event.stage)} ·{" "}
+                                  {event.event_code}
                                   {event.duration_ms !== null
                                     ? ` · ${formatDuration(event.duration_ms)}`
                                     : ""}
@@ -929,11 +1141,58 @@ export function PluginMonitoringPage() {
                   </section>
                 </>
               ) : (
-                <EmptyState title="请选择一次运行" />
+                <EmptyState
+                  title={
+                    logs.data && !logs.data.executions.length
+                      ? logView === "recent"
+                        ? "最近 24 小时没有运行记录，可在左侧查看历史日志"
+                        : "这一天没有运行记录，换个日期看看"
+                      : "从左侧选择一次运行查看详情"
+                  }
+                />
               )}
             </section>
           </section>
         </div>
+      )}
+      {recoverTarget && (
+        <Modal
+          title="恢复监控状态"
+          onClose={() => setRecoverTarget(null)}
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => setRecoverTarget(null)}
+              >
+                取消
+              </Button>
+              <Button
+                icon={<RotateCcw size={14} />}
+                loading={recoverPlugin.isPending}
+                onClick={() => recoverPlugin.mutate(recoverTarget.id)}
+              >
+                确认恢复
+              </Button>
+            </>
+          }
+        >
+          <div className="plugin-recover-confirm">
+            <p>
+              将把 <strong>{recoverTarget.partnerName}</strong>（
+              {recoverTarget.deviceName}）当前的「{recoverTarget.status.label}
+              」标记为已处理。
+            </p>
+            <ul>
+              <li>清除错误码和重试计数，今天内状态显示为「已恢复」。</li>
+              <li>不会重新运行采集，也不会改动用户设备上的数据。</li>
+              <li>之后再出现新的故障，会重新标记并提醒。</li>
+            </ul>
+            <p className="plugin-recover-hint">
+              建议先确认用户设备和 Codex 已恢复正常再操作。
+            </p>
+          </div>
+        </Modal>
       )}
       {backupOpen && (
         <Modal

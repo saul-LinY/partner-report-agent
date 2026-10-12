@@ -25,7 +25,16 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("reviewInstructions");
     expect(instructions).toContain("authoritative first-hand correction");
     expect(instructions).toContain("do not output a project description");
-    expect(instructions).toContain("2026-09-09.project-card.v9");
+    expect(instructions).toContain("2026-10-09.project-card.v10");
+  });
+  it("writes project progress fields for a manager who does not know the project", () => {
+    const instructions = aggregationInstructions("test-model");
+
+    expect(instructions).toContain(
+      "team manager who does not work on this project",
+    );
+    expect(instructions).toContain("previousProjectOutlook");
+    expect(instructions).toContain("roadmap step name it belongs to");
   });
 });
 

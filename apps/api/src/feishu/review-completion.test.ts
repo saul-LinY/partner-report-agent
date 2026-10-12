@@ -375,6 +375,45 @@ describe("review completion across Feishu cards", () => {
     await expectCompleted();
   });
 
+  it.each([
+    [{ count: 1, freshMessage: true }, "sends a new message", 1],
+    [{ count: 1 }, "keeps editing the existing message", 0],
+  ])("regenerated cards %#: %s", async (payload, _label, expectedSends) => {
+    const sendInteractiveCard = vi.fn(async () => ({
+      messageId: `om_${randomUUID()}`,
+    }));
+    const messageClient = { updateInteractiveCard, sendInteractiveCard };
+    const g = new FeishuGateway(
+      { appId: f.appId, appSecret: "test-secret" },
+      messageClient,
+      new FeishuDeliveryService({ appId: f.appId, messageClient }),
+      { tenantIdFilter: f.tenant },
+    );
+    await sql`update reviews set version = 2 where id = ${f.review}`;
+    await sql`insert into outbox_events (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+        values (${randomUUID()}, ${f.tenant}, 'work_items.draft.created', 'review', ${f.review},
+          ${JSON.stringify(payload)}::jsonb)`;
+    await expect(g.drainOutbox()).resolves.toBe(1);
+
+    expect(sendInteractiveCard).toHaveBeenCalledTimes(expectedSends);
+    const deliveries = await sql<
+      Array<{ status: string; message_id: string }>
+    >`select status, message_id from feishu_deliveries
+        where aggregate_id = ${f.review} order by created_at`;
+    if (expectedSends) {
+      // The old message is retired so its buttons stop working.
+      expect(deliveries).toEqual([
+        { status: "expired", message_id: f.messageId },
+        { status: "sent", message_id: expect.not.stringMatching(f.messageId) },
+      ]);
+      expect(JSON.stringify(updateInteractiveCard.mock.calls[0])).toContain(
+        "工作卡片已重新生成",
+      );
+    } else {
+      expect(deliveries).toEqual([{ status: "sent", message_id: f.messageId }]);
+    }
+  });
+
   it("creates only one snapshot when completion is attempted concurrently", async () => {
     await reviewed();
     const results = await Promise.all([

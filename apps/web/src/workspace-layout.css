@@ -1248,3 +1248,134 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Plugin monitoring: admin triage helpers. */
+.plugin-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.plugin-overview-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.plugin-overview-item strong {
+  color: var(--ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.plugin-overview-item.critical strong {
+  color: var(--danger);
+}
+.plugin-overview-item.warning strong {
+  color: var(--warning);
+}
+.plugin-overview-item.normal strong {
+  color: var(--accent);
+}
+.plugin-overview-item:hover {
+  border-color: #9cb9af;
+}
+.plugin-overview-item[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: #edf5f1;
+}
+.plugin-overview-checked {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.plugin-instance-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 12px;
+  padding: 0 9px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--muted);
+}
+.plugin-instance-search:focus-within {
+  outline: 2px solid #3c83b8;
+  outline-offset: 1px;
+}
+.app-shell .plugin-instance-search input,
+.plugin-instance-search input {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.app-shell .plugin-instance-copy .plugin-instance-status.critical {
+  color: var(--danger);
+}
+.app-shell .plugin-instance-copy .plugin-instance-status.warning {
+  color: var(--warning);
+}
+.app-shell .plugin-instance-copy .plugin-instance-outdated {
+  color: var(--warning);
+}
+.app-shell .plugin-instance-grid > .empty-state {
+  padding: 28px 12px;
+}
+.app-shell .plugin-log-summary strong small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.app-shell .monitor-diagnosis .monitor-diagnosis-message {
+  margin-top: 6px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.monitor-diagnosis-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.plugin-recover-confirm {
+  display: grid;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.plugin-recover-confirm ul {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+.plugin-recover-hint {
+  color: var(--warning);
+  font-size: 13px;
+}
+@media (max-width: 760px) {
+  .plugin-overview-checked {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+}

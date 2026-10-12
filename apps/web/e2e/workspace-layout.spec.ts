@@ -329,6 +329,10 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
       .last()
       .click();
     await page.getByTitle("恢复 成员 7 的监控状态", { exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "恢复监控状态" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "确认恢复", exact: true }).click();
     await expect
       .poll(() =>
         calls.some(

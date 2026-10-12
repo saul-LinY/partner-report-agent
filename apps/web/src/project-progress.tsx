@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Flag,
   Plus,
   RefreshCw,
@@ -36,6 +38,11 @@ const keyEventTypeLabels: Record<
   blocker: "问题阻塞",
   stage_change: "阶段切换",
 };
+const roadmapStateLabels = {
+  done: "已完成",
+  current: "进行中",
+  todo: "未开始",
+} as const;
 const countDays = (value: number | null) =>
   value === null ? "待核查" : `${value} 天`;
 function timestamp(value: string | null, timezone: string) {
@@ -453,6 +460,7 @@ export function ProjectProgress() {
   const [selectedKey, setSelectedKey] = useState("");
   const [month, setMonth] = useState("");
   const [day, setDay] = useState<string | null>(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const query = useQuery({
     queryKey: ["project-progress", "calendar", month],
     queryFn: async () => {
@@ -491,6 +499,7 @@ export function ProjectProgress() {
   const activeMemberId = activeMember?.id ?? "";
   useEffect(() => {
     if (activeKey) setSelectedKey(activeKey);
+    setAboutOpen(false);
     if (activeMemberId) setMemberId(activeMemberId);
   }, [activeKey, activeMemberId]);
   const visible = selected ? [selected] : [];
@@ -625,15 +634,61 @@ export function ProjectProgress() {
                       已开发 <strong>{totalDays}</strong> 天
                     </span>
                   </div>
+                  {selected.outlook ? (
+                    <section className="pc-outlook" aria-label="项目全景">
+                      <div className="pc-outlook-heading">
+                        <strong>项目目标</strong>
+                        {selected.projectDescription?.trim() && (
+                          <button
+                            type="button"
+                            className="pc-about-toggle"
+                            aria-expanded={aboutOpen}
+                            onClick={() => setAboutOpen((open) => !open)}
+                          >
+                            产品介绍
+                            {aboutOpen ? (
+                              <ChevronUp size={16} />
+                            ) : (
+                              <ChevronDown size={16} />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      <p className="pc-outlook-goal">{selected.outlook.goal}</p>
+                      {aboutOpen && selected.projectDescription?.trim() && (
+                        <p className="pc-project-description pc-project-about">
+                          {selected.projectDescription.trim()}
+                        </p>
+                      )}
+                      <ol className="pc-roadmap" aria-label="项目路线">
+                        {selected.outlook.roadmap.map((step) => (
+                          <li
+                            key={step.name}
+                            className={`pc-roadmap-step pc-roadmap-${step.state}`}
+                            aria-current={
+                              step.state === "current" ? "step" : undefined
+                            }
+                          >
+                            <span>{roadmapStateLabels[step.state]}</span>
+                            {step.name}
+                          </li>
+                        ))}
+                      </ol>
+                      <p className="pc-outlook-position">
+                        {selected.outlook.position}
+                      </p>
+                    </section>
+                  ) : (
+                    <p className="pc-project-description">
+                      {selected.projectDescription?.trim() || "暂无项目说明"}
+                    </p>
+                  )}
                   <div className="pc-focus">
                     <div className="pc-focus-heading">
                       <strong>当前重点</strong>
                     </div>
                     <p className="pc-latest">{focusText}</p>
                   </div>
-                  <p className="pc-project-description">
-                    {selected.projectDescription?.trim() || "暂无项目说明"}
-                  </p>
                   {selected.keyEvents.length > 0 && (
                     <section className="pc-key-events" aria-label="项目时间线">
                       <div className="pc-key-events-heading">
@@ -652,6 +707,11 @@ export function ProjectProgress() {
                               </span>
                               <strong>{event.title}</strong>
                             </div>
+                            {event.step && (
+                              <span className="pc-event-step">
+                                所属阶段：{event.step}
+                              </span>
+                            )}
                             <p>{event.detail}</p>
                           </article>
                         ))}

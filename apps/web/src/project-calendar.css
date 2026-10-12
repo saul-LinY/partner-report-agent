@@ -294,6 +294,97 @@
   line-height: 1.8;
   overflow-wrap: anywhere;
 }
+.pc-outlook {
+  margin: 0 0 24px;
+}
+.pc-outlook-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.pc-outlook-heading strong {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+.pc-about-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.pc-about-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pc-outlook-goal {
+  margin: 0 0 16px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.pc-roadmap {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pc-roadmap-step {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.pc-roadmap-step span {
+  display: block;
+  font-size: 10px;
+}
+.pc-roadmap-done {
+  color: var(--accent);
+  background: var(--surface-alt);
+}
+.pc-roadmap-current {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.pc-outlook-position {
+  margin: 12px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.pc-project-about {
+  margin: -6px 0 16px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--surface-alt);
+}
+.pc-event-step {
+  display: block;
+  margin: 0 0 6px 150px;
+  color: var(--accent);
+  font-size: 11px;
+}
 .pc-focus {
   margin: 0 0 24px;
   padding: 26px 28px;
@@ -502,7 +593,11 @@
   .pc-event-heading strong {
     grid-column: 1 / -1;
   }
-  .pc-key-event p {
+  .pc-key-event p,
+  .pc-event-step {
     margin-left: 0;
+  }
+  .pc-roadmap {
+    flex-direction: column;
   }
 }

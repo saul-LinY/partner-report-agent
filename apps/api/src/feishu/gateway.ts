@@ -1498,10 +1498,16 @@ export class FeishuGateway {
               ...scope,
               reviewId: event.aggregate_id,
             })
-          : await this.deliveries.deliverReview({
-              ...scope,
-              reviewId: event.aggregate_id,
-            });
+          : event.event_type === "work_items.draft.created" &&
+              safeRecord(event.payload).freshMessage === true
+            ? await this.deliveries.deliverRegeneratedReview({
+                ...scope,
+                reviewId: event.aggregate_id,
+              })
+            : await this.deliveries.deliverReview({
+                ...scope,
+                reviewId: event.aggregate_id,
+              });
       return !deliveryNeedsStatusRetry(result);
     }
 
