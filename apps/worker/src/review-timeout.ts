@@ -14,6 +14,7 @@ type ExpiredReview = {
   team_id: string;
   partner_id: string;
   period_id: string;
+  version: number;
   first_sent_at: Date | string;
 };
 
@@ -57,19 +58,20 @@ export async function autoApproveExpiredReviews(
 ): Promise<AutoApprovalResult> {
   const deadline = new Date(now.getTime() - REVIEW_AUTO_APPROVAL_DELAY_MS);
   const candidates = await sql<ExpiredReview[]>`
-    select r.id, r.tenant_id, r.team_id, r.partner_id, r.period_id,
+    select r.id, r.tenant_id, r.team_id, r.partner_id, r.period_id, r.version,
       first_delivery.first_sent_at
     from reviews r
     join lateral (
       -- The review window restarts when cards are regenerated, counted from the
       -- first message that carried the new content; reminders do not restart it.
-      select min(d.sent_at) as first_sent_at
-      from feishu_deliveries d
+      select min(d.delivered_at) as first_sent_at
+      from app_notifications d
       where d.tenant_id = r.tenant_id and d.team_id = r.team_id
-        and d.partner_id = r.partner_id and d.kind = 'review'
-        and d.aggregate_type = 'review' and d.aggregate_id = r.id::text
-        and d.sent_at is not null
-        and d.sent_at >= coalesce((
+        and d.partner_id = r.partner_id and d.target_type = 'review'
+        and d.kind = 'work_items.draft.created' and d.target_id = r.id::text
+        and d.review_version = r.version
+        and d.delivered_at is not null
+        and d.delivered_at >= coalesce((
           select max(v.created_at) from work_item_versions v
           where v.tenant_id = r.tenant_id and v.review_id = r.id
             and v.source in ('generated', 'regenerated')
@@ -92,7 +94,12 @@ export async function autoApproveExpiredReviews(
         for update
       `;
       const review = reviews[0];
-      if (!review || review.pending_count < 1) return null;
+      if (
+        !review ||
+        review.pending_count < 1 ||
+        review.version !== candidate.version
+      )
+        return null;
 
       const items = await tx<any[]>`
         select * from work_items

@@ -1,3 +1,7 @@
+import {
+  confirmCollectorIdentity,
+  removeCollectorIdentities,
+} from "./test-support/collector-identity.js";
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
@@ -55,8 +59,7 @@ suite("legacy and modern members sharing one platform", () => {
         values (${who.partnerId},${tenantId},${teamId},${`${who.partnerId}@local.test`},${who.version})`;
       await sql`insert into plugin_instances (id,tenant_id,team_id,partner_id,device_name,version,access_token_hash,refresh_token_hash,access_expires_at)
         values (${who.pluginInstanceId},${tenantId},${teamId},${who.partnerId},'Test',${who.version},${createHash("sha256").update(who.token).digest("hex")},${randomUUID()},now()+interval '1 day')`;
-      await sql`insert into feishu_partner_bindings (id,tenant_id,team_id,partner_id,status,open_id,app_id)
-        values (${randomUUID()},${tenantId},${teamId},${who.partnerId},'active',${who.partnerId},'test-app')`;
+      await confirmCollectorIdentity(who);
     }
     app = await buildApp({ logger: false });
   });
@@ -65,7 +68,7 @@ suite("legacy and modern members sharing one platform", () => {
     await app?.close();
     await sql`delete from outbox_events where tenant_id=${tenantId}`;
     await sql`delete from audit_events where tenant_id=${tenantId}`;
-    await sql`delete from feishu_partner_bindings where tenant_id=${tenantId}`;
+    await removeCollectorIdentities(tenantId);
     await sql`delete from project_scope_backup_snapshots where tenant_id=${tenantId}`;
     await sql`delete from project_scope_entries where tenant_id=${tenantId}`;
     await sql`delete from project_scope_policies where tenant_id=${tenantId}`;
@@ -92,7 +95,7 @@ suite("legacy and modern members sharing one platform", () => {
       await decideProjectScopes(
         {
           ...who,
-          actorType: "feishu",
+          actorType: "collector",
           actorId: "coexistence-test",
           userId: null,
         },

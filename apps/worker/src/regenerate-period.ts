@@ -8,7 +8,7 @@
  * Facts that happened inside the period but were uploaded after its cutoff are
  * moved back into it first (--reclaim). Each member's existing cards for the
  * period are replaced by a normal weekly_report job, which the worker generates
- * and then announces to Feishu through work_items.draft.created as usual.
+ * and then notifies the App through work_items.draft.created as usual.
  */
 import { randomUUID } from "node:crypto";
 import { stableJsonHash } from "@partner-report/contracts/hash";
@@ -188,7 +188,7 @@ try {
     }
   });
   console.log(
-    "\nCommitted. The worker will generate cards and send Feishu reviews.",
+    "\nCommitted. The worker will generate cards and notify the App for review.",
   );
 } catch (error) {
   if (!(error instanceof DryRun)) throw error;

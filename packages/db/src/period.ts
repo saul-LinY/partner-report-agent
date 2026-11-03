@@ -69,7 +69,7 @@ function zoneOffsetAt(date: Date, timezone: string) {
   );
 }
 
-function zonedDate(parts: DateParts, timezone: string) {
+export function zonedDate(parts: DateParts, timezone: string) {
   const guessedUtc = Date.UTC(
     parts.year,
     parts.month - 1,

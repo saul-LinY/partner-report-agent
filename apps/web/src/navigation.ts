@@ -1,12 +1,12 @@
 import {
   ClipboardCheck,
   FileStack,
-  HeartPulse,
   LayoutDashboard,
-  ListTodo,
-  PlugZap,
+  ScanSearch,
+  ServerCog,
   Settings2,
   TableProperties,
+  UserRound,
 } from "lucide-react";
 
 // Navigation groups describe presentation only; page routes and permissions stay
@@ -30,13 +30,9 @@ export const navigationGroups = [
   {
     label: "监控与排障",
     items: [
-      { label: "插件状态与日志", href: "/admin/plugin-logs", icon: PlugZap },
-      { label: "异常任务处理", href: "/admin/jobs", icon: ListTodo },
-      {
-        label: "系统状态与日志",
-        href: "/admin/system-monitoring",
-        icon: HeartPulse,
-      },
+      { label: "用户日志", href: "/admin/user-logs", icon: UserRound },
+      { label: "系统日志", href: "/admin/system-logs", icon: ServerCog },
+      { label: "异常巡检", href: "/admin/inspection", icon: ScanSearch },
     ],
   },
 ];

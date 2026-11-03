@@ -4070,6 +4070,55 @@ var projectStatusSchema = external_exports.enum([
   "paused"
 ]);
 
+// ../../packages/contracts/src/collector.ts
+var collectorSessionSchema = external_exports.object({
+  id: external_exports.string().min(1).max(1024),
+  scopeKey: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  agent: external_exports.enum([
+    "codex",
+    "claude",
+    "opencode",
+    "pi",
+    "hermes",
+    "omp",
+    "grokbuild",
+    "agy"
+  ]),
+  title: external_exports.string().max(4096),
+  modifiedAt: external_exports.string().datetime(),
+  turns: external_exports.array(
+    external_exports.object({
+      id: external_exports.string().min(1).max(1024),
+      prompt: external_exports.string(),
+      answer: external_exports.string().nullable().optional(),
+      questionTime: external_exports.string(),
+      answerTime: external_exports.string().nullable().optional(),
+      model: external_exports.string().nullable().optional()
+    }).strict()
+  ).max(1e5)
+}).strict();
+var collectorExtractionSchema = external_exports.object({
+  decision: external_exports.enum(["include", "ignore"]),
+  reason: external_exports.string().max(300),
+  title: external_exports.string().max(200),
+  summary: external_exports.string().max(1600),
+  contributions: external_exports.array(
+    external_exports.object({
+      kind: external_exports.enum([
+        "outcome",
+        "progress",
+        "decision",
+        "blocker",
+        "next_step"
+      ]),
+      text: external_exports.string().min(1).max(600),
+      confidence: external_exports.enum(["high", "medium", "low"]),
+      date: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      evidenceRefs: external_exports.array(external_exports.string().min(1)).min(1).max(20)
+    }).strict()
+  ).max(40)
+}).strict();
+
 // ../../packages/contracts/src/index.ts
 var idSchema = external_exports.string().uuid();
 var isoDateTimeSchema = external_exports.string().datetime({ offset: true });
@@ -4204,12 +4253,23 @@ var coverageSchema = external_exports.object({
   warnings: external_exports.array(external_exports.string()).default([]),
   lastSyncAt: isoDateTimeSchema.optional()
 });
+var projectOutlookSchema = external_exports.object({
+  goal: external_exports.string().trim().min(1).max(200),
+  roadmap: external_exports.array(
+    external_exports.object({
+      name: external_exports.string().trim().min(1).max(40),
+      state: external_exports.enum(["done", "current", "todo"])
+    }).strict()
+  ).min(2).max(6),
+  position: external_exports.string().trim().min(1).max(200)
+}).strict();
 var aggregationGroupSchema = external_exports.object({
   projectKey: external_exports.string().default(""),
   status: workStatusSchema,
   projectStatus: projectStatusSchema.optional(),
   projectStatusReason: external_exports.string().trim().max(500).optional(),
   currentFocus: external_exports.string().trim().min(1).max(240).optional(),
+  projectOutlook: projectOutlookSchema.optional(),
   keyEvents: external_exports.array(
     external_exports.object({
       date: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -4221,7 +4281,8 @@ var aggregationGroupSchema = external_exports.object({
         "stage_change"
       ]),
       title: external_exports.string().trim().min(1).max(160),
-      detail: external_exports.string().trim().min(1).max(500)
+      detail: external_exports.string().trim().min(1).max(500),
+      step: external_exports.string().trim().max(40).optional()
     }).strict()
   ).max(5).default([]),
   overview: external_exports.string().trim().min(1),
@@ -4293,11 +4354,14 @@ var teamReportResultSchema = external_exports.object({
   production: productionMetadataSchema
 });
 var agentJobTypeSchema = external_exports.enum([
+  "EXTRACT_COLLECTOR_SESSION",
   "AGGREGATE_WORK_ITEMS",
   "GENERATE_TEAM_REPORT",
   "REGENERATE_TEAM_REPORT",
   "REANALYZE_SESSIONS",
-  "RESCAN_SESSIONS"
+  "RESCAN_SESSIONS",
+  "ANALYZE_SYSTEM_LOGS",
+  "ANALYZE_INSPECTION_FINDING"
 ]);
 var reviewOperationSchema = external_exports.enum([
   "approve",
@@ -7116,7 +7180,7 @@ function output(value) {
       const pendingProjects = Array.isArray(event.pendingProjects) ? event.pendingProjects.length : 0;
       enqueueCollectionFinalState({
         outcome: "failed",
-        summary: value.status === "project_scope_approval_required" ? `\u91C7\u96C6\u672A\u5F00\u59CB\uFF1A${pendingProjects} \u4E2A\u9879\u76EE\u4ECD\u5728\u7B49\u5F85\u98DE\u4E66\u6743\u9650\u5BA1\u6838\u3002` : "\u91C7\u96C6\u672A\u5F00\u59CB\uFF1A\u5F53\u524D\u626B\u63CF\u8303\u56F4\u5185\u8FD8\u6CA1\u6709\u53EF\u5BA1\u6838\u9879\u76EE\u3002",
+        summary: value.status === "project_scope_approval_required" ? `\u91C7\u96C6\u672A\u5F00\u59CB\uFF1A${pendingProjects} \u4E2A\u9879\u76EE\u4ECD\u5728\u7B49\u5F85App\u6743\u9650\u5BA1\u6838\u3002` : "\u91C7\u96C6\u672A\u5F00\u59CB\uFF1A\u5F53\u524D\u626B\u63CF\u8303\u56F4\u5185\u8FD8\u6CA1\u6709\u53EF\u5BA1\u6838\u9879\u76EE\u3002",
         reasonCode: value.status,
         details: { pendingProjects, periodKey: event.periodKey }
       });
@@ -7322,7 +7386,7 @@ function connectedOutput(partnerId, deviceName, connectivity, binding, projectSc
     scheduledTask: SCHEDULED_COLLECTION_TASK,
     scheduledTaskInstallation,
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
-    bindingNextStep: binding.bindingCompleted ? "\u7ED1\u5B9A\u94FE\u8DEF\u5DF2\u5B8C\u6210\uFF0C\u7ED1\u5B9A\u7801\u5DF2\u6838\u9500\u3002" : "\u4E2D\u53F0\u8FDE\u63A5\u5DF2\u5EFA\u7ACB\uFF0C\u4F46\u7ED1\u5B9A\u5C1A\u672A\u5B8C\u6210\uFF1B\u7ED1\u5B9A\u7801\u4E0D\u4F1A\u5728\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5361\u6210\u529F\u9001\u8FBE\u524D\u6838\u9500\u3002",
+    bindingNextStep: binding.bindingCompleted ? "\u7ED1\u5B9A\u94FE\u8DEF\u5DF2\u5B8C\u6210\uFF0C\u7ED1\u5B9A\u7801\u5DF2\u6838\u9500\u3002" : "\u4E2D\u53F0\u8FDE\u63A5\u5DF2\u5EFA\u7ACB\uFF0C\u4F46\u7ED1\u5B9A\u5C1A\u672A\u5B8C\u6210\uFF1B\u8BF7\u5728 App \u4F7F\u7528\u540D\u5B57\u548C\u540C\u4E00\u7ED1\u5B9A\u7801\u5B8C\u6210\u7ED1\u5B9A\u3002",
     nextStep: scheduledTaskInstallation?.status === "failed" ? "\u8FDE\u63A5\u51ED\u636E\u5DF2\u4FDD\u7559\uFF0C\u4F46 Codex Scheduled Task \u68C0\u67E5\u5931\u8D25\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u91CD\u8BD5\u3002" : scheduledTaskInstallation?.status === "required" ? "\u8FDE\u63A5\u51ED\u636E\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u4F7F\u7528\u8FD4\u56DE\u7684 scheduledTask \u914D\u7F6E\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u521B\u5EFA\u4EFB\u52A1\u3002" : "\u68C0\u6D4B\u5230\u540C\u540D Codex Scheduled Task\uFF1B\u8BF7\u901A\u8FC7 Codex \u5B98\u65B9\u81EA\u52A8\u5316\u5DE5\u5177\u786E\u8BA4\u5176\u53EF\u89C1\u3002"
   });
 }
@@ -7573,7 +7637,7 @@ function projectScopeReady(periodKey, localScope) {
     deniedProjects: localScope.entries.filter(
       (entry) => entry.status === "denied"
     ).length,
-    message: "\u98DE\u4E66\u9879\u76EE\u6743\u9650\u5BA1\u6838\u5DF2\u5B8C\u6210\uFF0C\u53EA\u91C7\u96C6\u5DF2\u5141\u8BB8\u7684\u9879\u76EE\u3002"
+    message: "App\u9879\u76EE\u6743\u9650\u5BA1\u6838\u5DF2\u5B8C\u6210\uFF0C\u53EA\u91C7\u96C6\u5DF2\u5141\u8BB8\u7684\u9879\u76EE\u3002"
   };
 }
 function projectScopeHasPending(localScope) {
@@ -7591,7 +7655,7 @@ function projectScopeApprovalRequired(periodKey, localScope) {
       name: entry.displayName,
       sessionCount: entry.sessionCount
     })),
-    message: pendingProjects.length > 0 ? "\u9879\u76EE\u6743\u9650\u5361\u5DF2\u8BF7\u6C42\u53D1\u9001\u5230\u98DE\u4E66\uFF1B\u7528\u6237\u5B8C\u6210\u5BA1\u6838\u524D\u4E0D\u4F1A\u8BFB\u53D6\u8FD9\u4E9B\u9879\u76EE\u7684 Session\u3002" : "\u5F53\u524D\u65F6\u95F4\u8303\u56F4\u5185\u672A\u53D1\u73B0\u53EF\u5BA1\u6838\u9879\u76EE\uFF1B\u540E\u7EED\u53D1\u73B0\u9879\u76EE\u65F6\u4F1A\u53D1\u9001\u98DE\u4E66\u6743\u9650\u5361\u3002"
+    message: pendingProjects.length > 0 ? "\u9879\u76EE\u6743\u9650\u5361\u5DF2\u8BF7\u6C42\u53D1\u9001\u5230App\uFF1B\u7528\u6237\u5B8C\u6210\u5BA1\u6838\u524D\u4E0D\u4F1A\u8BFB\u53D6\u8FD9\u4E9B\u9879\u76EE\u7684 Session\u3002" : "\u5F53\u524D\u65F6\u95F4\u8303\u56F4\u5185\u672A\u53D1\u73B0\u53EF\u5BA1\u6838\u9879\u76EE\uFF1B\u540E\u7EED\u53D1\u73B0\u9879\u76EE\u65F6\u4F1A\u53D1\u9001App\u6743\u9650\u5361\u3002"
   };
 }
 function createRun(manifest) {

@@ -109,7 +109,7 @@ suite("project participation API", () => {
   it("reads only approved daily card content and does not infer project completion from weekly status", async () => {
     const response = await app.inject({
       method: "GET",
-      url: "/v1/admin/project-progress",
+      url: `/v1/admin/project-progress?from=${first}&to=${today}`,
       headers,
     });
     expect(response.statusCode).toBe(200);

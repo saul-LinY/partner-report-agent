@@ -56,12 +56,12 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             }}
           >
             <ErrorBanner error={login.error} />
-            <Field label="邮箱">
+            <Field label="账号">
               <input
-                type="email"
+                type="text"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                autoComplete="email"
+                autoComplete="username"
                 required
               />
             </Field>

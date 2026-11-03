@@ -26,12 +26,13 @@ suite("review timeout after regeneration", () => {
     await sql`insert into coverage_snapshots (id, tenant_id, team_id, partner_id, period_id, payload)
       values (${randomUUID()}, ${tenant}, ${team}, ${partner}, ${period}, '{}'::jsonb)`;
     // First card went out four days ago, before the content was regenerated.
-    await sql`insert into feishu_deliveries (id, tenant_id, team_id, partner_id, kind, aggregate_type, aggregate_id, receive_id, receive_id_type, message_id, status, idempotency_key, sent_at)
-      values (${randomUUID()}, ${tenant}, ${team}, ${partner}, 'review', 'review', ${review}, 'ou_old', 'open_id', 'om_old', 'expired', ${`old:${review}`}, ${new Date(now.getTime() - 4 * 86_400_000).toISOString()})`;
+    await sql`insert into app_notifications (id,tenant_id,team_id,partner_id,source_event_id,kind,title,body,target_type,target_id,delivered_at)
+      values (${randomUUID()},${tenant},${team},${partner},${randomUUID()},'work_items.draft.created','Review','Review pending','review',${review},${new Date(now.getTime() - 4 * 86_400_000).toISOString()})`;
     await sql`insert into work_item_versions (id, tenant_id, team_id, partner_id, period_id, review_id, work_item_id, version, title, status, payload, source, created_at)
       values (${randomUUID()}, ${tenant}, ${team}, ${partner}, ${period}, ${review}, ${item}, 1, 'Timeout item', 'in_progress', '{}'::jsonb, 'generated', ${new Date(now.getTime() - 2 * 86_400_000 - 60_000).toISOString()})`;
-    await sql`insert into feishu_deliveries (id, tenant_id, team_id, partner_id, kind, aggregate_type, aggregate_id, receive_id, receive_id_type, message_id, status, idempotency_key, sent_at)
-      values (${randomUUID()}, ${tenant}, ${team}, ${partner}, 'review', 'review', ${review}, 'ou_new', 'open_id', 'om_new', 'sent', ${`new:${review}`}, ${new Date(now.getTime() - 2 * 86_400_000).toISOString()})`;
+    await sql`insert into app_notifications (id,tenant_id,team_id,partner_id,source_event_id,kind,title,body,target_type,target_id,delivered_at)
+      values (${randomUUID()},${tenant},${team},${partner},${randomUUID()},'work_items.draft.created','Review','Review pending','review',${review},${new Date(now.getTime() - 2 * 86_400_000).toISOString()})`;
+    await sql`update app_notifications set review_version=1 where tenant_id=${tenant}`;
   });
 
   afterAll(async () => {
@@ -40,7 +41,7 @@ suite("review timeout after regeneration", () => {
       "outbox_events",
       "work_item_snapshots",
       "coverage_snapshots",
-      "feishu_deliveries",
+      "app_notifications",
       "work_item_versions",
       "work_items",
       "reviews",
@@ -52,6 +53,22 @@ suite("review timeout after regeneration", () => {
     await sql`delete from tenants where id = ${tenant}`;
   });
 
+  it("does not auto-approve a queued notification without a system receipt", async () => {
+    const receipts =
+      await sql`select id,delivered_at from app_notifications where tenant_id=${tenant}`;
+    await sql`update app_notifications set delivered_at=null where tenant_id=${tenant}`;
+    try {
+      await autoApproveExpiredReviews(
+        new Date(now.getTime() + 10 * 86_400_000),
+      );
+      expect(
+        (await sql`select state from reviews where id=${review}`)[0]!.state,
+      ).toBe("IN_PROGRESS");
+    } finally {
+      for (const row of receipts)
+        await sql`update app_notifications set delivered_at=${row.delivered_at} where id=${row.id}`;
+    }
+  });
   it("counts three days from the message carrying the regenerated content", async () => {
     await autoApproveExpiredReviews(now);
     expect(await sql`select state from reviews where id = ${review}`).toEqual([

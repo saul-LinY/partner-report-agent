@@ -16,6 +16,7 @@
     "db:migrate": "node --import tsx packages/db/src/migrate.ts",
     "db:seed": "node --import tsx packages/db/src/seed.ts",
     "dev": "concurrently -k -n api,web,worker -c cyan,green,yellow \"npm run dev -w @partner-report/api\" \"npm run dev -w @partner-report/web\" \"npm run dev -w @partner-report/worker\"",
+    "app:services": "node scripts/local-app-services.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "plugin:install": "node scripts/install-partner-report.mjs",

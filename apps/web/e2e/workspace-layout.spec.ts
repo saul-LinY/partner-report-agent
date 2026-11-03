@@ -34,66 +34,30 @@ async function setup(page: Page, path: string, longReview = false) {
       return send({ version: ++reviewVersion, changed: true });
     }
     if (request.method() === "POST") return send({ ok: true, version: 7 });
-    if (url.pathname === "/v1/admin/agent-jobs")
-      return send(
-        url.searchParams.get("status") === "FAILED"
-          ? [
-              {
-                id: "job-1",
-                partner_id: "member-1",
-                plugin_instance_id: null,
-                partner_name: "陈明",
-                plugin_device_name: null,
-                type: "AGGREGATE_WORK_ITEMS",
-                status: "FAILED",
-                attempt_count: 3,
-                max_attempts: 3,
-                error_code: "MODEL_REQUEST_TIMEOUT",
-                error_message: "请求超时，请稍后重试。",
-                created_at: date,
-                updated_at: date,
-              },
-            ]
-          : [],
-      );
-    if (url.pathname === "/v1/admin/plugin-monitoring")
+    if (url.pathname === "/v1/admin/user-logs")
       return send({
         checkedAt: date,
-        schedule: {
-          timezone: "Asia/Shanghai",
-          time: "17:00",
-          graceMinutes: 30,
-          staleRunMinutes: 30,
-        },
-        summary: { total: 8, normal: 0, warning: 0, critical: 8, unknown: 0 },
-        plugins: Array.from({ length: 8 }, (_, i) => ({
-          id: `plugin-${i}`,
-          partnerId: `member-${i}`,
-          partnerName: `成员 ${i}`,
-          deviceName: `研发工作设备 ${i}`,
-          version: "2.1.0",
-          lastHeartbeatAt: date,
-          lastSyncAt: date,
-          lastCollectionStartedAt: date,
-          lastCollectionCompletedAt: date,
-          latestEventAt: date,
-          latestStage: "上传贡献",
-          latestEventCode: "UPLOAD_FAILED",
-          latestMessage: "上传超时",
-          pendingLocalJobs: 0,
-          runnerState: "idle",
-          status: {
-            severity: "critical",
-            code: "UPLOAD_FAILED",
-            label: "上传异常",
-            reason: "贡献上传超时",
-            action: "检查网络后重试",
-          },
-        })),
+        onlineWindowMinutes: 5,
+        windowHours: 24,
+        members: [],
       });
-    if (url.pathname === "/v1/admin/plugin-logs")
+    if (url.pathname === "/v1/admin/system-monitoring")
       return send({
-        pluginInstanceId: url.searchParams.get("pluginInstanceId"),
+        checkedAt: date,
+        overallSeverity: "normal",
+        summary: {
+          componentCount: 0,
+          normal: 0,
+          warning: 0,
+          critical: 0,
+          openIncidents: 0,
+        },
+        components: [],
+        incidents: [],
+        worker: null,
+      });
+    if (url.pathname === "/v1/admin/system-logs")
+      return send({
         window: {
           mode: "recent",
           date: null,
@@ -101,56 +65,30 @@ async function setup(page: Page, path: string, longReview = false) {
           startedAt: date,
           endedAt: date,
         },
-        selectedExecutionId: "execution-1",
+        worker: null,
+        selectedExecutionId: null,
+        executions: [],
+        events: [],
         modelAnalysis: null,
-        executions: [
-          {
-            executionId: "execution-1",
-            grouping: "invocation",
-            invocationId: "invocation-1",
-            runId: "run-1",
-            command: "collect",
-            startedAt: date,
-            lastEventAt: date,
-            durationMs: 2000,
-            eventCount: 2,
-            errorCount: 1,
-            warningCount: 0,
-            finalSummary: "贡献上传超时",
-            diagnosis: {
-              severity: "critical",
-              state: "failed",
-              title: "上传未完成",
-              cause: "连接超时",
-              action: "检查连接并重试",
-              failedStage: "upload",
-              evidenceCode: "UPLOAD_FAILED",
-              retryable: true,
-            },
-          },
-        ],
-        events: ["info", "error"].map((level, i) => ({
-          id: `event-${i}`,
-          invocation_id: "invocation-1",
-          run_id: "run-1",
-          sequence: i,
-          command: "collect",
-          event_type: level === "error" ? "error" : "progress",
-          level,
-          stage: "upload",
-          event_code: level === "error" ? "UPLOAD_FAILED" : "UPLOAD_START",
-          message: level === "error" ? "上传超时，贡献已保留" : "开始上传贡献",
-          stack: null,
-          retryable: true,
-          attempt: 1,
-          duration_ms: 2000,
-          request_id: "request-1",
-          details: { retained: true },
-          occurred_at: date,
-        })),
       });
-    if (url.pathname === "/v1/admin/project-scope-backups/latest")
-      return send({ plugins: [] });
+    if (url.pathname === "/v1/admin/inspection")
+      return send({
+        checkedAt: date,
+        running: false,
+        modelConfigured: true,
+        lastRun: null,
+        summary: {
+          open: {
+            app: { warning: 0, critical: 0 },
+            system: { warning: 0, critical: 0 },
+            pipeline: { warning: 0, critical: 0 },
+          },
+          openTotal: 0,
+          resolvedTotal: 0,
+        },
+        members: [],
+        findings: [],
+      });
     if (url.pathname === "/v1/reviews/review-1")
       return send({
         review: {
@@ -207,7 +145,7 @@ for (const width of [390, 768, 1440]) {
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
-    await setup(page, "/admin/jobs");
+    await setup(page, "/admin/inspection");
     const sidebar = page.locator(".sidebar");
     const main = page.locator(".main-content");
     const navigation = page.getByRole("navigation", { name: "主导航" });
@@ -224,13 +162,13 @@ for (const width of [390, 768, 1440]) {
         expandedMain!.width,
       );
       await expect(navigation.getByRole("link")).toHaveCount(8);
-      const plugins = navigation.getByRole("link", {
-        name: "插件状态与日志",
+      const logs = navigation.getByRole("link", {
+        name: "系统日志",
         exact: true,
       });
-      await expect(plugins).toHaveAttribute("title", "插件状态与日志");
-      await plugins.click();
-      await expect(plugins).toHaveAttribute("aria-current", "page");
+      await expect(logs).toHaveAttribute("title", "系统日志");
+      await logs.click();
+      await expect(logs).toHaveAttribute("aria-current", "page");
       await expect(expand).toBeVisible();
     } else {
       await expect(navigation).toBeHidden();
@@ -263,6 +201,35 @@ for (const width of [390, 768, 1440]) {
   });
 }
 
+test("the monitoring group has exactly three pages and old routes redirect", async ({
+  page,
+}) => {
+  await setup(page, "/admin/jobs");
+  await expect(page).toHaveURL(/\/admin\/inspection$/);
+  const navigation = page.getByRole("navigation", { name: "主导航" });
+  const group = navigation
+    .locator(".nav-group")
+    .filter({ hasText: "监控与排障" });
+  await expect(group.getByRole("link")).toHaveText([
+    "用户日志",
+    "系统日志",
+    "异常巡检",
+  ]);
+  await expect(
+    navigation.getByRole("link", { name: "异常巡检", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.goto("/admin/plugin-logs");
+  await expect(page).toHaveURL(/\/admin\/user-logs$/);
+  await expect(
+    page.getByRole("heading", { name: "用户日志", exact: true }),
+  ).toBeVisible();
+  await page.goto("/admin/system-monitoring");
+  await expect(page).toHaveURL(/\/admin\/system-logs$/);
+  await expect(
+    page.getByRole("heading", { name: "系统日志", exact: true }),
+  ).toBeVisible();
+});
+
 test("review decisions stay available while reading a long work card", async ({
   page,
 }, testInfo) => {
@@ -282,110 +249,44 @@ test("review decisions stay available while reading a long work card", async ({
 });
 
 for (const width of [320, 390, 768, 1280, 1440, 1920]) {
-  test(`plugin, task and review workspaces retain their actions at ${width}px`, async ({
+  test(`monitoring and review workspaces retain their actions at ${width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    const calls = await setup(page, "/admin/plugin-logs");
+    const calls = await setup(page, "/admin/user-logs");
     const navigation = page.getByRole("navigation", { name: "主导航" });
     await expect(navigation.getByRole("link")).toHaveCount(8);
     await expect(
-      navigation.getByRole("link", { name: "插件状态与日志" }),
+      navigation.getByRole("link", { name: "用户日志", exact: true }),
     ).toHaveAttribute("aria-current", "page");
     await expect(
-      page.getByText("上传超时，贡献已保留", { exact: true }),
+      page.getByRole("heading", { name: "用户日志", exact: true }),
     ).toBeVisible();
     await noOverflow(page);
     await page.screenshot({
-      path: testInfo.outputPath(`plugins-${width}.png`),
+      path: testInfo.outputPath(`user-logs-${width}.png`),
       fullPage: true,
     });
-    await page.getByRole("button", { name: /成员 7 研发工作设备 7/ }).click();
-    await expect(page.locator(".plugin-log-summary")).toContainText("成员 7");
-    await page.getByRole("button", { name: "仅看问题" }).click();
-    await expect(page.getByText("开始上传贡献", { exact: true })).toHaveCount(
-      0,
-    );
-    await expect(
-      page.getByText("上传超时，贡献已保留", { exact: true }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "模型分析", exact: true }).click();
-    await expect
-      .poll(() => calls.find((c) => c.path.endsWith("/plugin-logs/analyze"))?.body)
-      .toEqual({ pluginInstanceId: "plugin-7", executionId: "execution-1" });
-    await page.getByRole("button", { name: "历史日志", exact: true }).click();
-    await expect(page.getByLabel("历史日志日期")).toBeVisible();
-    await page.getByRole("button", { name: "权限备份", exact: true }).click();
-    await expect(
-      page.getByRole("dialog", { name: "权限备份预览" }),
-    ).toBeVisible();
-    await expect(page.getByText("还没有权限备份")).toBeVisible();
-    await noOverflow(page);
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "关闭", exact: true })
-      .last()
-      .click();
-    await page.getByTitle("恢复 成员 7 的监控状态", { exact: true }).click();
-    await expect(
-      page.getByRole("dialog", { name: "恢复监控状态" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "确认恢复", exact: true }).click();
-    await expect
-      .poll(() =>
-        calls.some(
-          (c) => c.path.endsWith("/plugin-7/recover") && c.method === "POST",
-        ),
-      )
-      .toBe(true);
-
     await navigation
-      .getByRole("link", { name: "异常任务处理", exact: true })
+      .getByRole("link", { name: "异常巡检", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "异常任务处理", exact: true }),
+      page.getByRole("heading", { name: "异常巡检", exact: true }),
     ).toBeVisible();
     await expect(
-      navigation.getByRole("link", { name: "异常任务处理" }),
+      navigation.getByRole("link", { name: "异常巡检" }),
     ).toHaveAttribute("aria-current", "page");
     await expect(
       navigation.getByRole("link", { name: "项目进展" }),
     ).not.toHaveAttribute("aria-current");
-    await expect(page.getByRole("button", { name: "手动重试" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "立即巡检" })).toBeVisible();
     await noOverflow(page);
-    expect(
-      await page
-        .locator(".agent-job-detail")
-        .evaluate((element) => element.scrollWidth <= element.clientWidth),
-    ).toBe(true);
     await page.screenshot({
-      path: testInfo.outputPath(`jobs-${width}.png`),
+      path: testInfo.outputPath(`inspection-${width}.png`),
       fullPage: true,
     });
-    await page.getByRole("button", { name: "手动重试" }).click();
-    await expect(page.getByText("任务已重新入队，等待执行。")).toBeVisible();
-    expect(
-      calls.some(
-        (c) =>
-          c.path === "/v1/admin/agent-jobs/job-1/retry" && c.method === "POST",
-      ),
-    ).toBe(true);
-    await page.getByRole("button", { name: "清除异常", exact: true }).click();
-    await expect(
-      page.getByRole("dialog", { name: "清除异常任务" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "确认清除" }).click();
-    await expect(
-      page.getByText("异常任务已清除，任务记录已保留。"),
-    ).toBeVisible();
-    expect(
-      calls.some(
-        (c) =>
-          c.path === "/v1/admin/agent-jobs/job-1/clear" && c.method === "POST",
-      ),
-    ).toBe(true);
 
     await page.goto("/partner/review/review-1");
     await expect(

@@ -1,0 +1,115 @@
+{
+  "upstream_repository": "https://github.com/farion1231/cc-switch",
+  "upstream_commit": "6d6b7162f122ac0ce1356a14688c8c4f712db3c8",
+  "license": "MIT",
+  "files": [
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/opencode.rs",
+      "upstream_sha256": "efa546ab0fe62fe0e08ac83840eb2fba51275b5531992efae5f37fa25c28b4f3",
+      "local_path": "src/session_manager/providers/opencode.rs",
+      "local_sha256": "d99029a7cfdcd7ebc3b712f974ec5a736b50b47d4f9db6f5d35694d1e63907cf"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/pi.rs",
+      "upstream_sha256": "d5cdbbf03e464650866619bbe21a12fdff8b64b91916d3d71e5e1f906d4e3515",
+      "local_path": "src/session_manager/providers/pi.rs",
+      "local_sha256": "f74f6b53fe66a8d7c98990936620136110f98c59b68e8c5c85931dc56634a9e9"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/hermes.rs",
+      "upstream_sha256": "3c76fcde666f7941723e761137334a3af19dcbf561f8daf680334522c2b0b0cf",
+      "local_path": "src/session_manager/providers/hermes.rs",
+      "local_sha256": "7eacf15a6011ac4f987f2923c6d9013be0b09db1c9e8d471bdeaa86c60dfc55a"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/claude.rs",
+      "upstream_sha256": "a9f6c2d72a79936b7796b8bff32ee0a5d632113ca94bfcfbda38693acdfd0fbd",
+      "local_path": "src/session_manager/providers/claude.rs",
+      "local_sha256": "9f0c4274fa0204e28a5f937a67f93e49228e90bb2051c5b051ab82b90e647da5"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/codex.rs",
+      "upstream_sha256": "d5c1a0264d6794d94e45de13b0a565fe0dc5458da48a0c1c4970a412069a5e7f",
+      "local_path": "src/session_manager/providers/codex.rs",
+      "local_sha256": "657f333379937f476d12e38b4b3c53b5541fe548abe5710299a85070642a27f5"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/opencode_blocks.rs",
+      "upstream_sha256": "4f16aa57a85f4a3d0632a841d5dabde24ad74a57dcd2852dc9e29d44b0ac52c5",
+      "local_path": "src/session_manager/providers/opencode_blocks.rs",
+      "local_sha256": "4a45fee43da9bffd05e5b1c11e8cff5787de11a2667b7636604b8cc02e74e0ed"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/pi_blocks.rs",
+      "upstream_sha256": "068f706132a2cb62bbda8dbc0254c38485c3ab10be5af030276e632b04239813",
+      "local_path": "src/session_manager/providers/pi_blocks.rs",
+      "local_sha256": "4db7fa69dda8399a2ece581040be36cc67613da29b146a5fede1290563678d74"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/agy.rs",
+      "upstream_sha256": "2d92273f2c1324a267dcfbc699da3f7d639797e15c035ce6844000f2800224f6",
+      "local_path": "src/session_manager/providers/agy.rs",
+      "local_sha256": "ab6a87d37d2b6941ab8e095eb4de443ccec3b60977edf691e7ea20364c846eed"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/codex_items.rs",
+      "upstream_sha256": "32ff00077cfb119216948fa5b3669f1f45c604160ec07ebfdb26aad82a88c023",
+      "local_path": "src/session_manager/providers/codex_items.rs",
+      "local_sha256": "01ce0ce089f8cd26e3ba928c7e8e1a6011c74586e4e7787e739380128c3ed16a"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/blocks.rs",
+      "upstream_sha256": "f834cc6a7fb95fd255809775536eaeb48a99e65537e060b3a07bbd90e2d24f1b",
+      "local_path": "src/session_manager/providers/blocks.rs",
+      "local_sha256": "7b2e5075fc7de55ea7cbfedcb42c11b03792d5cb2608b6f97b79990de13bfb74"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/omp.rs",
+      "upstream_sha256": "7333f0aaa6b529de5140c02e4ba1b24cddc9f9a7cc67089e848385fb1160d3a1",
+      "local_path": "src/session_manager/providers/omp.rs",
+      "local_sha256": "0f0549d5d77a1f707711e7b38953eab5edab13ae2aa5b769a6a8d13edba59e92"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/grokbuild.rs",
+      "upstream_sha256": "5bd3633947ef9c0bad117eb9ce12f40a79bc657bff5c752b46f0f673e22cb1e7",
+      "local_path": "src/session_manager/providers/grokbuild.rs",
+      "local_sha256": "8ba92283b42ed62994f6d3ef8c4c70146b022ffa2def486a9ee10bdc8f6859a2"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/providers/utils.rs",
+      "upstream_sha256": "66c0500f664afaec978a6c30278a4f439b4bce901971e117c9d2909716fcb8bc",
+      "local_path": "src/session_manager/providers/utils.rs",
+      "local_sha256": "d399f926cf15c19a34ff74e3a6069a62e7f5f0dadcbae1932b943335afd86cdb"
+    },
+    {
+      "upstream_path": "src-tauri/src/session_manager/model.rs",
+      "upstream_sha256": "72729ea4c5822aa400f0c55606895d2f28c989ae1c373acad332ebbc3fef5fc2",
+      "local_path": "src/session_manager/model.rs",
+      "local_sha256": "3016e9112c9dd1d8b694cd6c1866e5f0f3ed5b6a978b9e6571d8fa02218291e6"
+    },
+    {
+      "upstream_path": "src-tauri/src/codex_rollout_file.rs",
+      "upstream_sha256": "90ecf5e7ab4289578a67388c61fa2826f1f5d8fbbc6ff711132e40d82cc04771",
+      "local_path": "src/codex_rollout_file.rs",
+      "local_sha256": "a324cdffaef3b0c6474a6dc398b838bf46d07f4bcce21963254407d5c3c44bdc"
+    }
+  ],
+  "changes": [
+    "Rust AST extraction removes tests tied to full application, scanning/deletion/resume/writing functions and unreachable private functions",
+    "Local modules instead of external absolute source paths",
+    "Pi/OMP directory adapters; Kimi timing helper localized",
+    "Original six-provider extraction/gating/native-text audit adapted into library and CLI",
+    "Removed list/title cache and original test modules coupled to full app",
+    "Removed remaining write/resume imports; Kimi timing helper is a local pure function",
+    "SQLite project/parent metadata verified from read-only source before transcript parsing",
+    "Six independent authorization/output integration tests and portable regression runner added",
+    "Native macOS app bridge exposes source timestamps question_ts/answer_ts; source-only reader vendored inside apps/macos/Reader for offline UI builds.",
+    "Antigravity CLI/Desktop metadata authorization and DONE planner-only extraction validated with real desktop conversation; generic MODEL steps excluded.",
+    "Grok Build authorized summary identity/cwd gate, native prompt_index and tool_result parsing, generated titles and events turn completion verified on two real local sessions.",
+    "App scope restricted to the twelve user-selected providers; DeepSeek Harness parser and assets removed. Retained parsers do not imply validated discovery or final-answer support.",
+    "Removed OpenClaw and MiniMax Code at user request; app now retains ten providers. Removed their reader modules, MiniMax configuration adapter and icon assets; Pi shared mapping retained.",
+    "Removed Gemini CLI and Kimi Code at user request; retained eight app providers. Removed standalone Gemini/Kimi parsing, Kimi discovery and timing helper; Antigravity still uses its own .gemini storage paths.",
+    "Hermes SQLite finish_reason projected into native stop metadata; completed terminal assistant responses accepted without waiting for session exit. Session model retained, tool/rewind/model-only records excluded, six regression cases added.",
+    "Metadata-only --locate CLI connects native discovery to extraction for Codex compressed/unindexed, Claude, Pi/OMP, Hermes JSONL and legacy OpenCode JSON. Compatible optional Antigravity completion columns, per-store source identity and strict project gates retained. Claude CLI sessionId distinguished from SDK session_id; ordinary nested text ignored by metadata visitors; live incomplete EOF tails tolerated. Thirty-six reader regression tests cover native shapes and extraction boundaries."
+  ]
+}

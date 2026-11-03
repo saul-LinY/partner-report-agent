@@ -10,6 +10,7 @@ export const centralModelIds = [
   "kimi-k2.7-code:cloud",
   "minimax-m3:cloud",
   "nemotron-3-super:cloud",
+  "qwen3.6:27b-mlx",
 ] as const;
 
 export type CentralModelId = (typeof centralModelIds)[number];

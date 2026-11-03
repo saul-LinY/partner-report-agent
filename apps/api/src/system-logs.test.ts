@@ -2,104 +2,192 @@ import { describe, expect, it } from "vitest";
 import { projectSystemLogExecutions } from "./system-logs.js";
 
 describe("system log projection", () => {
-  it("projects generation and delivery failures into readable executions", () => {
+  it("distinguishes queued App messages from macOS delivery receipts", () => {
+    const pending = {
+      id: "notification-1",
+      kind: "review.reminder.requested",
+      partner_name: "Member",
+      created_at: "2026-11-02T01:00:00Z",
+      delivered_at: null as string | null,
+    };
+    const rows = {
+      jobs: [],
+      notifications: [pending],
+      outbox: [],
+      reports: [],
+    };
+    expect(projectSystemLogExecutions(rows)[0]).toMatchObject({
+      source: "notification",
+      status: "pending",
+      eventCount: 1,
+    });
+    rows.notifications[0] = {
+      ...pending,
+      delivered_at: "2026-11-02T01:02:00Z",
+    };
+    expect(projectSystemLogExecutions(rows)[0]).toMatchObject({
+      source: "notification",
+      status: "delivered",
+      eventCount: 2,
+    });
+    expect(projectSystemLogExecutions(rows)[0]?.summary).toContain(
+      "不代表用户已阅读",
+    );
+  });
+  it("projects generation errors independently", () => {
     const executions = projectSystemLogExecutions({
       jobs: [
         {
-          id: "11111111-1111-4111-8111-111111111111",
+          id: "job-1",
           type: "GENERATE_TEAM_REPORT",
           status: "FAILED",
-          partner_name: null,
           attempt_count: 3,
           max_attempts: 3,
           error_code: "TEAM_REPORT_GENERATION_FAILED",
           error_message: "模型没有返回可用的报告内容。",
-          created_at: "2026-08-27T01:00:00.000Z",
-          updated_at: "2026-08-27T01:01:00.000Z",
-          completed_at: null,
+          created_at: "2026-11-02T01:00:00Z",
+          updated_at: "2026-11-02T01:01:00Z",
         },
       ],
-      deliveries: [
-        {
-          id: "22222222-2222-4222-8222-222222222222",
-          kind: "review",
-          status: "sent",
-          partner_name: "林勇",
-          attempt_count: 1,
-          last_error_code: null,
-          last_error_message: null,
-          created_at: "2026-08-27T01:02:00.000Z",
-          updated_at: "2026-08-27T01:02:02.000Z",
-          sent_at: "2026-08-27T01:02:02.000Z",
-        },
-      ],
-      inbox: [],
+      notifications: [],
       outbox: [],
       reports: [],
     });
-
-    expect(executions).toHaveLength(2);
     expect(executions[0]).toMatchObject({
-      source: "delivery",
-      title: "工作卡片审核发送",
-      severity: "normal",
-      summary: "工作卡片审核发送已发送到飞书。",
-      eventCount: 2,
-    });
-    expect(executions[1]).toMatchObject({
       source: "job",
-      title: "团队报告生成",
       severity: "critical",
       errorCode: "TEAM_REPORT_GENERATION_FAILED",
-      summary: "模型没有返回可用的报告内容。",
       eventCount: 2,
     });
   });
-
-  it("shows the receive, dispatch and report lifecycle stages", () => {
+  it("exposes job type, attempts, durations, retry timing, upload link and sanitized errors", () => {
+    const project = (job: Record<string, unknown>) =>
+      projectSystemLogExecutions({
+        jobs: [job],
+        notifications: [],
+        outbox: [],
+        reports: [],
+      })[0]!;
+    const failed = project({
+      id: "job-failed",
+      type: "EXTRACT_COLLECTOR_SESSION",
+      status: "FAILED",
+      partner_id: "partner-1",
+      partner_name: "Member",
+      attempt_count: 3,
+      max_attempts: 3,
+      error_code: "MODEL_TIMEOUT",
+      error_message: "request failed Bearer abcdefghijk at /Users/alice/proj",
+      idempotency_key: "extract:key",
+      upload_id: "upload-1",
+      period_key: "2026-W44",
+      lease_until: null,
+      next_retry_at: null,
+      created_at: "2026-11-02T01:00:00Z",
+      updated_at: "2026-11-02T01:02:00Z",
+      completed_at: null,
+    });
+    const retrying = project({
+      id: "job-retry",
+      type: "AGGREGATE_WORK_ITEMS",
+      status: "RETRY_WAIT",
+      attempt_count: 1,
+      max_attempts: 3,
+      error_code: "MODEL_BUSY",
+      error_message: null,
+      idempotency_key: "aggregate:key",
+      lease_until: null,
+      next_retry_at: "2026-11-02T01:10:00Z",
+      created_at: "2026-11-02T01:00:00Z",
+      updated_at: "2026-11-02T01:03:00Z",
+      completed_at: null,
+    });
+    const done = project({
+      id: "job-done",
+      type: "GENERATE_TEAM_REPORT",
+      status: "COMPLETED",
+      attempt_count: 1,
+      max_attempts: 3,
+      idempotency_key: "report:key",
+      created_at: "2026-11-02T01:00:00Z",
+      updated_at: "2026-11-02T01:00:30Z",
+      completed_at: "2026-11-02T01:00:30Z",
+    });
+    expect(failed.job).toMatchObject({
+      type: "EXTRACT_COLLECTOR_SESSION",
+      partnerId: "partner-1",
+      partnerName: "Member",
+      attemptCount: 3,
+      maxAttempts: 3,
+      errorCode: "MODEL_TIMEOUT",
+      idempotencyKey: "extract:key",
+      uploadId: "upload-1",
+      periodKey: "2026-W44",
+      durationMs: 120_000,
+      completedAt: null,
+    });
+    expect(failed.job?.errorMessage).not.toContain("abcdefghijk");
+    expect(failed.job?.errorMessage).not.toContain("/Users/alice");
+    expect(failed.summary).not.toContain("abcdefghijk");
+    expect(failed.events.at(-1)?.details).toMatchObject({
+      uploadId: "upload-1",
+      periodKey: "2026-W44",
+      errorCode: "MODEL_TIMEOUT",
+      attempt: 3,
+      maxAttempts: 3,
+    });
+    expect(retrying.job).toMatchObject({
+      nextRetryAt: "2026-11-02T01:10:00.000Z",
+      errorMessage: null,
+      uploadId: null,
+    });
+    expect(done.job).toMatchObject({
+      completedAt: "2026-11-02T01:00:30.000Z",
+      durationMs: 30_000,
+    });
+    expect(
+      projectSystemLogExecutions({
+        jobs: [],
+        notifications: [
+          {
+            id: "n",
+            kind: "k",
+            created_at: "2026-11-02T01:00:00Z",
+            delivered_at: null,
+          },
+        ],
+        outbox: [],
+        reports: [],
+      })[0]?.job,
+    ).toBeNull();
+  });
+  it("keeps dispatch and report lifecycle stages", () => {
     const executions = projectSystemLogExecutions({
       jobs: [],
-      deliveries: [],
-      inbox: [
-        {
-          id: "33333333-3333-4333-8333-333333333333",
-          status: "processed",
-          partner_name: "林勇",
-          error_code: null,
-          error_message: null,
-          received_at: "2026-08-27T02:00:00.000Z",
-          updated_at: "2026-08-27T02:00:01.000Z",
-          processed_at: "2026-08-27T02:00:01.000Z",
-        },
-      ],
+      notifications: [],
       outbox: [
         {
-          id: "44444444-4444-4444-8444-444444444444",
+          id: "event-1",
           aggregate_type: "review",
           event_type: "work_items.draft.created",
-          created_at: "2026-08-27T02:01:00.000Z",
-          published_at: "2026-08-27T02:01:01.000Z",
+          created_at: "2026-11-02T01:00:00Z",
+          published_at: "2026-11-02T01:00:01Z",
         },
       ],
       reports: [
         {
-          id: "55555555-5555-4555-8555-555555555555",
-          period_key: "2026-W35",
+          id: "report-1",
+          period_key: "2026-W44",
           status: "LOCKED",
           current_version: 2,
-          created_at: "2026-08-27T02:02:00.000Z",
-          updated_at: "2026-08-27T02:03:00.000Z",
-          generated_at: "2026-08-27T02:02:30.000Z",
-          locked_at: "2026-08-27T02:03:00.000Z",
+          created_at: "2026-11-02T02:00:00Z",
+          updated_at: "2026-11-02T02:03:00Z",
+          generated_at: "2026-11-02T02:02:00Z",
+          locked_at: "2026-11-02T02:03:00Z",
         },
       ],
     });
-
-    expect(executions.map((item) => item.source)).toEqual([
-      "report",
-      "outbox",
-      "inbox",
-    ]);
+    expect(executions.map((item) => item.source)).toEqual(["report", "outbox"]);
     expect(executions[0]?.events.map((item) => item.stage)).toEqual([
       "accepted",
       "generated",
@@ -108,10 +196,6 @@ describe("system log projection", () => {
     expect(executions[1]?.events.map((item) => item.stage)).toEqual([
       "accepted",
       "dispatched",
-    ]);
-    expect(executions[2]?.events.map((item) => item.stage)).toEqual([
-      "received",
-      "completed",
     ]);
   });
 });

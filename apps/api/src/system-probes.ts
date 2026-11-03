@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { sqlClient as sql } from "@partner-report/db";
-import { createFeishuClient } from "./feishu/client.js";
-import { requireFeishuConfig } from "./feishu/config.js";
 
 export const systemProbeKeys = [
   "api",
   "queue",
   "generation",
-  "feishu",
+  "notifications",
   "reports",
 ] as const;
 
@@ -48,9 +46,9 @@ const successCopy: Record<SystemProbeKey, { summary: string; detail: string }> =
       summary: "内容生成测试通过",
       detail: "Worker 已调用模型服务，并收到有效的结构化结果。",
     },
-    feishu: {
-      summary: "飞书连接测试通过",
-      detail: "飞书应用凭据有效，开放平台响应正常；本次未发送消息。",
+    notifications: {
+      summary: "App 通知队列测试通过",
+      detail: "通知存储可读；macOS 通知由绑定的 App 投递并回传回执。",
     },
     reports: {
       summary: "报告生成测试通过",
@@ -65,10 +63,6 @@ const failureCopy: Record<string, string> = {
   MODEL_NOT_CONFIGURED: "内容生成服务尚未配置。",
   MODEL_REQUEST_TIMEOUT: "内容生成服务响应超时。",
   CENTRAL_GENERATION_FAILED: "内容生成服务没有返回有效结果。",
-  FEISHU_NOT_CONFIGURED: "飞书应用凭据尚未完整配置。",
-  FEISHU_AUTH_FAILED: "飞书开放平台拒绝了当前应用凭据。",
-  FEISHU_REQUEST_TIMEOUT: "飞书开放平台响应超时。",
-  FEISHU_UNAVAILABLE: "当前无法连接飞书开放平台。",
   REPORT_PIPELINE_UNHEALTHY: "报告生成程序没有通过内置数据校验。",
   SYSTEM_PROBE_FAILED: "模块测试没有正常完成。",
 };
@@ -167,57 +161,8 @@ async function probeWorker(
   }
 }
 
-async function probeFeishu() {
-  let config;
-  try {
-    config = requireFeishuConfig();
-  } catch {
-    throw new SystemProbeError("FEISHU_NOT_CONFIGURED");
-  }
-  const client = createFeishuClient(config);
-  let timeout: NodeJS.Timeout | undefined;
-  try {
-    const response = await Promise.race([
-      client.auth.tenantAccessToken.internal({
-        data: { app_id: config.appId, app_secret: config.appSecret },
-      }),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new SystemProbeError("FEISHU_REQUEST_TIMEOUT")),
-          10_000,
-        );
-      }),
-    ]);
-    if (!feishuCredentialResponseSucceeded(response)) {
-      throw new SystemProbeError("FEISHU_AUTH_FAILED");
-    }
-  } catch (error) {
-    if (error instanceof SystemProbeError) throw error;
-    throw new SystemProbeError("FEISHU_UNAVAILABLE");
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
 export function probeFailureDetail(code: string) {
   return failureCopy[code] ?? failureCopy.SYSTEM_PROBE_FAILED!;
-}
-
-export function feishuCredentialResponseSucceeded(response: unknown) {
-  if (!response || typeof response !== "object" || Array.isArray(response))
-    return false;
-  const record = response as Record<string, unknown>;
-  const data =
-    record.data &&
-    typeof record.data === "object" &&
-    !Array.isArray(record.data)
-      ? (record.data as Record<string, unknown>)
-      : null;
-  return (
-    record.code === 0 &&
-    (typeof record.tenant_access_token === "string" ||
-      typeof data?.tenant_access_token === "string")
-  );
 }
 
 export async function runSystemProbe(
@@ -227,7 +172,8 @@ export async function runSystemProbe(
   const startedAt = Date.now();
   try {
     if (component === "api") await probeDatabase();
-    else if (component === "feishu") await probeFeishu();
+    else if (component === "notifications")
+      await sql`select id from app_notifications where tenant_id=${context.tenantId} and team_id=${context.teamId} limit 1`;
     else await probeWorker(component, context);
     return {
       component,

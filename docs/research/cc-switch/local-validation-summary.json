@@ -1,0 +1,224 @@
+{
+  "upstream_commit": "6d6b7162f122ac0ce1356a14688c8c4f712db3c8",
+  "authorized_project": "partner-report-agent",
+  "real": {
+    "codex": {
+      "files_considered": 154,
+      "files_parsed": 153,
+      "statuses": {
+        "parsed": 153,
+        "cross_project_metadata_blocked": 1
+      },
+      "turns": 1230,
+      "states": {
+        "complete": 1094,
+        "incomplete": 136
+      },
+      "evidence": {
+        "explicit_final_phase": 1094,
+        "aborted": 107,
+        "commentary_rejected": 2,
+        "no_final_answer": 27
+      },
+      "heuristic_stop_reasons": {},
+      "native_checked": 1094,
+      "native_unmatched": 0,
+      "blocks": {
+        "text": 7819,
+        "thinking": 16553,
+        "tool_call": 18482,
+        "tool_result": 18482,
+        "event": 328,
+        "image": 200
+      },
+      "parse_and_audit_ms": 12486,
+      "native_source_id_mismatches": 0
+    },
+    "claude": {
+      "files_considered": 5,
+      "files_parsed": 5,
+      "statuses": {
+        "parsed": 5
+      },
+      "turns": 31,
+      "states": {
+        "complete": 20,
+        "incomplete": 11
+      },
+      "evidence": {
+        "native_stop_reason": 20,
+        "no_final_answer": 3,
+        "provider_diagnostic": 6,
+        "aborted": 2
+      },
+      "heuristic_stop_reasons": {},
+      "native_checked": 20,
+      "native_unmatched": 0,
+      "blocks": {
+        "text": 95,
+        "thinking": 101,
+        "tool_call": 141,
+        "tool_result": 141,
+        "event": 5,
+        "image": 1
+      },
+      "parse_and_audit_ms": 142,
+      "native_source_id_mismatches": 0
+    },
+    "omp": {
+      "files_considered": 1,
+      "files_parsed": 1,
+      "statuses": {
+        "parsed": 1
+      },
+      "turns": 13,
+      "states": {
+        "incomplete": 4,
+        "complete": 9
+      },
+      "evidence": {
+        "aborted": 4,
+        "native_stop_reason": 9
+      },
+      "heuristic_stop_reasons": {},
+      "native_checked": 9,
+      "native_unmatched": 0,
+      "blocks": {
+        "event": 20,
+        "image": 1,
+        "text": 27,
+        "thinking": 22,
+        "tool_call": 24,
+        "tool_result": 24
+      },
+      "parse_and_audit_ms": 19,
+      "native_source_id_mismatches": 1
+    }
+  },
+  "turn_appearances": 1274,
+  "unique_native_turn_keys": 1274,
+  "duplicate_key_appearances": 0,
+  "passed_checks": 29,
+  "checks": [
+    {
+      "name": "six upstream provider parsers execute",
+      "passed": true
+    },
+    {
+      "name": "all isolated positive fixtures parse",
+      "passed": true
+    },
+    {
+      "name": "denied project blocks before opening nonexistent source",
+      "passed": true
+    },
+    {
+      "name": "unapproved root blocks before opening nonexistent source",
+      "passed": true
+    },
+    {
+      "name": "cross-project cwd blocks before transcript parsing",
+      "passed": true
+    },
+    {
+      "name": "Codex injected context is excluded",
+      "passed": true
+    },
+    {
+      "name": "Codex commentary is not uploaded as final",
+      "passed": true
+    },
+    {
+      "name": "Codex explicit final preserves Markdown",
+      "passed": true
+    },
+    {
+      "name": "Claude meta/sidechain/tool results do not become prompts",
+      "passed": true
+    },
+    {
+      "name": "Claude streamed assistant blocks preserve complete long final",
+      "passed": true
+    },
+    {
+      "name": "Claude client-generated errors cannot become final even with end_turn",
+      "passed": true
+    },
+    {
+      "name": "codex unfinished-to-complete keeps stable turn id",
+      "passed": true
+    },
+    {
+      "name": "pi unfinished-to-complete keeps stable turn id",
+      "passed": true
+    },
+    {
+      "name": "omp unfinished-to-complete keeps stable turn id",
+      "passed": true
+    },
+    {
+      "name": "pi active branch replaces prior branch without mixing answers",
+      "passed": true
+    },
+    {
+      "name": "omp active branch replaces prior branch without mixing answers",
+      "passed": true
+    },
+    {
+      "name": "OpenCode read-only SQLite schema fixture yields final",
+      "passed": true
+    },
+    {
+      "name": "Hermes parser candidate is separated from strict final",
+      "passed": true
+    },
+    {
+      "name": "steps/thinking/tool outputs never enter outbound payload",
+      "passed": true
+    },
+    {
+      "name": "outbound incomplete turns have prompt only",
+      "passed": true
+    },
+    {
+      "name": "all in-scope real files return structured results",
+      "passed": true
+    },
+    {
+      "name": "every audited accepted real final exactly matches native terminal text",
+      "passed": true
+    },
+    {
+      "name": "no fallback ordinal turn ids in real sample",
+      "passed": true
+    },
+    {
+      "name": "offline queue survives process storage reopen with exact text",
+      "passed": true
+    },
+    {
+      "name": "same acknowledged batch retry does not change data",
+      "passed": true
+    },
+    {
+      "name": "outbox advances only after successful durable ingestion",
+      "passed": true
+    },
+    {
+      "name": "three sources update existing prompt-only rows in receiver",
+      "passed": true
+    },
+    {
+      "name": "branch switch updates same rows without new turn records",
+      "passed": true
+    },
+    {
+      "name": "long raw answer survives queue and receiver storage without truncation",
+      "passed": true
+    }
+  ],
+  "receiver_real_rows": 1274,
+  "network_upload_tested": false,
+  "real_fixture_coverage": ["codex", "claude", "omp"],
+  "synthetic_only_coverage": ["pi", "opencode", "hermes"]
+}

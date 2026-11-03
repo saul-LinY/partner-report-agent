@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   projectCardWritingInput,
   projectOutcomeInput,
+  projectOutcomeSchemaForInput,
   projectOutcomeMaterialSchema,
   validateOutcomeReferences,
 } from "./project-outcomes.js";
@@ -90,6 +91,21 @@ describe("fixed project outcome inputs", () => {
         input,
       ),
     ).toEqual(material());
+  });
+  it("constrains model output to the source days and their own evidence references", () => {
+    const input = projectOutcomeInput(bucket, {});
+    const schema = projectOutcomeSchemaForInput(input);
+    expect(input.requiredDays).toEqual([
+      { date: "2026-09-01", refs: ["F1"] },
+      { date: "2026-09-02", refs: ["F2"] },
+    ]);
+    expect(schema.safeParse(material()).success).toBe(true);
+    const crossed = material();
+    crossed.daily[0]!.outcomes[0]!.evidenceRefs = ["F2"];
+    expect(schema.safeParse(crossed).success).toBe(false);
+    const missing = material();
+    missing.daily.pop();
+    expect(schema.safeParse(missing).success).toBe(false);
   });
 
   it("writes only from the fixed draft, current card and chronological review instructions", () => {

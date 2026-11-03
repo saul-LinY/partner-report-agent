@@ -1,0 +1,6 @@
+WeeklyReport.xcodeproj/
+.build/
+DerivedData/
+*.xcuserstate
+Resources/Reader/
+Reader/target/

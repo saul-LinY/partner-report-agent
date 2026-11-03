@@ -222,6 +222,18 @@ export async function scheduleDueWeeklyReports(
       `;
       const period = locked[0];
       if (!period) return { closed: false, jobs: 0 };
+      // Accepted App sources must finish before freezing the period.
+      const blocked =
+        await tx`select 1 from agent_jobs where tenant_id=${period.tenant_id} and team_id=${period.team_id}
+        and input_payload->'period'->>'id'=${period.id}
+        and (type='EXTRACT_COLLECTOR_SESSION' or type='AGGREGATE_WORK_ITEMS' and input_payload->>'aggregationMode'='collector')
+        and status in ('PENDING','LEASED','RETRY_WAIT','FAILED') limit 1`;
+      if (blocked.length) return { closed: false, jobs: 0 };
+      const unqueued =
+        await tx`select 1 from collector_uploads u join collector_devices d on d.id=u.device_id
+        where d.tenant_id=${period.tenant_id} and d.team_id=${period.team_id} and u.period_key=${period.period_key}
+          and u.status='completed' and d.status<>'test' and u.analysis_enqueued_at is null limit 1`;
+      if (unqueued.length) return { closed: false, jobs: 0 };
       const partners = await tx<{ partner_id: string }[]>`
         select id as partner_id from partners
         where tenant_id = ${period.tenant_id} and team_id = ${period.team_id}
@@ -321,6 +333,10 @@ export async function scheduleDueWeeklyReports(
           `;
           continue;
         }
+        const collectorCards =
+          await tx`select 1 from work_items where tenant_id=${period.tenant_id}
+          and review_id=${reviewRows[0]!.id} and payload ? 'collectorSourceChecksum' limit 1`;
+        if (collectorCards.length) continue;
         const inserted = await tx<{ id: string }[]>`
           insert into agent_jobs (
             id, tenant_id, team_id, partner_id, plugin_instance_id,
@@ -369,7 +385,10 @@ export async function scheduleDueWeeklyReports(
 export async function scheduleDueTeamReports(onlyPeriodId?: string) {
   const periods = await sql<any[]>`
     select rp.* from report_periods rp
-    where rp.status in ('facts_frozen', 'closed')
+    where (rp.status in ('facts_frozen', 'closed') or exists (
+      select 1 from team_reports tr where tr.period_id=rp.id and tr.tenant_id=rp.tenant_id
+        and tr.status='WAITING_SUBMISSIONS'
+    ))
       and (${onlyPeriodId ?? null}::uuid is null or rp.id = ${onlyPeriodId ?? null})
     order by rp.cutoff_at
   `;
@@ -414,6 +433,7 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
           and tr.tenant_id = previous_period.tenant_id
           and tr.team_id = previous_period.team_id
         join team_report_versions trv on trv.report_id = tr.id and trv.version = tr.current_version
+          and trv.payload->>'synthetic' is distinct from 'true'
         where previous_period.id = (
           select prior.id from report_periods prior
           where prior.tenant_id = ${period.tenant_id}
@@ -467,7 +487,12 @@ export async function scheduleDueTeamReports(onlyPeriodId?: string) {
             sourceChecksum,
             ...source,
           })}::jsonb
-        ) on conflict (tenant_id, idempotency_key) do nothing returning id
+        ) on conflict (tenant_id, idempotency_key) do update set
+          status='PENDING',output_payload=null,completed_at=null,
+          error_code=null,error_message=null,next_retry_at=null,
+          max_attempts=greatest(agent_jobs.max_attempts,agent_jobs.attempt_count+1),updated_at=now()
+        where agent_jobs.status='COMPLETED' and agent_jobs.output_payload->>'superseded'='true'
+        returning id
       `;
       if (inserted[0]) {
         await tx`

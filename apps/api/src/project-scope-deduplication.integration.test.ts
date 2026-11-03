@@ -1,5 +1,15 @@
+import {
+  confirmCollectorIdentity,
+  removeCollectorIdentities,
+} from "./test-support/collector-identity.js";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -55,14 +65,12 @@ suite("member project deduplication without a plugin update", () => {
     await sql`insert into plugin_instances
       (id,tenant_id,team_id,partner_id,device_name,version,access_token_hash,refresh_token_hash,access_expires_at)
       values (${who.pluginInstanceId},${who.tenantId},${who.teamId},${partnerId},'Test',${version},${randomUUID()},${randomUUID()},now()+interval '1 day')`;
-    await sql`insert into feishu_partner_bindings (id,tenant_id,team_id,partner_id,status,open_id,app_id)
-      values (${randomUUID()},${who.tenantId},${who.teamId},${partnerId},'active',${who.pluginInstanceId},'test-app')
-      on conflict do nothing`;
+    await confirmCollectorIdentity(who);
     return who;
   }
   const actor = () => ({
     ...identity,
-    actorType: "feishu" as const,
+    actorType: "collector" as const,
     actorId: "dedup-test",
     userId: null,
   });
@@ -109,7 +117,7 @@ suite("member project deduplication without a plugin update", () => {
     rmSync(directory, { recursive: true, force: true });
     await sql`delete from outbox_events where tenant_id=${identity.tenantId}`;
     await sql`delete from audit_events where tenant_id=${identity.tenantId}`;
-    await sql`delete from feishu_partner_bindings where tenant_id=${identity.tenantId}`;
+    await removeCollectorIdentities(identity.tenantId);
     await sql`delete from project_scope_backup_snapshots where tenant_id=${identity.tenantId}`;
     await sql`delete from project_scope_entries where tenant_id=${identity.tenantId}`;
     await sql`delete from project_scope_policies where tenant_id=${identity.tenantId}`;
@@ -181,7 +189,7 @@ suite("member project deduplication without a plugin update", () => {
       expect(local.entries[0]).toMatchObject({
         scopeKey: key(1),
         status: "denied",
-        localRoot: root,
+        localRoot: realpathSync(root),
       });
       expect(
         threadMayBeRead({ id: "thread", cwd: root, scopeKey: key(1) }, local, {

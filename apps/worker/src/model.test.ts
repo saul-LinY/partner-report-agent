@@ -28,6 +28,7 @@ describe("central structured model client", () => {
     delete process.env.MODEL_REQUEST_TIMEOUT_MS;
     delete process.env.MODEL_MAX_OUTPUT_TOKENS;
     delete process.env.MODEL_REASONING_EFFORT;
+    delete process.env.MODEL_INSTRUCTION_ROLE;
     delete process.env.OPENAI_REASONING_EFFORT;
   });
 
@@ -47,6 +48,18 @@ describe("central structured model client", () => {
         output_text: JSON.stringify(result),
       }),
     );
+  it("supports system instructions for gateways that ignore the developer role", async () => {
+    process.env.MODEL_API_KEY = "test-only-key";
+    process.env.MODEL_INSTRUCTION_ROLE = "system";
+    const request = vi.fn(async (_url: string, _init: RequestInit) =>
+      success(),
+    );
+    vi.stubGlobal("fetch", request);
+    await generate();
+    expect(
+      JSON.parse(request.mock.calls[0]![1]!.body as string).input[0].role,
+    ).toBe("system");
+  });
 
   it("accepts complete prose only when a single-field writer explicitly opts in", async () => {
     process.env.MODEL_API_KEY = "test-only-key";

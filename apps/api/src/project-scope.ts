@@ -16,7 +16,7 @@ export const projectScopeCandidateBatchSchema = z
           .object({
             scopeKey: z.string().regex(/^[a-f0-9]{64}$/),
             displayName: z.string().trim().min(1).max(120),
-            sessionCount: z.number().int().positive().max(1_000_000),
+            sessionCount: z.number().int().nonnegative().max(1_000_000),
           })
           .strict(),
       )
@@ -102,10 +102,10 @@ async function projectScopeIdentityConfirmed(
 ) {
   const rows = await database<Array<{ confirmed: boolean }>>`
     select exists (
-      select 1 from feishu_partner_bindings
-      where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
-        and partner_id = ${identity.partnerId} and status = 'active'
-        and open_id is not null
+      select 1 from collector_devices d join plugin_binding_codes b on b.id=d.binding_code_id
+      where d.tenant_id=${identity.tenantId} and d.team_id=${identity.teamId}
+        and d.partner_id=${identity.partnerId} and d.scope_instance_id=${identity.pluginInstanceId}
+        and d.status='active' and b.status <> 'revoked'
     ) as confirmed
   `;
   return rows[0]?.confirmed === true;
@@ -212,10 +212,10 @@ export async function registerProjectScopeCandidates(
     `;
     const identityRows = await tx<Array<{ confirmed: boolean }>>`
       select exists (
-        select 1 from feishu_partner_bindings
-        where tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
-          and partner_id = ${identity.partnerId} and status = 'active'
-          and open_id is not null
+        select 1 from collector_devices d join plugin_binding_codes b on b.id=d.binding_code_id
+        where d.tenant_id=${identity.tenantId} and d.team_id=${identity.teamId}
+          and d.partner_id=${identity.partnerId} and d.scope_instance_id=${identity.pluginInstanceId}
+          and d.status='active' and b.status <> 'revoked'
       ) as confirmed
     `;
     const unreviewedAllowed =
@@ -237,7 +237,7 @@ export async function registerProjectScopeCandidates(
       `;
     }
     // thread/list metadata is enough to identify candidate projects. Session
-    // contents remain unreadable until the Partner decides in Feishu.
+    // Contents remain unreadable until the Partner decides in the App.
     const eligibleCandidates = input.candidates;
     const existing =
       eligibleCandidates.length > 0
@@ -467,7 +467,7 @@ export async function reopenProjectScopeReview(
     const instances = await tx<Array<{ partner_id: string }>>`
       select partner_id from plugin_instances
       where id = ${pluginInstanceId} and tenant_id = ${actor.tenantId}
-        and team_id = ${actor.teamId} and status = 'active'
+        and team_id = ${actor.teamId} and status in ('active','collector')
       limit 1
       for update
     `;
@@ -582,7 +582,7 @@ export async function decideProjectScopes(
     select id from plugin_instances
     where id = ${pluginInstanceId} and tenant_id = ${actor.tenantId}
       and team_id = ${actor.teamId} and partner_id = ${actor.partnerId}
-      and status = 'active'
+      and (status = 'active' or (${actor.actorType} = 'collector' and status = 'collector'))
     limit 1
   `;
   if (!owned[0])
@@ -631,11 +631,11 @@ export async function decideProjectScopes(
         "PROJECT_SCOPE_NOT_FOUND",
         "部分项目权限不存在。",
       );
-    if (actor.actorType !== "feishu")
+    if (actor.actorType !== "collector")
       throw new ApiError(
         403,
-        "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED",
-        "项目采集权限只能由用户在飞书权限卡中确认。",
+        "PROJECT_SCOPE_APP_REVIEW_REQUIRED",
+        "项目采集权限只能由用户在 App 中确认。",
       );
     for (const item of input.decisions) {
       const effectiveFrom = projectScopeEffectiveFrom({ now: new Date() });

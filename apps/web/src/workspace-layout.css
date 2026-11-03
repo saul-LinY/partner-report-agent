@@ -206,16 +206,16 @@
   border-radius: var(--workspace-radius);
   background: var(--surface);
 }
-.app-shell :is(.aw-tabs, .sm-navigation) {
+.app-shell .aw-tabs {
   margin: 0;
   padding: 0 20px;
   border-bottom: 1px solid var(--line);
 }
-.app-shell :is(.aw-tabs, .sm-tabs) {
+.app-shell .aw-tabs {
   gap: 28px;
   overflow-x: auto;
 }
-.app-shell :is(.aw-tabs, .sm-tabs) > button {
+.app-shell .aw-tabs > button {
   flex-shrink: 0;
   min-height: 52px;
   padding: 0 2px;
@@ -300,28 +300,14 @@
   container-type: inline-size;
 }
 .app-shell
-  :is(
-    .aw-records,
-    .aw-detail,
-    .agent-job-list,
-    .agent-job-detail,
-    .plugin-log-detail,
-    .item-list,
-    .item-detail
-  ) {
+  :is(.aw-records, .aw-detail, .item-list, .item-detail) {
   min-width: 0;
 }
 .app-shell .aw-view .aw-section {
   border: 0;
 }
 .app-shell
-  :is(
-    .aw-section-heading,
-    .sm-section-heading,
-    .agent-job-list-heading,
-    .plugin-log-panel-title,
-    .plugin-log-section-title
-  ) {
+  :is(.aw-section-heading, .sm-section-heading) {
   min-height: 50px;
   padding-inline: 20px;
 }
@@ -632,191 +618,8 @@
 }
 
 /* Exceptions: cause, execution context, audit data, then task handling. */
-.app-shell .agent-jobs-layout {
-  grid-template-columns: 280px minmax(0, 1fr);
-  border: 1px solid var(--line);
-  border-radius: var(--workspace-radius);
-  background: var(--surface);
-}
-.app-shell .agent-job-list {
-  max-height: 850px;
-  overflow-y: auto;
-}
-.app-shell .agent-job-detail {
-  padding: 24px;
-  overflow-wrap: anywhere;
-}
-.app-shell .agent-job-detail-header > .badge {
-  flex-shrink: 0;
-}
-.app-shell .agent-job-error {
-  margin-top: 24px;
-  padding: 16px;
-  background: #fdf6f5;
-  border-radius: 0 6px 6px 0;
-}
-.app-shell .agent-job-context {
-  margin-top: 20px;
-}
-.agent-job-record {
-  margin-top: 24px;
-}
-.agent-job-record h3,
-.agent-job-detail-actions h3 {
-  margin: 0;
-  font-size: 13px;
-}
-.app-shell .agent-job-technical {
-  margin-top: 14px;
-  padding: 16px;
-  background: var(--surface-alt);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-.app-shell .agent-job-detail-actions {
-  position: sticky;
-  bottom: 0;
-  margin-top: 24px;
-  padding: 18px 0 0;
-  flex-direction: column;
-  align-items: flex-start;
-  background: var(--surface);
-}
 
 /* Device and execution selection share the left rail; inspection stays on the right. */
-.app-shell .plugin-log-workspace {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
-  min-height: 0;
-  border: 0;
-  background: transparent;
-}
-.plugin-selection-rail,
-.app-shell .plugin-log-detail {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 18px;
-  min-width: 0;
-}
-.app-shell .plugin-log-instances {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  overflow: hidden;
-}
-.app-shell .plugin-log-panel-title {
-  background: var(--surface-alt);
-}
-.plugin-instance-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  max-height: clamp(400px, calc(100dvh - 330px), 720px);
-  overflow-y: auto;
-}
-.app-shell .plugin-instance-row {
-  display: flex;
-  align-items: center;
-  padding-right: 12px;
-  border-right: 1px solid var(--line);
-}
-.app-shell .plugin-instance-select {
-  min-width: 0;
-  min-height: 94px;
-  padding: 14px 12px;
-}
-.app-shell .plugin-instance-recover {
-  position: static;
-  flex-shrink: 0;
-  min-height: 30px;
-}
-.app-shell .plugin-instance-copy small {
-  padding-right: 0;
-}
-.app-shell .plugin-instance-copy :is(strong, span, small) {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.app-shell .plugin-instance-row.active {
-  background: #edf5f1;
-}
-.plugin-current-context {
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-}
-.app-shell .plugin-log-summary {
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(120px, 0.7fr);
-}
-.app-shell .plugin-log-summary > div {
-  padding: 16px 20px;
-}
-.app-shell .monitor-diagnosis {
-  padding: 16px 20px;
-  border-bottom: 0;
-}
-.app-shell .plugin-execution-list {
-  grid-column: 1;
-  max-height: 850px;
-  min-height: 0;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-.app-shell .plugin-execution-detail {
-  grid-column: 1;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-.app-shell .plugin-execution-row {
-  min-height: 96px;
-  padding: 16px;
-}
-.app-shell .plugin-execution-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  padding: 16px 20px;
-  background: var(--surface);
-}
-.plugin-run-assessment {
-  padding: 20px;
-  background: #fafbfb;
-  border-bottom: 1px solid var(--line);
-}
-.app-shell .plugin-run-assessment .execution-diagnosis {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 16px;
-}
-.app-shell .plugin-run-assessment .plugin-model-analysis {
-  margin-top: 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-.app-shell .plugin-execution-meta {
-  margin: 16px 0 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-}
-.app-shell .plugin-execution-meta > div {
-  min-width: 0;
-  padding: 12px;
-}
-.app-shell .plugin-event-toolbar {
-  padding-inline: 20px;
-}
-.app-shell .plugin-event > summary {
-  padding-inline: 20px;
-}
-.app-shell .plugin-event-expanded {
-  margin-inline: 20px;
-}
 
 /* System views use the same control/list/detail hierarchy. */
 .app-shell .sm-log-query {
@@ -838,6 +641,10 @@
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
   border: 0;
   height: clamp(600px, calc(100dvh - 380px), 850px);
+}
+.app-shell .user-logs-page .sm-log-workspace {
+  grid-template-columns: 264px minmax(0, 1fr);
+  height: max(560px, calc(100dvh - 210px));
 }
 .app-shell .sm-detail-header {
   padding: 20px;
@@ -932,7 +739,8 @@
   }
 }
 @media (max-width: 1150px) {
-  .app-shell .sm-log-workspace {
+  .app-shell .sm-log-workspace,
+  .app-shell .user-logs-page .sm-log-workspace {
     grid-template-columns: minmax(0, 1fr);
     height: auto;
   }
@@ -948,12 +756,10 @@
   .app-shell .pc-member-list {
     max-height: min(160px, 20dvh);
   }
-  .app-shell .agent-jobs-layout,
   .app-shell .review-layout {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
   }
-  .app-shell .agent-job-list,
   .app-shell .item-list {
     position: static;
     max-height: 260px;
@@ -980,37 +786,6 @@
   }
   .app-shell .project-review-actions > span {
     flex: 0 0 100%;
-  }
-  .app-shell .plugin-instance-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    max-height: 360px;
-  }
-  .app-shell .plugin-log-workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .plugin-selection-rail,
-  .app-shell .plugin-log-detail {
-    display: contents;
-  }
-  .app-shell .plugin-log-instances {
-    grid-row: 1;
-  }
-  .app-shell .plugin-execution-detail,
-  .app-shell .plugin-execution-list {
-    grid-column: 1;
-  }
-  .app-shell .plugin-execution-detail {
-    grid-row: 4;
-  }
-  .app-shell .plugin-current-context {
-    grid-column: 1;
-    grid-row: 2;
-  }
-  .app-shell .plugin-execution-list {
-    grid-row: 3;
-    max-height: 300px;
-    min-height: 0;
-    border: 1px solid var(--line);
   }
   .sm-component-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -1110,13 +885,13 @@
   .app-shell .aw-metric {
     padding: 14px;
   }
-  .app-shell :is(.aw-tabs, .sm-navigation) {
+  .app-shell .aw-tabs {
     padding-inline: 12px;
   }
-  .app-shell :is(.aw-tabs, .sm-tabs) {
+  .app-shell .aw-tabs {
     gap: 14px;
   }
-  .app-shell :is(.aw-tabs, .sm-tabs) > button {
+  .app-shell .aw-tabs > button {
     font-size: 12px;
   }
   .app-shell .aw-filter-bar,
@@ -1166,38 +941,12 @@
   .app-shell .management-page .schedule-settings-grid > .button {
     justify-self: stretch;
   }
-  .app-shell .agent-job-detail {
-    padding: 20px 16px;
-  }
   .review-card-content,
   .review-card-actions {
     padding: 20px 16px;
   }
-  .app-shell .plugin-log-summary,
   .app-shell .team-report-layout {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .app-shell .plugin-execution-header {
-    position: static;
-    padding-inline: 14px;
-    flex-wrap: wrap;
-  }
-  .plugin-run-assessment {
-    padding: 12px;
-  }
-  .app-shell .plugin-log-summary > div {
-    min-height: 0;
-    padding: 12px 16px;
-  }
-  .app-shell .plugin-event-toolbar,
-  .app-shell .plugin-event > summary {
-    padding-inline: 12px;
-  }
-  .app-shell .plugin-event-expanded {
-    margin-inline: 12px;
-  }
-  .app-shell .monitor-diagnosis {
-    padding: 14px;
   }
   .sm-component-grid {
     padding: 12px;
@@ -1244,138 +993,6 @@
   .app-shell .sidebar nav a {
     font-size: 11px;
   }
-  .app-shell .plugin-instance-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* Plugin monitoring: admin triage helpers. */
-.plugin-overview {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 18px;
-}
-.plugin-overview-item {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--muted);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-.plugin-overview-item strong {
-  color: var(--ink);
-  font-size: 18px;
-  font-variant-numeric: tabular-nums;
-}
-.plugin-overview-item.critical strong {
-  color: var(--danger);
-}
-.plugin-overview-item.warning strong {
-  color: var(--warning);
-}
-.plugin-overview-item.normal strong {
-  color: var(--accent);
-}
-.plugin-overview-item:hover {
-  border-color: #9cb9af;
-}
-.plugin-overview-item[aria-pressed="true"] {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-  background: #edf5f1;
-}
-.plugin-overview-checked {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
-}
-.plugin-instance-search {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 10px 12px;
-  padding: 0 9px;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: #fff;
-  color: var(--muted);
-}
-.plugin-instance-search:focus-within {
-  outline: 2px solid #3c83b8;
-  outline-offset: 1px;
-}
-.app-shell .plugin-instance-search input,
-.plugin-instance-search input {
-  flex: 1;
-  min-width: 0;
-  height: auto;
-  padding: 0;
-  border: 0;
-  outline: 0;
-  box-shadow: none;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-}
-.app-shell .plugin-instance-copy .plugin-instance-status.critical {
-  color: var(--danger);
-}
-.app-shell .plugin-instance-copy .plugin-instance-status.warning {
-  color: var(--warning);
-}
-.app-shell .plugin-instance-copy .plugin-instance-outdated {
-  color: var(--warning);
-}
-.app-shell .plugin-instance-grid > .empty-state {
-  padding: 28px 12px;
-}
-.app-shell .plugin-log-summary strong small {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-}
-.app-shell .monitor-diagnosis .monitor-diagnosis-message {
-  margin-top: 6px;
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-.monitor-diagnosis-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-.plugin-recover-confirm {
-  display: grid;
-  gap: 10px;
-  font-size: 14px;
-  line-height: 1.6;
-}
-.plugin-recover-confirm ul {
-  margin: 0;
-  padding-left: 20px;
-  color: var(--muted);
-}
-.plugin-recover-hint {
-  color: var(--warning);
-  font-size: 13px;
-}
-@media (max-width: 760px) {
-  .plugin-overview-checked {
-    margin-left: 0;
-    flex-basis: 100%;
-  }
-}

@@ -24,7 +24,7 @@ import {
 import { ApiError, randomToken, requireWebActor, sha256 } from "../common.js";
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().min(1).max(254),
   password: z.string().min(6).max(200),
 });
 
@@ -93,6 +93,19 @@ export type AuthRouteOptions = {
   googleClientFactory?: typeof createGoogleClient;
 };
 
+export function localLoginEmail(account: string) {
+  const normalized = account.trim().toLowerCase();
+  if (
+    process.env.NODE_ENV === "development" &&
+    normalized === process.env.LOCAL_ADMIN_LOGIN_ALIAS?.trim().toLowerCase()
+  ) {
+    return (
+      process.env.LOCAL_ADMIN_LOGIN_EMAIL?.trim().toLowerCase() || normalized
+    );
+  }
+  return normalized;
+}
+
 export async function authRoutes(
   app: FastifyInstance,
   options: AuthRouteOptions = {},
@@ -113,12 +126,12 @@ export async function authRoutes(
     const input = loginSchema.parse(request.body);
     const rows = await sql<{ id: string; password_hash: string }[]>`
       select id, password_hash from users
-      where email = ${input.email.trim().toLowerCase()} and status = 'active'
+      where email = ${localLoginEmail(input.email)} and status = 'active'
       limit 1
     `;
     const user = rows[0];
     if (!user || !(await argon2.verify(user.password_hash, input.password))) {
-      throw new ApiError(401, "INVALID_CREDENTIALS", "邮箱或密码不正确。");
+      throw new ApiError(401, "INVALID_CREDENTIALS", "账号或密码不正确。");
     }
     await createWebSession(request, reply, user.id);
     return { ok: true };

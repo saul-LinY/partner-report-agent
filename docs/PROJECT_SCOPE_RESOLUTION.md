@@ -71,7 +71,7 @@ Historical backup recovery requires an exact anonymous key and a recorded
 decision. A current record, including an explicit pending review or denial,
 always takes precedence. Every restored record retains its original decision
 time and writes a `project_scope.permission_restored` audit event. The backup
-tables are retained. Recovery does not impersonate a Feishu reviewer.
+tables are retained. Recovery does not impersonate an App reviewer.
 
 The plugin applies central decisions to local mappings, retires obsolete local
 aliases, and rechecks authorization before reading session content. It does not

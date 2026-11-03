@@ -1,6 +1,7 @@
+import { sanitizePluginLogText } from "./sanitize.js";
+
 export type SystemLogLevel = "info" | "warning" | "error";
-export type SystemLogSource =
-  "inbox" | "job" | "delivery" | "outbox" | "report";
+export type SystemLogSource = "notification" | "job" | "outbox" | "report";
 
 export type SystemLogEvent = {
   id: string;
@@ -29,30 +30,46 @@ export type SystemLogExecution = {
   eventCount: number;
   summary: string;
   errorCode: string | null;
+  /** Job-only context; null for other sources. */
+  job: SystemLogJobMeta | null;
   events: SystemLogEvent[];
+};
+
+export type SystemLogJobMeta = {
+  type: string;
+  partnerId: string | null;
+  partnerName: string | null;
+  attemptCount: number;
+  maxAttempts: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  /** created -> completed, or created -> now-independent last update for unfinished jobs. */
+  durationMs: number;
+  leaseUntil: string | null;
+  nextRetryAt: string | null;
+  idempotencyKey: string;
+  uploadId: string | null;
+  periodKey: string | null;
 };
 
 type InputRows = {
   jobs: any[];
-  deliveries: any[];
-  inbox: any[];
+  notifications: any[];
   outbox: any[];
   reports: any[];
 };
 
 const jobLabels: Record<string, string> = {
+  EXTRACT_COLLECTOR_SESSION: "App 会话贡献分析",
   AGGREGATE_WORK_ITEMS: "工作卡片生成",
   GENERATE_TEAM_REPORT: "团队报告生成",
   REGENERATE_TEAM_REPORT: "团队报告重新生成",
+  REANALYZE_SESSIONS: "会话重新分析",
   RESCAN_SESSIONS: "会话重新扫描",
+  ANALYZE_INSPECTION_FINDING: "异常巡检分析",
 };
-const deliveryLabels: Record<string, string> = {
-  binding: "身份绑定卡发送",
-  recovery: "连接恢复卡发送",
-  scope: "项目权限卡发送",
-  review: "工作卡片审核发送",
-};
-
 function iso(value: Date | string) {
   return new Date(value).toISOString();
 }
@@ -86,6 +103,7 @@ function execution(
   status: string,
   events: SystemLogEvent[],
   errorCode: string | null = null,
+  job: SystemLogJobMeta | null = null,
 ) {
   const ordered = [...events].sort(
     (left, right) =>
@@ -114,13 +132,49 @@ function execution(
     eventCount: ordered.length,
     summary: last.message,
     errorCode,
+    job,
     events: ordered,
   } satisfies SystemLogExecution;
+}
+
+function nullableIso(value: Date | string | null | undefined) {
+  return value ? iso(value) : null;
 }
 
 function projectJob(row: any) {
   const title = jobLabels[row.type] ?? "后台任务处理";
   const subject = row.partner_name ?? "团队级任务";
+  const errorMessage = row.error_message?.trim()
+    ? sanitizePluginLogText(row.error_message.trim())
+    : null;
+  const createdAt = iso(row.created_at);
+  const completedAt = nullableIso(row.completed_at);
+  const meta: SystemLogJobMeta = {
+    type: row.type,
+    partnerId: row.partner_id ?? null,
+    partnerName: row.partner_name ?? null,
+    attemptCount: row.attempt_count ?? 0,
+    maxAttempts: row.max_attempts ?? 0,
+    errorCode: row.error_code ?? null,
+    errorMessage,
+    createdAt,
+    completedAt,
+    durationMs: duration(createdAt, completedAt ?? iso(row.updated_at)),
+    leaseUntil: nullableIso(row.lease_until),
+    nextRetryAt: nullableIso(row.next_retry_at),
+    idempotencyKey: row.idempotency_key ?? "",
+    uploadId: row.upload_id ?? null,
+    periodKey: row.period_key ?? null,
+  };
+  const context = {
+    type: meta.type,
+    status: row.status,
+    attempt: meta.attemptCount,
+    maxAttempts: meta.maxAttempts,
+    idempotencyKey: meta.idempotencyKey,
+    ...(meta.uploadId ? { uploadId: meta.uploadId } : {}),
+    ...(meta.periodKey ? { periodKey: meta.periodKey } : {}),
+  };
   const events = [
     event("job", row.id, "accepted", {
       level: "info",
@@ -128,8 +182,8 @@ function projectJob(row: any) {
       eventCode: "job.accepted",
       title: "任务已接收",
       message: `${title}已进入后台任务队列。`,
-      occurredAt: iso(row.created_at),
-      details: { type: row.type, status: row.status },
+      occurredAt: createdAt,
+      details: context,
     }),
   ];
   if (row.status === "LEASED")
@@ -141,7 +195,7 @@ function projectJob(row: any) {
         title: "任务正在处理",
         message: `${title}已由中台 Worker 开始执行。`,
         occurredAt: iso(row.updated_at),
-        details: { attempt: row.attempt_count },
+        details: { ...context, leaseUntil: meta.leaseUntil },
       }),
     );
   if (row.status === "COMPLETED")
@@ -152,8 +206,8 @@ function projectJob(row: any) {
         eventCode: "job.completed",
         title: "生成处理完成",
         message: `${title}已完成。`,
-        occurredAt: iso(row.completed_at ?? row.updated_at),
-        details: { attempts: row.attempt_count },
+        occurredAt: completedAt ?? iso(row.updated_at),
+        details: { ...context, durationMs: meta.durationMs },
       }),
     );
   if (["RETRY_WAIT", "FAILED", "CANCELLED"].includes(row.status)) {
@@ -165,10 +219,14 @@ function projectJob(row: any) {
         eventCode: row.error_code ?? `job.${row.status.toLowerCase()}`,
         title: failed ? "任务处理失败" : "任务等待后续处理",
         message:
-          row.error_message?.trim() ||
+          errorMessage ||
           (failed ? `${title}没有成功完成。` : `${title}正在等待重试。`),
         occurredAt: iso(row.updated_at),
-        details: { attempt: row.attempt_count, maxAttempts: row.max_attempts },
+        details: {
+          ...context,
+          errorCode: meta.errorCode,
+          nextRetryAt: meta.nextRetryAt,
+        },
       }),
     );
   }
@@ -180,107 +238,41 @@ function projectJob(row: any) {
     row.status,
     events,
     row.error_code,
+    meta,
   );
 }
 
-function projectDelivery(row: any) {
-  const title = deliveryLabels[row.kind] ?? "飞书消息发送";
-  const subject = row.partner_name ?? "未知接收人";
+function projectNotification(row: any) {
   const events = [
-    event("delivery", row.id, "queued", {
+    event("notification", row.id, "queued", {
       level: "info",
       stage: "accepted",
-      eventCode: "feishu.delivery.queued",
-      title: "消息已进入发送队列",
-      message: `${title}请求已由中台接收。`,
+      eventCode: "app.notification.queued",
+      title: "App 通知已排队",
+      message: "消息已进入 App 通知队列，尚不代表系统通知已送达。",
       occurredAt: iso(row.created_at),
-      details: { kind: row.kind, status: row.status },
+      details: { kind: row.kind },
     }),
   ];
-  if (row.sent_at)
+  if (row.delivered_at)
     events.push(
-      event("delivery", row.id, "sent", {
+      event("notification", row.id, "delivered", {
         level: "info",
-        stage: "sent",
-        eventCode: "feishu.delivery.sent",
-        title: "飞书消息发送成功",
-        message: `${title}已发送到飞书。`,
-        occurredAt: iso(row.sent_at),
-        details: { attempts: row.attempt_count },
-      }),
-    );
-  else if (
-    ["failed", "retry_wait", "deferred", "cancelled"].includes(row.status)
-  )
-    events.push(
-      event("delivery", row.id, "problem", {
-        level: row.status === "failed" ? "error" : "warning",
-        stage: row.status === "failed" ? "failed" : "retry",
-        eventCode: row.last_error_code ?? `feishu.delivery.${row.status}`,
-        title:
-          row.status === "failed" ? "飞书消息发送失败" : "飞书消息尚未送达",
-        message: row.last_error_message?.trim() || `${title}暂未成功送达。`,
-        occurredAt: iso(row.updated_at),
-        details: { attempts: row.attempt_count, status: row.status },
+        stage: "delivered",
+        eventCode: "app.notification.delivered",
+        title: "App 已确认系统通知投递",
+        message: "App 已调用 macOS 通知并返回投递回执，不代表用户已阅读。",
+        occurredAt: iso(row.delivered_at),
+        details: {},
       }),
     );
   return execution(
-    "delivery",
+    "notification",
     row.id,
-    title,
-    subject,
-    row.status,
+    "App 系统通知",
+    row.partner_name ?? "成员",
+    row.delivered_at ? "delivered" : "pending",
     events,
-    row.last_error_code,
-  );
-}
-
-function projectInbox(row: any) {
-  const events = [
-    event("inbox", row.id, "received", {
-      level: "info",
-      stage: "received",
-      eventCode: "feishu.callback.received",
-      title: "飞书操作已接收",
-      message: "中台已收到用户在飞书卡片上的操作。",
-      occurredAt: iso(row.received_at),
-      details: { status: row.status },
-    }),
-  ];
-  if (row.processed_at)
-    events.push(
-      event("inbox", row.id, "processed", {
-        level: row.error_code ? "warning" : "info",
-        stage: row.error_code ? "completed_with_error" : "completed",
-        eventCode: row.error_code ?? "feishu.callback.processed",
-        title: row.error_code
-          ? "飞书操作处理完成但存在问题"
-          : "飞书操作处理完成",
-        message: row.error_message?.trim() || "用户操作已经写入中台业务状态。",
-        occurredAt: iso(row.processed_at),
-        details: { status: row.status },
-      }),
-    );
-  else if (row.status === "failed")
-    events.push(
-      event("inbox", row.id, "failed", {
-        level: "error",
-        stage: "failed",
-        eventCode: row.error_code ?? "feishu.callback.failed",
-        title: "飞书操作处理失败",
-        message: row.error_message?.trim() || "飞书操作没有成功写入业务状态。",
-        occurredAt: iso(row.updated_at),
-        details: { status: row.status },
-      }),
-    );
-  return execution(
-    "inbox",
-    row.id,
-    "飞书操作接收",
-    row.partner_name ?? "飞书用户",
-    row.status,
-    events,
-    row.error_code,
   );
 }
 
@@ -367,8 +359,7 @@ function projectReport(row: any) {
 export function projectSystemLogExecutions(rows: InputRows) {
   return [
     ...rows.jobs.map(projectJob),
-    ...rows.deliveries.map(projectDelivery),
-    ...rows.inbox.map(projectInbox),
+    ...rows.notifications.map(projectNotification),
     ...rows.outbox.map(projectOutbox),
     ...rows.reports.map(projectReport),
   ].sort(

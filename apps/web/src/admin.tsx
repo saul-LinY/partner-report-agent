@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bell,
   CalendarClock,
   Users,
   Settings2,
@@ -36,10 +37,6 @@ type PartnerConnection = {
   partnerEmail: string;
   pluginInstanceId: string | null;
   connectionState: string;
-  feishuConnectionState: string;
-  feishuConnectedAt: string | null;
-  feishuLastAttemptAt: string | null;
-  feishuLastErrorCode: string | null;
   verifiedAt: string | null;
   lastUploadAt: string | null;
   deviceName: string | null;
@@ -116,38 +113,6 @@ const statusLabel: Record<string, string> = {
   expired: "连接已失效",
   not_connected: "未连接",
 };
-
-const feishuStatusTone: Record<
-  string,
-  "success" | "warning" | "danger" | "neutral"
-> = {
-  connected: "success",
-  connecting: "warning",
-  failed: "danger",
-  not_connected: "neutral",
-  not_started: "neutral",
-  unavailable: "neutral",
-};
-
-const feishuStatusLabel: Record<string, string> = {
-  connected: "已连接",
-  connecting: "检测中",
-  failed: "连接异常",
-  not_connected: "待首次投递",
-  not_started: "尚未发起",
-  unavailable: "飞书未配置",
-};
-
-function feishuStatusDetail(connection: PartnerConnection) {
-  if (connection.feishuConnectionState === "connected")
-    return `送达 ${formatTime(connection.feishuConnectedAt)}`;
-  if (connection.feishuLastErrorCode) return connection.feishuLastErrorCode;
-  if (connection.feishuConnectionState === "connecting")
-    return `尝试 ${formatTime(connection.feishuLastAttemptAt)}`;
-  if (connection.feishuConnectionState === "not_connected") return "等待权限卡";
-  if (connection.feishuConnectionState === "not_started") return "等待插件连接";
-  return "检查飞书配置";
-}
 
 const reviewStageLabel: Record<
   PartnerConnection["reviewProgress"]["stage"],
@@ -294,6 +259,43 @@ function TeamSettingsContent({
   const bindingCode = activeBindingCode ?? codes[0] ?? null;
   const recoverableInstanceId =
     selected?.connectionState === "expired" ? null : selected?.pluginInstanceId;
+  const notificationTest = useMutation({
+    mutationFn: (partnerId: string) =>
+      api<{ id: string; status: string }>(
+        `/v1/admin/partners/${partnerId}/notifications/test`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      ),
+  });
+  const notificationReceipt = useQuery({
+    queryKey: [
+      "test-notification-receipt",
+      notificationTest.variables,
+      notificationTest.data?.id,
+    ],
+    enabled:
+      !!notificationTest.data?.id &&
+      notificationTest.variables === selected?.partnerId,
+    queryFn: () =>
+      api<{ id: string; status: string }>(
+        `/v1/admin/partners/${notificationTest.variables}/notifications/${notificationTest.data!.id}`,
+      ),
+    refetchInterval: (query) =>
+      query.state.data?.status === "delivered" ? false : 2000,
+  });
+  const notificationStatus = notificationReceipt.data?.status;
+  const notificationFeedback =
+    notificationStatus === "delivered"
+      ? "macOS 已接受通知。若未出现横幅，请检查通知中心、横幅设置或专注模式。"
+      : notificationStatus === "permission_denied"
+        ? "App 的 macOS 通知权限未开启。请在 App「系统设置 → 账户连接 → 系统通知」打开系统设置并允许通知，开启后自动重试。"
+        : notificationStatus === "permission_required"
+          ? "等待首次通知授权，请在 Mac 上打开 App 并处理系统授权提示。"
+          : notificationStatus === "app_offline"
+            ? "尚未收到 App 的近期日志。请打开已绑定的 App，通知会保留并自动重试。"
+          : "已排队，等待 App 的系统通知回执。App 运行时约每 10 秒同步。";
 
   return (
     <div className="page admin-page management-page team-settings-page">
@@ -359,8 +361,7 @@ function TeamSettingsContent({
                     <thead>
                       <tr>
                         <th>人员</th>
-                        <th>插件连接</th>
-                        <th>飞书连接</th>
+                        <th>App 连接</th>
                         <th>审核进度</th>
                       </tr>
                     </thead>
@@ -396,17 +397,6 @@ function TeamSettingsContent({
                                 item.connectionState}
                             </Badge>
                             <small>上传 {formatTime(item.lastUploadAt)}</small>
-                          </td>
-                          <td>
-                            <Badge
-                              tone={
-                                feishuStatusTone[item.feishuConnectionState]
-                              }
-                            >
-                              {feishuStatusLabel[item.feishuConnectionState] ??
-                                item.feishuConnectionState}
-                            </Badge>
-                            <small>{feishuStatusDetail(item)}</small>
                           </td>
                           <td>
                             <div className="aw-progress">
@@ -468,11 +458,11 @@ function TeamSettingsContent({
                   </h3>
                   <dl className="aw-meta">
                     <div>
-                      <dt>插件设备</dt>
+                      <dt>App 设备</dt>
                       <dd>{selected.deviceName ?? "尚未配置"}</dd>
                     </div>
                     <div>
-                      <dt>插件版本</dt>
+                      <dt>App 版本</dt>
                       <dd>
                         {selected.version ? `v${selected.version}` : "--"}
                       </dd>
@@ -485,20 +475,20 @@ function TeamSettingsContent({
                       <dt>最近上传</dt>
                       <dd>{formatTime(selected.lastUploadAt)}</dd>
                     </div>
-                    <div className="aw-meta-full">
-                      <dt>飞书连接</dt>
-                      <dd>
-                        <Badge
-                          tone={
-                            feishuStatusTone[selected.feishuConnectionState]
-                          }
-                        >
-                          {feishuStatusLabel[selected.feishuConnectionState]}
-                        </Badge>{" "}
-                        · {feishuStatusDetail(selected)}
-                      </dd>
-                    </div>
                   </dl>
+                  <Button
+                    icon={<Bell size={15} />}
+                    disabled={notificationTest.isPending}
+                    onClick={() => notificationTest.mutate(selected.partnerId)}
+                  >
+                    测试 App 通知
+                  </Button>
+                  {notificationTest.isSuccess &&
+                    notificationTest.variables === selected.partnerId && (
+                      <p role="status">{notificationFeedback}</p>
+                    )}
+                  <ErrorBanner error={notificationTest.error} />
+                  <ErrorBanner error={notificationReceipt.error} />
                 </section>
                 <section className="aw-detail-section aw-person-access">
                   <h3>
@@ -833,7 +823,7 @@ function ProjectScopeModal({
                           onClick={() => {
                             if (
                               window.confirm(
-                                "重新发起后，当前项目的采集权限会立即暂停，用户需要在飞书重新审核。确认继续吗？",
+                                "重新发起后，当前项目的采集权限会立即暂停，用户需要在 App 重新审核。确认继续吗？",
                               )
                             )
                               reapproval.mutate(instance);

@@ -1,3 +1,7 @@
+import {
+  confirmCollectorIdentity,
+  removeCollectorIdentities,
+} from "./test-support/collector-identity.js";
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
@@ -25,7 +29,7 @@ suite("project permission resolution and legacy compatibility", () => {
   };
   const actor: DomainActor = {
     ...identity,
-    actorType: "feishu",
+    actorType: "collector",
     actorId: "scope-test",
     userId: null,
   };
@@ -57,15 +61,14 @@ suite("project permission resolution and legacy compatibility", () => {
       values (${identity.partnerId},${identity.tenantId},${identity.teamId},${`${identity.partnerId}@local.test`},'Resolution Partner')`;
     await sql`insert into plugin_instances (id,tenant_id,team_id,partner_id,device_name,version,access_token_hash,refresh_token_hash,access_expires_at)
       values (${identity.pluginInstanceId},${identity.tenantId},${identity.teamId},${identity.partnerId},'Test','2.0.0',${createHash("sha256").update(token).digest("hex")},'refresh',now()+interval '1 day')`;
-    await sql`insert into feishu_partner_bindings (id,tenant_id,team_id,partner_id,status,open_id,app_id)
-      values (${randomUUID()},${identity.tenantId},${identity.teamId},${identity.partnerId},'active',${identity.partnerId},'test-app')`;
+    await confirmCollectorIdentity(identity);
     await sql`insert into report_periods (id,tenant_id,team_id,period_key,starts_at,ends_at,cutoff_at,submission_deadline_at,timezone,status)
       values (${randomUUID()},${identity.tenantId},${identity.teamId},${periodKey},now()-interval '1 day',now()+interval '7 days',now()+interval '7 days',now()+interval '7 days','Asia/Shanghai','open')`;
   });
   afterAll(async () => {
     await sql`delete from outbox_events where tenant_id=${identity.tenantId}`;
     await sql`delete from audit_events where tenant_id=${identity.tenantId}`;
-    await sql`delete from feishu_partner_bindings where tenant_id=${identity.tenantId}`;
+    await removeCollectorIdentities(identity.tenantId);
     await sql`delete from project_scope_backup_snapshots where tenant_id=${identity.tenantId}`;
     await sql`delete from project_scope_entries where tenant_id=${identity.tenantId}`;
     await sql`delete from project_scope_policies where tenant_id=${identity.tenantId}`;

@@ -328,7 +328,7 @@ export async function pluginRoutes(app: FastifyInstance) {
       throw new ApiError(
         409,
         "PLUGIN_RECOVERY_ALREADY_PENDING",
-        "连接恢复申请已经存在，请在飞书中确认。",
+        "连接恢复申请已经存在，请在 App 中重新绑定。",
       );
     if (created !== "created")
       throw new ApiError(

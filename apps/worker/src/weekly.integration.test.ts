@@ -72,6 +72,8 @@ suite("weekly report scheduling", () => {
 
   afterAll(async () => {
     await sql.begin(async (tx) => {
+      await tx`delete from outbox_events where tenant_id = ${fixture.tenant}`;
+      await tx`delete from app_notifications where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
@@ -289,6 +291,8 @@ suite("weekly reporting with no collected activity", () => {
   afterAll(async () => {
     await sql.begin(async (tx) => {
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
+      await tx`delete from outbox_events where tenant_id = ${fixture.tenant}`;
+      await tx`delete from app_notifications where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
       await tx`delete from work_item_snapshots where tenant_id = ${fixture.tenant}`;

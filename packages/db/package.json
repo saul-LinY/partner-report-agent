@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@partner-report/contracts": "0.1.0",
     "argon2": "^0.41.0",
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.0"

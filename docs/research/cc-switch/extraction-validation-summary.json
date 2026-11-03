@@ -1,0 +1,123 @@
+{
+  "date": "2026-10-29",
+  "upstream_commit": "6d6b7162f122ac0ce1356a14688c8c4f712db3c8",
+  "branch": "codex/session-reader-extraction",
+  "standalone_build": true,
+  "offline_locked_build": true,
+  "original_source_tree_removed": true,
+  "frozen_comparison": {
+    "source_results": 161,
+    "equal_except_timing": true
+  },
+  "tests": {
+    "rust_integration_passed": 6,
+    "regression_checks_passed": 29
+  },
+  "size": {
+    "before_files": 1782,
+    "before_bytes": 63068665,
+    "after_files": 37,
+    "after_bytes": 426025,
+    "removed_original_files": 1779,
+    "branch": "codex/session-reader-extraction",
+    "root": "/Users/saul/PROJECT/ccswitch-upstream/cc-switch"
+  },
+  "real": {
+    "codex": {
+      "files_considered": 154,
+      "files_parsed": 153,
+      "statuses": {
+        "parsed": 153,
+        "cross_project_metadata_blocked": 1
+      },
+      "turns": 1232,
+      "states": {
+        "complete": 1096,
+        "incomplete": 136
+      },
+      "evidence": {
+        "explicit_final_phase": 1096,
+        "aborted": 107,
+        "commentary_rejected": 2,
+        "no_final_answer": 27
+      },
+      "heuristic_stop_reasons": {},
+      "native_checked": 1096,
+      "native_unmatched": 0,
+      "blocks": {
+        "text": 7829,
+        "thinking": 16566,
+        "tool_call": 18507,
+        "tool_result": 18506,
+        "event": 328,
+        "image": 200
+      },
+      "parse_and_audit_ms": 11843,
+      "native_source_id_mismatches": 0
+    },
+    "claude": {
+      "files_considered": 5,
+      "files_parsed": 5,
+      "statuses": {
+        "parsed": 5
+      },
+      "turns": 31,
+      "states": {
+        "complete": 20,
+        "incomplete": 11
+      },
+      "evidence": {
+        "native_stop_reason": 20,
+        "no_final_answer": 3,
+        "provider_diagnostic": 6,
+        "aborted": 2
+      },
+      "heuristic_stop_reasons": {},
+      "native_checked": 20,
+      "native_unmatched": 0,
+      "blocks": {
+        "text": 95,
+        "thinking": 101,
+        "tool_call": 141,
+        "tool_result": 141,
+        "event": 5,
+        "image": 1
+      },
+      "parse_and_audit_ms": 140,
+      "native_source_id_mismatches": 0
+    },
+    "omp": {
+      "files_considered": 1,
+      "files_parsed": 1,
+      "statuses": {
+        "parsed": 1
+      },
+      "turns": 13,
+      "states": {
+        "incomplete": 4,
+        "complete": 9
+      },
+      "evidence": {
+        "aborted": 4,
+        "native_stop_reason": 9
+      },
+      "heuristic_stop_reasons": {},
+      "native_checked": 9,
+      "native_unmatched": 0,
+      "blocks": {
+        "event": 20,
+        "image": 1,
+        "text": 27,
+        "thinking": 22,
+        "tool_call": 24,
+        "tool_result": 24
+      },
+      "parse_and_audit_ms": 20,
+      "native_source_id_mismatches": 1
+    }
+  },
+  "total_turns": 1276,
+  "total_complete_turns": 1125,
+  "network_upload_tested": false,
+  "raw_data_committed": false
+}

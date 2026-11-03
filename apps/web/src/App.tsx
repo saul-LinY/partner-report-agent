@@ -11,9 +11,9 @@ import { FactPreviewPage } from "./facts.js";
 import { TeamReportPage } from "./team-reports.js";
 import { ReviewQueuePage } from "./review-queue.js";
 import { ReportArchivePage } from "./report-archive.js";
-import { AgentJobsPage } from "./agent-jobs.js";
-import { PluginMonitoringPage } from "./plugin-logs.js";
-import { SystemMonitoringPage } from "./system-monitoring.js";
+import { UserLogsPage } from "./user-logs.js";
+import { SystemLogsPage } from "./system-logs.js";
+import { InspectionPage } from "./inspection.js";
 import { isNavigationActive, navigationGroups } from "./navigation.js";
 
 export type Me = {
@@ -170,14 +170,23 @@ function AuthenticatedApp({ me }: { me: Me }) {
           <Route path="/admin/facts">
             <FactPreviewPage />
           </Route>
-          <Route path="/admin/jobs">
-            <AgentJobsPage />
+          <Route path="/admin/user-logs">
+            <UserLogsPage />
+          </Route>
+          <Route path="/admin/system-logs">
+            <SystemLogsPage />
+          </Route>
+          <Route path="/admin/inspection">
+            <InspectionPage />
           </Route>
           <Route path="/admin/plugin-logs">
-            <PluginMonitoringPage />
+            <Redirect to="/admin/user-logs" replace />
+          </Route>
+          <Route path="/admin/jobs">
+            <Redirect to="/admin/inspection" replace />
           </Route>
           <Route path="/admin/system-monitoring">
-            <SystemMonitoringPage />
+            <Redirect to="/admin/system-logs" replace />
           </Route>
           <Route path="/admin/team-reports/:id">
             <TeamReportPage />

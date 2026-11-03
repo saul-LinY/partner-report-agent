@@ -52,6 +52,9 @@ const decisionLabels: Record<string, string> = {
   excluded: "已忽略",
 };
 
+const projectLabel = (item: any) =>
+  item.payload?.synthetic ? item.title : (item.project_name ?? item.title);
+
 export function ReviewPage() {
   const [, params] = useRoute("/partner/review/:reviewId");
   const reviewId = params?.reviewId ?? "";
@@ -74,13 +77,17 @@ export function ReviewPage() {
   useEffect(() => {
     const items = query.data?.items ?? [];
     if (!items.some((item) => item.id === selectedId)) {
-      setSelectedId(items[0]?.id ?? null);
+      setSelectedId(
+        (items.find((item) => item.review_status === "pending") ?? items[0])
+          ?.id ?? null,
+      );
     }
   }, [query.data?.items, selectedId]);
 
   const selected = useMemo(
     () =>
       query.data?.items.find((item) => item.id === selectedId) ??
+      query.data?.items.find((item) => item.review_status === "pending") ??
       query.data?.items[0],
     [query.data?.items, selectedId],
   );
@@ -236,7 +243,7 @@ export function ReviewPage() {
             >
               <FolderKanban size={17} />
               <div>
-                <strong>{item.project_name ?? item.title}</strong>
+                <strong>{projectLabel(item)}</strong>
                 <span>{statusLabels[item.status] ?? item.status}</span>
               </div>
               <Badge
@@ -267,7 +274,7 @@ export function ReviewPage() {
                       <Badge tone="info">
                         {statusLabels[selected.status] ?? selected.status}
                       </Badge>
-                      <h2>{selected.project_name ?? selected.title}</h2>
+                      <h2>{projectLabel(selected)}</h2>
                     </div>
                   </div>
 
@@ -317,7 +324,7 @@ export function ReviewPage() {
                 >
                   <h3>审核操作</h3>
                   <div className="review-action-subject">
-                    <strong>{selected.project_name ?? selected.title}</strong>
+                    <strong>{projectLabel(selected)}</strong>
                     <Badge
                       tone={
                         selected.review_status === "approved"

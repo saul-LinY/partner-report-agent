@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  feishuCredentialResponseSucceeded,
+  systemProbeKeys,
   probeFailureDetail,
   SystemProbeError,
 } from "./system-probes.js";
@@ -8,7 +8,6 @@ import {
 describe("system probe diagnostics", () => {
   it("returns specific safe messages for known failures", () => {
     expect(probeFailureDetail("MODEL_NOT_CONFIGURED")).toContain("尚未配置");
-    expect(probeFailureDetail("FEISHU_AUTH_FAILED")).toContain("拒绝");
     expect(probeFailureDetail("WORKER_PROBE_TIMEOUT")).toContain("Worker");
   });
 
@@ -24,19 +23,7 @@ describe("system probe diagnostics", () => {
     );
   });
 
-  it("accepts both Feishu SDK credential response shapes", () => {
-    expect(
-      feishuCredentialResponseSucceeded({
-        code: 0,
-        tenant_access_token: "top-level-token",
-      }),
-    ).toBe(true);
-    expect(
-      feishuCredentialResponseSucceeded({
-        code: 0,
-        data: { tenant_access_token: "nested-token" },
-      }),
-    ).toBe(true);
-    expect(feishuCredentialResponseSucceeded({ code: 10003 })).toBe(false);
+  it("probes the App notification queue", () => {
+    expect(systemProbeKeys).toContain("notifications");
   });
 });

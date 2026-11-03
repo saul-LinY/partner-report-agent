@@ -365,7 +365,7 @@ function output(value: unknown) {
         outcome: "failed",
         summary:
           value.status === "project_scope_approval_required"
-            ? `采集未开始：${pendingProjects} 个项目仍在等待飞书权限审核。`
+            ? `采集未开始：${pendingProjects} 个项目仍在等待App权限审核。`
             : "采集未开始：当前扫描范围内还没有可审核项目。",
         reasonCode: value.status,
         details: { pendingProjects, periodKey: event.periodKey },
@@ -625,7 +625,7 @@ function connectedOutput(
     taskPolicy: SCHEDULED_COLLECTION_TASK_POLICY,
     bindingNextStep: binding.bindingCompleted
       ? "绑定链路已完成，绑定码已核销。"
-      : "中台连接已建立，但绑定尚未完成；绑定码不会在飞书项目权限卡成功送达前核销。",
+      : "中台连接已建立，但绑定尚未完成；请在 App 使用名字和同一绑定码完成绑定。",
     nextStep:
       scheduledTaskInstallation?.status === "failed"
         ? "连接凭据已保留，但 Codex Scheduled Task 检查失败；请通过 Codex 官方自动化工具重试。"
@@ -946,7 +946,7 @@ function projectScopeReady(periodKey: string, localScope: LocalProjectScope) {
     deniedProjects: localScope.entries.filter(
       (entry) => entry.status === "denied",
     ).length,
-    message: "飞书项目权限审核已完成，只采集已允许的项目。",
+    message: "App项目权限审核已完成，只采集已允许的项目。",
   };
 }
 
@@ -974,8 +974,8 @@ function projectScopeApprovalRequired(
     })),
     message:
       pendingProjects.length > 0
-        ? "项目权限卡已请求发送到飞书；用户完成审核前不会读取这些项目的 Session。"
-        : "当前时间范围内未发现可审核项目；后续发现项目时会发送飞书权限卡。",
+        ? "项目权限卡已请求发送到App；用户完成审核前不会读取这些项目的 Session。"
+        : "当前时间范围内未发现可审核项目；后续发现项目时会发送App权限卡。",
   };
 }
 

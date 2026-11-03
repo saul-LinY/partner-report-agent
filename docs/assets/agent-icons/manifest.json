@@ -1,0 +1,96 @@
+[
+  {
+    "provider": "codex",
+    "name": "Codex",
+    "status": "downloaded",
+    "path": "docs/assets/agent-icons/codex.svg",
+    "url": "https://github.com/farion1231/cc-switch/blob/6d6b7162f122ac0ce1356a14688c8c4f712db3c8/src/icons/extracted/index.ts",
+    "bytes": 1702,
+    "source_type": "OpenAI brand mark, exact CC Switch Codex mapping; not a dedicated Codex app icon",
+    "checked_date": "2026-10-29",
+    "sha256": "ca72ef5f0417da41bcd8b96805ad58761a11552ce3da2eff0502e7c1c55222c0"
+  },
+  {
+    "provider": "claude",
+    "name": "Claude Code",
+    "path": "docs/assets/agent-icons/claude.svg",
+    "url": "https://claude.com/favicon.svg",
+    "content_type": "image/svg+xml",
+    "bytes": 2558,
+    "status": "downloaded",
+    "source_type": "official project/website asset",
+    "checked_date": "2026-10-29",
+    "sha256": "b150888bc7257af83e3b85d3c2be4294f88986026f8168f6c12fc1fde6697350"
+  },
+  {
+    "provider": "opencode",
+    "name": "OpenCode",
+    "status": "downloaded",
+    "path": "docs/assets/agent-icons/opencode.svg",
+    "url": "https://raw.githubusercontent.com/anomalyco/opencode/510aa79d075c32e75f85b7774ff7390370c22b18/packages/console/app/src/asset/brand/opencode-logo-light-square.svg",
+    "bytes": 631,
+    "source_type": "official project/website asset",
+    "checked_date": "2026-10-29",
+    "sha256": "b1c48d82ebd304eab820658387642bcf4c9b8350d6860894d0fe21ddca25ef3f"
+  },
+  {
+    "provider": "pi",
+    "name": "Pi",
+    "path": "docs/assets/agent-icons/pi.svg",
+    "url": "https://pi.dev/favicon.svg",
+    "content_type": "image/svg+xml",
+    "bytes": 438,
+    "status": "downloaded",
+    "source_type": "official project/website asset",
+    "checked_date": "2026-10-29",
+    "sha256": "d266b2c1d2c7bf169ca30d438963b176fba16fea6263b9ac30c8302f34ad7ce7"
+  },
+  {
+    "provider": "hermes",
+    "name": "Hermes",
+    "path": "docs/assets/agent-icons/hermes.svg",
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/ef75bc708867e3884cb40a91363be6dc6fddc034/website/static/img/favicon.svg",
+    "content_type": "image/svg+xml",
+    "bytes": 116350,
+    "status": "downloaded",
+    "source_type": "official project/website asset",
+    "checked_date": "2026-10-29",
+    "sha256": "6c4968c1a46f104559684826ed8061fad6052711ff0af9c6b36a6ce674536684"
+  },
+  {
+    "provider": "omp",
+    "name": "Oh My Pi",
+    "path": "docs/assets/agent-icons/omp.svg",
+    "url": "https://cloudzy.com/marketplace/oh-my-pi.svg",
+    "content_type": "image/svg+xml",
+    "bytes": 429,
+    "status": "downloaded",
+    "source_type": "user-selected third-party asset via https://share.google/xkQjlCyT9lFmHzX76",
+    "checked_date": "2026-10-30",
+    "sha256": "1b6f7679ab4f1e339b143104be9cab0b1485e101284d48e53cd598b977658050"
+  },
+  {
+    "provider": "grokbuild",
+    "name": "Grok Build",
+    "path": "docs/assets/agent-icons/grokbuild.svg",
+    "url": "https://grok.com/images/favicon.svg",
+    "content_type": "image/svg+xml",
+    "bytes": 9758,
+    "status": "downloaded",
+    "source_type": "official provider-brand fallback",
+    "checked_date": "2026-10-29",
+    "sha256": "c3db0dfaf760b702b8490c6cbefe07fd8bfe00db43cae6a0acccf768f44d6179"
+  },
+  {
+    "provider": "agy",
+    "name": "Antigravity",
+    "path": "docs/assets/agent-icons/agy.png",
+    "url": "https://antigravity.google/assets/image/antigravity-logo.png",
+    "content_type": "image/png",
+    "bytes": 32382,
+    "status": "downloaded",
+    "source_type": "official project/website asset",
+    "checked_date": "2026-10-29",
+    "sha256": "193ba1805de11c23cd0c7a1df92aa0a886708e57350f6f7766100afe5befed73"
+  }
+]

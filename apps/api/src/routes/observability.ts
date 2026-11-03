@@ -10,63 +10,24 @@ import {
   requireWebActor,
 } from "../common.js";
 import {
-  PLUGIN_SCHEDULE,
-  projectPluginMonitoringStatus,
   projectSystemComponents,
   type MonitoringSeverity,
 } from "../monitoring.js";
 import {
-  groupPluginExecutions,
-  type PluginExecutionEvent,
-} from "../plugin-log-diagnostics.js";
+  logDateSchema,
+  sanitizePluginLogDetails,
+  sanitizePluginLogText,
+} from "../sanitize.js";
 import { runSystemProbe, systemProbeKeys } from "../system-probes.js";
 import {
   projectSystemLogExecutions,
   type SystemLogSource,
 } from "../system-logs.js";
 
-export function isValidPluginLogDate(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
-}
-
-const adminLogQuerySchema = z
-  .object({
-    pluginInstanceId: z.string().uuid(),
-    executionId: z.string().trim().min(1).max(120).optional(),
-    runId: z.string().uuid().optional(),
-    level: z.enum(["debug", "info", "warning", "error"]).optional(),
-    date: z
-      .string()
-      .refine(isValidPluginLogDate, "日期必须是有效的 YYYY-MM-DD。")
-      .optional(),
-    limit: z.coerce.number().int().min(1).max(5_000).default(2_000),
-  })
-  .strict();
-
-const pluginLogAnalysisSchema = z
-  .object({
-    pluginInstanceId: z.string().uuid(),
-    executionId: z.string().trim().min(1).max(120),
-  })
-  .strict();
-
 const systemLogQuerySchema = z
   .object({
     executionId: z.string().trim().min(1).max(120).optional(),
-    date: z
-      .string()
-      .refine(isValidPluginLogDate, "日期必须是有效的 YYYY-MM-DD。")
-      .optional(),
+    date: logDateSchema.optional(),
     limit: z.coerce.number().int().min(1).max(2_000).default(500),
   })
   .strict();
@@ -77,52 +38,11 @@ const systemLogAnalysisSchema = z
 
 const systemExecutionIdSchema = z
   .string()
-  .regex(/^(inbox|job|delivery|outbox|report):[0-9a-f-]{36}$/i);
+  .regex(/^(notification|job|outbox|report):[0-9a-f-]{36}$/i);
 
 const systemProbeParamsSchema = z
   .object({ component: z.enum(systemProbeKeys) })
   .strict();
-
-const pluginMonitoringParamsSchema = z
-  .object({ pluginInstanceId: z.string().uuid() })
-  .strict();
-
-const secretPatterns: Array<[RegExp, string]> = [
-  [/\bBearer\s+[A-Za-z0-9._~-]{8,}\b/gi, "Bearer <REDACTED>"],
-  [/\bsk-[A-Za-z0-9_-]{8,}\b/g, "<REDACTED_API_KEY>"],
-  [
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-    "<REDACTED_PRIVATE_KEY>",
-  ],
-  [
-    /\b(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)(["']?\s*[:=]\s*["']?)[^\s,;"']{4,}/gi,
-    "$1$2<REDACTED>",
-  ],
-  [/\/Users\/[^/\s]+/g, "<USER_HOME>"],
-  [/[A-Za-z]:\\Users\\[^\\\s]+/g, "<USER_HOME>"],
-];
-
-export function sanitizePluginLogText(value: string) {
-  return secretPatterns.reduce(
-    (current, [pattern, replacement]) => current.replace(pattern, replacement),
-    value,
-  );
-}
-
-export function sanitizePluginLogDetails(value: unknown): unknown {
-  if (typeof value === "string") return sanitizePluginLogText(value);
-  if (Array.isArray(value)) return value.map(sanitizePluginLogDetails);
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-        key,
-        /token|secret|password|authorization|credential/i.test(key)
-          ? "<REDACTED>"
-          : sanitizePluginLogDetails(item),
-      ]),
-    );
-  return value;
-}
 
 export async function observabilityRoutes(app: FastifyInstance) {
   app.post("/v1/plugin-instances/me/log-events", async (request) => {
@@ -174,35 +94,6 @@ export async function observabilityRoutes(app: FastifyInstance) {
         accepted += rows.length;
       }
     });
-    const issueInvocations = new Map<string, (typeof input.events)[number]>();
-    for (const event of input.events)
-      if (
-        event.invocationId &&
-        (event.level === "error" || event.level === "warning")
-      )
-        issueInvocations.set(event.invocationId, event);
-    await Promise.all(
-      [...issueInvocations.entries()].map(
-        ([invocationId, event]) =>
-          sql`
-          insert into agent_jobs (
-            id, tenant_id, team_id, partner_id, plugin_instance_id,
-            type, status, idempotency_key, input_payload, max_attempts
-          ) values (
-            ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
-            ${actor.pluginInstanceId}, 'ANALYZE_PLUGIN_LOGS', 'PENDING',
-            ${`plugin-log-analysis:${actor.pluginInstanceId}:${invocationId}`},
-            ${JSON.stringify({
-              executionId: `invocation:${invocationId}`,
-              invocationId,
-              runId: event.runId ?? null,
-              command: event.command ?? null,
-            })}::jsonb,
-            2
-          ) on conflict (tenant_id, idempotency_key) do nothing
-        `,
-      ),
-    );
     await audit(
       request,
       actor,
@@ -213,331 +104,6 @@ export async function observabilityRoutes(app: FastifyInstance) {
     );
     return { ok: true, accepted, submitted: input.events.length };
   });
-
-  app.get("/v1/admin/plugin-logs", async (request) => {
-    const actor = await requireWebActor(request, "admin");
-    const query = adminLogQuerySchema.parse(request.query);
-    const plugins = await sql<
-      Array<{ id: string; partner_id: string; timezone: string }>
-    >`
-      select pi.id, pi.partner_id, t.timezone
-      from plugin_instances pi
-      join teams t on t.id = pi.team_id and t.tenant_id = pi.tenant_id
-      where pi.id = ${query.pluginInstanceId} and pi.tenant_id = ${actor.tenantId}
-        and pi.team_id = ${actor.teamId}
-      limit 1
-    `;
-    const plugin = plugins[0];
-    if (!plugin)
-      throw new ApiError(404, "PLUGIN_NOT_FOUND", "Plugin Instance 不存在。");
-
-    const windows = query.date
-      ? await sql<Array<{ window_start: Date; window_end: Date }>>`
-          select
-            (${query.date}::date::timestamp at time zone ${plugin.timezone}) as window_start,
-            ((${query.date}::date + 1)::timestamp at time zone ${plugin.timezone}) as window_end
-        `
-      : await sql<Array<{ window_start: Date; window_end: Date }>>`
-          select now() - interval '24 hours' as window_start, now() as window_end
-        `;
-    const logWindow = windows[0]!;
-    const recentEvents = await sql<any[]>`
-      select id, invocation_id, run_id, sequence, command, event_type,
-        level, stage, event_code, message, stack, retryable,
-        attempt, duration_ms, request_id, details, occurred_at, created_at
-      from plugin_log_events
-      where tenant_id = ${actor.tenantId}
-        and plugin_instance_id = ${query.pluginInstanceId}
-        and occurred_at >= ${logWindow.window_start}
-        and occurred_at < ${logWindow.window_end}
-      order by occurred_at desc, created_at desc
-      limit ${query.limit}
-    `;
-    const grouped = groupPluginExecutions(
-      recentEvents as PluginExecutionEvent[],
-    );
-    const selected = query.executionId
-      ? grouped.find((execution) => execution.executionId === query.executionId)
-      : query.runId
-        ? grouped.find((execution) => execution.runId === query.runId)
-        : grouped[0];
-    const events = (selected?.events ?? []).filter(
-      (event) => !query.level || event.level === query.level,
-    );
-    const executions = grouped.map(
-      ({ events: _events, ...execution }) => execution,
-    );
-    const analysisRows = selected
-      ? await sql<any[]>`
-          select id, status, output_payload, error_code, error_message,
-            created_at, updated_at, completed_at
-          from agent_jobs
-          where tenant_id = ${actor.tenantId}
-            and plugin_instance_id = ${query.pluginInstanceId}
-            and type = 'ANALYZE_PLUGIN_LOGS'
-            and input_payload ->> 'executionId' = ${selected.executionId}
-          order by created_at desc limit 1
-        `
-      : [];
-    return {
-      pluginInstanceId: plugin.id,
-      window: {
-        mode: query.date ? "day" : "recent",
-        date: query.date ?? null,
-        timezone: plugin.timezone,
-        startedAt: logWindow.window_start,
-        endedAt: logWindow.window_end,
-      },
-      selectedExecutionId: selected?.executionId ?? null,
-      events,
-      executions,
-      modelAnalysis: analysisRows[0] ?? null,
-      // Kept for older admin clients while they upgrade to execution-level grouping.
-      runs: executions
-        .filter((execution) => execution.runId)
-        .map((execution) => ({
-          run_id: execution.runId,
-          started_at: execution.startedAt,
-          last_event_at: execution.lastEventAt,
-          event_count: execution.eventCount,
-          error_count: execution.errorCount,
-          warning_count: execution.warningCount,
-        })),
-      generationJobs: [],
-    };
-  });
-
-  app.post("/v1/admin/plugin-logs/analyze", async (request) => {
-    const actor = await requireWebActor(request, "admin");
-    const input = pluginLogAnalysisSchema.parse(request.body);
-    const pluginRows = await sql<Array<{ id: string; partner_id: string }>>`
-      select id, partner_id from plugin_instances
-      where id = ${input.pluginInstanceId} and tenant_id = ${actor.tenantId}
-        and team_id = ${actor.teamId}
-      limit 1
-    `;
-    const plugin = pluginRows[0];
-    if (!plugin)
-      throw new ApiError(404, "PLUGIN_NOT_FOUND", "Plugin Instance 不存在。");
-    const invocationId = input.executionId.startsWith("invocation:")
-      ? input.executionId.slice("invocation:".length)
-      : "";
-    if (!z.string().uuid().safeParse(invocationId).success)
-      throw new ApiError(
-        409,
-        "PLUGIN_EXECUTION_NOT_ANALYZABLE",
-        "只有提供命令执行 ID 的单次命令日志才能进行模型分析。",
-      );
-    const recentEvents = await sql<any[]>`
-      select id, invocation_id, run_id, sequence, command, event_type,
-        level, stage, event_code, message, stack, retryable,
-        attempt, duration_ms, request_id, details, occurred_at, created_at
-      from plugin_log_events
-      where tenant_id = ${actor.tenantId}
-        and plugin_instance_id = ${input.pluginInstanceId}
-        and invocation_id = ${invocationId}
-      order by occurred_at desc, created_at desc limit 2000
-    `;
-    const execution = groupPluginExecutions(
-      recentEvents as PluginExecutionEvent[],
-    ).find((item) => item.executionId === input.executionId);
-    if (!execution)
-      throw new ApiError(
-        404,
-        "PLUGIN_EXECUTION_NOT_FOUND",
-        "找不到这次插件运行。",
-      );
-    if (execution.grouping !== "invocation")
-      throw new ApiError(
-        409,
-        "PLUGIN_EXECUTION_NOT_ANALYZABLE",
-        "只有提供命令执行 ID 的单次命令日志才能进行模型分析。",
-      );
-    const idempotencyKey = `plugin-log-analysis:${input.pluginInstanceId}:${execution.executionId}:${execution.lastEventAt}`;
-    const rows = await sql<Array<{ id: string; status: string }>>`
-      insert into agent_jobs (
-        id, tenant_id, team_id, partner_id, plugin_instance_id,
-        type, status, idempotency_key, input_payload, max_attempts
-      ) values (
-        ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${plugin.partner_id},
-        ${input.pluginInstanceId}, 'ANALYZE_PLUGIN_LOGS', 'PENDING',
-        ${idempotencyKey},
-        ${JSON.stringify({
-          executionId: execution.executionId,
-          invocationId: execution.invocationId,
-          runId: execution.runId,
-          command: execution.command,
-        })}::jsonb,
-        2
-      ) on conflict (tenant_id, idempotency_key) do update
-        set status = 'PENDING', attempt_count = 0, output_payload = null,
-          error_code = null, error_message = null, completed_at = null,
-          lease_until = null, updated_at = now()
-      returning id, status
-    `;
-    await audit(
-      request,
-      actor,
-      "plugin.logs.analysis_requested",
-      "plugin_instance",
-      input.pluginInstanceId,
-      { executionId: input.executionId, jobId: rows[0]?.id },
-    );
-    return { ok: true, job: rows[0] };
-  });
-
-  app.get("/v1/admin/plugin-monitoring", async (request) => {
-    const actor = await requireWebActor(request, "admin");
-    const rows = await sql<any[]>`
-      select
-        pi.id, pi.partner_id, pi.device_name, pi.version, pi.created_at,
-        pi.last_heartbeat_at, pi.last_sync_at, pi.runner_state,
-        pi.pending_local_jobs, pi.retry_count, pi.last_error_code,
-        pi.monitoring_recovered_at,
-        pi.last_collection_started_at, pi.last_collection_completed_at,
-        p.display_name as partner_name,
-        latest_event.occurred_at as latest_event_at,
-        latest_event.stage as latest_stage,
-        latest_event.event_code as latest_event_code,
-        latest_event.message as latest_message,
-        latest_state.event_code as latest_state_code,
-        latest_error.occurred_at as latest_error_at
-      from plugin_instances pi
-      join partners p on p.id = pi.partner_id and p.tenant_id = pi.tenant_id
-      left join lateral (
-        select occurred_at, stage, event_code, message
-        from plugin_log_events ple
-        where ple.tenant_id = pi.tenant_id and ple.plugin_instance_id = pi.id
-        order by occurred_at desc, created_at desc
-        limit 1
-      ) latest_event on true
-      left join lateral (
-        select event_code
-        from plugin_log_events ple
-        where ple.tenant_id = pi.tenant_id and ple.plugin_instance_id = pi.id
-          and ple.event_code not in ('command.started', 'command.completed')
-        order by occurred_at desc, created_at desc
-        limit 1
-      ) latest_state on true
-      left join lateral (
-        select occurred_at
-        from plugin_log_events ple
-        where ple.tenant_id = pi.tenant_id and ple.plugin_instance_id = pi.id
-          and ple.level = 'error'
-        order by occurred_at desc, created_at desc
-        limit 1
-      ) latest_error on true
-      where pi.tenant_id = ${actor.tenantId} and pi.team_id = ${actor.teamId}
-        and pi.status = 'active'
-      order by p.display_name, pi.created_at desc
-    `;
-    const now = new Date();
-    const plugins = rows.map((row) => ({
-      id: row.id,
-      partnerId: row.partner_id,
-      partnerName: row.partner_name,
-      deviceName: row.device_name,
-      version: row.version,
-      lastHeartbeatAt: row.last_heartbeat_at,
-      lastSyncAt: row.last_sync_at,
-      lastCollectionStartedAt: row.last_collection_started_at,
-      lastCollectionCompletedAt: row.last_collection_completed_at,
-      latestEventAt: row.latest_event_at,
-      latestStage: row.latest_stage,
-      latestEventCode: row.latest_event_code,
-      latestMessage: row.latest_message,
-      pendingLocalJobs: row.pending_local_jobs,
-      runnerState: row.runner_state,
-      status: projectPluginMonitoringStatus(
-        {
-          createdAt: row.created_at,
-          lastCollectionStartedAt: row.last_collection_started_at,
-          lastCollectionCompletedAt: row.last_collection_completed_at,
-          lastHeartbeatAt: row.last_heartbeat_at,
-          latestEventAt: row.latest_event_at,
-          latestEventCode: row.latest_state_code ?? row.latest_event_code,
-          latestErrorAt: row.latest_error_at,
-          monitoringRecoveredAt: row.monitoring_recovered_at,
-          lastErrorCode: row.last_error_code,
-          runnerState: row.runner_state,
-          retryCount: row.retry_count,
-          pendingLocalJobs: row.pending_local_jobs,
-        },
-        now,
-      ),
-    }));
-    const summary = {
-      total: plugins.length,
-      normal: plugins.filter((plugin) => plugin.status.severity === "normal")
-        .length,
-      warning: plugins.filter((plugin) => plugin.status.severity === "warning")
-        .length,
-      critical: plugins.filter(
-        (plugin) => plugin.status.severity === "critical",
-      ).length,
-      unknown: plugins.filter((plugin) => plugin.status.severity === "unknown")
-        .length,
-    };
-    return {
-      checkedAt: now.toISOString(),
-      schedule: {
-        timezone: PLUGIN_SCHEDULE.timezone,
-        time: `${String(PLUGIN_SCHEDULE.hour).padStart(2, "0")}:00`,
-        graceMinutes: PLUGIN_SCHEDULE.graceMinutes,
-        staleRunMinutes: PLUGIN_SCHEDULE.staleRunMinutes,
-      },
-      summary,
-      plugins,
-    };
-  });
-
-  app.post(
-    "/v1/admin/plugin-monitoring/:pluginInstanceId/recover",
-    async (request) => {
-      const actor = await requireWebActor(request, "admin");
-      const { pluginInstanceId } = pluginMonitoringParamsSchema.parse(
-        request.params,
-      );
-      const rows = await sql<
-        Array<{
-          id: string;
-          last_error_code: string | null;
-          retry_count: number;
-          monitoring_recovered_at: Date;
-        }>
-      >`
-        update plugin_instances set
-          monitoring_recovered_at = now(),
-          runner_state = case when runner_state = 'error' then 'idle' else runner_state end,
-          retry_count = 0,
-          last_error_code = null,
-          updated_at = now()
-        where id = ${pluginInstanceId}
-          and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-          and status = 'active'
-        returning id, last_error_code, retry_count, monitoring_recovered_at
-      `;
-      const recovered = rows[0];
-      if (!recovered)
-        throw new ApiError(
-          404,
-          "PLUGIN_INSTANCE_NOT_FOUND",
-          "插件实例不存在或已经失效。",
-        );
-      await audit(
-        request,
-        actor,
-        "plugin.monitoring.recovered",
-        "plugin_instance",
-        pluginInstanceId,
-      );
-      return {
-        ok: true,
-        pluginInstanceId: recovered.id,
-        recoveredAt: recovered.monitoring_recovered_at,
-      };
-    },
-  );
 
   app.get("/v1/admin/system-logs", async (request) => {
     const actor = await requireWebActor(request, "admin");
@@ -558,14 +124,22 @@ export async function observabilityRoutes(app: FastifyInstance) {
           select now() - interval '24 hours' as window_start, now() as window_end
         `;
     const window = windows[0]!;
-    const [jobs, deliveries, inbox, outbox, reports] = await Promise.all([
+    const [jobs, notifications, outbox, reports, workerRows] =
+      await Promise.all([
       sql<any[]>`
-        select aj.*, p.display_name as partner_name
+        select aj.*, p.display_name as partner_name, link.upload_id, link.period_key
         from agent_jobs aj
         left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
+        left join lateral (
+          select cuj.upload_id, u.period_key
+          from collector_upload_jobs cuj
+          join collector_uploads u on u.id = cuj.upload_id
+          where cuj.job_id = aj.id
+          order by u.created_at desc limit 1
+        ) link on true
         where aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
           and aj.type not like 'SYSTEM_HEALTH_%'
-          and aj.type not in ('ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS')
+          and aj.type not in ('ANALYZE_SYSTEM_LOGS', 'ANALYZE_INSPECTION_FINDING')
           and (
             (aj.created_at >= ${window.window_start} and aj.created_at < ${window.window_end})
             or (aj.updated_at >= ${window.window_start} and aj.updated_at < ${window.window_end})
@@ -574,31 +148,12 @@ export async function observabilityRoutes(app: FastifyInstance) {
         order by aj.updated_at desc limit ${query.limit}
       `,
       sql<any[]>`
-        select fd.*, p.display_name as partner_name
-        from feishu_deliveries fd
-        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
-        where fd.tenant_id = ${actor.tenantId} and fd.team_id = ${actor.teamId}
-          and (
-            (fd.created_at >= ${window.window_start} and fd.created_at < ${window.window_end})
-            or (fd.updated_at >= ${window.window_start} and fd.updated_at < ${window.window_end})
-            or (fd.sent_at >= ${window.window_start} and fd.sent_at < ${window.window_end})
-          )
-        order by fd.updated_at desc limit ${query.limit}
-      `,
-      sql<any[]>`
-        select fie.*, p.display_name as partner_name
-        from feishu_inbox_events fie
-        join feishu_deliveries fd
-          on fd.id::text = fie.sanitized_payload->'value'->>'deliveryId'
-          or fd.message_id = fie.sanitized_payload->>'messageId'
-        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
-        where fd.tenant_id = ${actor.tenantId} and fd.team_id = ${actor.teamId}
-          and (
-            (fie.received_at >= ${window.window_start} and fie.received_at < ${window.window_end})
-            or (fie.updated_at >= ${window.window_start} and fie.updated_at < ${window.window_end})
-            or (fie.processed_at >= ${window.window_start} and fie.processed_at < ${window.window_end})
-          )
-        order by fie.updated_at desc limit ${query.limit}
+        select n.*,p.display_name as partner_name from app_notifications n
+        join partners p on p.id=n.partner_id and p.tenant_id=n.tenant_id
+        where n.tenant_id=${actor.tenantId} and n.team_id=${actor.teamId}
+          and ((n.created_at >= ${window.window_start} and n.created_at < ${window.window_end})
+            or (n.delivered_at >= ${window.window_start} and n.delivered_at < ${window.window_end}))
+        order by n.created_at desc limit ${query.limit}
       `,
       sql<any[]>`
         select * from outbox_events
@@ -641,11 +196,14 @@ export async function observabilityRoutes(app: FastifyInstance) {
           )
         order by tr.updated_at desc limit ${query.limit}
       `,
+      sql<any[]>`
+        select heartbeat_at, last_tick_at, status, error_code, capabilities
+        from service_heartbeats where name = 'worker'
+      `,
     ]);
     const projected = projectSystemLogExecutions({
       jobs,
-      deliveries,
-      inbox,
+      notifications,
       outbox,
       reports,
     });
@@ -663,6 +221,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
           order by created_at desc limit 1
         `
       : [];
+    const worker = workerRows[0];
     return {
       window: {
         mode: query.date ? "day" : "recent",
@@ -671,6 +230,15 @@ export async function observabilityRoutes(app: FastifyInstance) {
         startedAt: window.window_start,
         endedAt: window.window_end,
       },
+      worker: worker
+        ? {
+            heartbeatAt: worker.heartbeat_at,
+            lastTickAt: worker.last_tick_at,
+            status: worker.status,
+            errorCode: worker.error_code,
+            capabilities: worker.capabilities,
+          }
+        : null,
       selectedExecutionId: selected?.executionId ?? null,
       executions: projected.map(
         ({ events: _events, ...execution }) => execution,
@@ -691,34 +259,30 @@ export async function observabilityRoutes(app: FastifyInstance) {
     z.string().uuid().parse(sourceId);
     const emptyRows: Parameters<typeof projectSystemLogExecutions>[0] = {
       jobs: [],
-      deliveries: [],
-      inbox: [],
+      notifications: [],
       outbox: [],
       reports: [],
     };
     if (source === "job")
       emptyRows.jobs = await sql<any[]>`
-        select aj.*, p.display_name as partner_name from agent_jobs aj
+        select aj.*, p.display_name as partner_name, link.upload_id, link.period_key
+        from agent_jobs aj
         left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
+        left join lateral (
+          select cuj.upload_id, u.period_key
+          from collector_upload_jobs cuj
+          join collector_uploads u on u.id = cuj.upload_id
+          where cuj.job_id = aj.id
+          order by u.created_at desc limit 1
+        ) link on true
         where aj.id = ${sourceId} and aj.tenant_id = ${actor.tenantId}
           and aj.team_id = ${actor.teamId} limit 1
       `;
-    else if (source === "delivery")
-      emptyRows.deliveries = await sql<any[]>`
-        select fd.*, p.display_name as partner_name from feishu_deliveries fd
-        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
-        where fd.id = ${sourceId} and fd.tenant_id = ${actor.tenantId}
-          and fd.team_id = ${actor.teamId} limit 1
-      `;
-    else if (source === "inbox")
-      emptyRows.inbox = await sql<any[]>`
-        select fie.*, p.display_name as partner_name from feishu_inbox_events fie
-        join feishu_deliveries fd
-          on fd.id::text = fie.sanitized_payload->'value'->>'deliveryId'
-          or fd.message_id = fie.sanitized_payload->>'messageId'
-        join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
-        where fie.id = ${sourceId} and fd.tenant_id = ${actor.tenantId}
-          and fd.team_id = ${actor.teamId} limit 1
+    else if (source === "notification")
+      emptyRows.notifications = await sql<any[]>`
+        select n.*,p.display_name as partner_name from app_notifications n
+        join partners p on p.id=n.partner_id and p.tenant_id=n.tenant_id
+        where n.id=${sourceId} and n.tenant_id=${actor.tenantId} and n.team_id=${actor.teamId} limit 1
       `;
     else if (source === "outbox")
       emptyRows.outbox = await sql<any[]>`
@@ -805,10 +369,10 @@ export async function observabilityRoutes(app: FastifyInstance) {
     const now = new Date();
     const [
       jobRows,
-      feishuRows,
+      notificationRows,
       reportRows,
       problemJobs,
-      problemDeliveries,
+      pendingNotifications,
       problemReports,
     ] = await Promise.all([
       sql<any[]>`
@@ -818,24 +382,19 @@ export async function observabilityRoutes(app: FastifyInstance) {
             count(*) filter (where status = 'RETRY_WAIT')::int as retry_wait,
             count(*) filter (where status = 'LEASED' and lease_until < now())::int as expired_leases,
             min(created_at) filter (where status in ('PENDING', 'LEASED', 'RETRY_WAIT')) as oldest_active_at,
-            count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'FAILED')::int as generation_failed,
-            count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'RETRY_WAIT')::int as generation_retry_wait,
-            count(*) filter (where type in ('AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT') and status = 'COMPLETED' and completed_at >= now() - interval '24 hours')::int as generation_completed_24h
+            count(*) filter (where type in ('EXTRACT_COLLECTOR_SESSION','AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT','REGENERATE_TEAM_REPORT') and status = 'FAILED')::int as generation_failed,
+            count(*) filter (where type in ('EXTRACT_COLLECTOR_SESSION','AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT','REGENERATE_TEAM_REPORT') and status = 'RETRY_WAIT')::int as generation_retry_wait,
+            count(*) filter (where type in ('EXTRACT_COLLECTOR_SESSION','AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT','REGENERATE_TEAM_REPORT') and status = 'COMPLETED' and completed_at >= now() - interval '24 hours')::int as generation_completed_24h
           from agent_jobs
           where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
             and type not like 'SYSTEM_HEALTH_%'
-            and type not in ('ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS')
+            and type not in ('ANALYZE_SYSTEM_LOGS', 'ANALYZE_INSPECTION_FINDING')
         `,
       sql<any[]>`
-          select
-            count(*) filter (where status = 'failed')::int as failed,
-            count(*) filter (where status = 'retry_wait')::int as retry_wait,
-            count(*) filter (where status = 'deferred')::int as deferred,
-            count(*) filter (where status = 'sending' and last_attempt_at < now() - interval '2 minutes')::int as stuck_sending,
-            count(*) filter (where status = 'pending' and created_at < now() - interval '5 minutes')::int as stale_pending,
-            count(*) filter (where status = 'sent' and sent_at >= now() - interval '24 hours')::int as sent_24h
-          from feishu_deliveries
-          where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
+          select count(*) filter (where delivered_at is null)::int as pending,
+            count(*) filter (where delivered_at is null and created_at < now()-interval '15 minutes')::int as stale_pending,
+            count(*) filter (where delivered_at >= now()-interval '24 hours')::int as delivered_24h
+          from app_notifications where tenant_id=${actor.tenantId} and team_id=${actor.teamId}
         `,
       sql<any[]>`
           select
@@ -853,7 +412,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
           left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
           where aj.tenant_id = ${actor.tenantId} and aj.team_id = ${actor.teamId}
             and aj.type not like 'SYSTEM_HEALTH_%'
-            and aj.type not in ('ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS')
+            and aj.type not in ('ANALYZE_SYSTEM_LOGS', 'ANALYZE_INSPECTION_FINDING')
             and (
               aj.status in ('FAILED', 'RETRY_WAIT')
               or (aj.status = 'LEASED' and aj.lease_until < now())
@@ -862,17 +421,11 @@ export async function observabilityRoutes(app: FastifyInstance) {
           order by aj.updated_at desc limit 50
         `,
       sql<any[]>`
-          select fd.id, fd.kind, fd.status, fd.last_error_code,
-            fd.last_error_message, fd.updated_at, p.display_name as partner_name
-          from feishu_deliveries fd
-          join partners p on p.id = fd.partner_id and p.tenant_id = fd.tenant_id
-          where fd.tenant_id = ${actor.tenantId} and fd.team_id = ${actor.teamId}
-            and (
-              fd.status in ('failed', 'retry_wait', 'deferred')
-              or (fd.status = 'sending' and fd.last_attempt_at < now() - interval '2 minutes')
-              or (fd.status = 'pending' and fd.created_at < now() - interval '5 minutes')
-            )
-          order by fd.updated_at desc limit 50
+          select n.id,n.title,n.created_at,p.display_name as partner_name
+          from app_notifications n join partners p on p.id=n.partner_id and p.tenant_id=n.tenant_id
+          where n.tenant_id=${actor.tenantId} and n.team_id=${actor.teamId}
+            and n.delivered_at is null and n.created_at < now()-interval '15 minutes'
+          order by n.created_at desc limit 50
         `,
       sql<any[]>`
           select id, status, updated_at
@@ -883,10 +436,12 @@ export async function observabilityRoutes(app: FastifyInstance) {
         `,
     ]);
     const jobs = jobRows[0] ?? {};
-    const feishu = feishuRows[0] ?? {};
+    const notifications = notificationRows[0] ?? {};
     const reports = reportRows[0] ?? {};
+    const [worker] = await sql<any[]>`select heartbeat_at,last_tick_at,status,error_code,capabilities from service_heartbeats where name='worker'`;
     const components = projectSystemComponents(
       {
+        worker: worker ?? null,
         queue: {
           pending: jobs.pending ?? 0,
           leased: jobs.leased ?? 0,
@@ -899,13 +454,10 @@ export async function observabilityRoutes(app: FastifyInstance) {
           retryWait: jobs.generation_retry_wait ?? 0,
           completed24h: jobs.generation_completed_24h ?? 0,
         },
-        feishu: {
-          failed: feishu.failed ?? 0,
-          retryWait: feishu.retry_wait ?? 0,
-          deferred: feishu.deferred ?? 0,
-          stuckSending: feishu.stuck_sending ?? 0,
-          stalePending: feishu.stale_pending ?? 0,
-          sent24h: feishu.sent_24h ?? 0,
+        notifications: {
+          pending: notifications.pending ?? 0,
+          stalePending: notifications.stale_pending ?? 0,
+          delivered24h: notifications.delivered_24h ?? 0,
         },
         reports: {
           aggregating: reports.aggregating ?? 0,
@@ -938,27 +490,20 @@ export async function observabilityRoutes(app: FastifyInstance) {
         errorCode: row.error_code,
         partnerName: row.partner_name,
         occurredAt: row.updated_at,
-        action: "前往异常任务查看详情并决定是否重试。",
-        href: "/admin/jobs",
+        action: "前往异常巡检查看详情并决定是否重试。",
+        href: "/admin/inspection",
       })),
-      ...problemDeliveries.map((row) => ({
-        id: `feishu:${row.id}`,
+      ...pendingNotifications.map((row) => ({
+        id: "notification:" + row.id,
         sourceId: row.id,
-        source: "feishu" as const,
-        severity: (row.status === "failed" || row.status === "sending"
-          ? "critical"
-          : "warning") as MonitoringSeverity,
-        title:
-          row.status === "sending"
-            ? "飞书消息发送超时"
-            : row.status === "retry_wait"
-              ? "飞书消息等待重试"
-              : "飞书消息未送达",
-        message: row.last_error_message?.trim() || "消息暂时没有成功送达用户。",
-        errorCode: row.last_error_code,
+        source: "notifications" as const,
+        severity: "warning" as const,
+        title: "App 通知尚未投递",
+        message: row.title,
+        errorCode: null,
         partnerName: row.partner_name,
-        occurredAt: row.updated_at,
-        action: "检查飞书连接和接收人绑定状态。",
+        occurredAt: row.created_at,
+        action: "确认 App 正在运行，并已允许 macOS 系统通知。",
         href: null,
       })),
       ...problemReports.map((row) => ({
@@ -972,7 +517,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
         partnerName: null,
         occurredAt: row.updated_at,
         action: "检查关联的内容生成任务，并确认 Worker 是否正常运行。",
-        href: "/admin/jobs",
+        href: "/admin/inspection",
       })),
     ]
       .sort(
@@ -1002,6 +547,15 @@ export async function observabilityRoutes(app: FastifyInstance) {
       },
       components,
       incidents,
+      worker: worker
+        ? {
+            heartbeatAt: worker.heartbeat_at,
+            lastTickAt: worker.last_tick_at,
+            status: worker.status,
+            errorCode: worker.error_code,
+            capabilities: worker.capabilities,
+          }
+        : null,
     };
   });
 

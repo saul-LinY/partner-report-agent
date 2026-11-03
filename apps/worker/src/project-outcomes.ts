@@ -48,7 +48,7 @@ export const projectOutcomeInstructions = `整理项目成果材料，回答每�
 将同日支撑共同功能、研究目标或主要问题的贡献归并成一至两个主要成果。研究工作写形成的判断、候选方向或方案；功能建设写新增或完善的可用能力；日常执行和问题处理写产出或恢复的工作。不要按来源、工具或技术模块列清单，不按会话数量分配篇幅，避免大量日常采集记录掩盖重要功能交付。
 每项成果用 done 简述主要产出或能力，用 purpose 说明对项目的实际用途，用 unfinished 保留重要限制。字段保持简短，不拼接原始摘要；省略内部角色、接口、执行步骤、采集量和通过数量，保留重要方案交付数量及必要来源范围。使用通俗但具体的中文，必要专业词可以保留，不作全面禁词。
 同一成果去重，不重复累计数字。候选不是已验证需求，方案形成不是商业成功，技术测试通过不等于真实完整流程已可用。详细贡献注明待验证时必须保留，不能把一个子任务的停止要求或限制扩大到整个项目。工作目的不等于已经发生的效果。
-projectPurpose 用一句话说明项目用途；weeklyFocus 选一至两个主要成果方向；daily 按日期升序，每个有已知日期的贡献日一条。跨日会话只按提供的 date 归属，不根据开始时间推断其他日期的工作；未知日期不自行推断。evidenceRefs 只复制支撑对应成果的本日 ref，结果与限制都要有依据。只输出符合 schema 的 JSON。`;
+projectPurpose 用一句话说明项目用途；weeklyFocus 选一至两个主要成果方向；daily 按日期升序，每个 requiredDays.date 都必须有且仅有一条，不得省略或增加日期。跨日会话只按提供的 date 归属，不根据开始时间推断其他日期的工作；未知日期不自行推断。evidenceRefs 只复制对应 requiredDays.refs 中支撑该成果的本日编号，结果与限制都要有依据。只输出符合 schema 的 JSON。`;
 
 export function outcomeProduction(model: string) {
   return {
@@ -61,7 +61,7 @@ export function outcomeProduction(model: string) {
 }
 
 export function projectOutcomeInput(bucket: any, period: any) {
-  return {
+  const input = {
     projectName: bucket.projectName,
     projectDescription: bucket.projectDescription ?? "",
     period,
@@ -83,6 +83,51 @@ export function projectOutcomeInput(bucket: any, period: any) {
       };
     }),
   };
+  return {
+    ...input,
+    requiredDays: [
+      ...new Set<string>(
+        input.facts.map((fact: any) => fact.date).filter(Boolean),
+      ),
+    ]
+      .sort()
+      .map((date) => ({
+        date,
+        refs: input.facts
+          .filter((fact: any) => fact.date === date)
+          .map((fact: any) => fact.ref),
+      })),
+  };
+}
+
+export function projectOutcomeSchemaForInput(
+  input: ReturnType<typeof projectOutcomeInput>,
+) {
+  if (!input.requiredDays.length || input.facts.some((fact: any) => !fact.date))
+    return projectOutcomeMaterialSchema;
+  const days = input.requiredDays.map(({ date, refs }) =>
+    z
+      .object({
+        date: z.literal(date),
+        outcomes: z
+          .array(
+            outcomeSchema.extend({
+              evidenceRefs: z
+                .array(z.enum(refs as [string, ...string[]]))
+                .min(1),
+            }),
+          )
+          .min(1),
+      })
+      .strict(),
+  );
+  const daySchema =
+    days.length === 1
+      ? days[0]!
+      : z.discriminatedUnion("date", [days[0]!, days[1]!, ...days.slice(2)]);
+  return projectOutcomeMaterialSchema.extend({
+    daily: z.array(daySchema).length(days.length),
+  });
 }
 
 export function validateOutcomeReferences(
@@ -129,10 +174,14 @@ export async function loadProjectOutcomeDraft(
 ): Promise<ProjectOutcomeDraft> {
   const reviewId = bucket.reviewId ?? job.input_payload.reviewId;
   if (typeof reviewId !== "string") throw new Error("REVIEW_ID_REQUIRED");
+  const draftKey = bucket.sourceChecksum
+    ? `${bucket.projectKey}@${bucket.sourceChecksum}`
+    : bucket.projectKey;
   const read = () => sql<ProjectOutcomeDraft[]>`
     select id, source_payload, material from project_outcome_drafts
     where tenant_id = ${job.tenant_id} and review_id = ${reviewId}
-      and project_key = ${bucket.projectKey}
+      and (${bucket.outcomeDraftId ?? null}::uuid is not null and id=${bucket.outcomeDraftId ?? null}::uuid
+        or ${bucket.outcomeDraftId ?? null}::uuid is null and project_key = ${draftKey})
   `;
   const [existing] = await read();
   if (existing)
@@ -149,10 +198,11 @@ export async function loadProjectOutcomeDraft(
   const material = validateOutcomeReferences(
     await generateStructured<ProjectOutcomeMaterial>({
       name: "partner_project_outcomes",
-      schema: projectOutcomeMaterialSchema,
+      schema: projectOutcomeSchemaForInput(input),
       instructions: projectOutcomeInstructions,
       input,
       model,
+      maxOutputTokens: 8192,
     }),
     input,
   );
@@ -161,7 +211,7 @@ export async function loadProjectOutcomeDraft(
     insert into project_outcome_drafts (
       id, tenant_id, review_id, project_key, source_payload, source_checksum, material, production
     ) values (
-      ${randomUUID()}, ${job.tenant_id}, ${reviewId}, ${bucket.projectKey},
+      ${randomUUID()}, ${job.tenant_id}, ${reviewId}, ${draftKey},
       ${JSON.stringify(source)}::jsonb, ${stableJsonHash(source)},
       ${JSON.stringify(material)}::jsonb, ${JSON.stringify(outcomeProduction(model))}::jsonb
     ) on conflict (tenant_id, review_id, project_key) do nothing

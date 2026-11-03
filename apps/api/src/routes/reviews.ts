@@ -5,7 +5,7 @@ import {
   projectStatusSchema,
   type ProjectStatus,
 } from "@partner-report/contracts/project-status";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   reviewChangeRequestSchema,
@@ -19,6 +19,13 @@ import {
   requireWebActor,
   stableJsonHash,
 } from "../common.js";
+import { requireCollector } from "./collector.js";
+
+async function requireReviewActor(request: FastifyRequest) {
+  return request.headers.authorization
+    ? requireCollector(request)
+    : requireWebActor(request, "partner");
+}
 
 type WorkItemRow = {
   id: string;
@@ -314,8 +321,8 @@ export async function completeReview(
   const activeJobs = await sql`
     select 1 from agent_jobs j where j.tenant_id = ${actor.tenantId}
       and j.team_id = ${review.team_id} and j.partner_id = ${actor.partnerId}
-      and j.status in ('PENDING', 'LEASED', 'RETRY_WAIT')
-      and j.type in ('AGGREGATE_WORK_ITEMS', 'REANALYZE_SESSIONS')
+      and (j.status in ('PENDING', 'LEASED', 'RETRY_WAIT') or (j.type='EXTRACT_COLLECTOR_SESSION' and j.status='FAILED'))
+      and j.type in ('EXTRACT_COLLECTOR_SESSION', 'AGGREGATE_WORK_ITEMS', 'REANALYZE_SESSIONS')
       and (
         j.input_payload->>'reviewId' = ${reviewId}
         or (
@@ -378,6 +385,18 @@ export async function completeReview(
   const snapshotId = randomUUID();
 
   return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`${actor.tenantId}:${actor.partnerId}:${review.period_id}`},0))`;
+    const queued =
+      await tx`select 1 from agent_jobs where tenant_id=${actor.tenantId} and partner_id=${actor.partnerId}
+      and input_payload->'period'->>'id'=${review.period_id}
+      and type in ('EXTRACT_COLLECTOR_SESSION','AGGREGATE_WORK_ITEMS')
+      and status in ('PENDING','LEASED','RETRY_WAIT','FAILED') limit 1`;
+    if (queued.length)
+      throw new ApiError(
+        409,
+        "AGENT_JOB_PENDING",
+        "仍有分析或生成任务待处理，请处理后完成审核。",
+      );
     const claimed = await tx<{ id: string }[]>`
       update reviews set state = ${approvedItems.length === 0 ? "ITEMS_DISMISSED" : "ITEMS_APPROVED"}, updated_at = now()
       where id = ${reviewId} and tenant_id = ${actor.tenantId}
@@ -866,8 +885,42 @@ export async function decideReviewWorkItem(
 }
 
 export async function reviewRoutes(app: FastifyInstance) {
+  app.get("/v1/partner/work-cards", async (request) => {
+    const actor = await requireReviewActor(request);
+    if (!actor.partnerId)
+      throw new ApiError(
+        403,
+        "PARTNER_REQUIRED",
+        "当前账号没有 Partner Profile。",
+      );
+    const reviews =
+      await sql`select r.id,r.state,r.version,rp.period_key from reviews r
+      join report_periods rp on rp.id=r.period_id where r.tenant_id=${actor.tenantId} and r.team_id=${actor.teamId}
+        and r.partner_id=${actor.partnerId} and r.state in ('IN_PROGRESS','ITEMS_APPROVED','ITEMS_DISMISSED')
+      order by rp.starts_at desc,r.created_at desc,r.id limit 100`;
+    return { reviews };
+  });
+  app.get("/v1/partner/reviews", async (request) => {
+    const actor = await requireReviewActor(request);
+    if (!actor.partnerId)
+      throw new ApiError(
+        403,
+        "PARTNER_REQUIRED",
+        "当前账号没有 Partner Profile。",
+      );
+    const reviews = await sql`
+      select r.id, r.state, r.version, rp.period_key
+      from reviews r
+      join report_periods rp on rp.id = r.period_id
+      where r.tenant_id = ${actor.tenantId} and r.team_id = ${actor.teamId}
+        and r.partner_id = ${actor.partnerId} and r.state = 'IN_PROGRESS'
+      order by rp.starts_at desc, r.created_at desc, r.id
+    `;
+    return { reviews };
+  });
+
   app.get("/v1/partner/dashboard", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     if (!actor.partnerId)
       throw new ApiError(
         403,
@@ -939,7 +992,7 @@ export async function reviewRoutes(app: FastifyInstance) {
   });
 
   app.get("/v1/reviews/:id", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const review = await loadReview(actor, id);
     const [items, regenerationJobs] = await Promise.all([
@@ -967,7 +1020,7 @@ export async function reviewRoutes(app: FastifyInstance) {
   });
 
   app.post("/v1/reviews/:id/items/:workItemId/regenerate", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     const { id, workItemId } = z
       .object({ id: z.string().uuid(), workItemId: z.string().uuid() })
       .parse(request.params);
@@ -999,7 +1052,7 @@ export async function reviewRoutes(app: FastifyInstance) {
   app.post(
     "/v1/reviews/:id/items/:workItemId/project-status",
     async (request) => {
-      const actor = await requireWebActor(request, "partner");
+      const actor = await requireReviewActor(request);
       const { id, workItemId } = z
         .object({ id: z.string().uuid(), workItemId: z.string().uuid() })
         .parse(request.params);
@@ -1029,7 +1082,7 @@ export async function reviewRoutes(app: FastifyInstance) {
   );
 
   app.post("/v1/reviews/:id/items/:workItemId/decision", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     const { id, workItemId } = z
       .object({ id: z.string().uuid(), workItemId: z.string().uuid() })
       .parse(request.params);
@@ -1075,7 +1128,7 @@ export async function reviewRoutes(app: FastifyInstance) {
   });
 
   app.post("/v1/reviews/:id/changes/preview", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const input = reviewChangeRequestSchema.parse(request.body);
     const review = await loadReview(actor, id);
@@ -1218,7 +1271,7 @@ export async function reviewRoutes(app: FastifyInstance) {
   });
 
   app.post("/v1/reviews/:id/changes/apply", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { changeId } = z
       .object({ changeId: z.string().uuid() })
@@ -1408,7 +1461,7 @@ export async function reviewRoutes(app: FastifyInstance) {
   });
 
   app.post("/v1/reviews/:id/complete", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { baseVersion } = z
       .object({ baseVersion: z.number().int().positive() })
@@ -1428,7 +1481,7 @@ export async function reviewRoutes(app: FastifyInstance) {
     return result;
   });
   app.post("/v1/reviews/:id/reopen", async (request) => {
-    const actor = await requireWebActor(request, "partner");
+    const actor = await requireReviewActor(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { baseVersion } = z
       .object({ baseVersion: z.number().int().positive() })

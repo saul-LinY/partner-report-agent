@@ -11,7 +11,7 @@ import { scheduleDueTeamReports } from "../../worker/src/weekly.js";
 
 const suite = process.env.RUN_DB_TESTS === "1" ? describe : describe.skip;
 
-suite("fixed outcomes and Feishu instruction regeneration", () => {
+suite("fixed outcomes and App instruction regeneration", () => {
   const tenant = randomUUID();
   const team = randomUUID();
   const partner = randomUUID();
@@ -20,7 +20,7 @@ suite("fixed outcomes and Feishu instruction regeneration", () => {
   const jobId = randomUUID();
   const factIds = [randomUUID(), randomUUID()];
   const actor = {
-    actorType: "feishu",
+    actorType: "collector",
     actorId: "synthetic-open-id",
     userId: null,
     tenantId: tenant,

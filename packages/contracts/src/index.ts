@@ -2,6 +2,7 @@ import { z } from "zod";
 import { projectStatusSchema } from "./project-status.js";
 
 export { buildTeamReportWorkCards } from "./team-report-source.js";
+export * from "./collector.js";
 export type { TeamReportSourceWorkCards } from "./team-report-source.js";
 
 export const idSchema: z.ZodTypeAny = z.string().uuid();
@@ -310,11 +311,14 @@ export const teamReportResultSchema: z.ZodTypeAny = z.object({
 });
 
 export const agentJobTypeSchema: z.ZodTypeAny = z.enum([
+  "EXTRACT_COLLECTOR_SESSION",
   "AGGREGATE_WORK_ITEMS",
   "GENERATE_TEAM_REPORT",
   "REGENERATE_TEAM_REPORT",
   "REANALYZE_SESSIONS",
   "RESCAN_SESSIONS",
+  "ANALYZE_SYSTEM_LOGS",
+  "ANALYZE_INSPECTION_FINDING",
 ]);
 
 export const reviewOperationSchema: z.ZodTypeAny = z.enum([

@@ -300,7 +300,10 @@ export async function generateStructured<T>({
         max_output_tokens: maxOutputTokens ?? modelMaxOutputTokens(),
         input: [
           {
-            role: "developer",
+            role:
+              process.env.MODEL_INSTRUCTION_ROLE === "system"
+                ? "system"
+                : "developer",
             content: [
               {
                 type: "input_text",

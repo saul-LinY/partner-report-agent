@@ -5,7 +5,8 @@ import {
   buildNoActivityTeamReport,
   formatReportDate,
   normalizeAggregation,
-  normalizePluginLogAnalysis,
+  inspectionAnalysisSchema,
+  normalizeLogAnalysis,
   normalizeTeamReportGeneration,
   normalizeTeamReportSummary,
   projectAggregationInputs,
@@ -64,10 +65,10 @@ describe("project work card generation inputs", () => {
   });
 });
 
-describe("plugin log model analysis", () => {
+describe("log model analysis", () => {
   it("normalizes a useful but loosely shaped model response", () => {
     expect(
-      normalizePluginLogAnalysis(
+      normalizeLogAnalysis(
         {
           failedStep: "读取本地会话",
           cause: "连续六次返回会话历史格式无效。",
@@ -85,6 +86,26 @@ describe("plugin log model analysis", () => {
       recommendedActions: ["升级插件后重新采集"],
       confidence: "high",
     });
+  });
+});
+
+describe("inspection analysis output schema", () => {
+  const valid = {
+    summary: "App 已离线",
+    likelyCause: "App 已退出",
+    impact: "上传延迟",
+    recommendedActions: ["联系成员"],
+    confidence: "high",
+    relatedChain: "app",
+  };
+  it("accepts the exact shape", () => {
+    expect(inspectionAnalysisSchema.parse(valid)).toEqual(valid);
+  });
+  it("rejects extra keys, empty actions and unknown enum values", () => {
+    expect(inspectionAnalysisSchema.safeParse({ ...valid, evidence: [] }).success).toBe(false);
+    expect(inspectionAnalysisSchema.safeParse({ ...valid, recommendedActions: [] }).success).toBe(false);
+    expect(inspectionAnalysisSchema.safeParse({ ...valid, confidence: "certain" }).success).toBe(false);
+    expect(inspectionAnalysisSchema.safeParse({ ...valid, relatedChain: "web" }).success).toBe(false);
   });
 });
 

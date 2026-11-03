@@ -57,7 +57,7 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("不提供修改或同步权限");
     expect(skill).toContain("插件完成真实项目归并");
     expect(skill).toContain("`bindingCompleted: true`");
-    expect(skill).toContain("飞书权限卡仅“请求发送”不等于已经送达");
+    expect(skill).toContain("App通知仅“请求发送”不等于已经送达");
     expect(skill).toContain("exclusion_set");
     expect(skill).toContain("jobInput");
     expect(skill).toContain("不得自行写结果文件");
@@ -76,7 +76,7 @@ describe("partner report skill packaging", () => {
       "正常连接、采集、上传、审查和状态查询都不访问 macOS Keychain",
     );
     expect(skill).toContain("向中台为原 Plugin Instance 自动补发凭据");
-    expect(skill).toContain("不发送飞书卡、不等待用户确认");
+    expect(skill).toContain("不发送App卡、不等待用户确认");
     expect(skill).toContain("自动恢复成功前不得列举或读取 Session");
     expect(skill).toContain("Partner Report daily collection");
     expect(skill).toContain("Codex 官方自动化工具");
@@ -100,13 +100,13 @@ describe("partner report skill packaging", () => {
     expect(skill).toContain("用户输入绑定码只允许首次项目发现");
     expect(skill).toContain("`~/Documents/Codex/YYYY-MM-DD/<任务名>`");
     expect(skill).toContain("不得为追求完整统计继续翻页");
-    expect(skill).toContain("必须通过飞书项目权限卡由用户逐项允许或拒绝");
+    expect(skill).toContain("必须通过App项目权限卡由用户逐项允许或拒绝");
     expect(skill).toContain(
-      "历史上未经飞书确认却为 allowed 的项目必须恢复为 pending",
+      "历史上未经用户确认却为 allowed 的项目必须恢复为 pending",
     );
-    expect(skill).toContain("后续发现的项目只能从飞书允许时间起进入采集");
+    expect(skill).toContain("后续发现的项目只能从App允许时间起进入采集");
     expect(skill).toContain(
-      "`project_scope_approval_required` 是本轮等待飞书审核的正常终态",
+      "`project_scope_approval_required` 是本轮等待App审核的正常终态",
     );
     expect(skill).toContain("每天北京时间 16:00");
     expect(skill).toContain("不得向用户展示带 `Z` 的 UTC 时间");

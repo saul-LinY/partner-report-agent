@@ -208,8 +208,7 @@ suite("synthetic report generation pipeline", () => {
     delete process.env.MODEL_API_BASE_URL;
     await sql.begin(async (tx) => {
       await tx`delete from outbox_events where tenant_id = ${fixture.tenant}`;
-      await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenant}`;
-      await tx`delete from feishu_partner_bindings where tenant_id = ${fixture.tenant}`;
+      await tx`delete from app_notifications where tenant_id = ${fixture.tenant}`;
       await tx`delete from agent_jobs where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_report_versions where tenant_id = ${fixture.tenant}`;
       await tx`delete from team_reports where tenant_id = ${fixture.tenant}`;
@@ -555,12 +554,12 @@ suite("synthetic report generation pipeline", () => {
           projectStatus: "development",
           projectStatusReason: "本周在实现功能。",
           overview:
-            "本周完善了飞书审核卡片的更新流程，让用户提交修改意见后能够看到处理状态，并在生成完成后继续审核。当前链路已经完成验证。",
+            "本周完善了 App 审核卡片的更新流程，让用户提交修改意见后能够看到处理状态，并在生成完成后继续审核。当前链路已经完成验证。",
           dailyProgress: [
             {
               date: "2026-08-12",
               summary:
-                "接入了修改意见提交和异步更新流程，生成完成后会刷新原卡片，不需要用户离开飞书重新操作。",
+                "接入了修改意见提交和异步更新流程，生成完成后会刷新原卡片，不需要用户离开 App 重新操作。",
             },
           ],
         },

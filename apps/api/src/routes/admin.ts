@@ -116,36 +116,6 @@ export function pluginConnectivityStatus(row: {
   return "pending";
 }
 
-export function feishuConnectionStatus(row: {
-  configured: boolean;
-  hasPlugin: boolean;
-  bindingStatus: string | null;
-  openId: string | null;
-  deliveryStatus: string | null;
-  lastSuccessfulAt: Date | string | null;
-  lastAttemptAt: Date | string | null;
-}) {
-  if (!row.configured) return "unavailable";
-  const lastSuccessfulAt = row.lastSuccessfulAt
-    ? new Date(row.lastSuccessfulAt).getTime()
-    : 0;
-  const lastAttemptAt = row.lastAttemptAt
-    ? new Date(row.lastAttemptAt).getTime()
-    : 0;
-  if (
-    ["failed", "retry_wait"].includes(row.deliveryStatus ?? "") &&
-    lastAttemptAt > lastSuccessfulAt
-  )
-    return "failed";
-  if ((row.bindingStatus === "active" && row.openId) || lastSuccessfulAt > 0)
-    return "connected";
-  if (row.bindingStatus === "pending")
-    return ["pending", "sending"].includes(row.deliveryStatus ?? "")
-      ? "connecting"
-      : "not_connected";
-  return row.hasPlugin ? "not_connected" : "not_started";
-}
-
 export function nextManualRetryMaxAttempts(
   attemptCount: number,
   maxAttempts: number,
@@ -233,16 +203,15 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/v1/admin/overview", async (request) => {
     const actor = await requireWebActor(request, "admin");
-    const feishuAppId = process.env.FEISHU_APP_ID?.trim() ?? "";
     const [
       teamRows,
       partnerRows,
       periodRows,
       projectRows,
       pluginRows,
+      collectorRows,
       jobRows,
       bindingRows,
-      feishuBindingRows,
       queueRows,
     ] = await Promise.all([
       sql<
@@ -343,6 +312,15 @@ export async function adminRoutes(app: FastifyInstance) {
         order by pi.created_at desc
       `,
       sql<any[]>`
+        select d.*, activity.last_log_at, uploads.last_upload_at
+        from collector_devices d
+        join plugin_binding_codes b on b.id=d.binding_code_id and b.status <> 'revoked'
+        left join lateral (select max(received_at) as last_log_at from collector_logs where device_id=d.id) activity on true
+        left join lateral (select max(completed_at) as last_upload_at from collector_uploads where device_id=d.id and status='completed') uploads on true
+        where d.tenant_id=${actor.tenantId} and d.team_id=${actor.teamId} and d.status='active'
+        order by d.created_at desc
+      `,
+      sql<any[]>`
         select status, type, count(*)::int as count from agent_jobs
         where team_id = ${actor.teamId} and tenant_id = ${actor.tenantId}
         group by status, type
@@ -353,34 +331,6 @@ export async function adminRoutes(app: FastifyInstance) {
         from plugin_binding_codes
         where tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
         order by created_at desc
-      `,
-      sql<any[]>`
-        select b.partner_id, b.status as binding_status, b.open_id, b.verified_at,
-          delivery.status as delivery_status,
-          delivery.last_attempt_at, delivery.last_error_code,
-          delivery.last_successful_at
-        from feishu_partner_bindings b
-        left join lateral (
-          select latest.status, latest.last_attempt_at, latest.last_error_code,
-            successful.last_successful_at
-          from lateral (
-            select d.status, d.last_attempt_at, d.last_error_code
-            from feishu_deliveries d
-            where d.tenant_id = b.tenant_id and d.team_id = b.team_id
-              and d.partner_id = b.partner_id and d.last_attempt_at is not null
-            order by d.last_attempt_at desc
-            limit 1
-          ) latest
-          cross join lateral (
-            select max(d.sent_at) as last_successful_at
-            from feishu_deliveries d
-            where d.tenant_id = b.tenant_id and d.team_id = b.team_id
-              and d.partner_id = b.partner_id and d.sent_at is not null
-          ) successful
-        ) delivery on true
-        where b.tenant_id = ${actor.tenantId} and b.team_id = ${actor.teamId}
-          and b.app_id = ${feishuAppId}
-        order by b.created_at desc
       `,
       sql<any[]>`
         select r.id as review_id, r.state as review_state, r.version as review_version,
@@ -428,6 +378,9 @@ export async function adminRoutes(app: FastifyInstance) {
       (plugin) => plugin.status === "active",
     );
     const connections = partnerRows.map((partner) => {
+      const collector = collectorRows.find(
+        (device) => device.partner_id === partner.id,
+      );
       const plugin =
         plugins.find(
           (candidate) =>
@@ -443,34 +396,22 @@ export async function adminRoutes(app: FastifyInstance) {
             : plugin.last_sync_at
               ? "active"
               : "connected";
-      const feishuBinding = feishuBindingRows.find(
-        (candidate) => candidate.partner_id === partner.id,
-      );
       return {
         partnerId: partner.id,
         partnerName: partner.display_name,
         partnerEmail: partner.email,
-        connectionState,
-        feishuConnectionState: feishuConnectionStatus({
-          configured: Boolean(feishuAppId),
-          hasPlugin: Boolean(plugin),
-          bindingStatus: feishuBinding?.binding_status ?? null,
-          openId: feishuBinding?.open_id ?? null,
-          deliveryStatus: feishuBinding?.delivery_status ?? null,
-          lastSuccessfulAt: feishuBinding?.last_successful_at ?? null,
-          lastAttemptAt: feishuBinding?.last_attempt_at ?? null,
-        }),
-        feishuConnectedAt:
-          feishuBinding?.verified_at ??
-          feishuBinding?.last_successful_at ??
-          null,
-        feishuLastAttemptAt: feishuBinding?.last_attempt_at ?? null,
-        feishuLastErrorCode: feishuBinding?.last_error_code ?? null,
-        verifiedAt: plugin?.connectivity_verified_at ?? null,
-        lastUploadAt: plugin?.last_sync_at ?? null,
-        deviceName: plugin?.device_name ?? null,
-        pluginInstanceId: plugin?.id ?? null,
-        version: plugin?.version ?? null,
+        connectionState: collector
+          ? collector.last_log_at &&
+            Date.now() - new Date(collector.last_log_at).getTime() < 300_000
+            ? "active"
+            : "connected"
+          : connectionState,
+        verifiedAt:
+          collector?.created_at ?? plugin?.connectivity_verified_at ?? null,
+        lastUploadAt: collector?.last_upload_at ?? plugin?.last_sync_at ?? null,
+        deviceName: collector?.device_name ?? plugin?.device_name ?? null,
+        pluginInstanceId: collector?.scope_instance_id ?? plugin?.id ?? null,
+        version: collector?.version ?? plugin?.version ?? null,
         reviewProgress: partnerReviewProgress({
           reviewId: partner.review_id ?? null,
           periodKey: partner.review_period_key ?? null,
@@ -624,7 +565,7 @@ export async function adminRoutes(app: FastifyInstance) {
           and psp.tenant_id = pi.tenant_id and psp.team_id = pi.team_id
           and psp.partner_id = pi.partner_id
         where pi.tenant_id = ${actor.tenantId} and pi.team_id = ${actor.teamId}
-          and pi.partner_id = ${id} and pi.status = 'active'
+          and pi.partner_id = ${id} and pi.status in ('active', 'collector')
         order by pi.created_at desc
       `,
       sql<
@@ -645,7 +586,7 @@ export async function adminRoutes(app: FastifyInstance) {
         from project_scope_entries pse
         join plugin_instances pi on pi.id = pse.plugin_instance_id
           and pi.tenant_id = pse.tenant_id and pi.team_id = pse.team_id
-          and pi.partner_id = pse.partner_id and pi.status = 'active'
+          and pi.partner_id = pse.partner_id and pi.status in ('active', 'collector')
         where pse.tenant_id = ${actor.tenantId} and pse.team_id = ${actor.teamId}
           and pse.partner_id = ${id}
         order by case pse.status
@@ -755,7 +696,7 @@ export async function adminRoutes(app: FastifyInstance) {
         select id from plugin_instances
         where id = ${input.pluginInstanceId} and tenant_id = ${actor.tenantId}
           and team_id = ${actor.teamId} and partner_id = ${id}
-          and status = 'active'
+          and status in ('active', 'collector')
         limit 1
       `;
       if (!instances[0])
@@ -836,7 +777,7 @@ export async function adminRoutes(app: FastifyInstance) {
         update plugin_binding_codes set status = 'revoked', updated_at = now()
         where partner_id = ${id} and tenant_id = ${actor.tenantId}
           and team_id = ${actor.teamId}
-          and status in ('active', 'connecting')
+          and status in ('active', 'connecting', 'claimed')
         returning id
       `;
       if (partner.user_id) {
@@ -884,7 +825,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const rows = await sql<{ id: string }[]>`
       update plugin_binding_codes set status = 'revoked', updated_at = now()
       where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-        and status in ('active', 'connecting') returning id
+        and status in ('active', 'connecting', 'claimed') returning id
     `;
     if (!rows[0])
       throw new ApiError(

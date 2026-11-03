@@ -99,6 +99,7 @@ async function enqueueTeamReportForPeriod(
       and tr.tenant_id = previous_period.tenant_id
       and tr.team_id = previous_period.team_id
     join team_report_versions trv on trv.report_id = tr.id and trv.version = tr.current_version
+      and trv.payload->>'synthetic' is distinct from 'true'
     where previous_period.id = (
       select prior.id from report_periods prior
       where prior.tenant_id = ${input.tenantId}
@@ -160,7 +161,12 @@ async function enqueueTeamReportForPeriod(
         sourceChecksum,
         ...source,
       })}::jsonb
-    ) on conflict (tenant_id, idempotency_key) do nothing returning id
+    ) on conflict (tenant_id, idempotency_key) do update set
+      status='PENDING', output_payload=null, completed_at=null,
+      error_code=null, error_message=null, next_retry_at=null,
+      max_attempts=greatest(agent_jobs.max_attempts,agent_jobs.attempt_count+1), updated_at=now()
+    where agent_jobs.status='COMPLETED' and agent_jobs.output_payload->>'superseded'='true'
+    returning id
   `;
   if (inserted[0]) {
     await tx`
@@ -320,7 +326,7 @@ export async function teamReportRoutes(app: FastifyInstance) {
         and period_id = ${input.periodId}
       limit 1
     `;
-    if (existing[0])
+    if (existing[0] && existing[0].status !== "WAITING_SUBMISSIONS")
       throw new ApiError(
         409,
         "TEAM_REPORT_EXISTS",
@@ -553,6 +559,8 @@ export async function teamReportRoutes(app: FastifyInstance) {
         update report_periods set status = 'completed', updated_at = now()
         where id = ${rows[0].period_id} and tenant_id = ${actor.tenantId}
       `;
+      await tx`insert into outbox_events (id,tenant_id,event_type,aggregate_type,aggregate_id,payload)
+        values (${randomUUID()},${actor.tenantId},'team_report.locked','team_report',${id},${JSON.stringify({ teamId: actor.teamId })}::jsonb)`;
       return rows[0];
     });
     await audit(request, actor, "team_report.locked", "team_report", id, {

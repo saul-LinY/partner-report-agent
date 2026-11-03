@@ -5,7 +5,7 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import formbody from "@fastify/formbody";
 import { ZodError } from "zod";
-import { closeDatabase } from "@partner-report/db";
+import { closeDatabase, dispatchAppNotifications } from "@partner-report/db";
 import { ApiError } from "./api-error.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes, type AuthRouteOptions } from "./routes/auth.js";
@@ -13,14 +13,12 @@ import { factRoutes } from "./routes/facts.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { observabilityRoutes } from "./routes/observability.js";
 import { pluginRoutes } from "./routes/plugin.js";
+import { collectorRoutes } from "./routes/collector.js";
+import { userLogRoutes } from "./routes/user-logs.js";
+import { inspectionRoutes } from "./routes/inspection.js";
 import { teamReportRoutes } from "./routes/team-reports.js";
 import { projectProgressRoutes } from "./routes/project-progress.js";
 import { reviewRoutes } from "./routes/reviews.js";
-import { loadFeishuConfig } from "./feishu/config.js";
-import {
-  getFeishuRuntimeStatus,
-  startFeishuIntegration,
-} from "./feishu/integration.js";
 
 export async function buildApp(
   options: { logger?: boolean; auth?: AuthRouteOptions } = {},
@@ -38,6 +36,8 @@ export async function buildApp(
               "req.headers.cookie",
               "res.headers.set-cookie",
               "body.password",
+              "body.bindingCode",
+              "body.token",
               "body.deviceCode",
               "body.refreshToken",
               "body.code",
@@ -128,12 +128,15 @@ export async function buildApp(
   app.get("/health", async () => ({
     status: "ok",
     time: new Date().toISOString(),
-    feishu: getFeishuRuntimeStatus(),
+    notifications: { channel: "macos-app" },
   }));
   await app.register(authRoutes, options.auth ?? {});
   await app.register(adminRoutes);
   await app.register(pluginRoutes);
+  await app.register(collectorRoutes);
   await app.register(observabilityRoutes);
+  await app.register(userLogRoutes);
+  await app.register(inspectionRoutes);
   await app.register(factRoutes);
   await app.register(jobRoutes);
   await app.register(reviewRoutes);
@@ -143,20 +146,24 @@ export async function buildApp(
 }
 
 async function start() {
-  const feishuConfig = loadFeishuConfig();
   const app = await buildApp();
   const host = process.env.API_HOST ?? "0.0.0.0";
   const port = Number(process.env.API_PORT ?? 4310);
   await app.listen({ host, port });
-  const feishu = feishuConfig
-    ? await startFeishuIntegration(feishuConfig, {
-        info: (context, message) => app.log.info(context, message),
-        warn: (context, message) => app.log.warn(context, message),
-        error: (context, message) => app.log.error(context, message),
-      })
-    : null;
+  let dispatching: Promise<unknown> | undefined;
+  const interval = setInterval(() => {
+    if (dispatching) return;
+    dispatching = dispatchAppNotifications()
+      .catch((error) =>
+        app.log.error(error, "App notification dispatch failed"),
+      )
+      .finally(() => {
+        dispatching = undefined;
+      });
+  }, 5_000);
   const shutdown = async () => {
-    await feishu?.stop();
+    clearInterval(interval);
+    await dispatching;
     await app.close();
     await closeDatabase();
     process.exit(0);

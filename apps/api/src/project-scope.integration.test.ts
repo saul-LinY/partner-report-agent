@@ -1,3 +1,7 @@
+import {
+  confirmCollectorIdentity,
+  removeCollectorIdentities,
+} from "./test-support/collector-identity.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
@@ -67,10 +71,9 @@ suite("project scope persistence", () => {
   });
 
   afterAll(async () => {
+    await removeCollectorIdentities(fixture.tenantId);
     await sql.begin(async (tx) => {
       await tx`delete from outbox_events where tenant_id = ${fixture.tenantId}`;
-      await tx`delete from feishu_deliveries where tenant_id = ${fixture.tenantId}`;
-      await tx`delete from feishu_partner_bindings where tenant_id = ${fixture.tenantId}`;
       await tx`delete from audit_events where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_backup_snapshots where tenant_id = ${fixture.tenantId}`;
       await tx`delete from project_scope_entries where tenant_id = ${fixture.tenantId}`;
@@ -85,7 +88,7 @@ suite("project scope persistence", () => {
     });
   });
 
-  it("requires Feishu review for initial and later discovered projects", async () => {
+  it("requires App review for initial and later discovered projects", async () => {
     const firstKey = "a".repeat(64);
     const secondKey = "d".repeat(64);
     const first = await registerProjectScopeCandidates(identity, {
@@ -169,26 +172,18 @@ suite("project scope persistence", () => {
         decisions: [{ scopeKey: firstKey, decision: "allow" }],
       }),
     ).rejects.toMatchObject({
-      code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED",
+      code: "PROJECT_SCOPE_APP_REVIEW_REQUIRED",
     } satisfies Partial<ApiError>);
 
-    const feishuOpenId = `ou_${randomUUID()}`;
-    await sql`
-      insert into feishu_partner_bindings (
-        id, tenant_id, team_id, partner_id, app_id, open_id, status, verified_at
-      ) values (
-        ${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId},
-        ${fixture.partnerId}, 'scope-integration-app', ${feishuOpenId},
-        'active', now()
-      )
-    `;
-    const feishuActor: DomainActor = {
+    const collectorActorID = `ou_${randomUUID()}`;
+    await confirmCollectorIdentity(identity);
+    const collectorActor: DomainActor = {
       ...actor,
-      actorType: "feishu",
-      actorId: feishuOpenId,
+      actorType: "collector",
+      actorId: collectorActorID,
     };
     const initialized = await decideProjectScopes(
-      feishuActor,
+      collectorActor,
       fixture.pluginInstanceId,
       {
         baseVersion: first.version,
@@ -235,10 +230,10 @@ suite("project scope persistence", () => {
         decisions: [{ scopeKey: laterKey, decision: "allow" }],
       }),
     ).rejects.toMatchObject({
-      code: "PROJECT_SCOPE_FEISHU_REVIEW_REQUIRED",
+      code: "PROJECT_SCOPE_APP_REVIEW_REQUIRED",
     } satisfies Partial<ApiError>);
     const laterApproved = await decideProjectScopes(
-      feishuActor,
+      collectorActor,
       fixture.pluginInstanceId,
       {
         baseVersion: later.version,
@@ -321,7 +316,7 @@ suite("project scope persistence", () => {
     } satisfies Partial<ApiError>);
 
     const reapproved = await decideProjectScopes(
-      feishuActor,
+      collectorActor,
       fixture.pluginInstanceId,
       {
         baseVersion: reopened.version,
@@ -394,7 +389,7 @@ suite("project scope persistence", () => {
     });
   });
 
-  it("repends historical auto-allowed scopes without a Feishu identity", async () => {
+  it("repends historical auto-allowed scopes without a App identity", async () => {
     const partnerId = randomUUID();
     const pluginInstanceId = randomUUID();
     const scopeKey = "7".repeat(64);

@@ -9,6 +9,8 @@ import {
 import { stableJsonHash } from "@partner-report/contracts/hash";
 import { centralModelIdSchema } from "@partner-report/contracts/models";
 import { sqlClient as sql } from "@partner-report/db";
+import { extractCollectorSession } from "./collector-extraction.js";
+import { applyCollectorCards } from "./collector-pipeline.js";
 import { z } from "zod";
 import {
   defaultProjectStatus,
@@ -52,6 +54,13 @@ type Job = {
   max_attempts: number;
   created_at: Date | string;
 };
+const centralLeaseOwner = randomUUID();
+
+export async function releaseCentralJobLeases() {
+  await sql`update agent_jobs set status='PENDING',lease_until=null,lease_token_hash=null,
+    max_attempts=greatest(max_attempts,attempt_count+1),updated_at=now()
+    where status='LEASED' and lease_token_hash=${centralLeaseOwner}`;
+}
 
 const systemHealthJobTypes = [
   "SYSTEM_HEALTH_QUEUE",
@@ -80,7 +89,7 @@ const projectProgressBackfillSchema = z.object({
   ),
 });
 const projectProgressBackfillInstructions = `根据每个项目提供的历史 Session 事实，补充项目进展预览字段。只返回 groups，不要返回周报、每日进展或项目状态。currentFocus 是当前最值得继续推进的一件事；没有足够证据时返回 null。keyEvents 只保留会长期影响项目方向的变化，类型只能是 goal_change、milestone、decision、blocker、stage_change，最多 5 条；普通日常工作不要写入。所有内容必须来自事实，不要猜测。使用简短、通俗的简体中文。`;
-const pluginLogAnalysisResultSchema = z.object({
+const logAnalysisResultSchema = z.object({
   summary: z.string().min(1).max(300),
   failedStep: z.string().min(1).max(120),
   rootCause: z.string().min(1).max(500),
@@ -88,7 +97,18 @@ const pluginLogAnalysisResultSchema = z.object({
   recommendedActions: z.array(z.string().min(1).max(240)).min(1).max(4),
   confidence: z.enum(["high", "medium", "low"]),
 });
-const pluginLogAnalysisModelSchema = z.record(z.string(), z.unknown());
+const logAnalysisModelSchema = z.record(z.string(), z.unknown());
+export const inspectionAnalysisSchema = z
+  .object({
+    summary: z.string().trim().min(1).max(300),
+    likelyCause: z.string().trim().min(1).max(500),
+    impact: z.string().trim().min(1).max(300),
+    recommendedActions: z.array(z.string().trim().min(1).max(240)).min(1).max(5),
+    confidence: z.enum(["low", "medium", "high"]),
+    relatedChain: z.enum(["app", "system", "pipeline"]),
+  })
+  .strict();
+export type InspectionAnalysis = z.infer<typeof inspectionAnalysisSchema>;
 
 function normalizedAnalysisText(value: unknown, fallback: string, max: number) {
   return (typeof value === "string" && value.trim() ? value : fallback)
@@ -112,7 +132,7 @@ function normalizedAnalysisList(value: unknown, fallback: string[]) {
   return normalized.length > 0 ? normalized : fallback;
 }
 
-export function normalizePluginLogAnalysis(
+export function normalizeLogAnalysis(
   generated: Record<string, unknown>,
   fallbackStep: string,
 ) {
@@ -126,7 +146,7 @@ export function normalizePluginLogAnalysis(
     "现有日志不足以确认唯一原因，请结合事件代码继续排查。",
     500,
   );
-  return pluginLogAnalysisResultSchema.parse({
+  return logAnalysisResultSchema.parse({
     summary: normalizedAnalysisText(
       generated.summary ?? generated.conclusion,
       failedStep,
@@ -202,6 +222,7 @@ export async function loadPreviousProjectStatus(job: Job, bucket: any) {
     where wi.tenant_id = ${job.tenant_id} and wi.team_id = ${job.team_id}
       and wi.partner_id = ${job.partner_id} and wi.project_id = ${bucket.projectId}
       and wi.review_status = 'approved' and rp.starts_at < current_period.starts_at
+      and wi.payload->>'synthetic' is distinct from 'true'
       and wi.payload->>'projectStatus' in ('research', 'development', 'delivery', 'paused')
       and (wi.payload->>'projectStatusSource' = 'user'
         or (wi.payload->>'projectStatusSource' is null
@@ -257,6 +278,7 @@ export async function loadPreviousProjectOutlook(job: Job, bucket: any) {
       and wi.partner_id = ${job.partner_id} and wi.project_id = ${bucket.projectId}
       and wi.review_status = 'approved' and rp.starts_at < current_period.starts_at
       and jsonb_typeof(wi.payload->'projectOutlook') = 'object'
+      and wi.payload->>'synthetic' is distinct from 'true'
     order by rp.starts_at desc, wi.updated_at desc, wi.id desc limit 1
   `;
   const parsed = projectOutlookSchema.safeParse(previous?.outlook);
@@ -354,6 +376,7 @@ export async function generateAggregationByProject(job: Job, model: string) {
             instructions: aggregationInstructions(model),
             input: projectCardWritingInput(input, draft),
             model,
+            maxOutputTokens: 8192,
           });
           if (
             result.groups.length !== 1 ||
@@ -425,9 +448,9 @@ async function leaseNextJob(onlyTenantId?: string) {
       where status in ('PENDING', 'RETRY_WAIT')
         and (${onlyTenantId ?? null}::uuid is null or tenant_id = ${onlyTenantId ?? null})
         and type in (
-          'AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT',
+          'EXTRACT_COLLECTOR_SESSION', 'AGGREGATE_WORK_ITEMS', 'GENERATE_TEAM_REPORT', 'REGENERATE_TEAM_REPORT',
           'SYSTEM_HEALTH_QUEUE', 'SYSTEM_HEALTH_GENERATION', 'SYSTEM_HEALTH_REPORTS',
-          'ANALYZE_PLUGIN_LOGS', 'ANALYZE_SYSTEM_LOGS'
+          'ANALYZE_SYSTEM_LOGS', 'ANALYZE_INSPECTION_FINDING'
         )
         and attempt_count < max_attempts
         and (status = 'PENDING' or coalesce(next_retry_at, updated_at + interval '1 minute') <= now())
@@ -453,6 +476,7 @@ async function leaseNextJob(onlyTenantId?: string) {
     const leaseMs = modelRequestTimeoutMs() * batches * stages + 60_000;
     await tx`
       update agent_jobs set status = 'LEASED', attempt_count = attempt_count + 1,
+        lease_token_hash = ${centralLeaseOwner},
         lease_until = now() + ${leaseMs} * interval '1 millisecond', next_retry_at = null, updated_at = now()
       where id = ${job.id}
     `;
@@ -477,6 +501,9 @@ export function normalizeAggregation(job: Job, output: unknown, model: string) {
     ? job.input_payload.projectBuckets
     : [];
   const groups = buckets.map((bucket: any) => {
+    const currentCard =
+      job.input_payload.currentCards?.[bucket.projectKey] ??
+      job.input_payload.currentCard;
     const group = groupsByProject.get(bucket.projectKey);
     if (!group && !qualityWarnings.includes("MODEL_PROJECT_BUCKET_MISSING"))
       qualityWarnings.push("MODEL_PROJECT_BUCKET_MISSING");
@@ -516,20 +543,19 @@ export function normalizeAggregation(job: Job, output: unknown, model: string) {
         : [],
       status,
       projectStatus:
-        job.input_payload.currentCard?.projectStatusSource === "user"
-          ? (readProjectStatus(job.input_payload.currentCard) ??
-            defaultProjectStatus(status))
+        currentCard?.projectStatusSource === "user"
+          ? (readProjectStatus(currentCard) ?? defaultProjectStatus(status))
           : (bucket.previousProjectStatus?.value ??
             readProjectStatus(group ?? {}) ??
             defaultProjectStatus(status)),
       projectStatusReason:
-        job.input_payload.currentCard?.projectStatusSource === "user"
-          ? (job.input_payload.currentCard.projectStatusReason ?? "用户选择")
+        currentCard?.projectStatusSource === "user"
+          ? (currentCard.projectStatusReason ?? "用户选择")
           : (bucket.previousProjectStatus?.reason ??
             group?.projectStatusReason ??
             "请结合本周工作确认当前项目状态。"),
       projectStatusSource:
-        job.input_payload.currentCard?.projectStatusSource === "user" ||
+        currentCard?.projectStatusSource === "user" ||
         bucket.previousProjectStatus
           ? "user"
           : "model",
@@ -678,6 +704,8 @@ async function applyAggregation(job: Job, output: unknown, model: string) {
       ? normalizeProjectProgressBackfill(job, output, model)
       : normalizeAggregation(job, output, model);
   const reviewId = job.input_payload.reviewId as string;
+  if (job.input_payload.aggregationMode === "collector")
+    return applyCollectorCards(job, result, projectCardPayload);
   const targetWorkItemId = job.input_payload.targetWorkItemId as
     string | undefined;
   if (job.input_payload.aggregationMode === "project_progress_backfill") {
@@ -870,18 +898,38 @@ async function applyTeamReport(
   const result = teamReportResultSchema.parse(
     finalizeTeamReport(generated, reportDate),
   );
-  const reports = await sql<any[]>`
+  return sql.begin(async (tx) => {
+    const reports = await tx<any[]>`
     select * from team_reports where id = ${job.input_payload.reportId}
-      and tenant_id = ${job.tenant_id} limit 1
+      and tenant_id = ${job.tenant_id} limit 1 for update
   `;
-  const report = reports[0];
-  if (
-    !report ||
-    (report.status === "LOCKED" && job.type !== "REGENERATE_TEAM_REPORT")
-  )
-    throw new Error("TEAM_REPORT_NOT_EDITABLE");
-  const version = report.current_version + 1;
-  await sql.begin(async (tx) => {
+    const report = reports[0];
+    if (
+      !report ||
+      (report.status === "LOCKED" && job.type !== "REGENERATE_TEAM_REPORT")
+    )
+      throw new Error("TEAM_REPORT_NOT_EDITABLE");
+    if (job.type === "GENERATE_TEAM_REPORT") {
+      const superseded = async () => {
+        await tx`update team_reports set status='WAITING_SUBMISSIONS', updated_at=now()
+          where id=${report.id} and tenant_id=${job.tenant_id}`;
+        return { ...result, superseded: true };
+      };
+      for (const card of job.input_payload.workCards ?? []) {
+        const [current] = await tx`select s.id from reviews r join lateral (
+        select id from work_item_snapshots where review_id=r.id and tenant_id=r.tenant_id
+        order by created_at desc limit 1
+      ) s on true where r.tenant_id=${job.tenant_id} and r.partner_id=${card.partnerId}
+        and r.period_id=${report.period_id} and r.state in ('ITEMS_APPROVED','ITEMS_DISMISSED') for update of r`;
+        if (current?.id !== card.snapshotId) return superseded();
+      }
+      const [pending] =
+        await tx`select 1 from agent_jobs where tenant_id=${job.tenant_id} and team_id=${job.team_id}
+      and input_payload->'period'->>'id'=${report.period_id}
+      and type in ('EXTRACT_COLLECTOR_SESSION','AGGREGATE_WORK_ITEMS') and status in ('PENDING','LEASED','RETRY_WAIT','FAILED') limit 1`;
+      if (pending) return superseded();
+    }
+    const version = report.current_version + 1;
     await tx`
       insert into team_report_versions (
         id, tenant_id, report_id, version, title, summary, markdown, payload,
@@ -900,6 +948,8 @@ async function applyTeamReport(
         updated_at = now()
       where id = ${report.id} and tenant_id = ${job.tenant_id}
     `;
+    await tx`insert into outbox_events (id,tenant_id,event_type,aggregate_type,aggregate_id,payload)
+      values (${randomUUID()},${job.tenant_id},'team_report.ready','team_report',${report.id},${JSON.stringify({ teamId: job.team_id, version })}::jsonb)`;
     await tx`
       update report_periods set status = 'completed', updated_at = now()
       where id = ${report.period_id} and tenant_id = ${job.tenant_id}
@@ -917,8 +967,8 @@ async function applyTeamReport(
         and input_payload->>'reportId' = ${report.id}
         and status in ('PENDING', 'RETRY_WAIT', 'LEASED', 'FAILED')
     `;
+    return result;
   });
-  return result;
 }
 
 function safeError(error: unknown) {
@@ -966,66 +1016,6 @@ async function runSystemHealthJob(job: Job) {
   throw new Error(`UNSUPPORTED_SYSTEM_HEALTH_JOB:${job.type}`);
 }
 
-async function runPluginLogAnalysisJob(job: Job) {
-  if (!job.plugin_instance_id) throw new Error("PLUGIN_INSTANCE_MISSING");
-  const invocationId =
-    typeof job.input_payload.invocationId === "string"
-      ? job.input_payload.invocationId
-      : null;
-  const runId =
-    typeof job.input_payload.runId === "string"
-      ? job.input_payload.runId
-      : null;
-  if (!invocationId && !runId) throw new Error("PLUGIN_EXECUTION_ID_MISSING");
-  const events = await sql<any[]>`
-    select sequence, command, event_type, level, stage, event_code, message,
-      stack, retryable, attempt, duration_ms, request_id, details, occurred_at
-    from plugin_log_events
-    where tenant_id = ${job.tenant_id}
-      and plugin_instance_id = ${job.plugin_instance_id}
-      and (
-        (${invocationId}::uuid is not null and invocation_id = ${invocationId})
-        or (${invocationId}::uuid is null and invocation_id is null and run_id = ${runId})
-      )
-    order by occurred_at asc, sequence asc nulls last
-    limit 200
-  `;
-  if (events.length === 0) throw new Error("PLUGIN_EXECUTION_LOGS_MISSING");
-  const { model } = await selectedTeamSettingsFor(job);
-  const generated = await generateStructured<Record<string, unknown>>({
-    name: "partner_report_plugin_log_analysis",
-    schema: pluginLogAnalysisModelSchema,
-    instructions:
-      '你是 Partner Report 插件故障分析器。只根据提供的插件命令、结构化事件和输出摘要判断，不补充日志中没有的事实。插件链路依次包含：本地 Codex 会话读取、项目权限检查、模型结构化提取、结果校验、贡献上传和采集收尾。区分直接证据与推测；证据不足时降低 confidence 并明确说明。使用通俗、简短的中文，不暴露凭证、用户路径或会话内容。failedStep 写出具体失败环节，rootCause 解释最可能原因，evidence 优先返回由事件代码或计数组成的字符串数组，recommendedActions 返回中台管理员可执行的步骤数组。示例形状：{"summary":"会话读取阶段连续失败","failedStep":"读取本地 Codex 会话","rootCause":"日志表明会话历史格式无效","evidence":["CODEX_THREAD_HISTORY_INVALID: 6"],"recommendedActions":["让用户升级插件后重试"],"confidence":"high"}。',
-    input: {
-      command: job.input_payload.command,
-      executionId: job.input_payload.executionId,
-      events: events.map((event) => ({
-        sequence: event.sequence,
-        eventType: event.event_type,
-        level: event.level,
-        stage: event.stage,
-        eventCode: event.event_code,
-        message: event.message,
-        retryable: event.retryable,
-        attempt: event.attempt,
-        durationMs: event.duration_ms,
-        requestId: event.request_id,
-        details: event.details,
-        stack: event.stack ? String(event.stack).slice(0, 4000) : null,
-        occurredAt: event.occurred_at,
-      })),
-    },
-    model,
-    timeoutMs: 35_000,
-    maxOutputTokens: 4096,
-  });
-  return normalizePluginLogAnalysis(
-    generated,
-    String(job.input_payload.command ?? "插件运行"),
-  );
-}
-
 async function runSystemLogAnalysisJob(job: Job) {
   const events = Array.isArray(job.input_payload.events)
     ? job.input_payload.events.slice(0, 100)
@@ -1034,9 +1024,9 @@ async function runSystemLogAnalysisJob(job: Job) {
   const { model } = await selectedTeamSettingsFor(job);
   const generated = await generateStructured<Record<string, unknown>>({
     name: "partner_report_system_log_analysis",
-    schema: pluginLogAnalysisModelSchema,
+    schema: logAnalysisModelSchema,
     instructions:
-      "你是 Partner Report 中台故障分析器。只根据提供的中台运行时间线判断，不补充日志中没有的事实。中台链路通常包括：接收请求或飞书操作、任务入队、模型生成、结果保存、飞书发送和报告归档。区分直接证据与推测；证据不足时降低 confidence。使用通俗、简短的中文，不暴露凭证、内部 Payload 或个人敏感信息。failedStep 指出具体失败环节，rootCause 解释最可能原因，evidence 返回事件代码或可核对的状态，recommendedActions 返回管理员可执行的步骤。",
+      "你是 Partner Report 中台故障分析器。只根据提供的中台运行时间线判断，不补充日志中没有的事实。中台链路通常包括：接收请求或 App 操作、任务入队、模型生成、结果保存、App 系统通知投递和报告归档。区分直接证据与推测；证据不足时降低 confidence。使用通俗、简短的中文，不暴露凭证、内部 Payload 或个人敏感信息。failedStep 指出具体失败环节，rootCause 解释最可能原因，evidence 返回事件代码或可核对的状态，recommendedActions 返回管理员可执行的步骤。",
     input: {
       executionId: job.input_payload.executionId,
       source: job.input_payload.source,
@@ -1048,13 +1038,54 @@ async function runSystemLogAnalysisJob(job: Job) {
     timeoutMs: 35_000,
     maxOutputTokens: 4096,
   });
-  return normalizePluginLogAnalysis(
+  return normalizeLogAnalysis(
     generated,
     String(job.input_payload.title ?? "中台处理"),
   );
 }
 
-function pluginLogAnalysisError(error: unknown) {
+async function runInspectionAnalysisJob(job: Job): Promise<InspectionAnalysis> {
+  const payload = job.input_payload;
+  if (typeof payload?.findingId !== "string")
+    throw new Error("INSPECTION_FINDING_MISSING");
+  const { model } = await selectedTeamSettingsFor(job);
+  const generated = await generateStructured<unknown>({
+    name: "partner_report_inspection_analysis",
+    schema: inspectionAnalysisSchema,
+    instructions:
+      "你是 Partner Report 中台的异常巡检分析器。只根据提供的巡检发现、证据、最近的 App 事件和相关任务判断，不补充输入中没有的事实。链路分为 app（成员本机 App 的心跳、同步、扫描、上传、通知）、system（Worker、任务队列、模型网关、报告）和 pipeline（上传后的分析、卡片和审核衔接）。区分直接证据与推测；证据不足时降低 confidence 并说明。使用通俗、简短的简体中文，不暴露凭证、用户路径或会话内容。输出字段：summary 一句话概括问题；likelyCause 最可能的原因；impact 对成员或周报的影响；recommendedActions 管理员可执行的步骤数组（最多 5 条）；confidence 只能是 low、medium、high；relatedChain 只能是 app、system、pipeline，表示问题所在链路。",
+    input: {
+      finding: {
+        chain: payload.chain,
+        rule: payload.rule,
+        severity: payload.severity,
+        subject: payload.subject,
+        title: payload.title,
+        occurrences: payload.occurrences,
+        firstSeenAt: payload.firstSeenAt,
+        lastSeenAt: payload.lastSeenAt,
+      },
+      evidence: payload.evidence ?? {},
+      events: Array.isArray(payload.events) ? payload.events.slice(0, 50) : [],
+      jobs: Array.isArray(payload.jobs) ? payload.jobs.slice(0, 20) : [],
+    },
+    model,
+    timeoutMs: 35_000,
+    maxOutputTokens: 4096,
+  });
+  return inspectionAnalysisSchema.parse(generated);
+}
+
+async function setInspectionAnalysisRunning(job: Job) {
+  const findingId = job.input_payload?.findingId;
+  if (typeof findingId !== "string") return;
+  await sql`
+    update inspection_findings set analysis_status = 'running'
+    where id = ${findingId} and tenant_id = ${job.tenant_id} and team_id = ${job.team_id}
+  `;
+}
+
+function analysisError(error: unknown) {
   if (error instanceof z.ZodError)
     return {
       code: "MODEL_ANALYSIS_FORMAT_INVALID",
@@ -1063,26 +1094,22 @@ function pluginLogAnalysisError(error: unknown) {
   if (error instanceof ModelRequestTimeoutError)
     return { code: error.code, message: "模型分析超时，请稍后重试。" };
   if (error instanceof ModelGatewayError)
-    return { code: error.code, message: error.message };
+    return {
+      code: error.code,
+      message:
+        error.code === "MODEL_NOT_CONFIGURED"
+          ? "中台尚未配置可用的模型服务。"
+          : error.message,
+    };
   if (!modelGatewayConfigured())
     return {
       code: "MODEL_NOT_CONFIGURED",
       message: "中台尚未配置可用的模型服务。",
     };
   return {
-    code: "PLUGIN_LOG_ANALYSIS_FAILED",
+    code: "LOG_ANALYSIS_FAILED",
     message: "模型分析暂时失败，请稍后重试。",
   };
-}
-
-function systemLogAnalysisError(error: unknown) {
-  const base = pluginLogAnalysisError(error);
-  return base.code === "PLUGIN_LOG_ANALYSIS_FAILED"
-    ? {
-        code: "SYSTEM_LOG_ANALYSIS_FAILED",
-        message: "中台日志模型分析暂时失败，请稍后重试。",
-      }
-    : base;
 }
 
 function systemHealthErrorCode(job: Job, error: unknown) {
@@ -1106,14 +1133,8 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       `;
       return { processed: true, jobId: job.id, type: job.type };
     }
-    if (
-      job.type === "ANALYZE_PLUGIN_LOGS" ||
-      job.type === "ANALYZE_SYSTEM_LOGS"
-    ) {
-      const output =
-        job.type === "ANALYZE_PLUGIN_LOGS"
-          ? await runPluginLogAnalysisJob(job)
-          : await runSystemLogAnalysisJob(job);
+    if (job.type === "ANALYZE_SYSTEM_LOGS") {
+      const output = await runSystemLogAnalysisJob(job);
       await sql`
         update agent_jobs set status = 'COMPLETED',
           output_payload = ${JSON.stringify(output)}::jsonb,
@@ -1123,7 +1144,33 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       `;
       return { processed: true, jobId: job.id, type: job.type };
     }
+    if (job.type === "ANALYZE_INSPECTION_FINDING") {
+      await setInspectionAnalysisRunning(job);
+      const output = await runInspectionAnalysisJob(job);
+      await sql.begin(async (tx) => {
+        await tx`
+          update agent_jobs set status = 'COMPLETED',
+            output_payload = ${JSON.stringify(output)}::jsonb,
+            completed_at = now(), lease_until = null, error_code = null,
+            error_message = null, updated_at = now()
+          where id = ${job.id} and status = 'LEASED'
+        `;
+        await tx`
+          update inspection_findings set analysis_status = 'completed',
+            analysis = ${JSON.stringify(output)}::jsonb, analyzed_fingerprint_at = now()
+          where id = ${job.input_payload.findingId} and tenant_id = ${job.tenant_id} and team_id = ${job.team_id}
+        `;
+      });
+      return { processed: true, jobId: job.id, type: job.type };
+    }
     const { model, timezone } = await selectedTeamSettingsFor(job);
+    if (job.type === "EXTRACT_COLLECTOR_SESSION") {
+      const output = await extractCollectorSession(job, model);
+      await sql`update agent_jobs set status='COMPLETED',output_payload=${JSON.stringify(output)}::jsonb,
+        completed_at=now(),lease_until=null,error_code=null,error_message=null,updated_at=now()
+        where id=${job.id} and status='LEASED' and attempt_count=${job.attempt_count}`;
+      return { processed: true, jobId: job.id, type: job.type };
+    }
     const isAggregation = job.type === "AGGREGATE_WORK_ITEMS";
     const isTeamReport = [
       "GENERATE_TEAM_REPORT",
@@ -1192,18 +1239,17 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       retryBaseMs + Math.floor(Math.random() * retryBaseMs * 0.25),
       error instanceof ModelGatewayError ? (error.retryAfterMs ?? 0) : 0,
     );
-    const analysisError =
-      job.type === "ANALYZE_PLUGIN_LOGS"
-        ? pluginLogAnalysisError(error)
-        : job.type === "ANALYZE_SYSTEM_LOGS"
-          ? systemLogAnalysisError(error)
-          : null;
+    const analysis = ["ANALYZE_SYSTEM_LOGS", "ANALYZE_INSPECTION_FINDING"].includes(
+      job.type,
+    )
+      ? analysisError(error)
+      : null;
     const errorCode =
-      analysisError?.code ??
+      analysis?.code ??
       (isSystemHealthJob(job.type)
         ? systemHealthErrorCode(job, error)
         : generationErrorCode(error));
-    const errorMessage = analysisError?.message ?? safeError(error);
+    const errorMessage = analysis?.message ?? safeError(error);
     await sql.begin(async (tx) => {
       await tx`
         update agent_jobs set status = ${terminal ? "FAILED" : "RETRY_WAIT"},
@@ -1213,6 +1259,15 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
           updated_at = now()
         where id = ${job.id} and status = 'LEASED'
       `;
+      if (
+        job.type === "ANALYZE_INSPECTION_FINDING" &&
+        typeof job.input_payload.findingId === "string"
+      ) {
+        await tx`
+          update inspection_findings set analysis_status = ${terminal ? "failed" : "queued"}
+          where id = ${job.input_payload.findingId} and tenant_id = ${job.tenant_id} and team_id = ${job.team_id}
+        `;
+      }
       if (
         terminal &&
         job.type === "AGGREGATE_WORK_ITEMS" &&

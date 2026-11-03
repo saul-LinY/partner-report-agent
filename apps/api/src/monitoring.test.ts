@@ -1,108 +1,41 @@
 import { describe, expect, it } from "vitest";
-import {
-  projectPluginMonitoringStatus,
-  projectSystemComponents,
-} from "./monitoring.js";
+import { projectSystemComponents } from "./monitoring.js";
 
-const now = new Date("2026-08-24T09:30:00.000Z"); // 17:30 in Asia/Shanghai
-const pluginBase = {
-  createdAt: "2026-08-01T00:00:00.000Z",
-  lastCollectionStartedAt: "2026-08-23T08:00:00.000Z",
-  lastCollectionCompletedAt: "2026-08-23T08:10:00.000Z",
-  lastHeartbeatAt: "2026-08-23T08:10:00.000Z",
-  latestEventAt: "2026-08-23T08:10:00.000Z",
-  latestEventCode: "command.completed",
-  latestErrorAt: null,
-  monitoringRecoveredAt: null,
-  lastErrorCode: null,
-  runnerState: "idle",
-  retryCount: 0,
-  pendingLocalJobs: 0,
-};
-
-describe("plugin monitoring status", () => {
-  it("marks a missing daily run after the grace period", () => {
-    expect(projectPluginMonitoringStatus(pluginBase, now)).toMatchObject({
-      severity: "critical",
-      code: "missed",
-      label: "今日未运行",
-    });
-  });
-
-  it("marks an open run without progress as interrupted", () => {
-    expect(
-      projectPluginMonitoringStatus(
-        {
-          ...pluginBase,
-          lastCollectionStartedAt: "2026-08-24T08:00:00.000Z",
-          lastCollectionCompletedAt: "2026-08-23T08:10:00.000Z",
-          lastHeartbeatAt: "2026-08-24T08:01:00.000Z",
-          latestEventAt: "2026-08-24T08:01:00.000Z",
-          latestEventCode: "command.started",
-        },
-        now,
-      ),
-    ).toMatchObject({ severity: "critical", code: "interrupted" });
-  });
-
-  it("keeps an explicit approval wait out of the failure state", () => {
-    expect(
-      projectPluginMonitoringStatus(
-        {
-          ...pluginBase,
-          lastCollectionStartedAt: "2026-08-24T08:00:00.000Z",
-          lastCollectionCompletedAt: "2026-08-23T08:10:00.000Z",
-          latestEventAt: "2026-08-24T08:01:00.000Z",
-          latestEventCode: "project_scope_approval_waiting",
-        },
-        now,
-      ),
-    ).toMatchObject({ severity: "warning", code: "waiting" });
-  });
-
-  it("marks today's completed run as healthy", () => {
-    expect(
-      projectPluginMonitoringStatus(
-        {
-          ...pluginBase,
-          lastCollectionStartedAt: "2026-08-24T08:00:00.000Z",
-          lastCollectionCompletedAt: "2026-08-24T08:10:00.000Z",
-          lastHeartbeatAt: "2026-08-24T08:10:00.000Z",
-          latestEventAt: "2026-08-24T08:10:00.000Z",
-        },
-        now,
-      ),
-    ).toMatchObject({ severity: "normal", code: "healthy" });
-  });
-
-  it("keeps acknowledged failures hidden for the rest of the day", () => {
-    expect(
-      projectPluginMonitoringStatus(
-        {
-          ...pluginBase,
-          latestErrorAt: "2026-08-24T08:30:00.000Z",
-          monitoringRecoveredAt: "2026-08-24T09:20:00.000Z",
-        },
-        now,
-      ),
-    ).toMatchObject({ severity: "normal", code: "healthy", label: "已恢复" });
-  });
-
-  it("reports a new failure after recovery", () => {
-    expect(
-      projectPluginMonitoringStatus(
-        {
-          ...pluginBase,
-          latestErrorAt: "2026-08-24T09:25:00.000Z",
-          monitoringRecoveredAt: "2026-08-24T09:20:00.000Z",
-        },
-        now,
-      ),
-    ).toMatchObject({ severity: "critical", code: "failed" });
-  });
-});
+const now = new Date("2026-08-24T09:30:00.000Z");
 
 describe("system monitoring components", () => {
+  it("detects an absent worker even with an empty queue, and missing model credentials", () => {
+    const base = {
+      queue: {
+        pending: 0,
+        leased: 0,
+        retryWait: 0,
+        expiredLeases: 0,
+        oldestActiveAt: null,
+      },
+      generation: { failed: 0, retryWait: 0, completed24h: 0 },
+      notifications: { pending: 0, stalePending: 0, delivered24h: 0 },
+      reports: { aggregating: 0, staleAggregating: 0, drafts: 0, locked24h: 0 },
+    };
+    expect(
+      projectSystemComponents({ ...base, worker: null }, now).find(
+        (c) => c.key === "queue",
+      ),
+    ).toMatchObject({ severity: "critical", summary: "后台任务进程离线" });
+    expect(
+      projectSystemComponents(
+        {
+          ...base,
+          worker: {
+            heartbeat_at: now,
+            status: "idle",
+            capabilities: { modelConfigured: false },
+          },
+        },
+        now,
+      ).find((c) => c.key === "generation"),
+    ).toMatchObject({ severity: "critical", summary: "模型未配置" });
+  });
   it("raises actionable severities for blocked jobs and message failures", () => {
     const components = projectSystemComponents(
       {
@@ -114,14 +47,7 @@ describe("system monitoring components", () => {
           oldestActiveAt: "2026-08-24T08:00:00.000Z",
         },
         generation: { failed: 2, retryWait: 1, completed24h: 6 },
-        feishu: {
-          failed: 1,
-          retryWait: 0,
-          deferred: 0,
-          stuckSending: 0,
-          stalePending: 0,
-          sent24h: 12,
-        },
+        notifications: { pending: 1, stalePending: 1, delivered24h: 12 },
         reports: {
           aggregating: 1,
           staleAggregating: 0,
@@ -137,9 +63,9 @@ describe("system monitoring components", () => {
     expect(components.find((item) => item.key === "generation")?.severity).toBe(
       "critical",
     );
-    expect(components.find((item) => item.key === "feishu")?.severity).toBe(
-      "critical",
-    );
+    expect(
+      components.find((item) => item.key === "notifications")?.severity,
+    ).toBe("warning");
     expect(components.find((item) => item.key === "reports")?.severity).toBe(
       "warning",
     );

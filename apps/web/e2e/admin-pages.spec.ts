@@ -22,11 +22,6 @@ function fixture() {
       "failed",
       "pending",
     ][i % 6],
-    feishuConnectionState:
-      i % 3 === 0 ? "connected" : i % 3 === 1 ? "failed" : "not_started",
-    feishuConnectedAt: date,
-    feishuLastAttemptAt: date,
-    feishuLastErrorCode: i % 3 === 1 ? "FEISHU_RATE_LIMIT" : null,
     verifiedAt: date,
     lastUploadAt: i % 2 ? null : date,
     deviceName: `开发设备 ${i}`,
@@ -163,7 +158,11 @@ function fixture() {
 async function setup(
   page: Page,
   path = "/admin/team-settings",
-  options: { fail?: string[]; empty?: boolean } = {},
+  options: {
+    fail?: string[];
+    empty?: boolean;
+    notificationStatus?: string;
+  } = {},
 ) {
   const data = fixture();
   const calls: Array<{
@@ -255,6 +254,17 @@ async function setup(
     }
     if (url.pathname.endsWith("/binding-codes"))
       return route.fulfill({ json: { code: "PR-RECOVERY-1234" } });
+    if (url.pathname.endsWith("/notifications/test"))
+      return route.fulfill({
+        json: { id: "notification-test", status: "queued" },
+      });
+    if (url.pathname.endsWith("/notifications/notification-test"))
+      return route.fulfill({
+        json: {
+          id: "notification-test",
+          status: options.notificationStatus ?? "queued",
+        },
+      });
     if (url.pathname.endsWith("/project-scopes/reapproval"))
       return route.fulfill({ json: { ok: true } });
     if (url.pathname.endsWith("/project-scopes"))
@@ -394,6 +404,14 @@ test("team settings appears after reviews and supports direct entry", async ({
     "工作卡审核",
     "团队管理",
   ]);
+  const monitoringGroup = navigation
+    .locator(".nav-group")
+    .filter({ hasText: "监控与排障" });
+  await expect(monitoringGroup.getByRole("link")).toHaveText([
+    "用户日志",
+    "系统日志",
+    "异常巡检",
+  ]);
   await expect(
     navigation.getByRole("link", { name: "团队管理", exact: true }),
   ).toHaveAttribute("aria-current", "page");
@@ -500,6 +518,53 @@ test("create, edit and delete retain their original API contracts", async ({
   expect(calls.find((c) => c.method === "DELETE")?.path).toBe(
     "/v1/admin/partners/partner-0",
   );
+});
+
+test("queues an App test notification for the selected member without claiming delivery", async ({
+  page,
+}) => {
+  const { calls } = await setup(page);
+  await page
+    .getByRole("button", { name: "测试 App 通知", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toHaveText(
+    "已排队，等待 App 的系统通知回执。App 运行时约每 10 秒同步。",
+  );
+  expect(
+    calls.find((c) => c.path.endsWith("/notifications/test")),
+  ).toMatchObject({
+    method: "POST",
+    path: "/v1/admin/partners/partner-0/notifications/test",
+  });
+  await page
+    .getByRole("button", { name: "查看 林安 的详情", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toHaveCount(0);
+});
+
+test("test notification status follows permission recovery through the macOS receipt", async ({
+  page,
+}) => {
+  const options = { notificationStatus: "permission_denied" };
+  await setup(page, "/admin/team-settings", options);
+  await page
+    .getByRole("button", { name: "测试 App 通知", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText("macOS 通知权限未开启");
+  options.notificationStatus = "permission_required";
+  await page.clock.runFor(2100);
+  await expect(page.getByRole("status")).toContainText("等待首次通知授权");
+  options.notificationStatus = "app_offline";
+  await page.clock.runFor(2100);
+  await expect(page.getByRole("status")).toContainText("请打开已绑定的 App");
+  options.notificationStatus = "queued";
+  await page.clock.runFor(2100);
+  await expect(page.getByRole("status")).toContainText(
+    "等待 App 的系统通知回执",
+  );
+  options.notificationStatus = "delivered";
+  await page.clock.runFor(2100);
+  await expect(page.getByRole("status")).toContainText("macOS 已接受通知");
 });
 
 test("binding codes support viewing, copying, recovery and new connection", async ({
