@@ -235,7 +235,14 @@ suite("collector end-to-end persistence and privacy boundary", () => {
     expect(response.statusCode, response.body).toBe(200);
     const state = response.json<{
       sessions: { id: string; messages: Record<string, string> }[];
-      uploads: { id: string; periodKey: string; sessionCount: number; projects: unknown }[];
+      uploads: {
+        id: string;
+        periodKey: string;
+        sessionCount: number;
+        completedAt: string | null;
+        createdAt: string;
+        projects: unknown;
+      }[];
     }>();
     const messages = (id: string) =>
       state.sessions.find((s) => s.id === id)?.messages;
@@ -248,6 +255,10 @@ suite("collector end-to-end persistence and privacy boundary", () => {
     });
     const upload = state.uploads.find((u) => u.id === completedID);
     expect(upload).toMatchObject({ periodKey, sessionCount: 2 });
+    // The macOS App decodes ISO 8601 only; Postgres text like "2026-11-04 15:53:19+00" breaks it.
+    const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    expect(upload?.completedAt).toMatch(iso);
+    expect(upload?.createdAt).toMatch(iso);
     expect(upload?.projects).toEqual([
       { scopeKey, sessionCount: 2, messageCount: 3 },
     ]);
@@ -317,9 +328,9 @@ suite("collector end-to-end persistence and privacy boundary", () => {
       "联系 a@b.com 或 [已隐藏]，服务器 [已隐藏]",
     );
     // Anything else in the body is still rejected.
-    expect(
-      (await send(run.id, { ...run.part, other: true })).statusCode,
-    ).toBe(400);
+    expect((await send(run.id, { ...run.part, other: true })).statusCode).toBe(
+      400,
+    );
   });
 
   it("retains unsent sessions older than the period but analyses only in-period ones", async () => {

@@ -137,8 +137,8 @@ export async function collectorRoutes(app: FastifyInstance) {
         id: string;
         periodKey: string;
         sessionCount: number;
-        completedAt: Date | null;
-        createdAt: Date;
+        completedAt: string | null;
+        createdAt: string;
         projects: {
           scopeKey: string;
           sessionCount: number;
@@ -147,7 +147,9 @@ export async function collectorRoutes(app: FastifyInstance) {
       }[]
     >`
       select u.id, u.period_key as "periodKey", u.session_count as "sessionCount",
-        u.completed_at as "completedAt", u.created_at as "createdAt",
+        -- The db client returns raw timestamps as Postgres text; the App decodes ISO 8601 only.
+        to_char(u.completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "completedAt",
+        to_char(u.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "createdAt",
         (select coalesce(jsonb_agg(jsonb_build_object('scopeKey', g.scope_key, 'sessionCount', g.sessions,
             'messageCount', g.messages)), '[]'::jsonb) from (
           select s.item->>'scopeKey' as scope_key, count(*)::int as sessions,
