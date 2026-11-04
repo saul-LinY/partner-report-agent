@@ -1,10 +1,11 @@
 import SwiftUI
 import WeeklyReportCore
 
-/// What the app collects, what it removes first, who can see it, and what the member controls.
+/// What the app collects, what it hides first, who can see it, and what the member controls.
 /// The numbers at the top are live; the rest states how the app actually behaves.
 struct PrivacyView: View {
     @EnvironmentObject private var store: AppStore
+    @State private var newTerm = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,19 +19,23 @@ struct PrivacyView: View {
                         "上传的是你的提问和 AI 的正式回复这两类文字，不包括 AI 的执行过程、思考和中间说明。",
                         "不是每次打开就上传：按「系统设置」里的上传安排自动上传，或由你点「立即上传」。",
                     ])
-                    section("上传前，在你的电脑上会先处理什么", symbol: "key.viewfinder", lines: [
-                        "对话里的密钥、令牌和口令会先替换成「[已隐藏]」再上传，例如 sk- 开头的密钥、Bearer 令牌、password=… 这样的写法，以及「口令是……」这样写在句子里的口令。",
-                        "其他内容按原样上传，包括网址、IP 地址、本地文件路径和邮箱。",
-                        "这个处理只能识别常见写法，不能保证发现所有凭证，请尽量不要把密钥直接贴进对话。",
+                    section("上传前，在你的电脑上会先隐藏什么", symbol: "eye.slash", lines: [
+                        "密钥、令牌和口令：sk- 开头的密钥、Bearer 令牌、password=… 这样的写法，以及「口令是……」这样写在句子里的口令。",
+                        "能识别出你或你的设备的信息：邮箱、手机号、IP 地址、网址和本机文件路径。",
+                        "你自己标记的内容（见下方）。",
+                        "这些内容会先替换成「[已隐藏]」再上传；在「项目会话」里它们会标红，你本机看到的原文不会被修改。",
+                        "自动识别只覆盖常见写法，不能保证发现所有隐私信息，请尽量不要把密钥直接贴进对话。",
                     ])
+                    hiddenTermsSection
                     section("上传到哪里，谁能看到", symbol: "building.2", lines: [
-                        "上传到你绑定的公司周报系统，会话原文会长期保存。",
-                        "团队管理员可以在网页后台查看已上传的会话原文，也能看到据此整理出的工作卡片、项目简介和周报。",
+                        "上传到你绑定的公司周报系统，会话原文会长期保存。公司系统入库前会用同一套规则再检查一遍。",
+                        "团队管理员可以在网页后台查看已上传的会话原文（已隐藏的部分看不到），也能看到据此整理出的工作卡片、项目简介和周报。",
                         "整理工作卡片时，会话内容会交给公司配置的 AI 模型。工作卡片需要你审核通过后才会进入团队周报。",
                     ])
                     controls
                     section("已经上传的内容", symbol: "clock.arrow.circlepath", lines: [
                         "之后才生效的设置（不上传某个会话、禁止某个项目、暂停自动上传）不会撤回已经上传的内容。",
+                        "新标记的隐藏内容会让相关会话重新上传隐藏后的版本；公司系统里更早的版本不会因此被删除。",
                         "已上传的内容仍保存在公司系统中，需要删除请联系团队管理员。",
                     ])
                 }.padding(.horizontal, 28).padding(.vertical, 26).frame(maxWidth: 760, alignment: .leading)
@@ -47,6 +52,8 @@ struct PrivacyView: View {
                 Rectangle().fill(Palette.line).frame(width: 1, height: 40)
                 fact("\(store.excludedSessionCount)", "个会话不上传")
                 Rectangle().fill(Palette.line).frame(width: 1, height: 40)
+                fact("\(store.hiddenTerms.count)", "条自己标记的隐藏内容")
+                Rectangle().fill(Palette.line).frame(width: 1, height: 40)
                 fact(store.preferences.autoUpload ? "开启" : "暂停", "自动上传")
             }
             .padding(.vertical, 14).background(Palette.quiet, in: RoundedRectangle(cornerRadius: 8))
@@ -62,11 +69,51 @@ struct PrivacyView: View {
         }.frame(maxWidth: .infinity)
     }
 
+    /// Terms marked by hand: hidden in every session and every later upload until removed.
+    private var hiddenTermsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            heading("你标记的隐藏内容", symbol: "highlighter")
+            bullet("在「项目会话」里选中文字，右键选「隐藏所选内容」；也可以在这里直接添加。")
+            bullet("所有会话里相同的文字都会被隐藏。至少 2 个字。")
+            HStack(spacing: 8) {
+                TextField("要隐藏的文字，例如客户名、内部项目代号", text: $newTerm)
+                    .textFieldStyle(.plain).font(.system(size: 13)).padding(.horizontal, 10).frame(height: 32)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.line))
+                    .onSubmit(addTerm).accessibilityIdentifier("hidden-term-field")
+                Button("添加", action: addTerm).buttonStyle(QuietButtonStyle())
+                    .disabled(newTerm.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+                    .accessibilityIdentifier("hidden-term-add")
+            }.padding(.leading, 28)
+            if store.hiddenTerms.isEmpty {
+                Text("还没有标记。").font(.system(size: 12)).foregroundStyle(Palette.secondary).padding(.leading, 28)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(store.hiddenTerms, id: \.self) { term in
+                        HStack(spacing: 10) {
+                            Text(term).font(.system(size: 13)).lineLimit(2).textSelection(.enabled)
+                            Spacer(minLength: 8)
+                            Button("移除") { store.unhideTerm(term) }.buttonStyle(QuietButtonStyle(compact: true))
+                                .help("之后的上传不再隐藏这段文字；已上传的内容不会改变")
+                        }.padding(.vertical, 8)
+                        Rule()
+                    }
+                }.padding(.leading, 28).accessibilityIdentifier("hidden-term-list")
+            }
+        }
+    }
+
+    private func addTerm() {
+        store.hideTerm(newTerm)
+        newTerm = ""
+    }
+
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
             heading("你可以决定", symbol: "hand.raised")
             bullet("哪些项目可以被采集：随时在「待审批项」里允许或禁止。")
             bullet("某个会话不上传：在「项目会话」里选中会话，点「不上传此会话」，也可以随时恢复。")
+            bullet("某段文字不上传：在「项目会话」里选中文字，右键选「隐藏所选内容」；在上方列表里可以移除。")
             bullet("是否自动上传：在「系统设置」的「自动上传」里暂停。")
             HStack(spacing: 10) {
                 Button("管理项目") { store.page = .approvals }.buttonStyle(QuietButtonStyle())

@@ -30,9 +30,9 @@
     "expected": "用户可以设置口令保护自己的故事"
   },
   {
-    "name": "path after keyword stays",
+    "name": "path after keyword is hidden",
     "input": "密码见 [成员凭据](/Users/saul/Documents/ChatGPT/app_novel/.local/accounts.json)",
-    "expected": "密码见 [成员凭据](/Users/saul/Documents/ChatGPT/app_novel/.local/accounts.json)"
+    "expected": "密码见 [成员凭据]([已隐藏])"
   },
   {
     "name": "hex digest",
@@ -45,9 +45,9 @@
     "expected": "k=[已隐藏]."
   },
   {
-    "name": "clause end stops hiding",
+    "name": "clause end stops hiding and the address is hidden separately",
     "input": "密钥是 abcdef123456，地址 10.0.0.8:8080 保持原样",
-    "expected": "密钥是 [已隐藏]，地址 10.0.0.8:8080 保持原样"
+    "expected": "密钥是 [已隐藏]，地址 [已隐藏] 保持原样"
   },
   {
     "name": "json env style",
@@ -73,6 +73,61 @@
     "name": "whitespace and newlines are kept",
     "input": "第一行\n\n  第二行 sk-0123456789abcdef0123456789abcdef01234567\t结尾",
     "expected": "第一行\n\n  第二行 [已隐藏]\t结尾"
+  },
+  {
+    "name": "email",
+    "input": "联系 a.b+c@example.com。再见",
+    "expected": "联系 [已隐藏]。再见"
+  },
+  {
+    "name": "email glued to Chinese text",
+    "input": "邮箱a@b.com结束",
+    "expected": "邮箱[已隐藏]结束"
+  },
+  {
+    "name": "mobile number",
+    "input": "电话13812345678，或 +86 13912345678 都行",
+    "expected": "电话[已隐藏]，或 [已隐藏] 都行"
+  },
+  {
+    "name": "long digit runs are not phone numbers",
+    "input": "订单 113812345678901 与时间戳 1793762072100",
+    "expected": "订单 113812345678901 与时间戳 1793762072100"
+  },
+  {
+    "name": "ipv4 address with port",
+    "input": "服务器 10.0.0.8:8080 和 203.0.113.7.",
+    "expected": "服务器 [已隐藏] 和 [已隐藏]."
+  },
+  {
+    "name": "versions and out-of-range numbers are not addresses",
+    "input": "版本 1.2.3.4.5 与 999.1.1.1",
+    "expected": "版本 1.2.3.4.5 与 999.1.1.1"
+  },
+  {
+    "name": "url followed by a Chinese clause",
+    "input": "见 https://a.example.com/x?y=1&z=2，然后继续",
+    "expected": "见 [已隐藏]，然后继续"
+  },
+  {
+    "name": "url inside a markdown link and a trailing full stop",
+    "input": "[文档](https://a.example.com/x) 访问 http://10.0.0.8:8080/v1.",
+    "expected": "[文档]([已隐藏]) 访问 [已隐藏]."
+  },
+  {
+    "name": "local path with Chinese folder names",
+    "input": "文件 /Users/saul/小说/a.md 里，还有 /var/folders/x/a.png.",
+    "expected": "文件 [已隐藏] 里，还有 [已隐藏]."
+  },
+  {
+    "name": "home-relative and Windows paths",
+    "input": "运行 ~/PROJECT/x.sh 或 C:\\Users\\a\\b.txt 即可",
+    "expected": "运行 [已隐藏] 或 [已隐藏] 即可"
+  },
+  {
+    "name": "relative paths stay",
+    "input": "改了 src/tmp/x.ts 和 apps/home/y.ts",
+    "expected": "改了 src/tmp/x.ts 和 apps/home/y.ts"
   },
   {
     "name": "empty",

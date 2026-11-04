@@ -1,11 +1,13 @@
 import Foundation
 
-/// Removes values that grant access (keys, tokens, passwords) from conversation text before it
-/// leaves the Mac. It touches nothing else: wording, whitespace, paths and addresses stay as written.
+/// Hides what must not leave this Mac: values that grant access (keys, tokens, passwords), details that
+/// identify a person, machine or place (email, phone, IP address, URL, local path) and whatever the
+/// member marked by hand. It touches nothing else: wording and whitespace stay as written.
 ///
-/// The rules mirror `redactCredentials` in `packages/contracts/src/privacy.ts` and are checked
-/// against the shared vectors in `privacy-vectors.json`. Boundaries are spelled out in ASCII
-/// instead of `\b`, because ICU treats CJK characters as word characters and JavaScript does not.
+/// The automatic rules mirror `redactSensitive` in `packages/contracts/src/privacy.ts` and are checked
+/// against the shared vectors in `privacy-vectors.json`. Boundaries and classes are spelled out in
+/// ASCII instead of `\b`, `\w` and `\d`, because ICU treats CJK characters as word characters and
+/// accepts non-ASCII digits, and JavaScript does neither.
 public enum SecretScrubber {
     public static let hidden = "[已隐藏]"
 
@@ -21,7 +23,7 @@ public enum SecretScrubber {
         compile(#"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"#),
         compile(#"(?<![A-Za-z0-9_])(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[^\s,;]{4,}"#, caseInsensitive: true),
         compile(#"(?<![A-Za-z0-9_])[A-Fa-f0-9]{32,}(?![A-Za-z0-9_])"#),
-        compile(#"(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])"#),
+        compile(#"(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])"#),
     ]
 
     // A secret written as a sentence ("口令设成 123456") sits some words after its keyword.
@@ -30,6 +32,16 @@ public enum SecretScrubber {
     // A token touching a slash is a path segment, not a secret.
     private static let contextToken = compile(
         #"(?<![A-Za-z0-9!@#$%^&*_.\-/\\])[A-Za-z0-9!@#$%^&*_.-]{6,}(?![A-Za-z0-9!@#$%^&*_.\-/\\])"#)
+
+    /// Identifying details. A URL goes before the email, IP address and path inside it.
+    private static let identifyingPatterns: [NSRegularExpression] = [
+        compile(#"(?<![A-Za-z0-9_])https?://[A-Za-z0-9\-._~:/?#@!$&'*+,;=%]+(?<![.,;:!?'])"#),
+        compile(#"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"#),
+        compile(#"(?<![A-Za-z0-9_.\-/~])(?:/(?:Users|home|var|private|tmp|Volumes)|~)/[^\s)）\]"'`，。；：！？、<>]+(?<![.,;:!?])"#),
+        compile(#"(?<![A-Za-z0-9_])[A-Za-z]:\\(?:Users|Documents and Settings)\\[^\s)）\]"'`，。；：！？、<>]+(?<![.,;:!?])"#),
+        compile(#"(?<![A-Za-z0-9_.])(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(?::[0-9]{1,5})?(?![A-Za-z0-9_])(?!\.[0-9])"#),
+        compile(#"(?<![0-9])(?:\+?86[ -]?)?1[3-9][0-9]{9}(?![0-9])"#),
+    ]
     private static let hiddenTemplate = NSRegularExpression.escapedTemplate(for: hidden)
 
     private static func replaceAll(_ regex: NSRegularExpression, in text: String) -> String {
@@ -37,8 +49,21 @@ public enum SecretScrubber {
             in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length), withTemplate: hiddenTemplate)
     }
 
-    public static func redact(_ text: String) -> String {
-        var out = text
+    /// Terms the member marked by hand are hidden everywhere they occur, before the automatic rules run.
+    private static func replaceTerms(_ terms: [String], in text: String) -> String {
+        let ranges = termRanges(terms, in: text)
+        guard !ranges.isEmpty else { return text }
+        let source = text as NSString
+        var out = "", cursor = 0
+        for range in ranges {
+            out += source.substring(with: NSRange(location: cursor, length: range.location - cursor)) + hidden
+            cursor = range.location + range.length
+        }
+        return out + source.substring(from: cursor)
+    }
+
+    public static func redact(_ text: String, hiding terms: [String] = []) -> String {
+        var out = replaceTerms(terms, in: text)
         for pattern in credentialPatterns { out = replaceAll(pattern, in: out) }
         let source = out as NSString
         var result = ""
@@ -50,7 +75,9 @@ public enum SecretScrubber {
             result += keyword + replaceAll(contextToken, in: rest)
             last = match.range.location + match.range.length
         }
-        return result + source.substring(from: last)
+        out = result + source.substring(from: last)
+        for pattern in identifyingPatterns { out = replaceAll(pattern, in: out) }
+        return out
     }
 
     /// What `redact` would upload, and the exact pieces of the original it hides (for showing them to the user).
@@ -91,11 +118,33 @@ public enum SecretScrubber {
         regex.matches(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)).map(\.range)
     }
 
+    private static func termRanges(_ terms: [String], in text: String) -> [NSRange] {
+        let source = text as NSString
+        var found: [NSRange] = []
+        for term in Set(terms) where !term.isEmpty {
+            var from = 0
+            while from < source.length {
+                let range = source.range(of: term, options: [.literal], range: NSRange(location: from, length: source.length - from))
+                if range.location == NSNotFound { break }
+                found.append(range); from = range.location + range.length
+            }
+        }
+        // Overlapping terms collapse into one hidden piece.
+        var merged: [NSRange] = []
+        for range in found.sorted(by: { $0.location < $1.location }) {
+            if let last = merged.last, range.location < last.location + last.length {
+                merged[merged.count - 1] = NSRange(location: last.location, length: max(last.length, range.location + range.length - last.location))
+            } else { merged.append(range) }
+        }
+        return merged
+    }
+
     /// Same rules as `redact`, applied in the same order, additionally reporting what was hidden.
     /// Kept separate so the upload path stays a plain string rewrite; tests require identical output.
-    public static func analyze(_ text: String) -> Analysis {
+    public static func analyze(_ text: String, hiding terms: [String] = []) -> Analysis {
         let units = Array(text.utf16)
         var working = Working(units: units, origin: Array(0..<units.count))
+        working.hide(termRanges(terms, in: text))
         for pattern in credentialPatterns { working.hide(matchRanges(pattern, in: working.string)) }
         let current = working.string
         let source = current as NSString
@@ -106,6 +155,7 @@ public enum SecretScrubber {
                 .map { NSRange(location: rest.location + $0.location, length: $0.length) }
         }
         working.hide(tokens)
+        for pattern in identifyingPatterns { working.hide(matchRanges(pattern, in: working.string)) }
         var merged: [Range<Int>] = []
         for span in working.spans.sorted(by: { $0.lowerBound < $1.lowerBound }) {
             if let last = merged.last, span.lowerBound <= last.upperBound { merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, span.upperBound) }
@@ -115,17 +165,17 @@ public enum SecretScrubber {
         return Analysis(text: working.string, hidden: merged.map { original.substring(with: NSRange(location: $0.lowerBound, length: $0.count)) })
     }
 
-    public static func redact(_ turn: ChatTurn) -> ChatTurn {
+    public static func redact(_ turn: ChatTurn, hiding terms: [String] = []) -> ChatTurn {
         var copy = turn
-        copy.prompt = redact(turn.prompt)
-        copy.answer = turn.answer.map(redact)
+        copy.prompt = redact(turn.prompt, hiding: terms)
+        copy.answer = turn.answer.map { redact($0, hiding: terms) }
         return copy
     }
 
-    public static func redact(_ session: CollectorSession) -> CollectorSession {
+    public static func redact(_ session: CollectorSession, hiding terms: [String] = []) -> CollectorSession {
         var copy = session
-        copy.title = redact(session.title)
-        copy.turns = session.turns.map(redact)
+        copy.title = redact(session.title, hiding: terms)
+        copy.turns = session.turns.map { redact($0, hiding: terms) }
         return copy
     }
 }

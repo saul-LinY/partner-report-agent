@@ -13,12 +13,24 @@ public struct UploadCheckpoint: Codable, Equatable, Sendable {
     public init(messages: [String: String], uploadedAt: Date) {
         self.uploadedAt = uploadedAt; self.messages = messages
     }
-    /// Text is redacted before upload, so a stored digest may describe either the raw or the redacted form.
-    public func contains(_ message: ConversationMessage) -> Bool {
+    /// What was uploaded is the redacted text, so a message is up to date only when its digest equals that of
+    /// the text as it would be uploaded now. A newly marked term or rule therefore makes older uploads pending.
+    public func contains(_ message: ConversationMessage, hiding terms: [String] = []) -> Bool {
         guard let stored = messages[message.id] else { return false }
-        return stored == Self.digest(message.text) || stored == Self.digest(SecretScrubber.redact(message.text))
+        return stored == Self.uploadedDigest(of: message.text, hiding: terms)
     }
-    public func pendingMessages(in turns: [ChatTurn]) -> [ConversationMessage] { Self.messages(in: turns).filter { !contains($0) } }
+    public func pendingMessages(in turns: [ChatTurn], hiding terms: [String] = []) -> [ConversationMessage] {
+        Self.messages(in: turns).filter { !contains($0, hiding: terms) }
+    }
+    /// Redacting is the costly part and the same text is compared on every refresh, so remember the result.
+    nonisolated(unsafe) private static let digestCache: NSCache<NSString, NSString> = { let cache = NSCache<NSString, NSString>(); cache.countLimit = 20_000; return cache }()
+    private static func uploadedDigest(of text: String, hiding terms: [String]) -> String {
+        let key = (digest(terms.joined(separator: "\u{1}")) + digest(text)) as NSString
+        if let cached = digestCache.object(forKey: key) { return cached as String }
+        let value = digest(SecretScrubber.redact(text, hiding: terms))
+        digestCache.setObject(value as NSString, forKey: key)
+        return value
+    }
     public static func messages(in turns: [ChatTurn]) -> [ConversationMessage] {
         turns.flatMap { turn in
             var result = [ConversationMessage(id: turn.id + ":prompt", text: turn.prompt, isAnswer: false, time: turn.questionTime, model: nil)]
@@ -41,13 +53,13 @@ public struct ConversationTimeline: Equatable, Sendable {
     public let messages: [ConversationMessage]
     public let uploadBoundaryID: String?
 
-    public init(turns: [ChatTurn], checkpoint: UploadCheckpoint?) {
+    public init(turns: [ChatTurn], checkpoint: UploadCheckpoint?, hiding terms: [String] = []) {
         messages = UploadCheckpoint.messages(in: turns)
         var firstPending: String?
         var hasUploadedMessage = false
         if let checkpoint {
             for message in messages {
-                if checkpoint.contains(message) { hasUploadedMessage = true }
+                if checkpoint.contains(message, hiding: terms) { hasUploadedMessage = true }
                 else if firstPending == nil { firstPending = message.id }
             }
         }

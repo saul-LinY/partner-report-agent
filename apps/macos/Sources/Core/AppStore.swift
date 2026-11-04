@@ -26,6 +26,7 @@ private struct SavedState: Codable {
     var lastAutomaticUploadAt: Date?
     var pendingNotificationReceipts: Set<String>?
     var uploadExcludedSessionIDs: Set<String>?
+    var hiddenTerms: [String]?
 }
 private struct DiscoveryReport: Codable {
     var version = 1
@@ -86,6 +87,8 @@ public final class AppStore: ObservableObject {
     @Published public var uploadFilter: SessionUploadFilter = .all
     /// Sessions the member chose not to upload; they are never packaged, even if already queued.
     @Published public private(set) var uploadExcludedSessionIDs: Set<String> = []
+    /// Text the member marked to hide; replaced by "[已隐藏]" in every upload, in any session. Kept across re-binding.
+    @Published public private(set) var hiddenTerms: [String] = []
     @Published public var settingsTab: SettingsTab = .account
     @Published public var selectedUploadRecordID: String?
     @Published public private(set) var uploadCheckpoints: [String: UploadCheckpoint] = [:]
@@ -213,6 +216,7 @@ public final class AppStore: ObservableObject {
                 }
                 localRecords = saved.localRecords
                 uploadExcludedSessionIDs = saved.uploadExcludedSessionIDs ?? []
+                hiddenTerms = saved.hiddenTerms ?? []
                 uploadRecords = localRecords + (live ? [] : DemoRepository.uploadRecords)
                 if live, let sources = saved.discoveredSources {
                     let active = sources.filter { !SessionSourcePolicy.isArchived($0.source) && (scanWindow?.contains($0.modifiedAt) ?? true) }
@@ -255,7 +259,7 @@ public final class AppStore: ObservableObject {
         preferences.launchAtLogin = true
         preferences.keepInMenuBar = true
         if !live {
-            for index in sessions.indices { sessions[index].uploaded = uploadCheckpoints[sessions[index].id]?.pendingMessages(in: sessions[index].turns).isEmpty == true }
+            for index in sessions.indices { sessions[index].uploaded = uploadCheckpoints[sessions[index].id]?.pendingMessages(in: sessions[index].turns, hiding: hiddenTerms).isEmpty == true }
         }
         selectedSessionID = visibleSessions.first?.id
         startupStage = !live || (initialScanCompleted && !collectionNeedsCompletion && scanWindow != nil && hasDiscoverySnapshot) ? .ready : .welcome
@@ -872,7 +876,7 @@ public final class AppStore: ObservableObject {
             let previous = old[key]
             let keep = loadedFingerprints[key] == fingerprint
             let turns = keep ? previous?.turns ?? [] : []
-            let uploaded = keep && uploadCheckpoints[key]?.pendingMessages(in: turns).isEmpty == true
+            let uploaded = keep && uploadCheckpoints[key]?.pendingMessages(in: turns, hiding: hiddenTerms).isEmpty == true
             return AgentSession(id: key, projectID: projectID, agent: source.agent, title: nativeTitles[key] ?? (keep ? previous?.title ?? fallbackTitle(source) : fallbackTitle(source)), updatedLabel: dateLabel(source.modifiedAt), uploaded: uploaded, turns: turns)
         }.sorted { (sourceGroups[$0.id]?.first?.modifiedAt ?? .distantPast) > (sourceGroups[$1.id]?.first?.modifiedAt ?? .distantPast) }
         if sessions != rebuilt { sessions = rebuilt }
@@ -919,7 +923,7 @@ public final class AppStore: ObservableObject {
                   sourceGroups[id]?.map(\.fingerprint).sorted().joined(separator: "|") == fingerprint,
                   let index = sessions.firstIndex(where: { $0.id == id }) else { return }
             sessions[index].turns = result.turns
-            sessions[index].uploaded = uploadCheckpoints[id]?.pendingMessages(in: result.turns).isEmpty == true
+            sessions[index].uploaded = uploadCheckpoints[id]?.pendingMessages(in: result.turns, hiding: hiddenTerms).isEmpty == true
             if result.warnings.isEmpty { sessionReadErrors.removeValue(forKey: id) }
             else { sessionReadErrors[id] = result.warnings.joined(separator: "\n") }
             if let title = nativeTitles[id] { sessions[index].title = title }
@@ -1017,7 +1021,7 @@ public final class AppStore: ObservableObject {
         } catch { storageError = "待传数据保存失败：\(error.localizedDescription)" }
     }
     public func pendingMessageCount(in session: AgentSession) -> Int {
-        uploadCheckpoints[session.id]?.pendingMessages(in: session.turns).count ?? UploadCheckpoint.messages(in: session.turns).count
+        uploadCheckpoints[session.id]?.pendingMessages(in: session.turns, hiding: hiddenTerms).count ?? UploadCheckpoint.messages(in: session.turns).count
     }
     private func summaries(for values: [AgentSession]) -> [UploadProjectSummary] {
         Dictionary(grouping: values, by: \.projectID).map { id, sessions in
@@ -1049,7 +1053,9 @@ public final class AppStore: ObservableObject {
             let saved = SavedState(preferences: preferences, registeredProjects: projects.filter { !$0.isDemo }, uploadedDemoIDs: Set(sessions.filter(\.uploaded).map(\.id)), localRecords: localRecords, liveProjects: isLive ? projects : nil, preparedFingerprints: preparedFingerprints, notifiedApprovalKeys: notifiedApprovalKeys, uploadCheckpoints: uploadCheckpoints, binding: binding, initialScanCompleted: initialScanCompleted, collectionNeedsCompletion: collectionNeedsCompletion, scanWindow: scanWindow, discoveredSources: isLive && hasDiscoverySnapshot ? sourceGroups.values.flatMap { $0 } : nil, importedSessions: isLive ? sessions.filter { ($0.hasModelReply || collectorService != nil) && loaded[$0.id] != nil && sessionReadErrors[$0.id] == nil } : nil, loadedFingerprints: isLive ? loaded : nil, excludedSessionFingerprints: isLive ? excludedSessionFingerprints.filter { loaded[$0.key] == $0.value } : nil, nativeTitles: isLive ? nativeTitles.filter { loaded[$0.key] != nil } : nil, collectorPolicy: collectorPolicy, permissionsConfirmed: permissionsConfirmed, collectorLogs: collectorLogs, lastAutomaticUploadAt: lastAutomaticUploadAt, pendingNotificationReceipts: pendingNotificationReceipts, uploadExcludedSessionIDs: uploadExcludedSessionIDs)
             let folder = stateURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try JSONEncoder().encode(saved).write(to: stateURL, options: .atomic)
+            var stored = saved
+            stored.hiddenTerms = hiddenTerms
+            try JSONEncoder().encode(stored).write(to: stateURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: stateURL.path)
         } catch {
             storageError = "本地设置保存失败：\(error.localizedDescription)"
@@ -1307,6 +1313,27 @@ extension AppStore {
             try CollectorJSON.decoder().decode([CollectorSession].self, from: bytes).contains { uploadExcludedSessionIDs.contains($0.id) }
         }
     }
+    /// Hide a piece of text the member selected. It applies to every upload from now on, including content that was
+    /// uploaded before: those sessions become pending again and the redacted version replaces them on the next upload.
+    public func hideTerm(_ raw: String) {
+        let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard term.count >= 2, term.count <= 500, !term.contains(SecretScrubber.hidden), !hiddenTerms.contains(term) else { return }
+        hiddenTerms.append(term)
+        hiddenTermsChanged()
+    }
+    public func unhideTerm(_ term: String) {
+        guard hiddenTerms.contains(term) else { return }
+        hiddenTerms.removeAll { $0 == term }
+        hiddenTermsChanged()
+    }
+    private func hiddenTermsChanged() {
+        // A queued package still carries the old wording.
+        try? discardCollectorOutbox(reason: "隐藏内容已变更，旧批次已作废，后续将重新打包。")
+        for index in sessions.indices {
+            sessions[index].uploaded = uploadCheckpoints[sessions[index].id]?.pendingMessages(in: sessions[index].turns, hiding: hiddenTerms).isEmpty == true
+        }
+        persist()
+    }
     private func discardCollectorOutbox(reason: String = "权限或绑定已变更，旧批次已作废，后续将重新打包。") throws {
         guard let url = collectorOutboxURL, FileManager.default.fileExists(atPath: url.path) else { return }
         try FileManager.default.removeItem(at: url)
@@ -1450,7 +1477,7 @@ extension AppStore {
                           let project = approvedProjects.first(where: { $0.id == session.projectID }), let key = project.scopeKey,
                           let modified = sourceGroups[session.id]?.map(\.modifiedAt).max(), modified <= end,
                           scanWindow?.contains(modified) ?? true,
-                          uploadCheckpoints[session.id]?.pendingMessages(in: session.turns).isEmpty != true,
+                          uploadCheckpoints[session.id]?.pendingMessages(in: session.turns, hiding: hiddenTerms).isEmpty != true,
                           loadedFingerprints[session.id] != nil, sessionReadErrors[session.id] == nil else { return nil }
                     return CollectorSession(id: session.id, scopeKey: key, agent: session.agent, title: session.title, modifiedAt: modified, turns: session.turns)
                 }.sorted { $0.id < $1.id }
@@ -1459,7 +1486,7 @@ extension AppStore {
                     await flushCollectorLogs()
                     return
                 }
-                package = try CollectorPackage(period: period, start: payload.map(\.modifiedAt).min() ?? end, end: end, version: collectorPolicy?.version ?? policy.version, sessions: payload)
+                package = try CollectorPackage(period: period, start: payload.map(\.modifiedAt).min() ?? end, end: end, version: collectorPolicy?.version ?? policy.version, sessions: payload, hiding: hiddenTerms)
                 try FileManager.default.createDirectory(at: outbox.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 try CollectorJSON.encoder().encode(package).write(to: outbox, options: .atomic)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: outbox.path)
@@ -1476,7 +1503,7 @@ extension AppStore {
                 for item in try CollectorJSON.decoder().decode([CollectorSession].self, from: bytes) {
                     uploadCheckpoints[item.id] = UploadCheckpoint(turns: item.turns)
                     if let index = sessions.firstIndex(where: { $0.id == item.id }) {
-                        sessions[index].uploaded = uploadCheckpoints[item.id]?.pendingMessages(in: sessions[index].turns).isEmpty == true
+                        sessions[index].uploaded = uploadCheckpoints[item.id]?.pendingMessages(in: sessions[index].turns, hiding: hiddenTerms).isEmpty == true
                     }
                 }
             }

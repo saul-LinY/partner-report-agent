@@ -56,7 +56,7 @@ struct SessionsView: View {
                             if session.turns.isEmpty {
                                 EmptyMessage(symbol: "bubble.left.and.text.bubble.right", title: "此会话暂无可显示的问答", subtitle: "")
                             } else {
-                                ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id]).equatable()
+                                ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id], terms: store.hiddenTerms, onHide: { store.hideTerm($0) }).equatable()
                             }
                         }
                     } else {
@@ -156,9 +156,12 @@ struct SessionsView: View {
             Text(uploadHint(session, excluded: excluded)).font(.system(size: 12)).foregroundStyle(Palette.secondary).lineLimit(1)
             let sensitive = sensitiveCount(session)
             if sensitive > 0 {
-                Label("已识别 \(sensitive) 处密钥等隐私信息，已标红，上传时自动隐藏", systemImage: "eye.slash").font(.system(size: 12)).foregroundStyle(Palette.red).lineLimit(1)
-                    .help("只在上传内容中替换为「[已隐藏]」；你本机看到的原文不会被修改").accessibilityIdentifier("sensitive-notice")
+                Label("已标红 \(sensitive) 处隐私信息，上传时自动隐藏", systemImage: "eye.slash").font(.system(size: 12)).foregroundStyle(Palette.red).lineLimit(1)
+                    .help("密钥、邮箱、手机号、IP 地址、网址、本机路径和你标记的内容，上传时会替换为「[已隐藏]」；你本机看到的原文不会被修改")
+                    .accessibilityIdentifier("sensitive-notice")
             }
+            Text("选中文字，右键可隐藏").font(.system(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1).layoutPriority(-1)
+                .help("选中任意文字后右键，选「隐藏所选内容」：之后所有上传里相同的文字都会被隐藏")
             Spacer(minLength: 8)
             Button(excluded ? "恢复上传" : "不上传此会话") { store.setUploadExcluded(!excluded, for: session.id) }
                 .buttonStyle(QuietButtonStyle(compact: true)).accessibilityIdentifier("toggle-upload-excluded")
@@ -170,15 +173,20 @@ struct SessionsView: View {
         return session.uploaded ? "有新内容时会继续上传" : "下次上传时会包含这个会话"
     }
     private func sensitiveCount(_ session: AgentSession) -> Int {
-        UploadCheckpoint.messages(in: session.turns).reduce(0) { $0 + RedactionMarks.hidden(in: $1.text).count }
+        UploadCheckpoint.messages(in: session.turns).reduce(0) { $0 + RedactionMarks.hidden(in: $1.text, terms: store.hiddenTerms).count }
     }
 }
 
 struct ChatView: View, Equatable {
     let session: AgentSession
     var checkpoint: UploadCheckpoint?
+    var terms: [String] = []
+    var onHide: (String) -> Void = { _ in }
+    nonisolated static func == (lhs: ChatView, rhs: ChatView) -> Bool {
+        lhs.session == rhs.session && lhs.checkpoint == rhs.checkpoint && lhs.terms == rhs.terms
+    }
     var body: some View {
-        let timeline = ConversationTimeline(turns: session.turns, checkpoint: checkpoint)
+        let timeline = ConversationTimeline(turns: session.turns, checkpoint: checkpoint, hiding: terms)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 26) {
@@ -205,7 +213,7 @@ struct ChatView: View, Equatable {
         HStack {
             Spacer(minLength: 28)
             VStack(alignment: .trailing, spacing: 7) {
-                Text(RedactionMarks.highlight(AttributedString(message.text), hiding: RedactionMarks.hidden(in: message.text))).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
+                SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, terms: terms)), onHide: onHide)
                     .padding(.horizontal, 14).padding(.vertical, 12).background(Palette.bubble.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                 if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
             }
@@ -219,7 +227,7 @@ struct ChatView: View, Equatable {
                     Text(session.agent.name).font(.system(size: 12, weight: .semibold))
                     if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
                 }
-                MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text)).equatable()
+                MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text, terms: terms), onHide: onHide).equatable()
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
                 } label: { Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(Palette.secondary) }.buttonStyle(.plain).help("复制回复").accessibilityLabel("复制回复")
@@ -228,49 +236,21 @@ struct ChatView: View, Equatable {
     }
 }
 
-/// Pieces of a message the upload will hide, found once per text.
-enum RedactionMarks {
-    private final class Box { let value: [String]; init(_ value: [String]) { self.value = value } }
-    // NSCache is thread-safe; the compiler just cannot see that.
-    nonisolated(unsafe) private static let cache: NSCache<NSString, Box> = { let cache = NSCache<NSString, Box>(); cache.countLimit = 4000; return cache }()
-
-    static func hidden(in text: String) -> [String] {
-        if let box = cache.object(forKey: text as NSString) { return box.value }
-        let value = SecretScrubber.analyze(text).hidden
-        cache.setObject(Box(value), forKey: text as NSString)
-        return value
-    }
-
-    /// Marks every occurrence of each hidden piece. Markdown is rendered first, so pieces are found by text.
-    static func highlight(_ attributed: AttributedString, hiding pieces: [String]) -> AttributedString {
-        guard !pieces.isEmpty else { return attributed }
-        var result = attributed
-        for piece in Set(pieces) where !piece.isEmpty {
-            var start = result.startIndex
-            while let range = result[start...].range(of: piece) {
-                result[range].foregroundColor = Palette.red
-                result[range].backgroundColor = Palette.red.opacity(0.14)
-                start = range.upperBound
-            }
-        }
-        return result
-    }
-}
-
 struct MarkdownBody: View, Equatable {
     let text: String
     var hidden: [String] = []
+    var onHide: (String) -> Void = { _ in }
+    nonisolated static func == (lhs: MarkdownBody, rhs: MarkdownBody) -> Bool { lhs.text == rhs.text && lhs.hidden == rhs.hidden }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(text.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, block in
                 if block.hasPrefix("```") {
-                    ScrollView(.horizontal) {
-                        Text(RedactionMarks.highlight(AttributedString(block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n")), hiding: hidden))
-                            .font(.system(size: 12, design: .monospaced)).textSelection(.enabled).padding(12)
-                    }.background(Palette.quiet, in: RoundedRectangle(cornerRadius: 6))
+                    SelectableText(text: MessageText.code(block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n"), hidden: hidden), onHide: onHide)
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Palette.quiet, in: RoundedRectangle(cornerRadius: 6))
                 } else {
-                    Text(RedactionMarks.highlight((try? AttributedString(markdown: block, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block), hiding: hidden))
-                        .font(.system(size: 13)).lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    SelectableText(text: MessageText.markdown(block, hidden: hidden), onHide: onHide)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

@@ -1,16 +1,19 @@
 // Text hygiene shared by everything that turns conversation text into something
-// a person reads. Two layers with different jobs:
+// a person reads or a system stores. Two layers with different jobs:
 //
-//  - redactCredentials: removes things that grant access (keys, tokens,
-//    passwords). Safe to apply to the stored original, and it is what the App
-//    and the server apply before a conversation is kept.
-//  - scrubText: additionally removes identifying details and host-app noise and
-//    flattens whitespace. Only for text a model reads or a person previews.
+//  - redactSensitive: hides things that grant access (keys, tokens, passwords) and
+//    details that identify a person, machine or place (email, phone, IP address, URL,
+//    local path). Changes nothing else, whitespace included. The App applies it before a
+//    conversation leaves the Mac and the server applies it before one is stored.
+//  - scrubText: additionally removes host-app noise and flattens whitespace. Only for
+//    text a model reads or a person previews.
 
-/** Things that grant access. Mirrored by SecretScrubber.swift in the macOS app. */
+// No \b, \w or \d in any pattern: JS and Swift disagree on whether CJK characters are word
+// characters and on which digits \d accepts, so boundaries and classes are spelled out in
+// ASCII and both languages behave the same. Mirrored by SecretScrubber.swift in the macOS app.
+
+/** Things that grant access. */
 const CREDENTIAL_PATTERNS: RegExp[] = [
-  // No \b anywhere: JS and Swift disagree on whether CJK characters are word characters,
-  // so boundaries are spelled out in ASCII and both languages behave the same.
   /(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]{16,}/g,
   /(?<![A-Za-z0-9_])(?:ghp|gho|github_pat|xox[abp]|AKIA)[A-Za-z0-9_-]{12,}/g,
   /(?<![A-Za-z0-9_])Bearer\s+[A-Za-z0-9._~-]{16,}/gi,
@@ -19,7 +22,7 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /(?<![A-Za-z0-9_])[A-Fa-f0-9]{32,}(?![A-Za-z0-9_])/g,
   // A long token mixing upper case, lower case and digits is a key; file names, paths and
   // identifiers rarely have all three.
-  /(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/g,
+  /(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/g,
 ];
 
 // A secret named in prose ("口令设成 123456") often sits some words after its
@@ -31,13 +34,16 @@ const CREDENTIAL_CONTEXT =
 const CONTEXT_TOKEN =
   /(?<![A-Za-z0-9!@#$%^&*_.\-\/\\])[A-Za-z0-9!@#$%^&*_.-]{6,}(?![A-Za-z0-9!@#$%^&*_.\-\/\\])/g;
 
-/** Details that identify a person, machine or place. */
+/** Details that identify a person, machine or place. Order matters: a URL goes before the email, IP and path inside it. */
 const IDENTIFYING_PATTERNS: RegExp[] = [
-  /[\w.+-]+@[\w-]+\.[\w.-]+/g,
-  /(?<!\d)1[3-9]\d{9}(?!\d)/g,
-  /\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g,
-  /https?:\/\/[^\s)）]+/g,
-  /(?:\/Users|\/var|\/private|\/home|\/tmp)\/[^\s)）"'`]+/g,
+  // URL: ASCII URL characters only, so a following Chinese clause survives; a final . , ; : ! ? ' is punctuation.
+  /(?<![A-Za-z0-9_])https?:\/\/[A-Za-z0-9\-._~:\/?#@!$&'*+,;=%]+(?<![.,;:!?'])/g,
+  /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g,
+  // Local path: stops at whitespace, brackets, quotes and Chinese punctuation; a final . , ; : ! ? is punctuation.
+  /(?<![A-Za-z0-9_.\-\/~])(?:\/(?:Users|home|var|private|tmp|Volumes)|~)\/[^\s)）\]"'`，。；：！？、<>]+(?<![.,;:!?])/g,
+  /(?<![A-Za-z0-9_])[A-Za-z]:\\(?:Users|Documents and Settings)\\[^\s)）\]"'`，。；：！？、<>]+(?<![.,;:!?])/g,
+  /(?<![A-Za-z0-9_.])(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(?::[0-9]{1,5})?(?![A-Za-z0-9_])(?!\.[0-9])/g,
+  /(?<![0-9])(?:\+?86[ -]?)?1[3-9][0-9]{9}(?![0-9])/g,
 ];
 
 // Blocks injected by the host app rather than written by the user.
@@ -53,24 +59,24 @@ const INJECTED_BLOCKS: RegExp[] = [
 
 export const HIDDEN = "[已隐藏]";
 
-/** Hides access-granting values and changes nothing else, whitespace included. */
-export function redactCredentials(text: string | null | undefined) {
+/** Hides credentials and identifying details and changes nothing else, whitespace included. */
+export function redactSensitive(text: string | null | undefined) {
   let out = text ?? "";
   for (const pattern of CREDENTIAL_PATTERNS) out = out.replace(pattern, HIDDEN);
-  return out.replace(
+  out = out.replace(
     CREDENTIAL_CONTEXT,
     (_match, keyword: string, rest: string) =>
       keyword + rest.replace(CONTEXT_TOKEN, HIDDEN),
   );
+  for (const pattern of IDENTIFYING_PATTERNS)
+    out = out.replace(pattern, HIDDEN);
+  return out;
 }
 
 export function scrubText(text: string | null | undefined) {
   let out = text ?? "";
   for (const pattern of INJECTED_BLOCKS) out = out.replace(pattern, " ");
-  out = redactCredentials(out);
-  for (const pattern of IDENTIFYING_PATTERNS)
-    out = out.replace(pattern, HIDDEN);
-  return out.replace(/\s+/g, " ").trim();
+  return redactSensitive(out).replace(/\s+/g, " ").trim();
 }
 
 const CREDENTIAL_WORDS =

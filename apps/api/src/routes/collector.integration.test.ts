@@ -257,7 +257,7 @@ suite("collector end-to-end persistence and privacy boundary", () => {
         .statusCode,
     ).toBe(401);
   });
-  it("removes credentials before storing a session and keeps every other word as sent", async () => {
+  it("removes credentials and identifying details before storing a session and keeps every other word as sent", async () => {
     const secret = "sk-0123456789abcdef0123456789abcdef01234567";
     const values = [
       {
@@ -266,7 +266,7 @@ suite("collector end-to-end persistence and privacy boundary", () => {
         turns: [
           {
             id: "t1",
-            prompt: `密钥是 ${secret}，地址 http://10.0.0.8:8080/v1 和邮箱 a@b.com 保持原样\n\n第二段`,
+            prompt: `密钥是 ${secret}，地址 http://10.0.0.8:8080/v1 和邮箱 a@b.com 电话13812345678 文件 /Users/saul/a.md 都隐藏\n\n第二段`,
             answer: "审核口令:4321 上现在是 WebShell 设的 123456，其余照旧",
             questionTime: "12:00",
           },
@@ -282,8 +282,9 @@ suite("collector end-to-end persistence and privacy boundary", () => {
     )[0]!.sessions;
     const text = JSON.stringify(stored);
     expect(text).not.toMatch(/sk-0123|123456|WebShell/);
-    expect(stored.turns[0].prompt).toContain("http://10.0.0.8:8080/v1");
-    expect(stored.turns[0].prompt).toContain("a@b.com");
+    expect(stored.turns[0].prompt).toBe(
+      "密钥是 [已隐藏]，地址 [已隐藏] 和邮箱 [已隐藏] 电话[已隐藏] 文件 [已隐藏] 都隐藏\n\n第二段",
+    );
     expect(stored.turns[0].prompt).toContain("\n\n第二段");
     expect(stored.turns[0].answer).toContain("其余照旧");
     expect(stored.turns[1]).toEqual(values[0]!.turns[1]);

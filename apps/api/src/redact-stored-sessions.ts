@@ -1,4 +1,4 @@
-import { redactSessionCredentials } from "@partner-report/contracts";
+import { redactSessionText } from "@partner-report/contracts";
 import { HIDDEN } from "@partner-report/contracts/privacy";
 import { closeDatabase, sqlClient as sql } from "@partner-report/db";
 import { collectorSessionsSchema } from "./collector-contracts.js";
@@ -45,7 +45,7 @@ for (const part of parts) {
     unparseable += 1;
     continue;
   }
-  const redacted = redactSessionCredentials(parsed.data);
+  const redacted = redactSessionText(parsed.data);
   let partChanged = false;
   parsed.data.forEach((session, s) => {
     const next = redacted[s]!;

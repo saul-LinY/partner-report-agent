@@ -31,11 +31,35 @@ final class SecretScrubberTests: XCTestCase {
             for piece in analysis.hidden { XCTAssertTrue(vector.input.contains(piece), vector.name) }
         }
         let secret = "sk-0123456789abcdef0123456789abcdef01234567"
-        let sample = "先说中文😀 密钥是 \(secret)，路径 /Users/a/b 保持。审核口令:4321 其余照旧"
+        let sample = "先说中文😀 密钥是 \(secret)，路径 /Users/a/b 邮箱 a@b.com 其余照旧"
         let analysis = SecretScrubber.analyze(sample)
-        XCTAssertTrue(analysis.hidden.contains(secret))
-        XCTAssertFalse(analysis.hidden.contains { $0.contains("/Users/a/b") })
+        XCTAssertEqual(Set(analysis.hidden), [secret, "/Users/a/b", "a@b.com"])
         XCTAssertEqual(analysis.text, SecretScrubber.redact(sample))
+        XCTAssertEqual(analysis.text, "先说中文😀 密钥是 [已隐藏]，路径 [已隐藏] 邮箱 [已隐藏] 其余照旧")
+    }
+
+    func testMarkedTermsAreHiddenEverywhereAndAnalysisAgreesWithRedaction() throws {
+        let terms = ["张三科技", "三科技有限", "客户A"]
+        let samples = ["给张三科技有限公司报价，客户A不同意；客户A再说", "没有可隐藏的内容", "张三科技 sk-0123456789abcdef0123456789abcdef01234567 张三科技"]
+        for sample in samples {
+            let analysis = SecretScrubber.analyze(sample, hiding: terms)
+            XCTAssertEqual(analysis.text, SecretScrubber.redact(sample, hiding: terms), sample)
+            for piece in analysis.hidden { XCTAssertTrue(sample.contains(piece), sample) }
+        }
+        // Overlapping terms become one hidden piece instead of leaving a fragment behind.
+        XCTAssertEqual(SecretScrubber.redact("给张三科技有限公司报价", hiding: terms), "给[已隐藏]公司报价")
+        XCTAssertEqual(SecretScrubber.redact("没有可隐藏的内容", hiding: terms), "没有可隐藏的内容")
+    }
+
+    func testCheckpointTreatsASessionAsPendingWhenNewRulesOrTermsChangeWhatWouldBeUploaded() throws {
+        let turn = ChatTurn(id: "t", prompt: "客户A的报价见 http://10.0.0.8/x", answer: "好的", questionTime: "12:00")
+        // Uploaded earlier under the current rules.
+        let uploaded = UploadCheckpoint(turns: [SecretScrubber.redact(turn)])
+        XCTAssertTrue(uploaded.pendingMessages(in: [turn]).isEmpty)
+        // The member then marks a term: the same session must go out again, redacted.
+        XCTAssertEqual(uploaded.pendingMessages(in: [turn], hiding: ["客户A"]).map(\.id), ["t:prompt"])
+        // Content that was uploaded before the address rule existed (raw) is pending as well.
+        XCTAssertEqual(UploadCheckpoint(turns: [turn]).pendingMessages(in: [turn]).map(\.id), ["t:prompt"])
     }
 
     func testUploadPackageRemovesCredentialsAndKeepsEverythingElseAsWritten() throws {
@@ -59,7 +83,7 @@ final class SecretScrubberTests: XCTestCase {
         let decoded = try CollectorJSON.decoder().decode([CollectorSession].self, from: package.parts[0])[0]
         XCTAssertEqual(decoded.id, "s")
         XCTAssertEqual(decoded.title, "调试 [已隐藏]")
-        XCTAssertTrue(decoded.turns[0].prompt.contains("http://10.0.0.8:8080/v1"))
+        XCTAssertEqual(decoded.turns[0].prompt, "密钥是 [已隐藏]，地址 [已隐藏] 保持原样\n\n第二段")
         XCTAssertTrue(decoded.turns[0].prompt.contains("\n\n第二段"))
         XCTAssertTrue(decoded.turns[0].answer?.contains("其余照旧") == true)
         XCTAssertEqual(decoded.turns[0].questionTime, "12:00")

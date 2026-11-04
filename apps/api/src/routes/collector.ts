@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   collectorPipelineStage,
-  redactSessionCredentials,
+  redactSessionText,
 } from "@partner-report/contracts";
 import {
   sqlClient as sql,
@@ -522,7 +522,7 @@ export async function collectorRoutes(app: FastifyInstance) {
         // The checksum above vouches for what the App sent; what is kept has credentials removed.
         if (run.status !== "completed")
           await tx`insert into collector_upload_parts (upload_id,part_index,checksum,sessions)
-        values (${id},${input.partIndex},${input.checksum},${JSON.stringify(redactSessionCredentials(sessions))}::jsonb) on conflict (upload_id,part_index) do nothing`;
+        values (${id},${input.partIndex},${input.checksum},${JSON.stringify(redactSessionText(sessions))}::jsonb) on conflict (upload_id,part_index) do nothing`;
         await tx`update collector_uploads set updated_at=now() where id=${id}`;
         return { ok: true, partIndex: input.partIndex };
       });

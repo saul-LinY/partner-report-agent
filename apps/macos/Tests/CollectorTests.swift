@@ -338,6 +338,50 @@ final class CollectorTests: XCTestCase {
         let sent = try CollectorJSON.decoder().decode([CollectorSession].self, from: try XCTUnwrap(afterRestore.last?.parts.first))
         XCTAssertEqual(sent.map(\.id), [session.id])
     }
+    func testMarkedTermIsHiddenInTheNextUploadEvenForAnAlreadyUploadedSessionAndSurvivesRestartAndRebinding() async throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "collector-hide-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let root = home.appending(path: "project")
+        let source = home.appending(path: ".claude/projects/test/session.jsonl")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let metadata: [String: Any] = ["type": "user", "sessionId": "session", "cwd": root.path, "message": ["role": "user", "content": "fixture question"]]
+        try JSONSerialization.data(withJSONObject: metadata).write(to: source)
+        let state = home.appending(path: "app/state.json")
+        let service = FakeCollector(), reader = QuestionOnlyReader()
+        let store = AppStore(stateURL: state, live: true, reader: reader, discoveryHome: home, discoveryEnvironment: [:], metadataReader: nil, collectorService: service)
+        await store.bindCollector(binding, code: "TEST-CODE")
+        try store.registerProject(name: "Project", folder: root.path)
+        let projectID = try XCTUnwrap(store.projects.first?.id)
+        _ = await store.synchronizePermission(projectID, permission: .allowed)
+        _ = await store.prepareCollectorPermissions()
+        store.confirmCollectorPermissions()
+        await store.startInitialScan()
+        await store.runLocalUpload()
+        let session = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(store.uploadState(of: session), .uploaded)
+
+        // Marking text that is part of the already-uploaded conversation makes it pending again.
+        store.hideTerm("complete question")
+        store.hideTerm("x")
+        XCTAssertEqual(store.hiddenTerms, ["complete question"])
+        XCTAssertEqual(store.uploadState(of: try XCTUnwrap(store.sessions.first)), .pending)
+        let before = await service.packages.count
+        await store.runLocalUpload()
+        let packages = await service.packages
+        XCTAssertEqual(packages.count, before + 1)
+        let sent = try CollectorJSON.decoder().decode([CollectorSession].self, from: try XCTUnwrap(packages.last?.parts.first))
+        XCTAssertEqual(sent.first?.turns.first?.prompt, "A [已隐藏]-only session")
+        XCTAssertEqual(store.uploadState(of: try XCTUnwrap(store.sessions.first)), .uploaded)
+
+        // The marks survive a restart and a new binding.
+        let relaunched = AppStore(stateURL: state, live: true, reader: reader, discoveryHome: home, discoveryEnvironment: [:], metadataReader: nil, collectorService: service)
+        XCTAssertEqual(relaunched.hiddenTerms, ["complete question"])
+        await relaunched.bindCollector(binding, code: "TEST-CODE")
+        XCTAssertEqual(relaunched.hiddenTerms, ["complete question"])
+        relaunched.unhideTerm("complete question")
+        XCTAssertTrue(relaunched.hiddenTerms.isEmpty)
+    }
     func testOldEmailConfigurationDoesNotCountAsAuthenticatedBinding() throws {
         let value = try JSONDecoder().decode(LocalBinding.self, from: Data(#"{"serviceAddress":"https://company.example","workEmail":"old@example.com","savedAt":0}"#.utf8))
         XCTAssertEqual(value.name, "")
