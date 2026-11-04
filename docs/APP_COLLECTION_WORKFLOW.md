@@ -25,7 +25,7 @@
 
 权限行与上传行采用一致的事务加锁顺序。清单、分包和完成请求都支持重复提交；不同内容不能复用同一批次。收到整批回执前不更新已上传状态。当前采集周期没有配置时明确报错，不生成虚构周期。
 
-完整会话保存在 `collector_upload_parts.sessions`；只有关联 `collector_uploads.status='completed'` 的批次才可作为完整输入读取。完成整包核验的同一事务会为会话内容版本登记 `EXTRACT_COLLECTOR_SESSION` 任务，Worker 提取带来源和日期的贡献后写入 `session_facts`，再按项目生成待审核卡片。旧的贡献上传接口继续兼容。接收成功、分析完成和审核完成分别记录，不能互相替代。运行、重试和验收方法见 [完整处理流水线](APP_PIPELINE_OPERATIONS.md)。
+完整会话保存在 `collector_upload_parts.sessions`；上传前 App 会去掉其中的密钥、令牌和口令，服务端入库前再去一遍，规则见 [凭证脱敏](CREDENTIAL_REDACTION.md)；只有关联 `collector_uploads.status='completed'` 的批次才可作为完整输入读取。完成整包核验的同一事务会为会话内容版本登记 `EXTRACT_COLLECTOR_SESSION` 任务，Worker 提取带来源和日期的贡献后写入 `session_facts`，再按项目生成待审核卡片。旧的贡献上传接口继续兼容。接收成功、分析完成和审核完成分别记录，不能互相替代。运行、重试和验收方法见 [完整处理流水线](APP_PIPELINE_OPERATIONS.md)。另有一条独立的项目简介流程：Worker 按项目时间顺序读取预处理后保留的会话，滚动生成面向非技术读者的简介，并写入项目说明，见 [项目简介](PROJECT_PROFILES.md)。
 
 ## 日志与隐私
 

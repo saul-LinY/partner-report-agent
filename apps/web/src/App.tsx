@@ -7,8 +7,8 @@ import { ErrorBanner } from "./components.js";
 import { Login } from "./auth-pages.js";
 import { AdminConsole, TeamSettingsPage } from "./admin.js";
 import { ReviewPage } from "./review.js";
-import { FactPreviewPage } from "./facts.js";
-import { TeamReportPage } from "./team-reports.js";
+import { SessionPreprocessPage } from "./preprocess.js";
+import { MemberDetailPage } from "./member-detail.js";
 import { ReviewQueuePage } from "./review-queue.js";
 import { ReportArchivePage } from "./report-archive.js";
 import { UserLogsPage } from "./user-logs.js";
@@ -167,8 +167,14 @@ function AuthenticatedApp({ me }: { me: Me }) {
           <Route path="/admin/reviews">
             <ReviewQueuePage />
           </Route>
-          <Route path="/admin/facts">
-            <FactPreviewPage />
+          <Route path="/admin/sessions">
+            <SessionPreprocessPage />
+          </Route>
+          <Route path="/admin/members/:id">
+            <MemberDetailPage />
+          </Route>
+          <Route path="/admin/preprocess">
+            <Redirect to="/admin/sessions" replace />
           </Route>
           <Route path="/admin/user-logs">
             <UserLogsPage />
@@ -187,9 +193,6 @@ function AuthenticatedApp({ me }: { me: Me }) {
           </Route>
           <Route path="/admin/system-monitoring">
             <Redirect to="/admin/system-logs" replace />
-          </Route>
-          <Route path="/admin/team-reports/:id">
-            <TeamReportPage />
           </Route>
           <Route path="/admin/reports">
             <ReportArchivePage />

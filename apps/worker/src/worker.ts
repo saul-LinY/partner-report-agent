@@ -11,6 +11,7 @@ import {
 } from "./collector-pipeline.js";
 import { modelGatewayConfigured } from "./model.js";
 import { runScheduledInspections } from "./inspection-analysis.js";
+import { processNextProjectProfile } from "./project-profile.js";
 
 let stopping = false;
 let workerState = "starting";
@@ -48,8 +49,16 @@ async function tick() {
   if (generation.processed)
     console.log("Central generation job processed", generation);
   await scheduleCollectorCards();
+  const profile = modelGatewayConfigured()
+    ? await processNextProjectProfile()
+    : { processed: false };
   const inspection = await runScheduledInspections();
-  if (inspection.teams > 0 && (inspection.opened > 0 || inspection.escalated > 0 || inspection.resolved > 0)) {
+  if (
+    inspection.teams > 0 &&
+    (inspection.opened > 0 ||
+      inspection.escalated > 0 ||
+      inspection.resolved > 0)
+  ) {
     console.log("Inspection run finished", inspection);
   }
   await sql`
@@ -73,7 +82,7 @@ async function tick() {
       and status in ('COMPLETED', 'FAILED', 'CANCELLED')
       and updated_at < now() - interval '10 minutes'
   `;
-  return generation.processed;
+  return generation.processed || profile.processed;
 }
 
 async function loop() {

@@ -454,9 +454,8 @@ function ParticipationForm({
   );
 }
 
-export function ProjectProgress() {
+export function ProjectProgress({ memberId }: { memberId: string }) {
   const [, navigate] = useLocation();
-  const [memberId, setMemberId] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
   const [month, setMonth] = useState("");
   const [day, setDay] = useState<string | null>(null);
@@ -488,20 +487,17 @@ export function ProjectProgress() {
       ...member,
       projects: projects.filter((project) => project.partnerId === member.id),
     }))
-    .filter((member) => member.projects.length > 0);
-  const activeMember =
-    groups.find((member) => member.id === memberId) ?? groups[0];
+    .filter((member) => member.projects.length > 0 && member.id === memberId);
+  const activeMember = groups[0];
   const memberProjects = activeMember?.projects ?? [];
   const selected =
     memberProjects.find((project) => keyOf(project) === selectedKey) ??
     memberProjects[0];
   const activeKey = selected ? keyOf(selected) : "";
-  const activeMemberId = activeMember?.id ?? "";
   useEffect(() => {
     if (activeKey) setSelectedKey(activeKey);
     setAboutOpen(false);
-    if (activeMemberId) setMemberId(activeMemberId);
-  }, [activeKey, activeMemberId]);
+  }, [activeKey]);
   const visible = selected ? [selected] : [];
   const focusText =
     selected?.currentFocus?.text ||
@@ -562,32 +558,8 @@ export function ProjectProgress() {
           />
         )
       ) : (
-        <div className="pc-workspace">
-          <aside className="pc-people" aria-label="人员列表">
-            <div className="pc-member-list">
-              {groups.map((member) => (
-                <button
-                  key={member.id}
-                  type="button"
-                  className={`pc-member-button ${member.id === activeMemberId ? "selected" : ""}`}
-                  aria-pressed={member.id === activeMemberId}
-                  aria-controls="pc-project-picker"
-                  onClick={() => {
-                    if (member.id !== activeMemberId) {
-                      setMemberId(member.id);
-                      setSelectedKey("");
-                    }
-                    setDay(null);
-                  }}
-                >
-                  {member.name}
-                </button>
-              ))}
-            </div>
-            {!projects.length && (
-              <p className="pc-empty">暂无已审核的项目进展</p>
-            )}
-          </aside>
+        <div className="pc-workspace is-locked">
+          {!projects.length && <p className="pc-empty">暂无已审核的项目进展</p>}
           <div className="pc-main">
             {activeMember && (
               <div

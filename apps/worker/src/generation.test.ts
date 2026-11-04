@@ -26,7 +26,7 @@ describe("reader-facing generation instructions", () => {
     expect(instructions).toContain("reviewInstructions");
     expect(instructions).toContain("authoritative first-hand correction");
     expect(instructions).toContain("do not output a project description");
-    expect(instructions).toContain("2026-10-09.project-card.v10");
+    expect(instructions).toContain("2026-11-03.project-card.v11");
   });
   it("writes project progress fields for a manager who does not know the project", () => {
     const instructions = aggregationInstructions("test-model");

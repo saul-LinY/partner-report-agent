@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   Copy,
   KeyRound,
+  LayoutDashboard,
   Pencil,
   Plus,
   RefreshCw,
@@ -19,7 +20,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Link } from "wouter";
-import { ProjectProgress } from "./project-progress.js";
+import { MemberOverview } from "./member-overview.js";
 import { api } from "./api.js";
 import { selectCurrentOpenPeriod } from "./period-selection.js";
 import {
@@ -144,6 +145,7 @@ import {
   AdminTabs,
   AdminWorkspace,
   AdminPagination,
+  WorkspaceHeader,
 } from "./admin-workspace.js";
 
 export function TeamSettingsPage() {
@@ -206,7 +208,14 @@ function ProgressOverview() {
   return (
     <div className="page admin-page management-page overview-page">
       <section className="aw-view aw-operations-view">
-        <ProjectProgress />
+        <div className="lc-stack">
+          <WorkspaceHeader
+            title="项目进展"
+            icon={LayoutDashboard}
+            context="按负责人查看项目进展与工作活跃度"
+          />
+          <MemberOverview />
+        </div>
       </section>
     </div>
   );
@@ -295,7 +304,7 @@ function TeamSettingsContent({
           ? "等待首次通知授权，请在 Mac 上打开 App 并处理系统授权提示。"
           : notificationStatus === "app_offline"
             ? "尚未收到 App 的近期日志。请打开已绑定的 App，通知会保留并自动重试。"
-          : "已排队，等待 App 的系统通知回执。App 运行时约每 10 秒同步。";
+            : "已排队，等待 App 的系统通知回执。App 运行时约每 10 秒同步。";
 
   return (
     <div className="page admin-page management-page team-settings-page">

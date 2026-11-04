@@ -744,7 +744,7 @@ function UploadRow({
         {!test &&
           (upload.report_id ? (
             <small>
-              <Link href={`/admin/team-reports/${upload.report_id}`}>
+              <Link href={`/admin/reports?report=${upload.report_id}`}>
                 查看周报
               </Link>
             </small>

@@ -1,6 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, it, expect } from "vitest";
-import { sqlClient as sql, dispatchAppNotifications, loadInspectionInput } from "@partner-report/db";
+import {
+  sqlClient as sql,
+  dispatchAppNotifications,
+  loadInspectionInput,
+} from "@partner-report/db";
 import { sha256 } from "../common.js";
 import {
   loadProjectScopePolicy,
@@ -220,6 +224,72 @@ suite("collector end-to-end persistence and privacy boundary", () => {
     });
     expect(conflict.statusCode).toBe(409);
   });
+  it("returns message digests and received batches to a re-bound device without any conversation text", async () => {
+    const digest = (text: string) =>
+      createHash("sha256").update(text, "utf8").digest("hex");
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/collector/sync-state",
+      headers: headers(),
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    const state = response.json<{
+      sessions: { id: string; messages: Record<string, string> }[];
+      uploads: { id: string; periodKey: string; sessionCount: number; projects: unknown }[];
+    }>();
+    const messages = (id: string) =>
+      state.sessions.find((s) => s.id === id)?.messages;
+    expect(messages("first")).toEqual({
+      "turn:prompt": digest("full question"),
+      "turn:answer": digest("full answer"),
+    });
+    expect(messages("question-only")).toEqual({
+      "t:prompt": digest("not a contribution"),
+    });
+    const upload = state.uploads.find((u) => u.id === completedID);
+    expect(upload).toMatchObject({ periodKey, sessionCount: 2 });
+    expect(upload?.projects).toEqual([
+      { scopeKey, sessionCount: 2, messageCount: 3 },
+    ]);
+    expect(response.body).not.toContain("full question");
+    expect(
+      (await app.inject({ method: "GET", url: "/v1/collector/sync-state" }))
+        .statusCode,
+    ).toBe(401);
+  });
+  it("removes credentials before storing a session and keeps every other word as sent", async () => {
+    const secret = "sk-0123456789abcdef0123456789abcdef01234567";
+    const values = [
+      {
+        ...session("with-secret"),
+        title: `调试 ${secret}`,
+        turns: [
+          {
+            id: "t1",
+            prompt: `密钥是 ${secret}，地址 http://10.0.0.8:8080/v1 和邮箱 a@b.com 保持原样\n\n第二段`,
+            answer: "审核口令:4321 上现在是 WebShell 设的 123456，其余照旧",
+            questionTime: "12:00",
+          },
+          { id: "t2", prompt: "没有答案的提问", questionTime: "12:01" },
+        ],
+      },
+    ];
+    const run = await create(values);
+    expect((await send(run.id, run.part)).statusCode).toBe(200);
+    await finish(run.id);
+    const [stored] = (
+      await sql`select sessions from collector_upload_parts where upload_id=${run.id}`
+    )[0]!.sessions;
+    const text = JSON.stringify(stored);
+    expect(text).not.toMatch(/sk-0123|123456|WebShell/);
+    expect(stored.turns[0].prompt).toContain("http://10.0.0.8:8080/v1");
+    expect(stored.turns[0].prompt).toContain("a@b.com");
+    expect(stored.turns[0].prompt).toContain("\n\n第二段");
+    expect(stored.turns[0].answer).toContain("其余照旧");
+    expect(stored.turns[1]).toEqual(values[0]!.turns[1]);
+    expect(stored.id).toBe("with-secret");
+  });
+
   it("retains unsent sessions older than the period but analyses only in-period ones", async () => {
     const day = 86400_000;
     const older = {
@@ -258,7 +328,8 @@ suite("collector end-to-end persistence and privacy boundary", () => {
     expect(created.statusCode, created.body).toBe(200);
     expect((await send(id, part)).statusCode).toBe(200);
     expect((await finish(id)).json().sessionCount).toBe(2);
-    const queued = await sql`select input_payload->>'sessionId' as session_id from agent_jobs j
+    const queued =
+      await sql`select input_payload->>'sessionId' as session_id from agent_jobs j
       join collector_upload_jobs l on l.job_id=j.id where l.upload_id=${id}`;
     expect(queued.map((row) => row.session_id)).toEqual(["in-period"]);
   });
@@ -648,34 +719,63 @@ suite("collector end-to-end persistence and privacy boundary", () => {
   });
   it("notifies once when a running collector registers a newly discovered pending project", async () => {
     const key = sha256(randomUUID());
-    const register = () => app.inject({
-      method: "POST",
-      url: "/v1/collector/project-scope/candidates",
-      headers: headers(),
-      payload: { periodKey, candidates: [{ scopeKey: key, displayName: "New runtime project", sessionCount: 1 }] },
-    });
+    const register = () =>
+      app.inject({
+        method: "POST",
+        url: "/v1/collector/project-scope/candidates",
+        headers: headers(),
+        payload: {
+          periodKey,
+          candidates: [
+            {
+              scopeKey: key,
+              displayName: "New runtime project",
+              sessionCount: 1,
+            },
+          ],
+        },
+      });
     const registered = await register();
     expect(registered.statusCode, registered.body).toBe(200);
     policyVersion = registered.json().version;
-    expect(registered.json().entries.find((e: any) => e.scopeKey === key)?.status).toBe("pending");
-    const events = await sql`select id from outbox_events where tenant_id=${tenant}
+    expect(
+      registered.json().entries.find((e: any) => e.scopeKey === key)?.status,
+    ).toBe("pending");
+    const events =
+      await sql`select id from outbox_events where tenant_id=${tenant}
       and aggregate_id=${instance} and event_type='project_scope.candidates.changed'
       and payload->>'version'=${String(registered.json().version)}`;
     expect(events).toHaveLength(1);
-    const inbox = await app.inject({ method: "GET", url: "/v1/collector/notifications", headers: headers() });
+    const inbox = await app.inject({
+      method: "GET",
+      url: "/v1/collector/notifications",
+      headers: headers(),
+    });
     expect(inbox.statusCode).toBe(200);
-    const notices = await sql`select id,kind,target_type,title,body from app_notifications where source_event_id=${events[0]!.id}`;
+    const notices =
+      await sql`select id,kind,target_type,title,body from app_notifications where source_event_id=${events[0]!.id}`;
     expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatchObject({ kind: "project_scope.candidates.changed", target_type: "projects", title: "新项目采集审批", body: "发现新项目，请确认是否允许采集会话。" });
-    expect(inbox.json().notifications.some((n: any) => n.id === notices[0]!.id)).toBe(true);
+    expect(notices[0]).toMatchObject({
+      kind: "project_scope.candidates.changed",
+      target_type: "projects",
+      title: "新项目采集审批",
+      body: "发现新项目，请确认是否允许采集会话。",
+    });
+    expect(
+      inbox.json().notifications.some((n: any) => n.id === notices[0]!.id),
+    ).toBe(true);
     const repeated = await register();
     expect(repeated.statusCode).toBe(200);
     expect(repeated.json().version).toBe(registered.json().version);
     await dispatchAppNotifications(100, tenant);
-    expect(await sql`select id from outbox_events where tenant_id=${tenant}
+    expect(
+      await sql`select id from outbox_events where tenant_id=${tenant}
       and aggregate_id=${instance} and event_type='project_scope.candidates.changed'
-      and payload->>'version'=${String(registered.json().version)}`).toHaveLength(1);
-    expect(await sql`select id from app_notifications where source_event_id=${events[0]!.id}`).toHaveLength(1);
+      and payload->>'version'=${String(registered.json().version)}`,
+    ).toHaveLength(1);
+    expect(
+      await sql`select id from app_notifications where source_event_id=${events[0]!.id}`,
+    ).toHaveLength(1);
     await sql`delete from project_scope_entries where plugin_instance_id=${instance} and scope_key=${key}`;
   });
   it("consumes report events without notifying and suppresses queued notices while preserving receipts", async () => {
@@ -684,7 +784,10 @@ suite("collector end-to-end persistence and privacy boundary", () => {
       select ${report},${tenant},${team},id from report_periods where tenant_id=${tenant} and period_key=${periodKey}`;
     const eventIds = [randomUUID(), randomUUID()];
     const futureEventIds = [randomUUID(), randomUUID()];
-    for (const [index, kind] of ["team_report.ready", "team_report.locked"].entries()) {
+    for (const [index, kind] of [
+      "team_report.ready",
+      "team_report.locked",
+    ].entries()) {
       await sql`insert into outbox_events (id,tenant_id,event_type,aggregate_type,aggregate_id,payload)
         values (${eventIds[index]!},${tenant},${kind},'team_report',${report},'{}'::jsonb)`;
       await sql`insert into app_notifications (id,tenant_id,team_id,partner_id,source_event_id,kind,title,body,target_type)
@@ -697,21 +800,45 @@ suite("collector end-to-end persistence and privacy boundary", () => {
       values (${deliveredId},${tenant},${team},${partner},${randomUUID()},'team_report.ready','Delivered report','Body','report',now())`;
     await dispatchAppNotifications(100, tenant);
     await dispatchAppNotifications(100, tenant);
-    const queuedNotices = await sql`select id from app_notifications where source_event_id in ${sql(eventIds)}`;
+    const queuedNotices =
+      await sql`select id from app_notifications where source_event_id in ${sql(eventIds)}`;
     expect(queuedNotices).toHaveLength(2);
-    expect(await sql`select id from app_notifications where source_event_id in ${sql(futureEventIds)}`).toHaveLength(0);
-    const inbox = await app.inject({ method: "GET", url: "/v1/collector/notifications", headers: headers() });
+    expect(
+      await sql`select id from app_notifications where source_event_id in ${sql(futureEventIds)}`,
+    ).toHaveLength(0);
+    const inbox = await app.inject({
+      method: "GET",
+      url: "/v1/collector/notifications",
+      headers: headers(),
+    });
     expect(inbox.statusCode).toBe(200);
-    expect(inbox.json().notifications.some((n: any) => n.kind.startsWith("team_report."))).toBe(false);
-    const inspection = await loadInspectionInput(sql, { tenantId: tenant, teamId: team }, new Date());
-    expect(inspection.notifications.some((n) => queuedNotices.some((queued) => queued.id === n.id))).toBe(false);
+    expect(
+      inbox
+        .json()
+        .notifications.some((n: any) => n.kind.startsWith("team_report.")),
+    ).toBe(false);
+    const inspection = await loadInspectionInput(
+      sql,
+      { tenantId: tenant, teamId: team },
+      new Date(),
+    );
+    expect(
+      inspection.notifications.some((n) =>
+        queuedNotices.some((queued) => queued.id === n.id),
+      ),
+    ).toBe(false);
     const lateReceipt = await app.inject({
-      method: "POST", url: "/v1/collector/notifications/delivered", headers: headers(),
+      method: "POST",
+      url: "/v1/collector/notifications/delivered",
+      headers: headers(),
       payload: { ids: queuedNotices.map((n) => n.id) },
     });
     expect(lateReceipt.statusCode).toBe(200);
-    expect(await sql`select id from app_notifications where id=${deliveredId}`).toHaveLength(1);
-    const events = await sql`select published_at from outbox_events where id in ${sql([...eventIds, ...futureEventIds])}`;
+    expect(
+      await sql`select id from app_notifications where id=${deliveredId}`,
+    ).toHaveLength(1);
+    const events =
+      await sql`select published_at from outbox_events where id in ${sql([...eventIds, ...futureEventIds])}`;
     expect(events).toHaveLength(4);
     expect(events.every((event) => event.published_at !== null)).toBe(true);
   });
@@ -812,10 +939,34 @@ suite("collector end-to-end persistence and privacy boundary", () => {
     ) =>
       sql`insert into collector_logs (device_id,event_id,occurred_at,stage,level,code,session_count,message,details)
         values (${device},${eventId},now(),${stage},${level},${code},0,${`message ${code}`},'{"httpStatus":500}'::jsonb)`;
-    await insertLog(otherDevice, eventIds.bUpload, "upload", "error", "UPLOAD_FAILED");
-    await insertLog(otherDevice, eventIds.bScan, "scan", "info", "SCAN_COMPLETED");
-    await insertLog(secondDevice, eventIds.bSecondDevice, "heartbeat", "info", "ALIVE");
-    await insertLog(deviceId, eventIds.aMarker, "app", "warning", "APP_LAUNCHED");
+    await insertLog(
+      otherDevice,
+      eventIds.bUpload,
+      "upload",
+      "error",
+      "UPLOAD_FAILED",
+    );
+    await insertLog(
+      otherDevice,
+      eventIds.bScan,
+      "scan",
+      "info",
+      "SCAN_COMPLETED",
+    );
+    await insertLog(
+      secondDevice,
+      eventIds.bSecondDevice,
+      "heartbeat",
+      "info",
+      "ALIVE",
+    );
+    await insertLog(
+      deviceId,
+      eventIds.aMarker,
+      "app",
+      "warning",
+      "APP_LAUNCHED",
+    );
     const admin = {
       cookie: `pra_session=${signSessionToken(webToken, process.env.SESSION_SECRET?.trim())}`,
     };
@@ -874,9 +1025,7 @@ suite("collector end-to-end persistence and privacy boundary", () => {
       expect(errors.json().events.map((e: any) => e.eventId)).toEqual([
         eventIds.bUpload,
       ]);
-      const scans = await get(
-        `/v1/admin/user-logs/${otherPartner}?stage=scan`,
-      );
+      const scans = await get(`/v1/admin/user-logs/${otherPartner}?stage=scan`);
       expect(scans.json().events.map((e: any) => e.eventId)).toEqual([
         eventIds.bScan,
       ]);
@@ -894,22 +1043,115 @@ suite("collector end-to-end persistence and privacy boundary", () => {
         ),
       ).toBe(false);
       expect(
-        (mine.json().events as any[]).some((e) => e.eventId === eventIds.aMarker),
+        (mine.json().events as any[]).some(
+          (e) => e.eventId === eventIds.aMarker,
+        ),
       ).toBe(true);
 
-      expect((await get(`/v1/admin/user-logs/${otherPartner}?level=fatal`)).statusCode).toBe(400);
-      expect((await get(`/v1/admin/user-logs/${otherPartner}?stage=bogus`)).statusCode).toBe(400);
-      expect((await get(`/v1/admin/user-logs/${otherPartner}?date=2026-02-31`)).statusCode).toBe(400);
-      const day = await get(`/v1/admin/user-logs/${otherPartner}?date=2020-01-01`);
+      expect(
+        (await get(`/v1/admin/user-logs/${otherPartner}?level=fatal`))
+          .statusCode,
+      ).toBe(400);
+      expect(
+        (await get(`/v1/admin/user-logs/${otherPartner}?stage=bogus`))
+          .statusCode,
+      ).toBe(400);
+      expect(
+        (await get(`/v1/admin/user-logs/${otherPartner}?date=2026-02-31`))
+          .statusCode,
+      ).toBe(400);
+      const day = await get(
+        `/v1/admin/user-logs/${otherPartner}?date=2020-01-01`,
+      );
       expect(day.statusCode).toBe(200);
-      expect(day.json().window).toMatchObject({ mode: "day", date: "2020-01-01" });
+      expect(day.json().window).toMatchObject({
+        mode: "day",
+        date: "2020-01-01",
+      });
       expect(day.json().events).toEqual([]);
-      expect((await get(`/v1/admin/user-logs/${randomUUID()}`)).statusCode).toBe(404);
-      expect((await get("/v1/admin/user-logs/not-a-uuid")).statusCode).toBe(400);
+      expect(
+        (await get(`/v1/admin/user-logs/${randomUUID()}`)).statusCode,
+      ).toBe(404);
+      expect((await get("/v1/admin/user-logs/not-a-uuid")).statusCode).toBe(
+        400,
+      );
     } finally {
       await sql`delete from collector_logs where device_id in (${otherDevice},${secondDevice})`;
       await sql`delete from collector_devices where id in (${otherDevice},${secondDevice})`;
     }
+  });
+  it("shows admins the newest copy of each uploaded session with its full transcript", async () => {
+    const admin = {
+      cookie: `pra_session=${signSessionToken(webToken, process.env.SESSION_SECRET?.trim())}`,
+    };
+    const get = (url: string) =>
+      app.inject({ method: "GET", url, headers: admin });
+    const earlier = new Date(Date.parse(end) - 3_600_000).toISOString();
+    const draft = {
+      ...session("transcript"),
+      title: "Draft title",
+      modifiedAt: earlier,
+    };
+    const latest = {
+      ...session("transcript"),
+      title: "Latest title",
+      turns: [
+        ...draft.turns,
+        {
+          id: "follow-up",
+          prompt: "second question",
+          answer: null,
+          questionTime: "12:05",
+        },
+      ],
+    };
+    for (const values of [[draft], [latest]]) {
+      const run = await create(values);
+      expect((await send(run.id, run.part)).statusCode).toBe(200);
+      expect((await finish(run.id)).statusCode).toBe(200);
+    }
+    expect(
+      (await app.inject({ method: "GET", url: "/v1/admin/collector-sessions" }))
+        .statusCode,
+    ).toBe(401);
+    const list = await get(
+      `/v1/admin/collector-sessions?partnerId=${partner}&pageSize=100`,
+    );
+    expect(list.statusCode, list.body).toBe(200);
+    const items = list.json().items as Array<Record<string, unknown>>;
+    const copies = items.filter((item) => item.session_id === "transcript");
+    expect(copies).toHaveLength(1);
+    const copy = copies[0]!;
+    expect(copy).toMatchObject({
+      title: "Latest title",
+      turn_count: 2,
+      preview: "full question",
+      project_name: "Allowed",
+      partner_name: "Collector Member",
+      period_key: periodKey,
+    });
+    expect(list.json().projects).toContain("Allowed");
+    expect(items.some((item) => "turns" in item)).toBe(false);
+    const filtered = await get(
+      `/v1/admin/collector-sessions?project=${encodeURIComponent("Nope")}`,
+    );
+    expect(filtered.json().total).toBe(0);
+    const detail = await get(
+      `/v1/admin/collector-sessions/detail?uploadId=${copy.upload_id}&sessionId=transcript`,
+    );
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json()).toMatchObject({
+      title: "Latest title",
+      projectName: "Allowed",
+      turns: latest.turns,
+    });
+    expect(
+      (
+        await get(
+          `/v1/admin/collector-sessions/detail?uploadId=${copy.upload_id}&sessionId=missing`,
+        )
+      ).statusCode,
+    ).toBe(404);
   });
   it("applies native decisions with version checks and blocks a previously prepared batch after revocation", async () => {
     const run = await create([session("revoked")]);

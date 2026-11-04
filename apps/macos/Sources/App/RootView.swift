@@ -28,6 +28,7 @@ struct RootView: View {
                     case .approvals: ApprovalsView()
                     case .sessions: SessionsView()
                     case .uploads: UploadsView()
+                    case .privacy: PrivacyView()
                     case .settings: SettingsView()
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -54,7 +55,7 @@ struct RootView: View {
             }.padding(18)
         }
         .onChange(of: store.selectedAgent) { _, _ in store.reconcileSelection() }
-        .onChange(of: store.pendingOnly) { _, _ in store.reconcileSelection() }
+        .onChange(of: store.uploadFilter) { _, _ in store.reconcileSelection() }
         .task(id: "\(store.selectedSessionID ?? ""):\(store.sourceRevision)") { await store.loadSelectedSession() }
     }
     private var sidebar: some View {

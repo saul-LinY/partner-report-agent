@@ -5,7 +5,7 @@ import { z } from "zod";
 import { generateStructured, ModelGatewayError } from "./model.js";
 
 export const OUTCOME_PROMPT_VERSION = "2026-09-07.project-outcomes.v1";
-export const CARD_PROMPT_VERSION = "2026-10-09.project-card.v10";
+export const CARD_PROMPT_VERSION = "2026-11-03.project-card.v11";
 
 const outcomeSchema = z
   .object({

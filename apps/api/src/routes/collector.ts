@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { collectorPipelineStage } from "@partner-report/contracts";
+import {
+  collectorPipelineStage,
+  redactSessionCredentials,
+} from "@partner-report/contracts";
 import {
   sqlClient as sql,
   dispatchAppNotifications,
@@ -98,6 +101,66 @@ export async function collectorRoutes(app: FastifyInstance) {
         ...collectorPipelineStage(upload),
       })),
     };
+  });
+
+  // Restores what a re-bound App forgot: which message versions the system already holds,
+  // and the batches it received. Only digests and counts leave the server, never conversation text.
+  app.get("/v1/collector/sync-state", async (request) => {
+    const actor = await requireCollector(request);
+    const since = new Date(Date.now() - collectorRetentionMs).toISOString();
+    const sessions = await sql<
+      { id: string; messages: Record<string, string> }[]
+    >`
+      select id, messages from (
+        select distinct on (s.item->>'id') s.item->>'id' as id,
+          (select coalesce(jsonb_object_agg(m.key, m.digest), '{}'::jsonb) from (
+            select (t.turn->>'id') || ':prompt' as key,
+              encode(sha256(convert_to(t.turn->>'prompt', 'UTF8')), 'hex') as digest
+            from jsonb_array_elements(s.item->'turns') t(turn)
+            union all
+            select (t.turn->>'id') || ':answer',
+              encode(sha256(convert_to(t.turn->>'answer', 'UTF8')), 'hex')
+            from jsonb_array_elements(s.item->'turns') t(turn)
+            where t.turn->>'answer' is not null
+          ) m) as messages
+        from collector_uploads u
+          join collector_devices d on d.id = u.device_id
+          join collector_upload_parts p on p.upload_id = u.id
+          cross join lateral jsonb_array_elements(p.sessions) s(item)
+        where d.tenant_id = ${actor.tenantId} and d.team_id = ${actor.teamId}
+          and d.partner_id = ${actor.partnerId} and d.status <> 'test'
+          and u.status = 'completed' and u.created_at >= ${since}
+        order by s.item->>'id', (s.item->>'modifiedAt')::timestamptz desc, u.created_at desc
+      ) latest`;
+    const uploads = await sql<
+      {
+        id: string;
+        periodKey: string;
+        sessionCount: number;
+        completedAt: Date | null;
+        createdAt: Date;
+        projects: {
+          scopeKey: string;
+          sessionCount: number;
+          messageCount: number;
+        }[];
+      }[]
+    >`
+      select u.id, u.period_key as "periodKey", u.session_count as "sessionCount",
+        u.completed_at as "completedAt", u.created_at as "createdAt",
+        (select coalesce(jsonb_agg(jsonb_build_object('scopeKey', g.scope_key, 'sessionCount', g.sessions,
+            'messageCount', g.messages)), '[]'::jsonb) from (
+          select s.item->>'scopeKey' as scope_key, count(*)::int as sessions,
+            sum(jsonb_array_length(s.item->'turns') +
+              (select count(*) from jsonb_array_elements(s.item->'turns') t(turn) where t.turn->>'answer' is not null))::int as messages
+          from collector_upload_parts p cross join lateral jsonb_array_elements(p.sessions) s(item)
+          where p.upload_id = u.id group by 1) g) as projects
+      from collector_uploads u join collector_devices d on d.id = u.device_id
+      where d.tenant_id = ${actor.tenantId} and d.team_id = ${actor.teamId}
+        and d.partner_id = ${actor.partnerId} and d.status <> 'test'
+        and u.status = 'completed' and u.created_at >= ${since}
+      order by u.completed_at desc nulls last limit 50`;
+    return { sessions, uploads };
   });
   app.post("/v1/admin/collector-uploads/:id/retry", async (request) => {
     const actor = await requireWebActor(request, "admin");
@@ -456,9 +519,10 @@ export async function collectorRoutes(app: FastifyInstance) {
             violation,
             "会话不属于已授权项目或采集范围。",
           );
+        // The checksum above vouches for what the App sent; what is kept has credentials removed.
         if (run.status !== "completed")
           await tx`insert into collector_upload_parts (upload_id,part_index,checksum,sessions)
-        values (${id},${input.partIndex},${input.checksum},${JSON.stringify(sessions)}::jsonb) on conflict (upload_id,part_index) do nothing`;
+        values (${id},${input.partIndex},${input.checksum},${JSON.stringify(redactSessionCredentials(sessions))}::jsonb) on conflict (upload_id,part_index) do nothing`;
         await tx`update collector_uploads set updated_at=now() where id=${id}`;
         return { ok: true, partIndex: input.partIndex };
       });

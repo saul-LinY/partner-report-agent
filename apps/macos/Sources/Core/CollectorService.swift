@@ -36,6 +36,31 @@ public struct CollectorClaim: Decodable, Sendable {
     public var policy: CollectorPolicy
 }
 
+/// What the system already holds for this member: message digests (never text) and received batches.
+/// Lets a re-bound App continue incrementally instead of re-uploading everything.
+public struct CollectorSyncState: Decodable, Equatable, Sendable {
+    public struct Session: Decodable, Equatable, Sendable {
+        public var id: String
+        public var messages: [String: String]
+    }
+    public struct Project: Decodable, Equatable, Sendable {
+        public var scopeKey: String
+        public var sessionCount: Int
+        public var messageCount: Int
+    }
+    public struct Upload: Decodable, Equatable, Sendable {
+        public var id: String
+        public var periodKey: String
+        public var sessionCount: Int
+        public var completedAt: Date?
+        public var createdAt: Date
+        public var projects: [Project]
+    }
+    public var sessions: [Session]
+    public var uploads: [Upload]
+    public static let empty = CollectorSyncState(sessions: [], uploads: [])
+}
+
 public struct CollectorSession: Codable, Equatable, Sendable {
     public var id: String
     public var scopeKey: String
@@ -61,7 +86,8 @@ public struct CollectorPackage: Codable, Sendable {
         endsAt = min(end, period.endsAt); startsAt = min(start, endsAt); policyVersion = version; sessionCount = sessions.count
         let encoder = CollectorJSON.encoder()
         var chunks: [Data] = [], current: [CollectorSession] = [], size = 2
-        for session in sessions {
+        // Keys, tokens and passwords never leave this Mac; everything else is sent as written.
+        for session in sessions.map(SecretScrubber.redact) {
             let bytes = try encoder.encode(session).count + 1
             guard bytes < 16 * 1024 * 1024 else { throw CollectorError(status: 413, message: "单个会话超过 16 MB，未上传，请联系管理员。") }
             if !current.isEmpty && size + bytes > targetBytes { chunks.append(try encoder.encode(current)); current = []; size = 2 }
@@ -285,6 +311,7 @@ public struct AppMessage: Codable, Equatable, Sendable, Identifiable {
 
 public protocol CollectorServing: Sendable {
     func pipeline(binding: LocalBinding) async throws -> [CollectorProcessingSummary]
+    func syncState(binding: LocalBinding) async throws -> CollectorSyncState
     func claim(binding: LocalBinding, code: String) async throws -> CollectorClaim
     func policy(binding: LocalBinding) async throws -> CollectorPolicy
     func decide(binding: LocalBinding, version: Int, scopeKey: String, permission: ProjectPermission) async throws -> CollectorPolicy
@@ -301,6 +328,7 @@ public protocol CollectorServing: Sendable {
 
 public extension CollectorServing {
     func pipeline(binding: LocalBinding) async throws -> [CollectorProcessingSummary] { [] }
+    func syncState(binding: LocalBinding) async throws -> CollectorSyncState { .empty }
     func notifications(binding: LocalBinding) async throws -> [AppMessage] { [] }
     func acknowledgeNotifications(binding: LocalBinding, ids: [String]) async throws { throw CollectorError(status: 501, message: "通知回执服务不可用。") }
     func reviews(binding: LocalBinding) async throws -> [ReviewBatch] { [] }
@@ -317,6 +345,9 @@ public actor HTTPCollectorService: CollectorServing {
     public func pipeline(binding: LocalBinding) async throws -> [CollectorProcessingSummary] {
         struct Index: Decodable { var uploads: [CollectorProcessingSummary] }
         return try JSONDecoder().decode(Index.self, from: await request(binding, "pipeline")).uploads
+    }
+    public func syncState(binding: LocalBinding) async throws -> CollectorSyncState {
+        try CollectorJSON.decoder().decode(CollectorSyncState.self, from: await request(binding, "sync-state"))
     }
     private let session: URLSession
     private var transportLogs: [CollectorLog] = []

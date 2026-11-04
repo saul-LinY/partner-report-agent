@@ -12,28 +12,30 @@ struct SessionsView: View {
             HStack(spacing: 10) {
                 projectMenu.frame(width: 190)
                 agentMenu.frame(width: 155)
+                searchField.frame(width: 170)
                 Text("\(store.visibleSessions.count) 个会话").font(.system(size: 11)).foregroundStyle(Palette.secondary).padding(.leading, 4)
                 Spacer(minLength: 0)
                 ViewThatFits {
                     Label("已归档内容不扫描、不上传", systemImage: "checkmark.shield").font(.system(size: 11)).foregroundStyle(Palette.secondary)
                     Image(systemName: "checkmark.shield").foregroundStyle(Palette.secondary).help("已归档内容不扫描、不上传")
                 }
-            }.padding(.horizontal, 24).padding(.bottom, 16)
+            }.padding(.horizontal, 28).padding(.bottom, 16)
             Rule()
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
                         Text("会话").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                         Spacer()
-                        FilterTab(title: "全部", selected: !store.pendingOnly) { store.pendingOnly = false }
-                        FilterTab(title: "未上传", selected: store.pendingOnly) { store.pendingOnly = true }
+                        FilterTab(title: "全部", selected: store.uploadFilter == .all) { store.uploadFilter = .all }
+                        FilterTab(title: "未上传", selected: store.uploadFilter == .pending) { store.uploadFilter = .pending }
+                        FilterTab(title: "不上传", selected: store.uploadFilter == .excluded) { store.uploadFilter = .excluded }
                     }.padding(.horizontal, 14)
                     Rule()
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(store.visibleSessions) { session in sessionRow(session) }
                             if store.visibleSessions.isEmpty {
-                                EmptyMessage(symbol: "bubble.left", title: store.pendingOnly ? "暂无未上传会话" : "暂无会话", subtitle: "").frame(height: 220)
+                                EmptyMessage(symbol: "bubble.left", title: emptyTitle, subtitle: "").frame(height: 220)
                             }
                         }
                     }
@@ -48,10 +50,14 @@ struct SessionsView: View {
                             Button("重试") { Task { await store.loadSelectedSession() } }.buttonStyle(QuietButtonStyle()).padding(.bottom, 28)
                         }
                     } else if let session = store.selectedSession {
-                        if session.turns.isEmpty {
-                            EmptyMessage(symbol: "bubble.left.and.text.bubble.right", title: "此会话暂无可显示的问答", subtitle: "")
-                        } else {
-                            ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id]).equatable()
+                        VStack(spacing: 0) {
+                            uploadBar(session)
+                            Rule()
+                            if session.turns.isEmpty {
+                                EmptyMessage(symbol: "bubble.left.and.text.bubble.right", title: "此会话暂无可显示的问答", subtitle: "")
+                            } else {
+                                ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id]).equatable()
+                            }
                         }
                     } else {
                         VStack {
@@ -93,14 +99,78 @@ struct SessionsView: View {
                 Text(session.title).font(.system(size: 14, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
                 HStack(spacing: 7) { AgentIcon(agent: session.agent, size: 17); Text(session.agent.name).font(.system(size: 12)).foregroundStyle(Palette.secondary) }
                 HStack {
-                    Text(session.updatedLabel).font(.system(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1)
+                    Text(session.turns.isEmpty ? session.updatedLabel : "\(session.updatedLabel) · \(session.turns.count) 轮").font(.system(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1)
                     Spacer(minLength: 4)
-                    StatusLabel(text: store.sessionReadErrors[session.id] != nil ? "读取受限" : session.uploaded ? "已上传" : "未上传", color: store.sessionReadErrors[session.id] != nil ? Palette.red : session.uploaded ? Palette.green : Palette.yellow, size: 6)
+                    StatusLabel(text: statusText(session), color: statusColor(session), size: 6)
                 }
             }.padding(.horizontal, 18).padding(.vertical, 18).frame(maxWidth: .infinity, alignment: .leading)
                 .background(session.id == store.selectedSessionID ? Palette.selected : .white)
                 .overlay(alignment: .leading) { if session.id == store.selectedSessionID { Rectangle().fill(Palette.yellow).frame(width: 3) } }.contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier("session-\(session.id)").overlay(alignment: .bottom) { Rule() }
+            .contextMenu {
+                let excluded = store.uploadState(of: session) == .excluded
+                Button(excluded ? "恢复上传" : "不上传此会话") { store.setUploadExcluded(!excluded, for: session.id) }
+            }
+    }
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            TextField("搜索会话", text: $store.query).textFieldStyle(.plain).font(.system(size: 13))
+            if !store.query.isEmpty {
+                Button { store.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.secondary) }
+                    .buttonStyle(.plain).help("清除搜索").accessibilityLabel("清除搜索")
+            }
+        }
+        .padding(.horizontal, 10).frame(height: 34).background(.white, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.line)).accessibilityIdentifier("session-search")
+    }
+    private var emptyTitle: String {
+        if !store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "没有找到匹配的会话" }
+        switch store.uploadFilter {
+        case .all: return "暂无会话"
+        case .pending: return "暂无未上传会话"
+        case .excluded: return "没有设为不上传的会话"
+        }
+    }
+    private func statusText(_ session: AgentSession) -> String {
+        if store.sessionReadErrors[session.id] != nil { return "读取受限" }
+        switch store.uploadState(of: session) {
+        case .uploaded: return "已上传"
+        case .pending: return "未上传"
+        case .excluded: return "不上传"
+        }
+    }
+    private func statusColor(_ session: AgentSession) -> Color {
+        if store.sessionReadErrors[session.id] != nil { return Palette.red }
+        switch store.uploadState(of: session) {
+        case .uploaded: return Palette.green
+        case .pending: return Palette.yellow
+        case .excluded: return Palette.secondary
+        }
+    }
+    /// Above the conversation: what will happen to this session, and the one control to change it.
+    private func uploadBar(_ session: AgentSession) -> some View {
+        let excluded = store.uploadState(of: session) == .excluded
+        return HStack(spacing: 12) {
+            StatusLabel(text: statusText(session), color: statusColor(session), size: 7)
+            Text(uploadHint(session, excluded: excluded)).font(.system(size: 12)).foregroundStyle(Palette.secondary).lineLimit(1)
+            let sensitive = sensitiveCount(session)
+            if sensitive > 0 {
+                Label("已识别 \(sensitive) 处密钥等隐私信息，已标红，上传时自动隐藏", systemImage: "eye.slash").font(.system(size: 12)).foregroundStyle(Palette.red).lineLimit(1)
+                    .help("只在上传内容中替换为「[已隐藏]」；你本机看到的原文不会被修改").accessibilityIdentifier("sensitive-notice")
+            }
+            Spacer(minLength: 8)
+            Button(excluded ? "恢复上传" : "不上传此会话") { store.setUploadExcluded(!excluded, for: session.id) }
+                .buttonStyle(QuietButtonStyle(compact: true)).accessibilityIdentifier("toggle-upload-excluded")
+                .help(excluded ? "之后的上传会再次包含这个会话" : "之后的上传不再包含这个会话；已上传的内容仍保留在公司系统中")
+        }.padding(.horizontal, 24).frame(height: 46)
+    }
+    private func uploadHint(_ session: AgentSession, excluded: Bool) -> String {
+        if excluded { return session.uploaded ? "之后不再上传；已上传的内容仍保留在公司系统中" : "这个会话不会被上传" }
+        return session.uploaded ? "有新内容时会继续上传" : "下次上传时会包含这个会话"
+    }
+    private func sensitiveCount(_ session: AgentSession) -> Int {
+        UploadCheckpoint.messages(in: session.turns).reduce(0) { $0 + RedactionMarks.hidden(in: $1.text).count }
     }
 }
 
@@ -135,7 +205,7 @@ struct ChatView: View, Equatable {
         HStack {
             Spacer(minLength: 28)
             VStack(alignment: .trailing, spacing: 7) {
-                Text(message.text).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
+                Text(RedactionMarks.highlight(AttributedString(message.text), hiding: RedactionMarks.hidden(in: message.text))).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
                     .padding(.horizontal, 14).padding(.vertical, 12).background(Palette.bubble.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                 if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
             }
@@ -149,7 +219,7 @@ struct ChatView: View, Equatable {
                     Text(session.agent.name).font(.system(size: 12, weight: .semibold))
                     if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
                 }
-                MarkdownBody(text: message.text).equatable()
+                MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text)).equatable()
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
                 } label: { Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(Palette.secondary) }.buttonStyle(.plain).help("复制回复").accessibilityLabel("复制回复")
@@ -158,18 +228,48 @@ struct ChatView: View, Equatable {
     }
 }
 
+/// Pieces of a message the upload will hide, found once per text.
+enum RedactionMarks {
+    private final class Box { let value: [String]; init(_ value: [String]) { self.value = value } }
+    // NSCache is thread-safe; the compiler just cannot see that.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, Box> = { let cache = NSCache<NSString, Box>(); cache.countLimit = 4000; return cache }()
+
+    static func hidden(in text: String) -> [String] {
+        if let box = cache.object(forKey: text as NSString) { return box.value }
+        let value = SecretScrubber.analyze(text).hidden
+        cache.setObject(Box(value), forKey: text as NSString)
+        return value
+    }
+
+    /// Marks every occurrence of each hidden piece. Markdown is rendered first, so pieces are found by text.
+    static func highlight(_ attributed: AttributedString, hiding pieces: [String]) -> AttributedString {
+        guard !pieces.isEmpty else { return attributed }
+        var result = attributed
+        for piece in Set(pieces) where !piece.isEmpty {
+            var start = result.startIndex
+            while let range = result[start...].range(of: piece) {
+                result[range].foregroundColor = Palette.red
+                result[range].backgroundColor = Palette.red.opacity(0.14)
+                start = range.upperBound
+            }
+        }
+        return result
+    }
+}
+
 struct MarkdownBody: View, Equatable {
     let text: String
+    var hidden: [String] = []
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(text.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, block in
                 if block.hasPrefix("```") {
                     ScrollView(.horizontal) {
-                        Text(block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n"))
+                        Text(RedactionMarks.highlight(AttributedString(block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n")), hiding: hidden))
                             .font(.system(size: 12, design: .monospaced)).textSelection(.enabled).padding(12)
                     }.background(Palette.quiet, in: RoundedRectangle(cornerRadius: 6))
                 } else {
-                    Text((try? AttributedString(markdown: block, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block))
+                    Text(RedactionMarks.highlight((try? AttributedString(markdown: block, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block), hiding: hidden))
                         .font(.system(size: 13)).lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

@@ -9,7 +9,15 @@ public struct UploadCheckpoint: Codable, Equatable, Sendable {
         self.uploadedAt = uploadedAt
         messages = Dictionary(uniqueKeysWithValues: Self.messages(in: turns).map { ($0.id, Self.digest($0.text)) })
     }
-    public func contains(_ message: ConversationMessage) -> Bool { messages[message.id] == Self.digest(message.text) }
+    /// Digests reported by the system. They cover the redacted text that actually left this Mac.
+    public init(messages: [String: String], uploadedAt: Date) {
+        self.uploadedAt = uploadedAt; self.messages = messages
+    }
+    /// Text is redacted before upload, so a stored digest may describe either the raw or the redacted form.
+    public func contains(_ message: ConversationMessage) -> Bool {
+        guard let stored = messages[message.id] else { return false }
+        return stored == Self.digest(message.text) || stored == Self.digest(SecretScrubber.redact(message.text))
+    }
     public func pendingMessages(in turns: [ChatTurn]) -> [ConversationMessage] { Self.messages(in: turns).filter { !contains($0) } }
     public static func messages(in turns: [ChatTurn]) -> [ConversationMessage] {
         turns.flatMap { turn in

@@ -13,13 +13,26 @@ struct UploadsView: View {
             return date >= Calendar.current.date(byAdding: .day, value: -days, to: .now)!
         }
     }
+    /// What an upload started now would carry, so the button is not a blind action.
+    private var queueSummary: String {
+        let waiting = store.pendingSessions.count
+        let excluded = store.excludedSessionCount
+        let base = waiting == 0 ? "没有待上传的会话" : "待上传 \(waiting) 个会话"
+        return excluded == 0 ? base : "\(base) · \(excluded) 个不上传"
+    }
     private var records: [UploadRecord] {
         datedRecords.filter { result == .all || (result == .failure ? $0.status == .failed : [.complete, .backfilled].contains($0.status)) }
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                Text("上传记录").font(.system(size: 23, weight: .semibold))
+            PageHeading(title: "上传记录") {
+                if !store.isLive { Text("示例记录").font(.system(size: 11)).foregroundStyle(Palette.secondary) }
+            }
+            HStack(spacing: 10) {
+                ForEach(ResultFilter.allCases, id: \.self) { filter in
+                    FilterTab(title: filter.rawValue, count: count(filter), selected: result == filter) { result = filter }
+                }
+                Spacer()
                 Menu {
                     Button("最近 7 天") { days = 7 }
                     Button("最近 30 天") { days = 30 }
@@ -28,14 +41,8 @@ struct UploadsView: View {
                     Label(days == 0 ? "全部时间" : "最近 \(days) 天", systemImage: "calendar").font(.system(size: 12))
                 }.menuStyle(.borderlessButton).menuIndicator(.visible).modifier(ScheduleFieldStyle())
                     .accessibilityLabel("上传记录时间范围").accessibilityIdentifier("upload-date-range")
-                Spacer()
-                if !store.isLive { Text("示例记录").font(.system(size: 11)).foregroundStyle(Palette.secondary) }
-            }.frame(height: 72).padding(.horizontal, 28).padding(.top, 10)
-            HStack(spacing: 10) {
-                ForEach(ResultFilter.allCases, id: \.self) { filter in
-                    FilterTab(title: filter.rawValue, count: count(filter), selected: result == filter) { result = filter }
-                }
-                Spacer()
+                Text(queueSummary).font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                    .accessibilityIdentifier("upload-queue-summary")
                 Button {
                     Task {
                         await store.runLocalUpload()

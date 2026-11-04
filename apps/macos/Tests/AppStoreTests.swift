@@ -41,13 +41,13 @@ final class AppStoreTests: XCTestCase {
         store.selectedAgent = .codex
         XCTAssertEqual(store.count(for: nil as Agent?), total)
         for pending in [false, true] {
-            store.pendingOnly = pending
+            store.uploadFilter = pending ? .pending : .all
             for agent in Agent.allCases {
                 store.selectedAgent = agent
                 XCTAssertEqual(store.count(for: agent), store.visibleSessions.count)
             }
         }
-        store.pendingOnly = false
+        store.uploadFilter = .all
         store.selectProject("content")
         XCTAssertEqual(store.count(for: .codex), 1)
         store.query = "不存在的会话标题"
@@ -62,6 +62,30 @@ final class AppStoreTests: XCTestCase {
         XCTAssertFalse(store.approvedProjects.contains { $0.name == "客户文档" })
         XCTAssertThrowsError(try store.registerProject(name: "客户文档", folder: "/tmp/other"))
         XCTAssertThrowsError(try store.registerProject(name: "另一个名称", folder: "/tmp/weekly-report-documents/../weekly-report-documents"))
+    }
+    func testExcludingASessionTakesItOutOfPendingAndSurvivesRelaunch() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "weekly-report-tests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "state.json")
+        let first = AppStore(stateURL: url)
+        let session = try XCTUnwrap(first.pendingSessions.first)
+        let waiting = first.pendingSessions.count
+        first.selectProject(session.projectID)
+
+        first.setUploadExcluded(true, for: session.id)
+        XCTAssertEqual(first.uploadState(of: session), .excluded)
+        XCTAssertEqual(first.pendingSessions.count, waiting - 1)
+        XCTAssertEqual(first.excludedSessionCount, 1)
+        first.uploadFilter = .excluded
+        XCTAssertEqual(first.visibleSessions.map(\.id), [session.id])
+        first.uploadFilter = .pending
+        XCTAssertFalse(first.visibleSessions.contains { $0.id == session.id })
+
+        let second = AppStore(stateURL: url)
+        XCTAssertEqual(second.excludedSessionCount, 1)
+        second.setUploadExcluded(false, for: session.id)
+        XCTAssertEqual(second.pendingSessions.count, waiting)
+        XCTAssertEqual(second.excludedSessionCount, 0)
     }
     func testPreferencesAndLocalStateSurviveRelaunch() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "weekly-report-tests-\(UUID())")

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const centralModelIds = [
   "deepseek-v4-flash:cloud",
+  "deepseek-v4.1-flash:cloud",
   "deepseek-v4-pro:cloud",
   "gemini-3-flash-preview:cloud",
   "glm-5.1:cloud",

@@ -43,6 +43,26 @@ for (const width of [1440, 390]) {
             teamName: "产品团队",
           },
         });
+      if (path === "/v1/admin/report-archive")
+        return route.fulfill({
+          json: {
+            periods: [
+              {
+                id: "period-layout",
+                periodKey: "2026-W35",
+                startsAt: "2026-08-24T00:00:00+08:00",
+                endsAt: "2026-08-30T23:59:59+08:00",
+                people: [],
+                teamReport: {
+                  id: "layout",
+                  title: "团队报告版本 3",
+                  summary: "",
+                  version: 3,
+                },
+              },
+            ],
+          },
+        });
       if (path === "/v1/admin/team-reports/layout")
         return route.fulfill({
           json: {
@@ -58,13 +78,9 @@ for (const width of [1440, 390]) {
         });
       return route.fulfill({ json: {} });
     });
-    await page.goto("/admin/team-reports/layout");
+    await page.goto("/admin/reports?report=layout");
     const document = page.locator(".report-document");
-    for (const version of [3, 2, 1]) {
-      if (version !== 3)
-        await page
-          .getByRole("button", { name: new RegExp(`^v${version}`) })
-          .click();
+    {
       const owner = document
         .locator("td:visible")
         .filter({ hasText: /^Saul 林勇$/ });

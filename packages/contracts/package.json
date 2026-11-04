@@ -8,7 +8,9 @@
     "./hash": "./src/hash.ts",
     "./models": "./src/models.ts",
     "./project-progress": "./src/project-progress.ts",
-    "./project-status": "./src/project-status.ts"
+    "./project-status": "./src/project-status.ts",
+    "./privacy": "./src/privacy.ts",
+    "./project-profile": "./src/project-profile.ts"
   },
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",

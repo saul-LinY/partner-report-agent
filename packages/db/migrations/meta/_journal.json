@@ -302,6 +302,20 @@
       "when": 1793677562041,
       "tag": "0042_collector_log_details_inspection",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1793698955652,
+      "tag": "0043_cloudy_katie_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1793714877398,
+      "tag": "0044_nebulous_the_twelve",
+      "breakpoints": true
     }
   ]
 }

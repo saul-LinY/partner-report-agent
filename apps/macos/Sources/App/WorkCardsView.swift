@@ -62,24 +62,37 @@ struct WorkCardsView: View {
             Button("忽略", role: .destructive) { if let selected { Task { await store.performCardAction(.exclude, cardID: selected.id) } } }
         } message: { Text("这张卡片不会进入本期团队报告。") }
     }
+    private func projectGroups(_ cards: [ReviewCard]) -> [(name: String, cards: [ReviewCard])] {
+        Dictionary(grouping: cards, by: \.displayName)
+            .map { name, values in
+                (name: name, cards: values.sorted { (batch($0)?.review.period_key ?? "") > (batch($1)?.review.period_key ?? "") })
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
     private func cardGroup(_ title: String, cards: [ReviewCard], identifier: String) -> some View {
         Section {
-            ForEach(cards) { card in
-                Button { selectedID = card.id } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "doc.text").font(.system(size: 20)).frame(width: 22)
-                        VStack(alignment: .leading, spacing: 9) {
-                            Text(card.displayName).font(.system(size: 14, weight: .semibold)).lineLimit(2)
-                            Text(batch(card)?.review.period_key ?? "工作卡片").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+            ForEach(projectGroups(cards), id: \.name) { group in
+                // A project appears once; its periods are listed beneath the name.
+                HStack(spacing: 8) {
+                    Image(systemName: "folder").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                    Text(group.name).font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                    Spacer(minLength: 8)
+                    Text("\(group.cards.count)").font(.system(size: 11)).monospacedDigit().foregroundStyle(Palette.secondary)
+                }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 8)
+                ForEach(group.cards) { card in
+                    Button { selectedID = card.id } label: {
+                        HStack(spacing: 10) {
+                            Text(batch(card)?.review.period_key ?? "工作卡片").font(.system(size: 12)).monospacedDigit()
+                            Spacer(minLength: 8)
                             StatusLabel(text: status(card), color: card.review_status == "approved" ? Palette.green : card.review_status == "excluded" ? Palette.secondary : Palette.yellow, size: 6)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.padding(20).frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
-                        .background(selectedID == card.id ? Palette.selected : .white)
-                        .overlay(alignment: .leading) { if selectedID == card.id { Rectangle().fill(Palette.yellow).frame(width: 3) } }
-                        .contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityIdentifier("review-card-\(card.id)")
-                    .id("\(identifier):\(card.id):\(card.review_status):\(selectedID == card.id)")
-                Rule()
+                        }.padding(.leading, 40).padding(.trailing, 20).frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                            .background(selectedID == card.id ? Palette.selected : .white)
+                            .overlay(alignment: .leading) { if selectedID == card.id { Rectangle().fill(Palette.yellow).frame(width: 3) } }
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("review-card-\(card.id)")
+                        .id("\(identifier):\(card.id):\(card.review_status):\(selectedID == card.id)")
+                }
+                Rule().padding(.top, 8)
             }
             if cards.isEmpty {
                 Text("暂无\(title)卡片").font(.system(size: 12)).foregroundStyle(Palette.secondary)

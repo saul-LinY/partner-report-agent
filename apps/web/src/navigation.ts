@@ -1,11 +1,11 @@
 import {
   ClipboardCheck,
+  Filter,
   FileStack,
   LayoutDashboard,
   ScanSearch,
   ServerCog,
   Settings2,
-  TableProperties,
   UserRound,
 } from "lucide-react";
 
@@ -22,7 +22,7 @@ export const navigationGroups = [
   {
     label: "采集与管理",
     items: [
-      { label: "贡献记录", href: "/admin/facts", icon: TableProperties },
+      { label: "会话预处理", href: "/admin/sessions", icon: Filter },
       { label: "工作卡审核", href: "/admin/reviews", icon: ClipboardCheck },
       { label: "团队管理", href: "/admin/team-settings", icon: Settings2 },
     ],
@@ -40,8 +40,8 @@ export const navigationGroups = [
 export function isNavigationActive(location: string, href: string) {
   if (href === "/admin/reviews")
     return location === href || location.startsWith("/partner/review/");
-  if (href === "/admin/reports")
-    return location === href || location.startsWith("/admin/team-reports/");
+  if (href === "/admin")
+    return location === href || location.startsWith("/admin/members/");
   return location === href;
 }
 

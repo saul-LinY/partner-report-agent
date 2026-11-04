@@ -10,6 +10,9 @@ private actor FakeCollector: CollectorServing {
     var failLogs = false
     var failUploads = false
     var messages: [AppMessage] = []
+    var syncedState = CollectorSyncState.empty
+    func setSyncState(_ value: CollectorSyncState) { syncedState = value }
+    func syncState(binding: LocalBinding) async throws -> CollectorSyncState { syncedState }
     var receipts: [String] = []
     var failReceipts = false
     var failPolicy = false
@@ -196,6 +199,32 @@ final class CollectorTests: XCTestCase {
         XCTAssertTrue(store.approvedProjects.isEmpty)
         XCTAssertEqual(store.collectorPolicy?.version, 2)
     }
+    func testRebindingRestoresUploadHistoryAndMessageCheckpointsFromTheSystem() async throws {
+        let service = FakeCollector()
+        let key = String(repeating: "a", count: 64)
+        await service.setEntries([.init(scopeKey: key, displayName: "Atlas", status: .allowed)])
+        let uploaded = ChatTurn(id: "t", prompt: "question", answer: "answer", questionTime: "12:00")
+        let completed = Date.now.addingTimeInterval(-3600)
+        await service.setSyncState(CollectorSyncState(
+            sessions: [.init(id: "session", messages: UploadCheckpoint(turns: [uploaded]).messages)],
+            uploads: [.init(id: "upload", periodKey: "2026-W45", sessionCount: 3, completedAt: completed, createdAt: completed, projects: [.init(scopeKey: key, sessionCount: 3, messageCount: 12)])]))
+        let store = AppStore(live: true, collectorService: service)
+        await store.bindCollector(binding, code: "TEST-CODE")
+        let record = try XCTUnwrap(store.uploadRecords.first)
+        XCTAssertEqual([record.id, record.status.rawValue, record.projectsAndAgents], ["upload", "complete", "Atlas"])
+        XCTAssertEqual(record.messageCount, 12)
+        let checkpoint = try XCTUnwrap(store.uploadCheckpoints["session"])
+        XCTAssertTrue(checkpoint.pendingMessages(in: [uploaded]).isEmpty)
+        var edited = uploaded; edited.answer = "a new answer"
+        XCTAssertEqual(checkpoint.pendingMessages(in: [edited]).map(\.id), ["t:answer"])
+    }
+    func testRebindingStillSucceedsWhenTheSystemHasNoStateToReturn() async throws {
+        let store = AppStore(live: true, collectorService: FakeCollector())
+        await store.bindCollector(binding, code: "TEST-CODE")
+        XCTAssertTrue(store.binding.isBound)
+        XCTAssertTrue(store.uploadRecords.isEmpty)
+        XCTAssertTrue(store.uploadCheckpoints.isEmpty)
+    }
     func testBackgroundResumeKeepsBindingAndDoesNotBypassFirstScanConsent() async throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "background-resume-\(UUID())")
         defer { try? FileManager.default.removeItem(at: home) }
@@ -254,6 +283,60 @@ final class CollectorTests: XCTestCase {
         XCTAssertEqual(decoded[0].turns, [question])
         let roundtrip = try CollectorJSON.decoder().decode(CollectorPackage.self, from: CollectorJSON.encoder().encode(package))
         XCTAssertEqual(roundtrip.parts, package.parts)
+    }
+    func testExcludedSessionIsNeverUploadedEvenWhenAlreadyQueuedAndComesBackWhenRestored() async throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "collector-exclude-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let root = home.appending(path: "project")
+        let source = home.appending(path: ".claude/projects/test/session.jsonl")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let metadata: [String: Any] = ["type": "user", "sessionId": "session", "cwd": root.path, "message": ["role": "user", "content": "fixture question"]]
+        try JSONSerialization.data(withJSONObject: metadata).write(to: source)
+        let state = home.appending(path: "app/state.json")
+        let outbox = state.deletingLastPathComponent().appending(path: "collector-outbox.json")
+        let service = FakeCollector(), reader = QuestionOnlyReader()
+        let store = AppStore(stateURL: state, live: true, reader: reader, discoveryHome: home, discoveryEnvironment: [:], metadataReader: nil, collectorService: service)
+        await store.bindCollector(binding, code: "TEST-CODE")
+        try store.registerProject(name: "Project", folder: root.path)
+        let projectID = try XCTUnwrap(store.projects.first?.id)
+        let approved = await store.synchronizePermission(projectID, permission: .allowed)
+        XCTAssertTrue(approved)
+        _ = await store.prepareCollectorPermissions()
+        store.confirmCollectorPermissions()
+        await store.startInitialScan()
+        let session = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(store.uploadState(of: session), .pending)
+
+        // A failed upload leaves the session queued in the outbox.
+        await service.setUploadFailure(true)
+        await store.runLocalUpload()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outbox.path))
+        let attempts = await service.packages.count
+
+        // Excluding it afterwards must also remove it from that queued package.
+        store.setUploadExcluded(true, for: session.id)
+        XCTAssertEqual(store.uploadState(of: session), .excluded)
+        XCTAssertTrue(store.pendingSessions.isEmpty)
+        await service.setUploadFailure(false)
+        await store.runLocalUpload()
+        let afterExclusion = await service.packages
+        XCTAssertEqual(afterExclusion.count, attempts, "an excluded session must not be sent")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outbox.path))
+        XCTAssertEqual(store.uploadNotice, "距离上次上传后没有新的或更新的会话，无需上传。")
+        XCTAssertTrue(store.uploadRecords.first?.errorMessage?.contains("不上传") == true)
+
+        // The choice survives a restart.
+        let relaunched = AppStore(stateURL: state, live: true, reader: reader, discoveryHome: home, discoveryEnvironment: [:], metadataReader: nil, collectorService: service)
+        XCTAssertTrue(relaunched.uploadExcludedSessionIDs.contains(session.id))
+
+        // Restoring it makes the next upload carry the session again.
+        relaunched.setUploadExcluded(false, for: session.id)
+        await relaunched.runLocalUpload()
+        let afterRestore = await service.packages
+        XCTAssertEqual(afterRestore.count, attempts + 1)
+        let sent = try CollectorJSON.decoder().decode([CollectorSession].self, from: try XCTUnwrap(afterRestore.last?.parts.first))
+        XCTAssertEqual(sent.map(\.id), [session.id])
     }
     func testOldEmailConfigurationDoesNotCountAsAuthenticatedBinding() throws {
         let value = try JSONDecoder().decode(LocalBinding.self, from: Data(#"{"serviceAddress":"https://company.example","workEmail":"old@example.com","savedAt":0}"#.utf8))

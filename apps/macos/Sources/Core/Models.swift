@@ -1,13 +1,14 @@
 import Foundation
 
 public enum AppPage: String, CaseIterable, Identifiable, Sendable {
-    case approvals, sessions, uploads, settings
+    case approvals, sessions, uploads, privacy, settings
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .sessions: "项目会话"
         case .approvals: "待审批项"
         case .uploads: "上传记录"
+        case .privacy: "隐私说明"
         case .settings: "系统设置"
         }
     }
@@ -16,7 +17,26 @@ public enum AppPage: String, CaseIterable, Identifiable, Sendable {
         case .sessions: "bubble.left.and.bubble.right"
         case .approvals: "checklist"
         case .uploads: "icloud.and.arrow.up"
+        case .privacy: "lock.shield"
         case .settings: "slider.horizontal.3"
+        }
+    }
+}
+
+/// What will happen to a session at the next upload.
+public enum SessionUploadState: Sendable {
+    case uploaded, pending
+    /// The member chose not to upload this session.
+    case excluded
+}
+
+public enum SessionUploadFilter: CaseIterable, Sendable {
+    case all, pending, excluded
+    func includes(_ state: SessionUploadState) -> Bool {
+        switch self {
+        case .all: true
+        case .pending: state == .pending
+        case .excluded: state == .excluded
         }
     }
 }

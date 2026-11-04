@@ -144,7 +144,12 @@ function fixture(): ProjectProgressResponse {
 }
 async function setup(
   page: Page,
-  options: { fail?: boolean; empty?: boolean; conflict?: boolean } = {},
+  options: {
+    fail?: boolean;
+    empty?: boolean;
+    conflict?: boolean;
+    member?: string;
+  } = {},
 ) {
   const data = fixture();
   const writes: any[] = [];
@@ -172,6 +177,71 @@ async function setup(
           bindingCodes: [],
           reviewQueue: [],
           jobs: [],
+        },
+      });
+    if (url.pathname === "/v1/admin/project-profiles")
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id: "profile-a",
+              partnerId: "member-a",
+              projectName: "Partner Report",
+              updatedAt: data.to,
+              sessions: 3,
+              failed: false,
+              note: {
+                oneLine: { text: "让团队写周报更省事的小工具", refs: ["S1T1"] },
+                intro: {
+                  text: "成员每周把工作交给 AI 整理，领导直接读到清楚的进展。",
+                  refs: ["S1T1"],
+                },
+                features: [{ text: "一键汇总每周工作", refs: ["S1T2"] }],
+                status: { text: "", refs: [] },
+                openIssues: [
+                  { text: "成员是否愿意每周使用还没验证", refs: ["S1T3"] },
+                ],
+              },
+            },
+          ],
+        },
+      });
+    if (url.pathname === "/v1/admin/ai-activity")
+      return route.fulfill({
+        json: {
+          timezone: "Asia/Shanghai",
+          from: data.from,
+          to: data.to,
+          days: 28,
+          totals: {
+            sessions: 0,
+            turns: 0,
+            previousSessions: 0,
+            previousTurns: 0,
+            activeMembers: 0,
+            projects: 0,
+            dropped: 0,
+          },
+          daily: [],
+          projects: [],
+          members: [
+            {
+              id: "member-a",
+              name: "陈明",
+              turns: 5,
+              sessions: 2,
+              activeDays: 2,
+              byDay: { "2026-09-07": 2, "2026-09-08": 3 },
+              byProject: {},
+              events: [
+                { t: "2026-09-07T10:15", p: "Partner Report" },
+                { t: "2026-09-07T10:40", p: "数据服务" },
+                { t: "2026-09-08T09:05", p: "Partner Report" },
+                { t: "2026-09-08T09:30", p: "Partner Report" },
+                { t: "2026-09-08T14:10", p: "数据服务" },
+              ],
+            },
+          ],
         },
       });
     if (url.pathname === "/v1/admin/project-progress") {
@@ -279,7 +349,7 @@ async function setup(
       json: { message: "Unexpected request" },
     });
   });
-  await page.goto("/admin");
+  await page.goto(`/admin/members/${options.member ?? "member-a"}`);
   await expect(
     page.getByRole("heading", { name: "项目进展", exact: true }),
   ).toBeVisible();
@@ -295,7 +365,9 @@ test("shows a familiar month calendar and actual daily achievements", async ({
   page,
 }) => {
   await setup(page);
-  await expect(page.getByRole("heading", { name: "项目进展" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "项目进展", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "2026 年 9 月" }),
   ).toBeVisible();
@@ -316,7 +388,6 @@ test("shows a familiar month calendar and actual daily achievements", async ({
   );
   await expect(page.getByRole("dialog")).not.toContainText("优化数据查询");
   await page.getByRole("button", { name: "关闭详情" }).click();
-  await page.getByRole("button", { name: "陈明", exact: true }).click();
   await page
     .getByRole("button", { name: "查看 陈明 的 数据服务", exact: true })
     .click();
@@ -327,16 +398,8 @@ test("shows a familiar month calendar and actual daily achievements", async ({
   await expect(page.getByRole("dialog")).not.toContainText("完成贡献采集接口");
 });
 
-test("selects a person on the left and switches their projects at the top", async ({
-  page,
-}) => {
+test("switches a member's projects at the top", async ({ page }) => {
   const { data } = await setup(page);
-  const people = page.getByRole("complementary", { name: "人员列表" });
-  await expect(people.getByRole("button")).toHaveText(["陈明", "林安"]);
-  await expect(people.locator(".pc-project-choice")).toHaveCount(0);
-  await expect(
-    people.getByRole("button", { name: "陈明", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
   const picker = page.getByRole("group", { name: "陈明的项目", exact: true });
   await expect(picker.getByRole("button")).toHaveText([
     "Partner Report",
@@ -362,38 +425,21 @@ test("selects a person on the left and switches their projects at the top", asyn
   await expect(
     page.getByRole("region", { name: "当前项目进度" }).getByRole("heading"),
   ).toHaveText("数据服务");
-  // Clicking the selected person and refreshing must preserve the project choice.
-  await people.getByRole("button", { name: "陈明", exact: true }).click();
   data.projects[0]!.latestProgress!.date = today;
   await page.getByTitle("刷新项目进展").click();
   await expect(
     page.getByRole("region", { name: "当前项目进度" }).getByRole("heading"),
   ).toHaveText("数据服务");
-  await people.getByRole("button", { name: "林安", exact: true }).focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page
-      .getByRole("group", { name: "林安的项目", exact: true })
-      .getByRole("button"),
-  ).toHaveText(["客户门户"]);
-  await expect(
-    page.getByRole("region", { name: "当前项目进度" }),
-  ).toContainText("客户门户");
-  await expect(picker).toHaveCount(0);
-  await expect(
-    people.getByRole("button", { name: "林安", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
 });
 
 test("keeps each person's work separate when the project names match", async ({
   page,
 }) => {
-  const { data } = await setup(page);
+  const { data } = await setup(page, { member: "member-b" });
   data.projects[2]!.projectId = data.projects[0]!.projectId;
   data.projects[2]!.projectName = data.projects[0]!.projectName;
   data.projects[2]!.projectDescription = "林安负责的工作说明";
   await page.getByTitle("刷新项目进展").click();
-  await page.getByRole("button", { name: "林安", exact: true }).click();
   await expect(
     page
       .getByRole("group", { name: "林安的项目", exact: true })
@@ -452,8 +498,7 @@ test("shows the complete description, focus and every event directly in the over
 test("selects a member's project without inventing dates when no dated work exists", async ({
   page,
 }) => {
-  await setup(page);
-  await page.getByRole("button", { name: "林安", exact: true }).click();
+  await setup(page, { member: "member-b" });
   await expect(page.locator(".pc-project-choice.selected")).toHaveCount(1);
   await expect(
     page.getByRole("region", { name: "当前项目进度" }),
@@ -466,7 +511,6 @@ test("switches calendar months and filters by member without hiding latest proje
   page,
 }) => {
   const { reads } = await setup(page);
-  await page.getByRole("button", { name: "陈明", exact: true }).click();
   await expect(page.locator(".pc-project-choice")).toHaveCount(2);
   await page.getByRole("button", { name: "上个月" }).click();
   await expect(
@@ -530,7 +574,6 @@ test("refreshes new progress and recovers from unavailable data", async ({
   await expect(page.locator(".pc-project-description")).toContainText(
     "面向研发团队的项目贡献采集与周报系统。",
   );
-  await page.getByRole("button", { name: "陈明", exact: true }).click();
   await page
     .getByRole("button", { name: "查看 陈明 的 Partner Report", exact: true })
     .click();
@@ -538,19 +581,17 @@ test("refreshes new progress and recovers from unavailable data", async ({
 });
 
 for (const width of [390, 768, 1440]) {
-  test(`keeps people and project choices fixed while content scrolls at ${width}px`, async ({
+  test(`keeps the project choices fixed while content scrolls at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 });
     await setup(page);
     const content = page.getByRole("region", { name: "项目内容", exact: true });
-    const people = page.getByRole("complementary", { name: "人员列表" });
     const picker = page.getByRole("group", { name: "陈明的项目", exact: true });
     await expect(content).toBeVisible();
     await page
-      .locator(".aw-operations-view")
+      .locator(".pc-dashboard")
       .evaluate((element) => element.scrollIntoView({ block: "start" }));
-    const peopleBefore = await people.boundingBox();
     const pickerBefore = await picker.boundingBox();
     const windowBefore = await page.evaluate(() => window.scrollY);
     await content.hover();
@@ -558,7 +599,6 @@ for (const width of [390, 768, 1440]) {
     await expect
       .poll(() => content.evaluate((element) => element.scrollTop))
       .toBeGreaterThan(100);
-    expect(await people.boundingBox()).toEqual(peopleBefore);
     expect(await picker.boundingBox()).toEqual(pickerBefore);
     expect(await page.evaluate(() => window.scrollY)).toBe(windowBefore);
 
@@ -569,7 +609,6 @@ for (const width of [390, 768, 1440]) {
     await expect(page.locator(".pc-day").last()).toBeInViewport();
     await page.mouse.wheel(0, 500);
     await page.mouse.wheel(0, 500);
-    expect(await people.boundingBox()).toEqual(peopleBefore);
     expect(await picker.boundingBox()).toEqual(pickerBefore);
     expect(await page.evaluate(() => window.scrollY)).toBe(windowBefore);
 
@@ -587,13 +626,6 @@ for (const width of [390, 768, 1440]) {
     await expect
       .poll(() => content.evaluate((element) => element.scrollTop))
       .toBeGreaterThan(0);
-    await people.getByRole("button", { name: "林安", exact: true }).click();
-    await expect
-      .poll(() => content.evaluate((element) => element.scrollTop))
-      .toBe(0);
-    await expect(
-      content.getByRole("heading", { name: "客户门户", exact: true }),
-    ).toBeInViewport();
   });
 
   test(`calendar and member project selection fit ${width}px`, async ({
@@ -613,7 +645,6 @@ for (const width of [390, 768, 1440]) {
       path: testInfo.outputPath(`calendar-${width}.png`),
       fullPage: true,
     });
-    await page.getByRole("button", { name: "陈明", exact: true }).click();
     await page
       .getByRole("button", { name: "查看 陈明 的 Partner Report", exact: true })
       .click();
@@ -632,3 +663,50 @@ for (const width of [390, 768, 1440]) {
     expect(errors).toEqual([]);
   });
 }
+
+test("shows each project's plain-language profile", async ({ page }) => {
+  await setup(page);
+  const card = page.locator(".lc-card", { hasText: "Partner Report" });
+  await expect(card.locator(".lc-oneline")).toHaveText(
+    "让团队写周报更省事的小工具",
+  );
+  await expect(card.locator(".lc-intro")).toContainText(
+    "成员每周把工作交给 AI 整理",
+  );
+  await expect(card.getByText("一键汇总每周工作")).toBeVisible();
+  // A project without a profile shows no empty placeholders.
+  await expect(
+    page.locator(".lc-card", { hasText: "数据服务" }).locator(".lc-profile"),
+  ).toHaveCount(0);
+});
+
+test("charts a member's AI interactions by hour and by month, and pages between months", async ({
+  page,
+}) => {
+  await setup(page);
+  const panel = page.locator(".lc-panel", { hasText: "会话活跃度" });
+  await expect(panel.getByRole("heading")).toHaveText(
+    "2026年9月8日 会话活跃度",
+  );
+  await expect(panel.locator(".lc-axis-title")).toHaveText([
+    "时间（小时）",
+    "交互轮数（轮）",
+  ]);
+  await panel.getByRole("button", { name: "按月看" }).click();
+  await expect(panel.getByRole("heading")).toHaveText("2026年9月 会话活跃度");
+  await expect(panel.locator(".lc-axis-title")).toHaveText([
+    "日期（日）",
+    "交互轮数（轮）",
+  ]);
+  // Data starts in September, so there is nothing before it to page back to.
+  await expect(panel.getByRole("button", { name: "上一月" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "下一月" })).toBeDisabled();
+  // A legend entry hides that project's line.
+  await expect(panel.locator("svg polyline")).toHaveCount(2);
+  await panel.getByRole("button", { name: "数据服务" }).click();
+  await expect(panel.locator("svg polyline")).toHaveCount(1);
+  await panel.getByRole("button", { name: "按天看" }).click();
+  await expect(panel.getByRole("heading")).toHaveText(
+    "2026年9月8日 会话活跃度",
+  );
+});

@@ -25,6 +25,7 @@ private struct SavedState: Codable {
     var collectorLogs: [CollectorLog]?
     var lastAutomaticUploadAt: Date?
     var pendingNotificationReceipts: Set<String>?
+    var uploadExcludedSessionIDs: Set<String>?
 }
 private struct DiscoveryReport: Codable {
     var version = 1
@@ -82,7 +83,9 @@ public final class AppStore: ObservableObject {
     @Published public var selectedProjectID: String
     @Published public var selectedAgent: Agent?
     @Published public var query = ""
-    @Published public var pendingOnly = false
+    @Published public var uploadFilter: SessionUploadFilter = .all
+    /// Sessions the member chose not to upload; they are never packaged, even if already queued.
+    @Published public private(set) var uploadExcludedSessionIDs: Set<String> = []
     @Published public var settingsTab: SettingsTab = .account
     @Published public var selectedUploadRecordID: String?
     @Published public private(set) var uploadCheckpoints: [String: UploadCheckpoint] = [:]
@@ -209,6 +212,7 @@ public final class AppStore: ObservableObject {
                     if saved.uploadCheckpoints == nil { uploadCheckpoints[sessions[index].id] = UploadCheckpoint(turns: sessions[index].turns) }
                 }
                 localRecords = saved.localRecords
+                uploadExcludedSessionIDs = saved.uploadExcludedSessionIDs ?? []
                 uploadRecords = localRecords + (live ? [] : DemoRepository.uploadRecords)
                 if live, let sources = saved.discoveredSources {
                     let active = sources.filter { !SessionSourcePolicy.isArchived($0.source) && (scanWindow?.contains($0.modifiedAt) ?? true) }
@@ -420,7 +424,7 @@ public final class AppStore: ObservableObject {
         guard approvedProjects.contains(where: { $0.id == selectedProjectID }) else { return [] }
         return sessions.filter { session in
             session.projectID == selectedProjectID && (agent == nil || session.agent == agent) &&
-            (!pendingOnly || !session.uploaded) &&
+            uploadFilter.includes(uploadState(of: session)) &&
             (query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
              ([session.title] + session.turns.flatMap { [$0.prompt, $0.answer ?? ""] }).joined(separator: " ").localizedCaseInsensitiveContains(query))
         }
@@ -431,7 +435,27 @@ public final class AppStore: ObservableObject {
         let fingerprint = sources.map(\.fingerprint).sorted().joined(separator: "|")
         return loadingSessionIDs.contains(id) || (loadedFingerprints[id] != fingerprint && sessionReadErrors[id] == nil) ? id : nil
     }
-    public var pendingSessions: [AgentSession] { sessions.filter { session in !session.uploaded && approvedProjects.contains { $0.id == session.projectID } } }
+    public var pendingSessions: [AgentSession] {
+        sessions.filter { session in
+            !session.uploaded && !uploadExcludedSessionIDs.contains(session.id) && approvedProjects.contains { $0.id == session.projectID }
+        }
+    }
+    public func uploadState(of session: AgentSession) -> SessionUploadState {
+        uploadExcludedSessionIDs.contains(session.id) ? .excluded : session.uploaded ? .uploaded : .pending
+    }
+    /// Sessions of allowed projects that the member keeps out of uploads.
+    public var excludedSessionCount: Int {
+        sessions.filter { session in
+            uploadExcludedSessionIDs.contains(session.id) && approvedProjects.contains { $0.id == session.projectID }
+        }.count
+    }
+    /// Takes effect at the next upload. Content that was already uploaded stays in the company system.
+    public func setUploadExcluded(_ excluded: Bool, for sessionID: String) {
+        guard uploadExcludedSessionIDs.contains(sessionID) != excluded else { return }
+        if excluded { uploadExcludedSessionIDs.insert(sessionID) } else { uploadExcludedSessionIDs.remove(sessionID) }
+        persist()
+        reconcileSelection()
+    }
     public var newProjectCount: Int { projects.filter { $0.permission == .pending }.count }
     public var pendingProjects: [Project] { projects.filter { $0.permission == .pending } }
     public var pendingCards: [ReviewCard] { reviewBatches.flatMap(\.pendingCards) }
@@ -1022,7 +1046,7 @@ public final class AppStore: ObservableObject {
         do {
             let allowed = Set(approvedProjects.map(\.folder))
             let loaded = loadedFingerprints.filter { sourceGroups[$0.key]?.first.map { allowed.contains($0.projectRoot) } == true }
-            let saved = SavedState(preferences: preferences, registeredProjects: projects.filter { !$0.isDemo }, uploadedDemoIDs: Set(sessions.filter(\.uploaded).map(\.id)), localRecords: localRecords, liveProjects: isLive ? projects : nil, preparedFingerprints: preparedFingerprints, notifiedApprovalKeys: notifiedApprovalKeys, uploadCheckpoints: uploadCheckpoints, binding: binding, initialScanCompleted: initialScanCompleted, collectionNeedsCompletion: collectionNeedsCompletion, scanWindow: scanWindow, discoveredSources: isLive && hasDiscoverySnapshot ? sourceGroups.values.flatMap { $0 } : nil, importedSessions: isLive ? sessions.filter { ($0.hasModelReply || collectorService != nil) && loaded[$0.id] != nil && sessionReadErrors[$0.id] == nil } : nil, loadedFingerprints: isLive ? loaded : nil, excludedSessionFingerprints: isLive ? excludedSessionFingerprints.filter { loaded[$0.key] == $0.value } : nil, nativeTitles: isLive ? nativeTitles.filter { loaded[$0.key] != nil } : nil, collectorPolicy: collectorPolicy, permissionsConfirmed: permissionsConfirmed, collectorLogs: collectorLogs, lastAutomaticUploadAt: lastAutomaticUploadAt, pendingNotificationReceipts: pendingNotificationReceipts)
+            let saved = SavedState(preferences: preferences, registeredProjects: projects.filter { !$0.isDemo }, uploadedDemoIDs: Set(sessions.filter(\.uploaded).map(\.id)), localRecords: localRecords, liveProjects: isLive ? projects : nil, preparedFingerprints: preparedFingerprints, notifiedApprovalKeys: notifiedApprovalKeys, uploadCheckpoints: uploadCheckpoints, binding: binding, initialScanCompleted: initialScanCompleted, collectionNeedsCompletion: collectionNeedsCompletion, scanWindow: scanWindow, discoveredSources: isLive && hasDiscoverySnapshot ? sourceGroups.values.flatMap { $0 } : nil, importedSessions: isLive ? sessions.filter { ($0.hasModelReply || collectorService != nil) && loaded[$0.id] != nil && sessionReadErrors[$0.id] == nil } : nil, loadedFingerprints: isLive ? loaded : nil, excludedSessionFingerprints: isLive ? excludedSessionFingerprints.filter { loaded[$0.key] == $0.value } : nil, nativeTitles: isLive ? nativeTitles.filter { loaded[$0.key] != nil } : nil, collectorPolicy: collectorPolicy, permissionsConfirmed: permissionsConfirmed, collectorLogs: collectorLogs, lastAutomaticUploadAt: lastAutomaticUploadAt, pendingNotificationReceipts: pendingNotificationReceipts, uploadExcludedSessionIDs: uploadExcludedSessionIDs)
             let folder = stateURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try JSONEncoder().encode(saved).write(to: stateURL, options: .atomic)
@@ -1091,7 +1115,8 @@ extension AppStore {
             value.serviceAddress = value.serviceAddress.trimmingCharacters(in: .whitespacesAndNewlines)
             let claim = try await collectorService.claim(binding: value, code: code.trimmingCharacters(in: .whitespacesAndNewlines))
             _ = await collectorService.drainLogs()
-            // A new binding never inherits cached contents or local-only approvals.
+            // A new binding never inherits cached contents or local-only approvals; upload history and
+            // checkpoints are re-read from the system below.
             binding = value; binding.deviceID = claim.deviceId; binding.name = claim.name; binding.savedAt = .now
             projects = []; sessions = []; sourceGroups = [:]; loadedFingerprints = [:]; excludedSessionFingerprints = [:]
             uploadCheckpoints = [:]; nativeTitles = [:]; preparedFingerprints = [:]; collectorLogs = []
@@ -1104,6 +1129,8 @@ extension AppStore {
             lastFailureLogAt = [:]; lastDiscoveryLog = nil
             try discardCollectorOutbox()
             applyCollectorPolicy(claim.policy)
+            // Best effort: without it the first upload simply carries the whole cycle again.
+            if let state = try? await collectorService.syncState(binding: binding) { restoreCollectorState(state, policy: claim.policy) }
             recordCollectorLog("binding", "BOUND")
             persist()
             await flushCollectorLogs()
@@ -1205,6 +1232,20 @@ extension AppStore {
         }
     }
 
+    /// A re-bound App keeps only what the system confirms: message digests and received batches.
+    private func restoreCollectorState(_ state: CollectorSyncState, policy: CollectorPolicy) {
+        for session in state.sessions where !session.messages.isEmpty {
+            uploadCheckpoints[session.id] = UploadCheckpoint(messages: session.messages, uploadedAt: state.uploads.compactMap(\.completedAt).max() ?? .now)
+        }
+        let names = Dictionary(policy.entries.map { ($0.scopeKey, $0.displayName) }, uniquingKeysWith: { first, _ in first })
+        localRecords = state.uploads.map { upload in
+            let projects = upload.projects.map { UploadProjectSummary(id: $0.scopeKey, name: names[$0.scopeKey] ?? "已上传项目", sessionCount: $0.sessionCount, messageCount: $0.messageCount) }
+            let date = upload.completedAt ?? upload.createdAt
+            return UploadRecord(id: upload.id, time: date.formatted(.dateTime.month().day().hour().minute()), kind: "周期会话包", projectsAndAgents: projects.map(\.name).sorted().joined(separator: "、"), content: "\(upload.sessionCount) 个完整会话", status: .complete, details: [upload.periodKey, "绑定时从系统恢复"], createdAt: date, projects: projects)
+        }
+        uploadRecords = localRecords
+    }
+
     private func applyCollectorPolicy(_ policy: CollectorPolicy) {
         let entries = Dictionary(uniqueKeysWithValues: policy.entries.map { ($0.scopeKey, $0) })
         for project in projects {
@@ -1261,12 +1302,17 @@ extension AppStore {
     }
 
     private var collectorOutboxURL: URL? { stateURL?.deletingLastPathComponent().appending(path: "collector-outbox.json") }
-    private func discardCollectorOutbox() throws {
+    private func outboxContainsExcludedSession(_ package: CollectorPackage) throws -> Bool {
+        try package.parts.contains { bytes in
+            try CollectorJSON.decoder().decode([CollectorSession].self, from: bytes).contains { uploadExcludedSessionIDs.contains($0.id) }
+        }
+    }
+    private func discardCollectorOutbox(reason: String = "权限或绑定已变更，旧批次已作废，后续将重新打包。") throws {
         guard let url = collectorOutboxURL, FileManager.default.fileExists(atPath: url.path) else { return }
         try FileManager.default.removeItem(at: url)
         for index in localRecords.indices where localRecords[index].status == .queued || localRecords[index].status == .failed {
             localRecords[index].status = .failed
-            localRecords[index].errorMessage = "权限或绑定已变更，旧批次已作废，后续将重新打包。"
+            localRecords[index].errorMessage = reason
         }
         uploadRecords = localRecords
     }
@@ -1376,6 +1422,9 @@ extension AppStore {
             if FileManager.default.fileExists(atPath: outbox.path) {
                 package = try CollectorJSON.decoder().decode(CollectorPackage.self, from: Data(contentsOf: outbox))
                 if package.policyVersion != policy.version { try discardCollectorOutbox() }
+                else if try outboxContainsExcludedSession(package) {
+                    try discardCollectorOutbox(reason: "已按你的选择不上传部分会话，旧批次已作废，后续将重新打包。")
+                }
             }
             if FileManager.default.fileExists(atPath: outbox.path) {
                 package = try CollectorJSON.decoder().decode(CollectorPackage.self, from: Data(contentsOf: outbox))
@@ -1397,7 +1446,8 @@ extension AppStore {
                 // First upload carries every approved session of the scanned month; later uploads carry
                 // only sessions that are new or changed since their last successful upload receipt.
                 let payload = sessions.compactMap { session -> CollectorSession? in
-                    guard let project = approvedProjects.first(where: { $0.id == session.projectID }), let key = project.scopeKey,
+                    guard !uploadExcludedSessionIDs.contains(session.id),
+                          let project = approvedProjects.first(where: { $0.id == session.projectID }), let key = project.scopeKey,
                           let modified = sourceGroups[session.id]?.map(\.modifiedAt).max(), modified <= end,
                           scanWindow?.contains(modified) ?? true,
                           uploadCheckpoints[session.id]?.pendingMessages(in: session.turns).isEmpty != true,

@@ -965,6 +965,112 @@ export const syncBatches = pgTable(
   ],
 );
 
+/** Session-level usefulness verdicts. Keyed by the same identity the admin
+ * session list de-duplicates on, so a verdict survives re-uploads. */
+export const sessionPreprocess = pgTable(
+  "session_preprocess",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    scopeKey: text("scope_key").notNull(),
+    agent: text("agent").notNull(),
+    sessionId: text("session_id").notNull(),
+    verdict: text("verdict").notNull(),
+    reason: text("reason"),
+    decidedBy: text("decided_by").notNull(),
+    ruleVersion: integer("rule_version").notNull(),
+    sourceModifiedAt: timestamp("source_modified_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("session_preprocess_session_unique").on(
+      table.tenantId,
+      table.partnerId,
+      table.scopeKey,
+      table.agent,
+      table.sessionId,
+    ),
+    index("session_preprocess_verdict_idx").on(
+      table.tenantId,
+      table.teamId,
+      table.verdict,
+    ),
+  ],
+);
+
+/** A plain-language profile of one project owned by one person, built by reading
+ * the project's kept sessions in time order. `note` is ProjectProfileNote. */
+export const projectProfiles = pgTable(
+  "project_profiles",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    pluginInstanceId: uuid("plugin_instance_id")
+      .notNull()
+      .references(() => pluginInstances.id),
+    scopeKey: text("scope_key").notNull(),
+    note: jsonb("note").notNull(),
+    version: integer("version").notNull().default(0),
+    lastError: text("last_error"),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("project_profiles_scope_unique").on(
+      table.tenantId,
+      table.partnerId,
+      table.pluginInstanceId,
+      table.scopeKey,
+    ),
+    index("project_profiles_team_idx").on(table.tenantId, table.teamId),
+  ],
+);
+
+/** Which sessions a profile has read. `seq` numbers a profile's sessions in the
+ * order they were first read and anchors evidence refs such as S3T2. */
+export const projectProfileSessions = pgTable(
+  "project_profile_sessions",
+  {
+    profileId: uuid("profile_id")
+      .notNull()
+      .references(() => projectProfiles.id, { onDelete: "cascade" }),
+    agent: text("agent").notNull(),
+    sessionId: text("session_id").notNull(),
+    sourceScopeKey: text("source_scope_key").notNull(),
+    seq: integer("seq").notNull(),
+    sourceModifiedAt: timestamp("source_modified_at", {
+      withTimezone: true,
+    }).notNull(),
+    status: text("status").notNull().default("done"),
+    failures: integer("failures").notNull().default(0),
+    ...timestamps(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.profileId, table.agent, table.sessionId],
+    }),
+    uniqueIndex("project_profile_sessions_seq_unique").on(
+      table.profileId,
+      table.seq,
+    ),
+  ],
+);
+
 export const sessionRecords = pgTable(
   "session_records",
   {

@@ -4,6 +4,7 @@ import {
   collectorSessionSchema,
   type CollectorSession,
 } from "@partner-report/contracts";
+import { judgeSession, PROMPT_SAMPLE_TURNS } from "./session-judge.js";
 
 export function collectorSessionKey(session: CollectorSession) {
   return createHash("sha256")
@@ -30,6 +31,21 @@ export async function enqueueCollectorUpload(tx: any, uploadId: string) {
     // Retained only: a session last modified before the period has no in-period messages to analyse.
     if (Date.parse(session.modifiedAt) < new Date(upload.period_starts_at).getTime())
       continue;
+    // Sessions preprocessing drops (tests, chitchat) never reach summaries; a
+    // human verdict overrides the rules.
+    const [override] =
+      await tx`select verdict from session_preprocess where tenant_id=${upload.tenant_id}
+        and partner_id=${upload.partner_id} and scope_key=${session.scopeKey ?? ""}
+        and agent=${session.agent} and session_id=${session.id} and decided_by='human'`;
+    const verdict =
+      override?.verdict ??
+      judgeSession({
+        turnCount: session.turns.length,
+        prompts: session.turns
+          .slice(0, PROMPT_SAMPLE_TURNS)
+          .map((turn) => turn.prompt.slice(0, 200)),
+      }).verdict;
+    if (verdict === "drop") continue;
     const sessionKey = stableJsonHash([
       upload.period_id,
       collectorSessionKey(session),

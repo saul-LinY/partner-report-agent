@@ -79,44 +79,60 @@ function fixture() {
       { status: "RETRY_WAIT", type: "GENERATE_TEAM_REPORT", count: 1 },
     ],
   };
-  const facts = Array.from({ length: 15 }, (_, i) => ({
-    id: `fact-${i}`,
+  const sessions = Array.from({ length: 15 }, (_, i) => ({
+    id: `preprocess-${i}`,
+    verdict: "keep" as "keep" | "drop",
+    reason: null as string | null,
+    decided_by: "rule" as "rule" | "human",
+    upload_id: `upload-${i}`,
+    session_id: `session-${i}`,
     partner_id: `partner-${i % 2}`,
     partner_name: partnerNames[i % 2],
     period_id: `period-${i % 2}`,
     period_key: i % 2 ? "2026-W35" : "2026-W36",
-    session_id: `session-${i}`,
-    external_fact_id: `contribution-original-${i}`,
-    source_hash: `source-checksum-${i}`,
-    source_occurred_at: i % 2 ? "2026-09-04T09:00:00.000Z" : date,
-    payload: {
-      title:
-        i === 0
-          ? "监控查询性能优化"
-          : i === 1
-            ? "历史贡献格式兼容"
-            : `项目贡献 ${i}`,
-      projectId: i % 3 === 2 ? undefined : `project-${i % 2}`,
-      summary:
-        i === 1 ? undefined : "完成查询流程调整，补充异常处理与自动化验证。",
-      timeline: i === 1 ? [{ summary: "旧格式最后一条进展摘要" }] : [],
-      contributions:
-        i === 1
-          ? undefined
-          : [
-              { kind: "outcome", text: "查询耗时降低 30%" },
-              { kind: "progress", text: "完成接口联调" },
-              { kind: "decision", text: "保留现有鉴权边界" },
-              { kind: "blocker", text: "等待外部服务配额" },
-              { kind: "next_step", text: "继续验证高峰期查询" },
-            ],
-      outcomes: ["历史成果"],
-      actions: ["历史进展"],
-      decisions: ["历史决策"],
-      blockers: [],
-      nextSteps: ["历史下一步"],
-    },
+    agent: i % 2 ? "claude" : "codex",
+    title: i === 0 ? "监控查询性能优化" : `项目会话 ${i}`,
+    modified_at: i % 2 ? "2026-09-04T09:00:00.000Z" : date,
+    turn_count: i === 0 ? 25 : 2,
+    preview: `会话 ${i} 的第一条提问`,
+    project_name: i % 3 === 2 ? "数据服务" : "Partner Report",
   }));
+  for (const [i, reason] of ["test", "chitchat", "empty"].entries()) {
+    sessions.push({
+      ...sessions[i]!,
+      id: `dropped-${i}`,
+      upload_id: `dropped-upload-${i}`,
+      session_id: `dropped-session-${i}`,
+      title: `已剔除会话 ${reason}`,
+      preview: `不应展示的内容 ${reason}`,
+      verdict: "drop",
+      reason,
+    });
+  }
+  const transcript = (row: (typeof sessions)[number]) => ({
+    uploadId: row.upload_id,
+    sessionId: row.session_id,
+    agent: row.agent,
+    title: row.title,
+    modifiedAt: row.modified_at,
+    partnerName: row.partner_name,
+    periodKey: row.period_key,
+    projectName: row.project_name,
+    turns: Array.from({ length: row.turn_count }, (_, t) => ({
+      id: `${row.session_id}-turn-${t}`,
+      prompt:
+        t === 1
+          ? `粘贴的长日志开始\n${"日志行\n".repeat(40)}长日志结尾标记`
+          : `${row.title} 第 ${t + 1} 个问题`,
+      answer:
+        t === 1
+          ? null
+          : `已完成第 ${t + 1} 步：\n\n- **查询耗时**降低 30%\n- 新增 \`isValid()\` 校验`,
+      questionTime: "09月05日 17:00",
+      answerTime: t === 1 ? null : "09月05日 17:02",
+      model: t === 1 ? null : "gpt-test",
+    })),
+  });
   const archive = {
     periods: periods.map((p, i) => ({
       id: p.id,
@@ -152,7 +168,7 @@ function fixture() {
       })),
     })),
   };
-  return { overview, facts, archive };
+  return { overview, sessions, transcript, archive };
 }
 
 async function setup(
@@ -299,24 +315,40 @@ async function setup(
           ],
         },
       });
-    if (url.pathname === "/v1/admin/session-facts") {
+    if (url.pathname.endsWith("/verdict") && request.method() === "PUT") {
+      const row = data.sessions.find(
+        (item) =>
+          url.pathname === `/v1/admin/session-preprocess/${item.id}/verdict`,
+      );
+      if (row) {
+        const { verdict } = request.postDataJSON();
+        row.verdict = verdict === "auto" ? "keep" : verdict;
+        row.reason = verdict === "drop" ? "manual" : null;
+        row.decided_by = verdict === "auto" ? "rule" : "human";
+      }
+      return route.fulfill({ json: { ok: true } });
+    }
+    if (url.pathname === "/v1/admin/session-preprocess/rerun")
+      return route.fulfill({
+        json: { ok: true, judged: data.sessions.length },
+      });
+    if (url.pathname === "/v1/admin/session-preprocess") {
       const records = options.empty
         ? []
-        : data.facts.filter(
+        : data.sessions.filter(
             (row) =>
               (!url.searchParams.has("partnerId") ||
                 row.partner_id === url.searchParams.get("partnerId")) &&
               (!url.searchParams.has("periodId") ||
                 row.period_id === url.searchParams.get("periodId")) &&
-              (!url.searchParams.has("projectId") ||
-                (url.searchParams.get("projectId") === "unassigned"
-                  ? !row.payload.projectId
-                  : row.payload.projectId ===
-                    url.searchParams.get("projectId"))) &&
-              (!url.searchParams.has("sessionDate") ||
-                row.source_occurred_at.startsWith(
-                  url.searchParams.get("sessionDate")!,
-                )),
+              (!url.searchParams.has("project") ||
+                row.project_name === url.searchParams.get("project")) &&
+              (!url.searchParams.has("agent") ||
+                row.agent === url.searchParams.get("agent")) &&
+              (!url.searchParams.has("verdict") ||
+                row.verdict === url.searchParams.get("verdict")) &&
+              (!url.searchParams.has("decidedBy") ||
+                row.decided_by === url.searchParams.get("decidedBy")),
           );
       const current = Number(url.searchParams.get("page"));
       return route.fulfill({
@@ -325,13 +357,18 @@ async function setup(
           page: current,
           pageSize: 10,
           total: records.length,
-          projects: [
-            { id: "project-0", name: "Partner Report" },
-            { id: "project-1", name: "数据服务" },
-          ],
-          hasUnassigned: true,
+          projects: ["Partner Report", "数据服务"],
+          agents: [...new Set(data.sessions.map((row) => row.agent))],
         },
       });
+    }
+    if (url.pathname === "/v1/admin/collector-sessions/detail") {
+      const row = data.sessions.find(
+        (item) => item.upload_id === url.searchParams.get("uploadId"),
+      );
+      return row
+        ? route.fulfill({ json: data.transcript(row) })
+        : route.fulfill({ status: 404, json: { code: "SESSION_NOT_FOUND" } });
     }
     if (url.pathname === "/v1/admin/report-archive")
       return route.fulfill({
@@ -400,10 +437,19 @@ test("team settings appears after reviews and supports direct entry", async ({
     .locator(".nav-group")
     .filter({ hasText: "采集与管理" });
   await expect(contributionGroup.getByRole("link")).toHaveText([
-    "贡献记录",
+    "会话预处理",
     "工作卡审核",
     "团队管理",
   ]);
+  await expect(
+    navigation.getByRole("link", { name: "会话预处理", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    navigation.getByRole("link", { name: "会话原文", exact: true }),
+  ).toHaveCount(0);
+  await expect(navigation.getByText("数据提取", { exact: true })).toHaveCount(
+    0,
+  );
   const monitoringGroup = navigation
     .locator(".nav-group")
     .filter({ hasText: "监控与排障" });
@@ -677,54 +723,148 @@ test("review queue searches and filters before opening the right review", async 
     .toBe("partner-0");
 });
 
-test("facts retain server filtering, pagination, legacy content and full provenance", async ({
+test("preprocessing only shows kept sessions through filtering and pagination", async ({
   page,
 }) => {
-  const { calls } = await setup(page, "/admin/facts");
-  await expect(page.locator(".aw-fact-table tbody tr")).toHaveCount(10);
-  const detail = page.getByRole("region", { name: "贡献详情" });
-  await expect(detail).toContainText("查询耗时降低 30%");
-  await detail.locator("summary").filter({ hasText: "来源记录" }).click();
+  const { calls } = await setup(page, "/admin/sessions");
+  const rows = page.locator(".aw-session-table tbody tr");
+  await expect(rows).toHaveCount(10);
+  await expect(page.getByLabel("会话判定", { exact: true })).toHaveCount(1);
   await expect(
-    detail.getByText("source-checksum-0", { exact: true }),
+    page.getByRole("combobox", { name: "会话判定", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "会话原因" })).toHaveCount(0);
+  await expect(page.getByText(/已剔除会话|不应展示的内容/)).toHaveCount(0);
+  const detail = page.getByRole("region", { name: "会话详情" });
+  await expect(
+    detail.getByRole("heading", { name: "监控查询性能优化", exact: true }),
   ).toBeVisible();
-  await expect(detail).toContainText("source-checksum-0");
-  await page.getByRole("button", { name: /历史贡献格式兼容/ }).click();
-  await expect(detail).toContainText("旧格式最后一条进展摘要");
-  await expect(detail).toContainText("历史成果");
-  await expect(detail).toContainText("历史下一步");
+  const turns = detail.locator(".sx-turn");
+  await expect(turns).toHaveCount(20);
+  await expect(turns.first().locator(".sx-user")).toContainText(
+    "监控查询性能优化 第 1 个问题",
+  );
+  await expect(
+    turns.first().locator(".sx-assistant strong").first(),
+  ).toHaveText("回复 · gpt-test");
+  await expect(
+    turns.first().locator(".sx-assistant").getByText("查询耗时"),
+  ).toHaveCSS("font-weight", "700");
+  await expect(turns.nth(1)).toContainText("未记录回复");
+  const longPrompt = turns.nth(1).locator(".sx-user");
+  await expect(longPrompt.locator(".sx-body")).toHaveClass(/is-collapsed/);
+  await longPrompt.getByRole("button", { name: /展开全文/ }).click();
+  await expect(longPrompt.locator(".sx-body")).not.toHaveClass(/is-collapsed/);
+  await expect(longPrompt).toContainText("长日志结尾标记");
+  await detail
+    .getByRole("button", { name: "显示后续 5 轮（剩余 5 轮）" })
+    .click();
+  await expect(turns).toHaveCount(25);
+
   await page.getByTitle("下一页", { exact: true }).click();
-  await expect(page.locator(".aw-fact-table tbody tr")).toHaveCount(5);
-  await page.getByLabel("贡献人员").selectOption("partner-0");
-  await page.getByLabel("贡献周期").selectOption("period-0");
-  await page.getByLabel("贡献项目").selectOption("unassigned");
-  await page.getByLabel("贡献会话日期").fill("2026-09-05");
-  await expect(page.locator(".aw-fact-table tbody tr")).toHaveCount(3);
+  await expect(rows).toHaveCount(5);
+  await expect(page.getByText(/已剔除会话|不应展示的内容/)).toHaveCount(0);
+  await page.getByLabel("会话人员").selectOption("partner-0");
+  await page.getByLabel("会话周期").selectOption("period-0");
+  await page.getByLabel("会话项目").selectOption("数据服务");
+  await page.getByLabel("会话工具").selectOption("codex");
+  await expect(rows).toHaveCount(3);
   expect(
-    calls.filter((c) => c.path === "/v1/admin/session-facts").at(-1)?.params,
+    calls.filter((c) => c.path === "/v1/admin/session-preprocess").at(-1)
+      ?.params,
   ).toEqual({
     page: "1",
     pageSize: "10",
+    verdict: "keep",
     partnerId: "partner-0",
     periodId: "period-0",
-    projectId: "unassigned",
-    sessionDate: "2026-09-05",
+    project: "数据服务",
+    agent: "codex",
   });
-  await page.getByLabel("贡献会话日期").fill("2026-08-01");
-  await expect(page.getByText("当前筛选条件下没有 Session 贡献")).toBeVisible();
-  await expect(detail).toContainText("暂无贡献详情");
+  await page.getByLabel("会话工具").selectOption("claude");
+  await expect(page.getByText("当前筛选条件下没有会话")).toBeVisible();
+  await expect(detail).toContainText("暂无会话");
+  await page
+    .getByRole("button", { name: "重置筛选", exact: true })
+    .first()
+    .click();
+  await expect(rows).toHaveCount(10);
+  expect(
+    calls
+      .filter((call) => call.path === "/v1/admin/session-preprocess")
+      .every((call) => call.params.verdict === "keep"),
+  ).toBeTruthy();
+  expect(
+    calls.some((call) => call.path === "/v1/admin/collector-sessions"),
+  ).toBe(false);
+  expect(
+    calls.some((call) => call.params.uploadId?.startsWith("dropped-")),
+  ).toBe(false);
 });
 
-test("fact selection responds across the whole row without moving the list", async ({
+test("legacy preprocessing address redirects to the single active navigation entry", async ({
   page,
 }) => {
-  const { calls } = await setup(page, "/admin/facts");
-  const rows = page.locator(".aw-fact-table tbody tr");
-  const detail = page.getByRole("region", { name: "贡献详情" });
-  const list = page.locator(".facts-page .aw-table-scroll");
+  await setup(page, "/admin/preprocess");
+  await expect(page).toHaveURL(/\/admin\/sessions$/);
+  await expect(
+    page.getByRole("heading", { name: "会话预处理", exact: true }),
+  ).toBeVisible();
+  const entry = page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "会话预处理", exact: true });
+  await expect(entry).toHaveCount(1);
+  await expect(entry).toHaveClass(/active/);
+  await expect(page.locator(".aw-session-table tbody tr")).toHaveCount(10);
+});
+
+test("manually dropping a session removes its content and keeps reruns filtered", async ({
+  page,
+}) => {
+  const { calls } = await setup(page, "/admin/sessions");
+  const detail = page.getByRole("region", { name: "会话详情" });
+  await expect(
+    detail.getByRole("heading", { name: "监控查询性能优化", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "改为剔除", exact: true }).click();
+  await expect(page.locator(".aw-session-table")).not.toContainText(
+    "监控查询性能优化",
+  );
+  await expect(
+    detail.getByRole("heading", { name: "项目会话 1", exact: true }),
+  ).toBeVisible();
+  expect(
+    calls.find(
+      (call) =>
+        call.path === "/v1/admin/session-preprocess/preprocess-0/verdict",
+    )?.body,
+  ).toEqual({ verdict: "drop" });
+  await page.getByRole("button", { name: "重新判定", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        calls.filter((call) => call.path === "/v1/admin/session-preprocess")
+          .length,
+    )
+    .toBeGreaterThanOrEqual(3);
+  await expect(page.getByText(/已剔除会话|不应展示的内容/)).toHaveCount(0);
+  await expect(page.locator(".aw-session-table")).not.toContainText(
+    "监控查询性能优化",
+  );
+  await page.getByTitle("下一页", { exact: true }).click();
+  await expect(page.locator(".aw-session-table tbody tr")).toHaveCount(4);
+});
+
+test("session selection responds across the whole row without moving the list", async ({
+  page,
+}) => {
+  const { calls } = await setup(page, "/admin/sessions");
+  const rows = page.locator(".aw-session-table tbody tr");
+  const detail = page.getByRole("region", { name: "会话详情" });
+  const list = page.locator(".sessions-page .aw-table-scroll");
   await expect(rows).toHaveCount(10);
   const reads = calls.filter(
-    (call) => call.path === "/v1/admin/session-facts",
+    (call) => call.path === "/v1/admin/session-preprocess",
   ).length;
 
   await rows.nth(4).scrollIntoViewIfNeeded();
@@ -733,11 +873,12 @@ test("fact selection responds across the whole row without moving the list", asy
     .nth(4)
     .locator("td")
     .last()
-    .getByText("陈明", { exact: true })
+    .getByText("规则 · 陈明", { exact: true })
     .click();
   await expect(
-    detail.getByRole("heading", { name: "项目贡献 4", exact: true }),
+    detail.getByRole("heading", { name: "项目会话 4", exact: true }),
   ).toBeVisible();
+  await expect(detail.locator(".sx-turn")).toHaveCount(2);
   await expect(rows.nth(4).getByRole("button")).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -751,102 +892,78 @@ test("fact selection responds across the whole row without moving the list", asy
       .first()
       .click({ position: { x: 5, y: 5 } });
     await expect(
-      detail.getByRole("heading", { name: `项目贡献 ${index}`, exact: true }),
+      detail.getByRole("heading", { name: `项目会话 ${index}`, exact: true }),
     ).toBeVisible();
-    await expect(page.locator(".aw-fact-table .is-selected")).toHaveCount(1);
+    await expect(page.locator(".aw-session-table .is-selected")).toHaveCount(1);
   }
-  await rows.nth(3).locator("time").click();
-  await expect(
-    detail.getByRole("heading", { name: "项目贡献 3", exact: true }),
-  ).toBeVisible();
-  const button = rows.nth(4).getByRole("button");
+  const button = rows.nth(3).getByRole("button");
   await button.focus();
   await page.keyboard.press("Enter");
   await expect(button).toHaveAttribute("aria-pressed", "true");
   expect(
-    calls.filter((call) => call.path === "/v1/admin/session-facts"),
+    calls.filter((call) => call.path === "/v1/admin/session-preprocess"),
   ).toHaveLength(reads);
 });
 
-test("facts never show prior filter content while the next request is pending", async ({
+test("sessions never show prior filter content while the next request is pending", async ({
   page,
 }) => {
-  await setup(page, "/admin/facts");
-  await expect(page.locator(".aw-fact-table tbody tr")).toHaveCount(10);
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await page.route("**/v1/admin/session-facts?**", async (route) => {
-    await pending;
+  await setup(page, "/admin/sessions");
+  await expect(page.locator(".aw-session-table tbody tr")).toHaveCount(10);
+  const release = Promise.withResolvers<void>();
+  await page.route("**/v1/admin/session-preprocess?**", async (route) => {
+    await release.promise;
     await route.fallback();
   });
   try {
-    await page.getByLabel("贡献项目").selectOption("project-1");
-    await expect(page.getByText("加载贡献记录", { exact: true })).toBeVisible();
+    await page.getByLabel("会话项目").selectOption("数据服务");
+    await expect(page.getByText("加载会话", { exact: true })).toBeVisible();
     await expect(
-      page.getByRole("region", { name: "贡献详情" }),
-    ).not.toContainText("source-checksum-0");
+      page.getByRole("region", { name: "会话详情" }),
+    ).not.toContainText("监控查询性能优化");
     await expect(page.getByTitle("下一页", { exact: true })).toBeDisabled();
   } finally {
-    release();
+    release.resolve();
   }
-  await expect(page.locator(".aw-fact-table tbody tr")).toHaveCount(5);
+  await expect(page.locator(".aw-session-table tbody tr")).toHaveCount(5);
 });
 
-test("archive pagination, waiting reports, work card snapshots and report versions", async ({
+test("weekly page shows the full report of the chosen period, or approved work while it is pending", async ({
   page,
   context,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await setup(page, "/admin/reports");
-  await expect(page.locator(".reports-page .aw-filter-bar")).toHaveCount(0);
-  await expect(page.locator(".aw-archive-table tbody tr")).toHaveCount(12);
-  await page.getByTitle("下一页", { exact: true }).click();
-  await expect(page.locator(".aw-archive-table tbody tr")).toHaveCount(2);
-  const waitingReport = page.locator(".aw-archive-table tbody tr").filter({
-    hasText: "等待周报",
-  });
-  await expect(waitingReport).toHaveCount(1);
-  await expect(
-    waitingReport.getByRole("link", { name: "查看报告" }),
-  ).toHaveCount(0);
-  await page.getByRole("tab", { name: "项目工作卡" }).click();
-  await expect(page.locator(".aw-archive-card")).toHaveCount(12);
-  await page
-    .locator(".aw-archive-card")
-    .filter({ hasText: "项目交付 1-1" })
-    .locator("summary")
-    .click();
-  await expect(
-    page.getByText("归档完整摘要 1-1：完成接口优化、权限边界验证与上线检查。"),
-  ).toBeVisible();
-  await expect(page.getByText("work-1-1", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("没有已确认的项目工作卡", { exact: true }),
-  ).toBeVisible();
-  await page.getByRole("tab", { name: "团队周报" }).click();
-  await page.getByRole("link", { name: "查看报告" }).first().click();
-  await expect(page).toHaveURL(/\/admin\/team-reports\/report-0$/);
+  const periods = page.getByRole("navigation", { name: "报告周期" });
+  await expect(periods.getByRole("button")).toHaveCount(14);
+  // The newest period with a report opens in place; there is no separate detail page to visit.
   await expect(
     page.getByRole("heading", { name: "团队报告版本 2" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: /v1/ }).click();
-  await expect(
-    page.getByRole("heading", { name: "团队报告版本 1" }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "查看完整报告" })).toHaveCount(0);
   await page.getByRole("button", { name: "复制周报" }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
-    "版本 1 的报告正文",
+    "版本 2 的报告正文",
   );
-  await page.getByRole("link", { name: "返回归档" }).click();
+  await expect(page.getByLabel("报告版本")).toHaveCount(0);
+  // A period without a generated report lists approved cards only and folds members without any.
+  await periods.getByRole("button").nth(1).click();
+  const pending = page.getByRole("article");
+  await expect(pending).toContainText("该周期的团队周报尚未生成");
+  await expect(pending).toContainText("归档完整摘要 1-0");
+  await expect(pending).not.toContainText("归档完整摘要 1-1");
+  await expect(pending).toContainText("本周没有已确认工作卡");
+  await periods.getByRole("button").first().click();
+  await expect(
+    page.getByRole("heading", { name: "团队报告版本 2" }),
+  ).toBeVisible();
   await expect(page).toHaveURL(/\/admin\/reports$/);
 });
 
 for (const [path, title, endpoint] of [
   ["/admin/team-settings", "团队管理", "/v1/admin/overview"],
   ["/admin/reviews", "工作卡审核", "/v1/admin/overview"],
-  ["/admin/facts", "贡献记录", "/v1/admin/session-facts"],
+  ["/admin/sessions", "会话预处理", "/v1/admin/session-preprocess"],
   ["/admin/reports", "周报与工作卡", "/v1/admin/report-archive"],
 ]) {
   test(`${title} handles empty data and recoverable request failures`, async ({
@@ -863,7 +980,9 @@ for (const [path, title, endpoint] of [
     options.empty = false;
     await page.getByTitle(`刷新${title}`, { exact: true }).click();
     await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(page.locator(".aw-table tbody tr").first()).toBeVisible();
+    await expect(
+      page.locator(".aw-table tbody tr, .wr-periods button").first(),
+    ).toBeVisible();
   });
 }
 
@@ -884,7 +1003,7 @@ for (const width of [320, 390, 768, 1440, 1920]) {
     for (const [name, slug] of [
       ["团队管理", "settings"],
       ["工作卡审核", "reviews"],
-      ["贡献记录", "facts"],
+      ["会话预处理", "sessions"],
       ["周报与工作卡", "archive"],
     ]) {
       await page
@@ -894,17 +1013,19 @@ for (const width of [320, 390, 768, 1440, 1920]) {
       await expect(
         page.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
-      await expect(page.locator(".aw-table tbody tr").first()).toBeVisible();
+      await expect(
+        page.locator(".aw-table tbody tr, .wr-periods button").first(),
+      ).toBeVisible();
       await noOverflow();
       await page.screenshot({
         path: testInfo.outputPath(`${slug}-${width}.png`),
         fullPage: true,
       });
-      if (slug === "settings" || slug === "facts") {
+      if (slug === "settings" || slug === "sessions") {
         await page.locator(".aw-record-button").first().click();
         await expect(
           page.getByRole("region", {
-            name: slug === "settings" ? "人员详情" : "贡献详情",
+            name: slug === "settings" ? "人员详情" : "会话详情",
           }),
         ).toBeVisible();
         await noOverflow();
@@ -918,13 +1039,6 @@ for (const width of [320, 390, 768, 1440, 1920]) {
             .click();
       }
     }
-    await page.getByRole("tab", { name: "项目工作卡" }).click();
-    await page.locator(".aw-archive-card summary").first().click();
-    await noOverflow();
-    await page.screenshot({
-      path: testInfo.outputPath(`cards-${width}.png`),
-      fullPage: true,
-    });
     expect(errors).toEqual([]);
   });
 }

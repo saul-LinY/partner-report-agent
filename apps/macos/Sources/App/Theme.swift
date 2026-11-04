@@ -237,7 +237,7 @@ struct UpdateBadgeButtonStyle: ButtonStyle {
             .font(.system(size: 16, weight: .regular))
             .foregroundStyle(.white)
             .frame(width: 52, height: 26)
-            .background(Color(hex: 0xFF3030).opacity(configuration.isPressed ? 0.75 : 1), in: Capsule())
+            .background(Palette.red.opacity(configuration.isPressed ? 0.75 : 1), in: Capsule())
             .contentShape(Capsule())
     }
 }

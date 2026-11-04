@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { redactCredentials } from "./privacy.js";
 
 export const collectorSessionSchema = z
   .object({
@@ -33,6 +34,22 @@ export const collectorSessionSchema = z
   })
   .strict();
 export type CollectorSession = z.infer<typeof collectorSessionSchema>;
+
+/** Keys, tokens and passwords never reach storage; ids, times and every other word stay as sent. */
+export function redactSessionCredentials(
+  sessions: CollectorSession[],
+): CollectorSession[] {
+  return sessions.map((session) => ({
+    ...session,
+    title: redactCredentials(session.title),
+    turns: session.turns.map((turn) => ({
+      ...turn,
+      prompt: redactCredentials(turn.prompt),
+      answer:
+        turn.answer == null ? turn.answer : redactCredentials(turn.answer),
+    })),
+  }));
+}
 
 export const collectorExtractionSchema = z
   .object({

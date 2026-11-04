@@ -1,17 +1,6 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import * as schema from "./schema.js";
-import { resolveDatabaseUrl } from "./config.js";
+import { sqlClient } from "./client.js";
 
-const connectionUrl = resolveDatabaseUrl();
-
-export const sqlClient = postgres(connectionUrl, {
-  max: Number(process.env.DB_POOL_SIZE ?? 10),
-  idle_timeout: 20,
-  connect_timeout: 10,
-});
-
-export const db = drizzle(sqlClient, { schema });
+export { sqlClient, db } from "./client.js";
 export * from "./schema.js";
 export * from "./period.js";
 export * from "./config.js";
@@ -24,3 +13,6 @@ export * from "./inspection.js";
 export async function closeDatabase() {
   await sqlClient.end();
 }
+export * from "./session-judge.js";
+export * from "./latest-sessions.js";
+export * from "./session-preprocess.js";

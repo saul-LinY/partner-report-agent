@@ -1342,66 +1342,6 @@ suite("tenant and role authorization", () => {
       external_ids: [`path-sha256:${"c".repeat(64)}`],
     });
 
-    const factPreview = await app.inject({
-      method: "GET",
-      url: `/v1/admin/session-facts?partnerId=${fixture.partnerA}`,
-      headers,
-    });
-    expect(factPreview.statusCode).toBe(200);
-    const factPreviewBody = factPreview.json();
-    expect(factPreviewBody).toMatchObject({
-      page: 1,
-      pageSize: 10,
-      total: 1,
-      projects: [
-        {
-          id: discoveredProjects[0].id,
-          name: "automatic-project",
-        },
-      ],
-      hasUnassigned: false,
-    });
-    expect(factPreviewBody.projects).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: fixture.projectA }),
-      ]),
-    );
-    expect(factPreviewBody.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          external_fact_id: `${sessionKey}:${"b".repeat(64)}:contribution`,
-          period_id: fixture.currentPeriodA,
-          payload: expect.objectContaining({
-            recordType: "session_contribution",
-            periodKey: "fixture-current-a",
-            contentHash: "b".repeat(64),
-            projectId: discoveredProjects[0].id,
-            projectMatchMethod: "path_discovered",
-          }),
-        }),
-      ]),
-    );
-    expect(JSON.stringify(factPreviewBody)).not.toContain("userPrompt");
-    const matchingSessionDate = await app.inject({
-      method: "GET",
-      url: `/v1/admin/session-facts?sessionDate=2026-08-03`,
-      headers,
-    });
-    expect(matchingSessionDate.statusCode).toBe(200);
-    expect(matchingSessionDate.json().total).toBe(1);
-    const differentSessionDate = await app.inject({
-      method: "GET",
-      url: `/v1/admin/session-facts?sessionDate=2026-08-04`,
-      headers,
-    });
-    expect(differentSessionDate.statusCode).toBe(200);
-    expect(differentSessionDate.json().total).toBe(0);
-    const invalidSessionDate = await app.inject({
-      method: "GET",
-      url: `/v1/admin/session-facts?sessionDate=2026-02-30`,
-      headers,
-    });
-    expect(invalidSessionDate.statusCode).toBe(400);
     const records = await sql<any[]>`
       select session_id, source_hash, collection_run_id
       from session_records where tenant_id = ${fixture.tenantA}

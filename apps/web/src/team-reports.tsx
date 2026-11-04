@@ -44,42 +44,23 @@ type Detail = {
   versions: Version[];
 };
 
-export function TeamReportPage() {
-  const [, params] = useRoute("/admin/team-reports/:id");
-  return params?.id ? <TeamReportDetail id={params.id} /> : null;
-}
-
-function TeamReportDetail({ id }: { id: string }) {
-  const detail = useQuery({
+const useTeamReportDetail = (id: string) =>
+  useQuery({
     queryKey: ["team-report", id],
     queryFn: () => api<Detail>(`/v1/admin/team-reports/${id}`),
     refetchInterval: 15_000,
   });
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+
+/** The complete report with copy, shown inside the weekly page. */
+export function TeamReportView({ id }: { id: string }) {
+  const detail = useTeamReportDetail(id);
   const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
   const current = detail.data?.current;
   const report = detail.data?.report;
-  const viewed = selectedVersion
-    ? detail.data?.versions.find(
-        (version) => version.version === selectedVersion,
-      )
-    : current;
+  const viewed = current;
   const error = detail.error;
   return (
-    <div className="page admin-page">
-      <WorkspaceHeader
-        title={report?.period_key ?? "Team Report"}
-        icon={FileStack}
-        context={
-          report
-            ? `${statusLabel(report.status)} · 当前版本 v${report.current_version}`
-            : "加载中"
-        }
-      >
-        <Link className="button button-ghost" href="/admin/reports">
-          返回归档
-        </Link>
-      </WorkspaceHeader>
+    <>
       <ErrorBanner error={error} />
       {detail.isLoading ? (
         <div className="page-loading">
@@ -90,27 +71,6 @@ function TeamReportDetail({ id }: { id: string }) {
         <EmptyState title="报告正在生成，完成后会自动出现" />
       ) : (
         <div className="team-report-layout">
-          <aside className="team-report-versions" aria-label="报告版本">
-            <strong>历史版本</strong>
-            {detail.data?.versions.map((version) => (
-              <button
-                className={viewed?.version === version.version ? "active" : ""}
-                key={version.id}
-                onClick={() =>
-                  setSelectedVersion(
-                    version.version === current.version
-                      ? null
-                      : version.version,
-                  )
-                }
-              >
-                <span>v{version.version}</span>
-                <small>
-                  {new Date(version.created_at).toLocaleString("zh-CN")}
-                </small>
-              </button>
-            ))}
-          </aside>
           <section className="team-report-editor">
             <div className="team-report-document-toolbar">
               <div className="team-report-meta">
@@ -171,7 +131,7 @@ function TeamReportDetail({ id }: { id: string }) {
           </section>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

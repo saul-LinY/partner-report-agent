@@ -1,0 +1,82 @@
+[
+  {
+    "name": "key glued to Chinese text",
+    "input": "密钥sk-0123456789abcdef0123456789abcdef01234567结束",
+    "expected": "密钥[已隐藏]结束"
+  },
+  {
+    "name": "bearer token",
+    "input": "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123",
+    "expected": "Authorization: [已隐藏]"
+  },
+  {
+    "name": "password assignment",
+    "input": "password=hunter2hunter2 ok",
+    "expected": "[已隐藏] ok"
+  },
+  {
+    "name": "private key block",
+    "input": "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\nabc\n-----END RSA PRIVATE KEY-----\n后文",
+    "expected": "[已隐藏]\n后文"
+  },
+  {
+    "name": "credential written as a sentence",
+    "input": "审核口令:4321 上现在是 WebShell 擅自设的 `123456`,而且它重启了服务",
+    "expected": "审核口令:4321 上现在是 [已隐藏] 擅自设的 `[已隐藏]`,而且它重启了服务"
+  },
+  {
+    "name": "keyword without a secret",
+    "input": "用户可以设置口令保护自己的故事",
+    "expected": "用户可以设置口令保护自己的故事"
+  },
+  {
+    "name": "path after keyword stays",
+    "input": "密码见 [成员凭据](/Users/saul/Documents/ChatGPT/app_novel/.local/accounts.json)",
+    "expected": "密码见 [成员凭据](/Users/saul/Documents/ChatGPT/app_novel/.local/accounts.json)"
+  },
+  {
+    "name": "hex digest",
+    "input": "sha 0123456789abcdef0123456789abcdef01234567 end",
+    "expected": "sha [已隐藏] end"
+  },
+  {
+    "name": "long mixed-case key",
+    "input": "k=Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7cDe0fGh.",
+    "expected": "k=[已隐藏]."
+  },
+  {
+    "name": "clause end stops hiding",
+    "input": "密钥是 abcdef123456，地址 10.0.0.8:8080 保持原样",
+    "expected": "密钥是 [已隐藏]，地址 10.0.0.8:8080 保持原样"
+  },
+  {
+    "name": "json env style",
+    "input": "{ \"OPENAI_API_KEY\": \"sk-abcdefghijklmnopqrstuvwx\" }",
+    "expected": "{ \"OPENAI_API_KEY\": \"[已隐藏]\" }"
+  },
+  {
+    "name": "sk inside a longer word is not a key",
+    "input": "mask-0123456789abcdef0123456789abcdef01234567",
+    "expected": "mask-[已隐藏]"
+  },
+  {
+    "name": "full-width colon",
+    "input": "密码：Hunter22secret，其余",
+    "expected": "密码：[已隐藏]，其余"
+  },
+  {
+    "name": "file names and snake_case identifiers stay",
+    "input": "见 codex-clipboard-97edf189-738e-413b-9f71-3afee88a9189.png 与 some_very_long_snake_case_identifier_name_for_a_function",
+    "expected": "见 codex-clipboard-97edf189-738e-413b-9f71-3afee88a9189.png 与 some_very_long_snake_case_identifier_name_for_a_function"
+  },
+  {
+    "name": "whitespace and newlines are kept",
+    "input": "第一行\n\n  第二行 sk-0123456789abcdef0123456789abcdef01234567\t结尾",
+    "expected": "第一行\n\n  第二行 [已隐藏]\t结尾"
+  },
+  {
+    "name": "empty",
+    "input": "",
+    "expected": ""
+  }
+]

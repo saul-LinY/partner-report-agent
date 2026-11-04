@@ -31,7 +31,7 @@ struct CollectorBindingView: View {
                     Text("绑定码").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                     SecureField("绑定码", text: $code).modifier(FieldStyle()).accessibilityIdentifier("onboarding-binding-code")
                 }
-                if let error = store.connectionError { Text(error).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+                if let error = store.connectionError { Text(error).font(.system(size: 12)).foregroundStyle(Palette.red).fixedSize(horizontal: false, vertical: true) }
                 Button {
                     Task { await store.bindCollector(binding, code: code); if store.binding.isBound { code = "" } }
                 } label: {
@@ -68,7 +68,7 @@ struct CollectorPermissionsView: View {
                     Text("更新于 \(date.formatted(date: .omitted, time: .standard))")
                 }.font(.system(size: 12)).foregroundStyle(Palette.secondary).accessibilityIdentifier("project-discovery-status")
             }
-            if let error = store.connectionError { Text(error).font(.system(size: 13)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            if let error = store.connectionError { Text(error).font(.system(size: 13)).foregroundStyle(Palette.red).fixedSize(horizontal: false, vertical: true) }
             if !store.discoveryIssues.isEmpty {
                 Text(store.discoveryIssues.joined(separator: "\n")).font(.system(size: 12)).foregroundStyle(Palette.secondary).lineLimit(3)
             }
@@ -190,7 +190,7 @@ struct OnboardingView: View {
                         }.buttonStyle(YellowButtonStyle()).accessibilityIdentifier("start-initial-scan")
                         if store.hasCollectorService {
                             Button { store.revisitCollectorPermissions() } label: { Label("项目权限", systemImage: "arrow.left") }.buttonStyle(.plain)
-                            if let error = store.connectionError { Text(error).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).frame(width: 400) }
+                            if let error = store.connectionError { Text(error).font(.system(size: 12)).foregroundStyle(Palette.red).fixedSize(horizontal: false, vertical: true).frame(width: 400) }
                         }
                     }
                 }

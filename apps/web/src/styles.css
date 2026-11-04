@@ -2751,37 +2751,9 @@ select:focus {
 }
 .team-report-layout {
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   border: 1px solid var(--line);
   background: var(--surface);
-}
-.team-report-versions {
-  padding: 18px 12px;
-  border-right: 1px solid var(--line);
-}
-.team-report-versions > strong {
-  display: block;
-  margin: 0 7px 12px;
-  font-size: 12px;
-}
-.team-report-versions button {
-  width: 100%;
-  margin-bottom: 4px;
-  padding: 9px;
-  display: grid;
-  border: 0;
-  border-radius: 4px;
-  color: var(--ink);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-.team-report-versions button.active {
-  background: #eaf2ef;
-}
-.team-report-versions small {
-  margin-top: 3px;
-  color: var(--muted);
 }
 .team-report-editor {
   min-width: 0;
@@ -2885,19 +2857,6 @@ select:focus {
   }
   .fact-row-head {
     display: block;
-  }
-  .team-report-versions {
-    display: flex;
-    gap: 5px;
-    overflow-x: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .team-report-versions > strong {
-    display: none;
-  }
-  .team-report-versions button {
-    min-width: 125px;
   }
   .sidebar {
     position: static;
