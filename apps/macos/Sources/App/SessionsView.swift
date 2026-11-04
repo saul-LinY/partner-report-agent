@@ -214,7 +214,7 @@ struct ChatView: View, Equatable {
         HStack {
             Spacer(minLength: 28)
             VStack(alignment: .trailing, spacing: 7) {
-                SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding)), onHide: onHide, onReveal: onReveal)
+                SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding)), onHide: onHide, onReveal: onReveal, snug: true)
                     .padding(.horizontal, 14).padding(.vertical, 12).background(Palette.bubble.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                 if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
             }
@@ -240,8 +240,8 @@ struct ChatView: View, Equatable {
 struct MarkdownBody: View, Equatable {
     let text: String
     var hidden: [String] = []
-    var onHide: (String) -> Void = { _ in }
-    var onReveal: (String) -> Void = { _ in }
+    var onHide: ((String) -> Void)? = nil
+    var onReveal: ((String) -> Void)? = nil
     nonisolated static func == (lhs: MarkdownBody, rhs: MarkdownBody) -> Bool { lhs.text == rhs.text && lhs.hidden == rhs.hidden }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

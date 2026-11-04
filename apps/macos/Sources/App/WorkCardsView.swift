@@ -4,10 +4,19 @@ import WeeklyReportCore
 struct WorkCardsView: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedID: String?
-    @State private var period: String?
+    @State private var scope: PeriodScope = .latest
     @State private var instruction = ""
     @State private var confirmExclude = false
+    private enum PeriodScope: Equatable { case latest, all, key(String) }
     private var periods: [String] { Array(Set(store.reviewBatches.compactMap { $0.review.period_key })).sorted(by: >) }
+    /// The current period unless the member picked another one or all of them: far fewer rows to read.
+    private var period: String? {
+        switch scope {
+        case .latest: periods.first
+        case .all: nil
+        case .key(let key): key
+        }
+    }
     private var scopedBatches: [ReviewBatch] { store.reviewBatches.filter { period == nil || $0.review.period_key == period } }
     private var allCards: [ReviewCard] { scopedBatches.flatMap(\.items) }
     private var pendingIDs: Set<String> { Set(scopedBatches.flatMap(\.pendingCards).map(\.id)) }
@@ -23,10 +32,10 @@ struct WorkCardsView: View {
                 Text("\(visible.count) 张工作卡片").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                 Spacer()
                 Menu {
-                    Button("全部周期") { period = nil }
-                    ForEach(periods, id: \.self) { value in Button(value) { period = value } }
+                    Button("全部周期") { scope = .all }
+                    ForEach(periods, id: \.self) { value in Button(PeriodLabel.text(value)) { scope = .key(value) } }
                 } label: {
-                    Label(period ?? "全部周期", systemImage: "calendar")
+                    Label(period.map(PeriodLabel.text) ?? "全部周期", systemImage: "calendar")
                 }.menuStyle(.borderlessButton).fixedSize().frame(minWidth: 116)
                     .accessibilityIdentifier("review-period")
             }.padding(.horizontal, 28).frame(height: 44)
@@ -72,20 +81,18 @@ struct WorkCardsView: View {
     private func cardGroup(_ title: String, cards: [ReviewCard], identifier: String) -> some View {
         Section {
             ForEach(projectGroups(cards), id: \.name) { group in
-                // A project appears once; its periods are listed beneath the name.
-                HStack(spacing: 8) {
-                    Image(systemName: "folder").font(.system(size: 12)).foregroundStyle(Palette.secondary)
-                    Text(group.name).font(.system(size: 14, weight: .semibold)).lineLimit(2)
-                    Spacer(minLength: 8)
-                    Text("\(group.cards.count)").font(.system(size: 11)).monospacedDigit().foregroundStyle(Palette.secondary)
-                }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 8)
+                // A project appears once; its periods are single short lines beneath the name.
+                Text(group.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 4)
                 ForEach(group.cards) { card in
                     Button { selectedID = card.id } label: {
-                        HStack(spacing: 10) {
-                            Text(batch(card)?.review.period_key ?? "工作卡片").font(.system(size: 12)).monospacedDigit()
+                        HStack(spacing: 8) {
+                            Text(PeriodLabel.text(batch(card)?.review.period_key)).font(.system(size: 12)).monospacedDigit()
+                                .foregroundStyle(Palette.secondary).lineLimit(1)
                             Spacer(minLength: 8)
-                            StatusLabel(text: status(card), color: card.review_status == "approved" ? Palette.green : card.review_status == "excluded" ? Palette.secondary : Palette.yellow, size: 6)
-                        }.padding(.leading, 40).padding(.trailing, 20).frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                            if pendingIDs.contains(card.id) { StatusLabel(text: status(card), color: Palette.yellow, size: 6) }
+                            else { Text(status(card)).font(.system(size: 12)).foregroundStyle(Palette.secondary) }
+                        }.padding(.leading, 32).padding(.trailing, 20).frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
                             .background(selectedID == card.id ? Palette.selected : .white)
                             .overlay(alignment: .leading) { if selectedID == card.id { Rectangle().fill(Palette.yellow).frame(width: 3) } }
                             .contentShape(Rectangle())
@@ -96,15 +103,14 @@ struct WorkCardsView: View {
             }
             if cards.isEmpty {
                 Text("暂无\(title)卡片").font(.system(size: 12)).foregroundStyle(Palette.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(20)
-                Rule()
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 12)
             }
         } header: {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Text(title).fontWeight(.semibold)
                 Text("\(cards.count)").monospacedDigit().foregroundStyle(Palette.secondary)
                 Spacer()
-            }.font(.system(size: 12)).padding(.horizontal, 20).frame(height: 38).background(Palette.quiet)
+            }.font(.system(size: 12)).padding(.horizontal, 20).frame(height: 30).background(Palette.quiet)
                 .accessibilityIdentifier("review-group-\(identifier)")
         }.id(identifier)
     }
@@ -112,7 +118,8 @@ struct WorkCardsView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
                 Text(card.displayName).font(.system(size: 20, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                Text(batch(card)?.review.period_key ?? "工作卡片").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                Text(PeriodLabel.text(batch(card)?.review.period_key)).font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                    .help(batch(card)?.review.period_key ?? "")
             }.padding(26).frame(maxWidth: .infinity, alignment: .leading)
             Rule()
             ScrollView {
@@ -188,8 +195,24 @@ struct WorkCardsView: View {
     private func reconcile() { if !visible.contains(where: { $0.id == selectedID }) { selectedID = visible.first?.id } }
     private func followSelection() {
         if case .card(let id) = store.selectedApproval {
-            period = nil
+            scope = .all
             selectedID = visible.first(where: { $0.id == id })?.id
         }
+    }
+}
+
+/// "2026-W45" reads as "第45周". A key with a start-time suffix is a second period for the same week; that start
+/// date tells the two apart. Anything unrecognised is shown as written.
+enum PeriodLabel {
+    private static let pattern = try! NSRegularExpression(pattern: #"^[0-9]{4}-W([0-9]{1,2})(?:-([0-9]{8})T[0-9]{6}Z)?$"#)
+
+    static func text(_ key: String?) -> String {
+        guard let key else { return "工作卡片" }
+        let source = key as NSString
+        guard let match = pattern.firstMatch(in: key, range: NSRange(location: 0, length: source.length)),
+              let week = Int(source.substring(with: match.range(at: 1))) else { return key }
+        guard match.range(at: 2).location != NSNotFound else { return "第\(week)周" }
+        let day = source.substring(with: match.range(at: 2))
+        return "第\(week)周 · \(day.dropFirst(4).prefix(2))-\(day.suffix(2)) 起"
     }
 }

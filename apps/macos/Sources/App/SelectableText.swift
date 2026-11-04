@@ -2,11 +2,14 @@ import AppKit
 import SwiftUI
 import WeeklyReportCore
 
-/// Selectable text whose context menu can hide the selection from every upload.
+/// Selectable text. Given handlers, its context menu can hide a selection from every upload or take a red piece back;
+/// without them (work cards) it offers neither.
 struct SelectableText: NSViewRepresentable {
     let text: NSAttributedString
-    var onHide: (String) -> Void
-    var onReveal: (String) -> Void
+    var onHide: ((String) -> Void)? = nil
+    var onReveal: ((String) -> Void)? = nil
+    /// Shrink to the longest line (chat bubbles). Everything else takes the full width it is offered.
+    var snug = false
 
     func makeNSView(context: Context) -> HidingTextView {
         let view = HidingTextView(usingTextLayoutManager: false)
@@ -28,14 +31,29 @@ struct SelectableText: NSViewRepresentable {
         if !view.attributedString().isEqual(to: text) { view.textStorage?.setAttributedString(text) }
     }
 
-    /// Wraps at the offered width but is no wider than its longest line, so short messages keep a snug bubble.
+    /// SwiftUI asks for the size at several widths (the real one and probes for the minimum). The measuring therefore
+    /// uses a scratch text layout: resizing the live text container for a probe left it wrapping at the probe's width
+    /// while the view kept the real frame, so the extra lines overflowed onto whatever came next.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: HidingTextView, context: Context) -> CGSize? {
-        guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
         let offered = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 480
-        container.containerSize = NSSize(width: offered, height: .greatestFiniteMagnitude)
+        let full = Self.measure(text, width: offered)
+        guard snug else { return CGSize(width: offered, height: full.height) }
+        let snugWidth = min(offered, full.width + 2)
+        let narrow = Self.measure(text, width: snugWidth)
+        // If the narrower width wraps differently, keep the full width rather than overflow.
+        return narrow.height > full.height ? CGSize(width: offered, height: full.height) : CGSize(width: snugWidth, height: narrow.height)
+    }
+
+    private static func measure(_ text: NSAttributedString, width: CGFloat) -> CGSize {
+        let storage = NSTextStorage(attributedString: text)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
-        return CGSize(width: min(offered, ceil(used.width) + 2), height: ceil(used.height))
+        return CGSize(width: ceil(used.width), height: ceil(used.height))
     }
 }
 
@@ -55,9 +73,9 @@ final class HidingTextView: NSTextView {
         let clicked = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
         let clickedInSelection = selection.length > 0 && NSLocationInRange(clicked, selection)
         let anchor = selection.length > 0 && clickedInSelection ? selection.location : clicked
-        if let piece = redPiece(at: anchor) ?? (clicked > 0 && selection.length == 0 ? redPiece(at: clicked - 1) : nil) {
+        if let piece = redPiece(at: anchor) ?? (clicked > 0 && selection.length == 0 ? redPiece(at: clicked - 1) : nil), onReveal != nil {
             add("取消隐藏（上传原文）", piece, #selector(reveal(_:)), to: menu)
-        } else if selection.length > 0 {
+        } else if selection.length > 0, onHide != nil {
             add("隐藏所选内容（不上传）", (string as NSString).substring(with: selection), #selector(hideSelection(_:)), to: menu)
         }
         return menu
