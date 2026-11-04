@@ -147,7 +147,21 @@ describe("weekly report baselines", () => {
     expect(projects[0]!.workCardSnapshotIds).toEqual([snapshotId, "another"]);
     expect(
       teamReportRequestBatches({
-        workCards: ["a", "b", "c", "d", "e"].map((id) => card(id)),
+        workCards: [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "i",
+          "j",
+          "k",
+          "l",
+          "m",
+        ].map((id) => card(id)),
       }),
     ).toBe(4);
   });
@@ -361,7 +375,8 @@ describe("project writing followed by team summary", () => {
           new Promise((resolve) => {
             finish = resolve;
           }),
-      );
+      )
+      .mockResolvedValueOnce({ progress: "完成。" });
     let finished = false;
     const pending = generateTeamReport(
       { workCards: [card("a"), card("b"), card("c")] },
@@ -371,10 +386,10 @@ describe("project writing followed by team summary", () => {
       return error;
     });
     await Promise.resolve();
-    expect(model).toHaveBeenCalledTimes(2);
+    expect(model).toHaveBeenCalledTimes(3);
     expect(finished).toBe(false);
     finish({ progress: "完成。" });
     expect(await pending).toEqual(new Error("upstream error"));
-    expect(model).toHaveBeenCalledTimes(2);
+    expect(model).toHaveBeenCalledTimes(3);
   });
 });

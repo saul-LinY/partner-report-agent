@@ -1,4 +1,5 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { centralModelIds } from "@partner-report/contracts/models";
 
 type GenerateInput = {
   name: string;
@@ -10,8 +11,19 @@ type GenerateInput = {
   maxOutputTokens?: number;
   reasoningEffort?: "none";
   plainTextField?: string;
+  /** Health probes must report on exactly this model, so they skip the fallback chain. */
+  noFallback?: boolean;
 };
 
+// A fallback chain may spend up to this many request timeouts; job leases are sized to match.
+export const MODEL_CHAIN_TIME_FACTOR = 2;
+const MIN_FALLBACK_BUDGET_MS = 5_000;
+// Same API key for every model, so retrying another model cannot help these.
+const NO_FALLBACK_CODES: Record<string, true> = {
+  MODEL_NOT_CONFIGURED: true,
+  MODEL_AUTH_FAILED: true,
+  MODEL_QUOTA_EXHAUSTED: true,
+};
 const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 240_000;
 const MAX_MODEL_REQUEST_TIMEOUT_MS = 900_000;
 const DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 32_768;
@@ -90,7 +102,7 @@ function reasoningRequest(override?: "none") {
     override ??
     process.env.MODEL_REASONING_EFFORT ??
     process.env.OPENAI_REASONING_EFFORT ??
-    "low";
+    "none";
   const normalized = effort.trim().toLowerCase();
   return {
     reasoning: {
@@ -259,7 +271,46 @@ function parseStructuredText(text: string, plainTextField?: string) {
   }
 }
 
-export async function generateStructured<T>({
+/** Configured model first, then the remaining supported models in priority order. */
+export function modelChain(model: string) {
+  return [model, ...centralModelIds.filter((id) => id !== model)];
+}
+
+export async function generateStructured<T>(input: GenerateInput): Promise<T> {
+  if (input.noFallback) return requestStructured<T>(input);
+  const timeoutMs = input.timeoutMs ?? modelRequestTimeoutMs();
+  const deadline = Date.now() + timeoutMs * MODEL_CHAIN_TIME_FACTOR;
+  let firstError: unknown;
+  for (const model of modelChain(input.model)) {
+    const remaining = deadline - Date.now();
+    if (firstError && remaining < MIN_FALLBACK_BUDGET_MS) break;
+    try {
+      return await requestStructured<T>({
+        ...input,
+        model,
+        timeoutMs: Math.min(timeoutMs, remaining),
+      });
+    } catch (error) {
+      if (
+        !(error instanceof ModelGatewayError) ||
+        error.code in NO_FALLBACK_CODES
+      )
+        throw error;
+      firstError ??= error;
+      console.warn("Model failed, trying next model", {
+        name: input.name,
+        model,
+        code: error.code,
+        status: error.status,
+        requestId: error.requestId,
+      });
+    }
+  }
+  // Surface the configured model's failure: job retry timing keys off its error code and retry-after.
+  throw firstError;
+}
+
+async function requestStructured<T>({
   name,
   schema,
   instructions,

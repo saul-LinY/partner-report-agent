@@ -25,9 +25,11 @@ const job = {
   max_attempts: 4,
   created_at: new Date(),
   input_payload: {
-    projectBuckets: ["a", "b", "c", "d", "e"].map((projectKey) => ({
-      projectKey,
-    })),
+    projectBuckets: ["a", "b", "c", "d", "e", "f", "g", "h"].map(
+      (projectKey) => ({
+        projectKey,
+      }),
+    ),
   },
 };
 const production = {
@@ -90,30 +92,39 @@ describe("bounded project generation", () => {
     const request = expect(
       generateAggregationByProject(job, "deepseek-v4-flash:cloud"),
     ).resolves.toMatchObject({
-      groups: ["a", "b", "c", "d", "e"].map((projectKey) => ({ projectKey })),
+      groups: ["a", "b", "c", "d", "e", "f", "g", "h"].map((projectKey) => ({
+        projectKey,
+      })),
     });
     await vi.advanceTimersByTimeAsync(100);
     await request;
-    expect(peak).toBe(2);
+    expect(peak).toBe(6);
     expect(active).toBe(0);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
   it("waits for in-flight work and does not launch another batch after a failure", async () => {
     vi.useFakeTimers();
     process.env.MODEL_API_KEY = "test-only-key";
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response("unavailable", {
+    const requestedProjects: string[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const text = JSON.parse(String(init.body)).input[1].content[0].text;
+      const { projectBuckets } = JSON.parse(
+        text
+          .split("<partner_report_data>\n")[1]
+          .split("\n</partner_report_data>")[0],
+      );
+      const projectKey = projectBuckets[0].projectKey;
+      requestedProjects.push(projectKey);
+      // Project "a" fails on every model; the rest finish after 100ms.
+      if (projectKey === "a")
+        return new Response("unavailable", {
           status: 503,
           headers: { "retry-after": "120" },
-        }),
-      )
-      .mockImplementationOnce(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        return success("b");
-      });
+        });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return success(projectKey);
+    });
     vi.stubGlobal("fetch", fetchMock);
     let settled = false;
     const request = generateAggregationByProject(
@@ -130,6 +141,7 @@ describe("bounded project generation", () => {
       code: "MODEL_SERVICE_UNAVAILABLE",
       retryAfterMs: 120_000,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestedProjects).not.toContain("g");
+    expect(requestedProjects).not.toContain("h");
   });
 });

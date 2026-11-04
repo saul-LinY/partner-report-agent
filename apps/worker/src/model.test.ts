@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { z } from "zod";
 import { aggregationResultSchema } from "@partner-report/contracts";
 import { generateStructured, retryAfterMs } from "./model.js";
@@ -39,6 +39,7 @@ describe("central structured model client", () => {
       instructions: "Aggregate facts.",
       input: { facts: [] },
       model: "deepseek-v4-flash:cloud",
+      noFallback: true,
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
   const success = () =>
@@ -74,6 +75,7 @@ describe("central structured model client", () => {
       instructions: "Write progress.",
       input: {},
       model: "deepseek-v4-flash:cloud",
+      noFallback: true,
     };
     await expect(
       generateStructured({ ...input, plainTextField: "progress" }),
@@ -627,5 +629,73 @@ describe("central structured model client", () => {
     });
     await vi.advanceTimersByTimeAsync(25);
     await rejection;
+  });
+
+  describe("model fallback chain", () => {
+    const requestedModels = (fetchMock: Mock) =>
+      fetchMock.mock.calls.map(
+        (call) => JSON.parse(String(call[1].body)).model as string,
+      );
+    const run = (model: string) =>
+      generateStructured({
+        name: "fallback_test",
+        schema: aggregationResultSchema,
+        instructions: "Aggregate facts.",
+        input: { facts: [] },
+        model,
+      });
+
+    it("moves to the next model in priority order after a failure", async () => {
+      process.env.MODEL_API_KEY = "test-only-key";
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+        .mockImplementation(async () => success());
+      vi.stubGlobal("fetch", fetchMock);
+      await run("deepseek-v4.1-flash:cloud");
+      expect(requestedModels(fetchMock)).toEqual([
+        "deepseek-v4.1-flash:cloud",
+        "deepseek-v4-pro:cloud",
+      ]);
+    });
+
+    it("tries the configured model first, then the rest in list order", async () => {
+      process.env.MODEL_API_KEY = "test-only-key";
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+        .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+        .mockImplementation(async () => success());
+      vi.stubGlobal("fetch", fetchMock);
+      await run("glm-5.2:cloud");
+      expect(requestedModels(fetchMock)).toEqual([
+        "glm-5.2:cloud",
+        "deepseek-v4.1-flash:cloud",
+        "deepseek-v4-pro:cloud",
+      ]);
+    });
+
+    it("does not fall back on credential failures shared by every model", async () => {
+      process.env.MODEL_API_KEY = "test-only-key";
+      const fetchMock = vi.fn(async () => new Response("{}", { status: 401 }));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(run("deepseek-v4.1-flash:cloud")).rejects.toMatchObject({
+        code: "MODEL_AUTH_FAILED",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("tries every model once and reports the configured model's failure", async () => {
+      process.env.MODEL_API_KEY = "test-only-key";
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response("{}", { status: 422 }))
+        .mockImplementation(async () => new Response("{}", { status: 400 }));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(run("deepseek-v4.1-flash:cloud")).rejects.toMatchObject({
+        status: 422,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+    });
   });
 });

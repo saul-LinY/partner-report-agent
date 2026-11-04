@@ -9,7 +9,7 @@ import { z } from "zod";
 import { generateStructured } from "./model.js";
 
 export const TEAM_REPORT_PROMPT_VERSION = "2026-09-21.team.v23";
-const PROJECT_CONCURRENCY = 2;
+const PROJECT_CONCURRENCY = 6;
 type Progress = z.infer<typeof teamReportProjectProgressSchema>;
 type Project = Omit<Progress, "progress"> & {
   ref: string;

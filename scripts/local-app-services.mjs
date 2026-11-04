@@ -37,13 +37,11 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const database =
   process.env.COLLECTOR_DATABASE_URL ??
   "postgres://partner_report:partner_report@127.0.0.1:54339/partner_report";
-const modelBase =
-  process.env.MODEL_API_BASE_URL ??
-  config.modelApiBaseUrl ??
-  "http://127.0.0.1:11434";
-const localModel = ["127.0.0.1", "localhost", "[::1]"].includes(
-  new URL(modelBase).hostname,
-);
+const modelBase = process.env.MODEL_API_BASE_URL ?? config.modelApiBaseUrl;
+if (!modelBase)
+  throw new Error(
+    "Set MODEL_API_BASE_URL (or modelApiBaseUrl in .local/collector-dev-config.json) to the cloud model gateway",
+  );
 const env = {
   PATH: process.env.PATH,
   HOME: process.env.HOME,
@@ -59,14 +57,10 @@ const env = {
   LOCAL_ADMIN_LOGIN_ALIAS: "admin",
   LOCAL_ADMIN_LOGIN_EMAIL: "admin@local.test",
   MODEL_API_BASE_URL: modelBase,
-  MODEL_API_KEY:
-    process.env.MODEL_API_KEY ??
-    config.modelApiKey ??
-    (localModel ? "ollama" : ""),
+  MODEL_API_KEY: process.env.MODEL_API_KEY ?? config.modelApiKey ?? "",
   MODEL_REASONING_EFFORT: "none",
   MODEL_REQUEST_TIMEOUT_MS: process.env.MODEL_REQUEST_TIMEOUT_MS ?? "240000",
-  MODEL_INSTRUCTION_ROLE:
-    process.env.MODEL_INSTRUCTION_ROLE ?? (localModel ? "system" : "developer"),
+  MODEL_INSTRUCTION_ROLE: process.env.MODEL_INSTRUCTION_ROLE ?? "developer",
 };
 function isOurs(pid, name) {
   if (!pid) return false;

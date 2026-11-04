@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { closeDatabase, sqlClient as sql } from "@partner-report/db";
 import { autoApproveExpiredReviews } from "./review-timeout.js";
 import { scheduleDueWeeklyReports } from "./weekly.js";
@@ -13,9 +14,22 @@ import { modelGatewayConfigured } from "./model.js";
 import { runScheduledInspections } from "./inspection-analysis.js";
 import { processNextProjectProfile } from "./project-profile.js";
 
+const GENERATION_JOBS_IN_FLIGHT = 2;
+const SCHEDULER_IDLE_MS = 15_000;
+const EXECUTOR_IDLE_MS = 5_000;
+const BUSY_MS = 250;
 let stopping = false;
 let workerState = "starting";
 let workerError: string | null = null;
+let activeSteps = 0;
+const failingLoops: Record<string, true> = {};
+
+function refreshState() {
+  if (stopping) return;
+  const failing = Object.keys(failingLoops).length > 0;
+  workerState = failing ? "error" : activeSteps > 0 ? "processing" : "idle";
+  workerError = failing ? "WORKER_TICK_FAILED" : null;
+}
 
 async function heartbeat(tickCompleted = false) {
   await sql`insert into service_heartbeats (name,heartbeat_at,last_tick_at,status,error_code,capabilities)
@@ -25,8 +39,9 @@ async function heartbeat(tickCompleted = false) {
       capabilities=excluded.capabilities,last_tick_at=coalesce(excluded.last_tick_at,service_heartbeats.last_tick_at)`;
 }
 
-async function tick() {
-  await backfillCollectorUploads();
+/** Sweeps that must never wait behind a model call: scheduling, timeouts, inspections, housekeeping. */
+async function schedulerStep() {
+  const backfilled = await backfillCollectorUploads();
   await scheduleCollectorCards();
   const reviewTimeout = await autoApproveExpiredReviews();
   if (reviewTimeout.approvedReviews > 0) {
@@ -45,13 +60,6 @@ async function tick() {
       `Queued ${weekly.teamReportJobs} Team Report generation job(s).`,
     );
   }
-  const generation = await processNextGenerationJob();
-  if (generation.processed)
-    console.log("Central generation job processed", generation);
-  await scheduleCollectorCards();
-  const profile = modelGatewayConfigured()
-    ? await processNextProjectProfile()
-    : { processed: false };
   const inspection = await runScheduledInspections();
   if (
     inspection.teams > 0 &&
@@ -82,31 +90,48 @@ async function tick() {
       and status in ('COMPLETED', 'FAILED', 'CANCELLED')
       and updated_at < now() - interval '10 minutes'
   `;
-  return generation.processed || profile.processed;
+  await heartbeat(true);
+  // A full backfill batch means more uploads are waiting.
+  return backfilled >= 20 ? BUSY_MS : SCHEDULER_IDLE_MS;
 }
 
-async function loop() {
+/** Leases and runs one model-backed job. Each executor loop holds at most one job at a time. */
+async function generationStep() {
+  const generation = await processNextGenerationJob();
+  if (!generation.processed) return EXECUTOR_IDLE_MS;
+  console.log("Central generation job processed", generation);
+  // Finished analysis may make a member's cards ready to queue; don't wait for the next scheduler sweep.
+  await scheduleCollectorCards();
+  return BUSY_MS;
+}
+
+async function profileStep() {
+  if (!modelGatewayConfigured()) return SCHEDULER_IDLE_MS;
+  return (await processNextProjectProfile()).processed
+    ? BUSY_MS
+    : SCHEDULER_IDLE_MS;
+}
+
+/** One failing loop is reported in the heartbeat but never stops the others. */
+async function runLoop(name: string, step: () => Promise<number>) {
   while (!stopping) {
-    let processed = false;
+    let delayMs = SCHEDULER_IDLE_MS;
+    activeSteps++;
+    refreshState();
     try {
-      workerState = "processing";
-      await heartbeat();
-      processed = await tick();
-      workerState = "idle";
-      workerError = null;
-      await heartbeat(true);
+      delayMs = await step();
+      delete failingLoops[name];
     } catch (error) {
-      workerState = "error";
-      workerError = "WORKER_TICK_FAILED";
-      await heartbeat().catch(() => {});
+      failingLoops[name] = true;
       console.error(
-        "worker tick failed",
+        `worker loop ${name} failed`,
         error instanceof Error ? error.message : error,
       );
+    } finally {
+      activeSteps--;
+      refreshState();
     }
-    await new Promise((resolve) =>
-      setTimeout(resolve, processed ? 250 : 15_000),
-    );
+    await sleep(delayMs);
   }
 }
 
@@ -122,9 +147,15 @@ const shutdown = async () => {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-console.log("Partner Report worker started.");
+console.log("Weekly Report worker started.");
 const heartbeatTimer = setInterval(() => {
   void heartbeat().catch(() => {});
 }, 15_000);
 heartbeatTimer.unref();
-await loop();
+await Promise.all([
+  runLoop("scheduler", schedulerStep),
+  ...Array.from({ length: GENERATION_JOBS_IN_FLIGHT }, (_, index) =>
+    runLoop(`generation-${index + 1}`, generationStep),
+  ),
+  runLoop("profile", profileStep),
+]);

@@ -39,6 +39,7 @@ import {
   ModelGatewayError,
   ModelRequestTimeoutError,
   modelGatewayConfigured,
+  MODEL_CHAIN_TIME_FACTOR,
   modelRequestTimeoutMs,
 } from "./model.js";
 
@@ -103,7 +104,10 @@ export const inspectionAnalysisSchema = z
     summary: z.string().trim().min(1).max(300),
     likelyCause: z.string().trim().min(1).max(500),
     impact: z.string().trim().min(1).max(300),
-    recommendedActions: z.array(z.string().trim().min(1).max(240)).min(1).max(5),
+    recommendedActions: z
+      .array(z.string().trim().min(1).max(240))
+      .min(1)
+      .max(5),
     confidence: z.enum(["low", "medium", "high"]),
     relatedChain: z.enum(["app", "system", "pipeline"]),
   })
@@ -212,7 +216,8 @@ export function projectAggregationInputs(inputPayload: any) {
   }));
 }
 
-const PROJECT_GENERATION_CONCURRENCY = 2;
+// Gateway rejects beyond ~23 in-flight requests (gateway_queue_full). Worker budget: 2 jobs × 6 = 12, leaving headroom.
+const PROJECT_GENERATION_CONCURRENCY = 6;
 
 export async function loadPreviousProjectStatus(job: Job, bucket: any) {
   if (!job.partner_id || !bucket.projectId || !job.input_payload.period?.id)
@@ -475,7 +480,9 @@ async function leaseNextJob(onlyTenantId?: string) {
           ? teamReportRequestBatches(job.input_payload)
           : 1;
     const stages = job.type === "AGGREGATE_WORK_ITEMS" ? 2 : 1;
-    const leaseMs = modelRequestTimeoutMs() * batches * stages + 60_000;
+    const leaseMs =
+      modelRequestTimeoutMs() * MODEL_CHAIN_TIME_FACTOR * batches * stages +
+      60_000;
     await tx`
       update agent_jobs set status = 'LEASED', attempt_count = attempt_count + 1,
         lease_token_hash = ${centralLeaseOwner},
@@ -998,6 +1005,7 @@ async function runSystemHealthJob(job: Job) {
       model,
       timeoutMs: 25_000,
       maxOutputTokens: 4096,
+      noFallback: true,
     });
     return { ok: true, component: "generation", model };
   }
@@ -1241,9 +1249,10 @@ export async function processNextGenerationJob(onlyTenantId?: string) {
       retryBaseMs + Math.floor(Math.random() * retryBaseMs * 0.25),
       error instanceof ModelGatewayError ? (error.retryAfterMs ?? 0) : 0,
     );
-    const analysis = ["ANALYZE_SYSTEM_LOGS", "ANALYZE_INSPECTION_FINDING"].includes(
-      job.type,
-    )
+    const analysis = [
+      "ANALYZE_SYSTEM_LOGS",
+      "ANALYZE_INSPECTION_FINDING",
+    ].includes(job.type)
       ? analysisError(error)
       : null;
     const errorCode =

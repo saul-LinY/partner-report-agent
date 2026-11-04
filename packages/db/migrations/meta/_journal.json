@@ -316,6 +316,13 @@
       "when": 1793714877398,
       "tag": "0044_nebulous_the_twelve",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793805951161,
+      "tag": "0045_central_model_fallback_chain",
+      "breakpoints": true
     }
   ]
 }
