@@ -1,6 +1,6 @@
 :root {
-  color: #1d242b;
-  background: #f4f6f7;
+  color: #1f2937;
+  background: #f3f5f9;
   font-family:
     Inter,
     ui-sans-serif,
@@ -10,18 +10,23 @@
     sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --ink: #1d242b;
-  --muted: #69747e;
-  --line: #dce1e4;
+  --ink: #1f2937;
+  --muted: #667085;
+  --line: #e2e6ee;
   --surface: #ffffff;
-  --surface-alt: #f7f9fa;
-  --accent: #1c6558;
-  --accent-hover: #144e45;
-  --blue: #2b5f91;
-  --danger: #a13c37;
-  --warning: #9a6813;
-  --sidebar: #20262b;
-  --sidebar-text: #eef1f2;
+  --surface-alt: #f7f8fc;
+  --accent: #3563e9;
+  --accent-hover: #2749c0;
+  --accent-soft: #eaf0ff;
+  --blue: #0e8fc7;
+  --success: #1f9d6b;
+  --success-soft: #e6f6ef;
+  --danger: #d6453d;
+  --danger-soft: #fdeceb;
+  --warning: #c77a0a;
+  --warning-soft: #fff4de;
+  --sidebar: #1c2540;
+  --sidebar-text: #eef1fa;
   --radius: 6px;
 }
 
@@ -53,7 +58,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid #3c83b8;
+  outline: 2px solid #3563e9;
   outline-offset: 2px;
 }
 
@@ -158,7 +163,7 @@ select:focus-visible {
 .sidebar nav a:hover,
 .sidebar nav a.active {
   color: #fff;
-  background: #30383e;
+  background: #2e3b66;
 }
 .sidebar-user {
   margin-top: auto;
@@ -544,7 +549,7 @@ td {
   place-items: center;
   border-radius: 5px;
   color: #285b88;
-  background: #edf3f8;
+  background: #eef2ff;
 }
 .summary-icon svg {
   width: 18px;
@@ -768,7 +773,7 @@ td {
   display: grid;
   place-items: center;
   color: #2f628b;
-  background: #edf3f8;
+  background: #eef2ff;
   border-radius: 5px;
 }
 .partner-icon {
@@ -1126,7 +1131,7 @@ td {
 .work-item-version-tabs button:hover,
 .work-item-version-tabs button.active {
   border-color: #8baaa3;
-  background: #edf5f2;
+  background: #eef2ff;
 }
 .report-source-cards button strong {
   margin-left: 4px;
@@ -1203,7 +1208,7 @@ td {
 }
 .locked-notice {
   color: #175e4b;
-  background: #edf7f2;
+  background: #eef2ff;
   border: 1px solid #bddfce;
 }
 .quality-warnings {
@@ -1466,7 +1471,7 @@ select:focus {
 }
 
 .permission-backup-meta .allowed strong {
-  color: #1f7658;
+  color: #1f9d6b;
 }
 
 .permission-backup-groups {
@@ -1576,7 +1581,7 @@ select:focus {
   grid-template-columns: 22px minmax(0, 1fr);
   gap: 10px;
   border-bottom: 1px solid var(--line);
-  background: #f2f8f5;
+  background: #f3f6ff;
 }
 
 .execution-diagnosis-warning {
@@ -1641,8 +1646,8 @@ select:focus {
   place-items: center;
   border: 1px solid #c9dfd7;
   border-radius: 5px;
-  color: #1f7658;
-  background: #edf7f2;
+  color: #1f9d6b;
+  background: #eef2ff;
 }
 
 .system-component-warning .system-component-icon {
@@ -1902,7 +1907,7 @@ select:focus {
     box-shadow 140ms ease;
 }
 .ops-metric-link:hover {
-  background: #f8faf9;
+  background: #f7f8fc;
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 .ops-metric-link.danger:hover {
@@ -1924,7 +1929,7 @@ select:focus {
   display: grid;
   place-items: center;
   color: var(--accent);
-  background: #edf5f2;
+  background: #eef2ff;
   border-radius: 5px;
 }
 .ops-metric.danger > span {

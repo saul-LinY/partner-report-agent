@@ -86,6 +86,25 @@
   font-size: 15px;
   overflow-wrap: anywhere;
 }
+.lc-card h4.lc-member-name {
+  font-size: 20px;
+  font-weight: 700;
+}
+.lc-toggle {
+  display: block;
+  margin: 12px auto 0;
+  padding: 6px 16px;
+  border: 1px solid var(--line, #d9dfe3);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.lc-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .lc-badge {
   flex: none;
   padding: 1px 9px;
@@ -97,15 +116,15 @@
 }
 .lc-badge.is-ok {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--accent-soft);
 }
 .lc-badge.is-stalled {
   color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  background: var(--warning-soft);
 }
 .lc-badge.is-blocked {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 .lc-stage-bar {
   display: grid;
@@ -120,10 +139,10 @@
   background: var(--line);
 }
 .lc-stage-bar span.is-done {
-  background: var(--accent);
+  background: var(--success);
 }
 .lc-stage-bar span.is-current {
-  background: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
 .lc-stage small,
 .lc-card footer small {
@@ -258,7 +277,7 @@
   aspect-ratio: 1;
   max-height: 26px;
   border-radius: 3px;
-  background: #eef1f3;
+  background: #eceff5;
 }
 .lc-empty,
 .lc-note {

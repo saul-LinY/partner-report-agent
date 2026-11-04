@@ -2,7 +2,7 @@ import { Link, useRoute } from "wouter";
 import { ArrowLeft, ChevronLeft, ChevronRight, UserRound } from "lucide-react";
 import { WorkspaceHeader } from "./admin-workspace.js";
 import { EmptyState, ErrorBanner } from "./components.js";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { LineChart, seriesColor } from "./charts.js";
 import { ProjectProgress } from "./project-progress.js";
 import {
@@ -20,6 +20,45 @@ const shiftDate = (date: string, offset: number) =>
 
 const formatDay = (day: string) =>
   `${Number(day.slice(0, 4))}年${Number(day.slice(5, 7))}月${Number(day.slice(8))}日`;
+
+const COLLAPSED_ROWS = 2;
+
+/** Card grid showing two rows by default; extra rows toggle open/closed. */
+function CollapsibleCards({ children }: { children: ReactNode[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [columns, setColumns] = useState(3);
+  const [open, setOpen] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() =>
+      setColumns(
+        Math.max(1, getComputedStyle(el).gridTemplateColumns.split(" ").length),
+      ),
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const limit = columns * COLLAPSED_ROWS;
+  const hidden = children.length - limit;
+  return (
+    <>
+      <div className="lc-cards" ref={ref}>
+        {open || hidden <= 0 ? children : children.slice(0, limit)}
+      </div>
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="lc-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "收起" : `展开其余 ${hidden} 个项目`}
+        </button>
+      )}
+    </>
+  );
+}
 
 export function MemberDetailPage() {
   const [, params] = useRoute("/admin/members/:id");
@@ -151,7 +190,7 @@ export function MemberDetailPage() {
             <div className="lc-section-title">
               <h3>负责的项目</h3>
             </div>
-            <div className="lc-cards">
+            <CollapsibleCards>
               {projects.map(
                 ({
                   project,
@@ -226,7 +265,7 @@ export function MemberDetailPage() {
                   </article>
                 ),
               )}
-            </div>
+            </CollapsibleCards>
 
             <section className="lc-panel">
               <div className="lc-section-title">

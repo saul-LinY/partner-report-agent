@@ -53,7 +53,7 @@
   color: white;
 }
 .sidebar-toggle:focus-visible {
-  outline: 2px solid #71b5a6;
+  outline: 2px solid #8fa8f2;
   outline-offset: 3px;
 }
 
@@ -113,7 +113,7 @@
 }
 
 .app-shell .sidebar nav a.active {
-  box-shadow: inset 3px 0 0 #71b5a6;
+  box-shadow: inset 3px 0 0 #8fa8f2;
 }
 
 .app-shell .sidebar-user {

@@ -184,7 +184,7 @@
   font-size: 12px;
 }
 .aw-search:focus-within {
-  outline: 2px solid #3c83b8;
+  outline: 2px solid #3563e9;
   outline-offset: 2px;
 }
 .aw-search .icon-button {
@@ -291,10 +291,10 @@
   overflow-wrap: anywhere;
 }
 .aw-table tbody tr:hover {
-  background: #f8faf9;
+  background: #f7f8fc;
 }
 .aw-table tbody tr.is-selected {
-  background: #edf5f1;
+  background: #eef2ff;
 }
 .aw-table tbody tr.is-selected td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);

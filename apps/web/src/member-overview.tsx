@@ -77,7 +77,7 @@ export function MemberOverview() {
               aria-label={`查看 ${member.name} 的项目`}
             >
               <header>
-                <h4>{member.name}</h4>
+                <h4 className="lc-member-name">{member.name}</h4>
                 <span className="lc-muted">{projects.length} 个项目</span>
                 <ChevronRight size={16} />
               </header>

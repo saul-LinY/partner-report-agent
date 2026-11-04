@@ -216,10 +216,10 @@
   margin-bottom: 5px;
   text-align: left;
   border: 0;
-  border-left: 2px solid var(--pc-color, #377660);
+  border-left: 2px solid var(--pc-color, #1f9d6b);
   border-radius: 4px;
   background: var(--pc-bg, #edf5ee);
-  color: var(--pc-color, #377660);
+  color: var(--pc-color, #1f9d6b);
   cursor: pointer;
 }
 .pc-calendar-entry strong {
@@ -230,24 +230,24 @@
   text-overflow: ellipsis;
 }
 .pc-color-0 {
-  --pc-color: #376b58;
-  --pc-bg: #edf5ef;
+  --pc-color: #1f9d6b;
+  --pc-bg: #e6f6ef;
 }
 .pc-color-1 {
-  --pc-color: #48658e;
-  --pc-bg: #eef3fb;
+  --pc-color: #3563e9;
+  --pc-bg: #eaf0ff;
 }
 .pc-color-2 {
-  --pc-color: #866830;
-  --pc-bg: #fbf5e9;
+  --pc-color: #c77a0a;
+  --pc-bg: #fff4de;
 }
 .pc-color-3 {
-  --pc-color: #80608e;
-  --pc-bg: #f5eff8;
+  --pc-color: #8a56d6;
+  --pc-bg: #f3ecfd;
 }
 .pc-color-4 {
-  --pc-color: #9b6250;
-  --pc-bg: #fbf0ec;
+  --pc-color: #d6453d;
+  --pc-bg: #fdeceb;
 }
 .pc-empty {
   font-size: 13px;
