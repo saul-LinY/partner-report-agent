@@ -1,7 +1,8 @@
 import Foundation
 
 public enum AppPage: String, CaseIterable, Identifiable, Sendable {
-    case approvals, sessions, uploads, privacy, settings
+    // Declaration order is the sidebar order and the ⌘1…⌘5 shortcuts.
+    case approvals, sessions, uploads, settings, privacy
     public var id: String { rawValue }
     public var title: String {
         switch self {

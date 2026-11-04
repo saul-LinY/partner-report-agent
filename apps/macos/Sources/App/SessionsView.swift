@@ -4,6 +4,10 @@ import WeeklyReportCore
 
 struct SessionsView: View {
     @EnvironmentObject private var store: AppStore
+    /// Which red span the member was last taken to in the open session; nil until they click the notice.
+    @State private var redCursor: Int?
+    /// Counts clicks, so the conversation scrolls even when the same span is asked for twice (a session with one).
+    @State private var jumpSerial = 0
     var body: some View {
         VStack(spacing: 0) {
             PageHeading(title: "项目会话") {
@@ -50,13 +54,15 @@ struct SessionsView: View {
                             Button("重试") { Task { await store.loadSelectedSession() } }.buttonStyle(QuietButtonStyle()).padding(.bottom, 28)
                         }
                     } else if let session = store.selectedSession {
+                        let regions = RedRegions.all(in: UploadCheckpoint.messages(in: session.turns), hiding: store.hiding)
+                        let focus = redCursor.flatMap { regions.isEmpty ? nil : regions[min($0, regions.count - 1)] }
                         VStack(spacing: 0) {
-                            uploadBar(session)
+                            uploadBar(session, regions: regions)
                             Rule()
                             if session.turns.isEmpty {
                                 EmptyMessage(symbol: "bubble.left.and.text.bubble.right", title: "此会话暂无可显示的问答", subtitle: "")
                             } else {
-                                ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id], hiding: store.hiding, onHide: { store.hideTerm($0) }, onReveal: { store.revealTerm($0) }).equatable()
+                                ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id], hiding: store.hiding, focus: focus, jumpSerial: jumpSerial, onHide: { store.hideTerm($0) }, onReveal: { store.revealTerm($0) }).equatable()
                             }
                         }
                     } else {
@@ -69,7 +75,7 @@ struct SessionsView: View {
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
+        }.onChange(of: store.selectedSessionID) { redCursor = nil }
     }
     private var projectMenu: some View {
         Menu {
@@ -148,18 +154,28 @@ struct SessionsView: View {
         case .excluded: return Palette.secondary
         }
     }
+    private enum Notice { case full, short, none }
     /// Above the conversation: what will happen to this session, and the one control to change it.
-    private func uploadBar(_ session: AgentSession) -> some View {
+    private func uploadBar(_ session: AgentSession, regions: [RedRegion]) -> some View {
         let excluded = store.uploadState(of: session) == .excluded
-        let sensitive = sensitiveCount(session)
+        let sensitive = regions.count
+        let position = sensitive > 0 ? redCursor.map { "第 \(min($0, sensitive - 1) + 1)/\(sensitive) 处" } : nil
         // Optional pieces are dropped, most dispensable first, when the bar is too narrow, instead of being cut off mid-word.
-        func bar(notice: Bool, hint: Bool) -> some View {
+        func bar(notice: Notice, hint: Bool) -> some View {
             HStack(spacing: 12) {
                 StatusLabel(text: statusText(session), color: statusColor(session), size: 7)
                 Text(uploadHint(session, excluded: excluded)).font(.app(size: 12)).foregroundStyle(Palette.secondary).lineLimit(1)
-                if notice && sensitive > 0 {
-                    Label("已标红 \(sensitive) 处隐私信息，上传时自动隐藏", systemImage: "eye.slash").font(.app(size: 12)).foregroundStyle(Palette.red).lineLimit(1)
-                        .help("密钥、邮箱、手机号、IP 地址、网址、本机路径和你标记的内容，上传时会替换为「[已隐藏]」；你本机看到的原文不会被修改")
+                if notice != .none && sensitive > 0 {
+                    Button { jumpToNextRegion(count: sensitive) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "eye.slash")
+                            Text(notice == .full ? "已标红 \(sensitive) 处隐私信息，上传时自动隐藏" : "已标红 \(sensitive) 处")
+                            if let position { Text("· \(position)").monospacedDigit() }
+                            Image(systemName: "chevron.down").font(.app(size: 9, weight: .semibold))
+                        }.font(.app(size: 12)).foregroundStyle(Palette.red).lineLimit(1).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .help("点击从上到下依次查看每一处标红。密钥、邮箱、手机号、IP 地址、网址、本机路径和你标记的内容，上传时会替换为「[已隐藏]」；你本机看到的原文不会被修改")
+                        .accessibilityLabel("已标红 \(sensitive) 处隐私信息，点击跳到下一处")
                         .accessibilityIdentifier("sensitive-notice")
                 }
                 if hint {
@@ -173,17 +189,19 @@ struct SessionsView: View {
             }
         }
         return ViewThatFits(in: .horizontal) {
-            bar(notice: true, hint: true)
-            bar(notice: true, hint: false)
-            bar(notice: false, hint: false)
+            bar(notice: .full, hint: true)
+            bar(notice: .full, hint: false)
+            bar(notice: .short, hint: false)
+            bar(notice: .none, hint: false)
         }.padding(.horizontal, 24).frame(height: 46)
     }
     private func uploadHint(_ session: AgentSession, excluded: Bool) -> String {
         if excluded { return session.uploaded ? "之后不再上传；已上传的内容仍保留在公司系统中" : "这个会话不会被上传" }
         return session.uploaded ? "有新内容时会继续上传" : "下次上传时会包含这个会话"
     }
-    private func sensitiveCount(_ session: AgentSession) -> Int {
-        UploadCheckpoint.messages(in: session.turns).reduce(0) { $0 + RedactionMarks.hidden(in: $1.text, hiding: store.hiding).count }
+    private func jumpToNextRegion(count: Int) {
+        redCursor = RedactionRegions.next(after: redCursor, count: count)
+        jumpSerial += 1
     }
 }
 
@@ -191,10 +209,14 @@ struct ChatView: View, Equatable {
     let session: AgentSession
     var checkpoint: UploadCheckpoint?
     var hiding: SecretScrubber.Hiding = .none
+    /// The red span to bring into view and draw stronger, when the member asked for one.
+    var focus: RedRegion? = nil
+    /// Changes on every request to go to `focus`.
+    var jumpSerial = 0
     var onHide: (String) -> Void = { _ in }
     var onReveal: (String) -> Void = { _ in }
     nonisolated static func == (lhs: ChatView, rhs: ChatView) -> Bool {
-        lhs.session == rhs.session && lhs.checkpoint == rhs.checkpoint && lhs.hiding == rhs.hiding
+        lhs.session == rhs.session && lhs.checkpoint == rhs.checkpoint && lhs.hiding == rhs.hiding && lhs.focus == rhs.focus && lhs.jumpSerial == rhs.jumpSerial
     }
     var body: some View {
         let timeline = ConversationTimeline(turns: session.turns, checkpoint: checkpoint, hiding: hiding)
@@ -218,14 +240,28 @@ struct ChatView: View, Equatable {
                 }.padding(.horizontal, 28).padding(.top, 28).padding(.bottom, 24)
             }.accessibilityIdentifier("conversation")
                 .onAppear { proxy.scrollTo("conversation-end", anchor: .bottom) }
+                .onChange(of: jumpSerial) {
+                    guard let focus else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(focus.messageID, anchor: .top) }
+                    // The list builds a message's blocks only once it is near the screen, so settle on the exact block after the first scroll.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(220))
+                        withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(focus.blockID, anchor: .center) }
+                    }
+                }
         }.id(session.id)
+    }
+    /// The red span to draw stronger inside this message, if the member was taken there.
+    private func focused(in message: ConversationMessage) -> RedRegion? {
+        focus?.messageID == message.id ? focus : nil
     }
     private func question(_ message: ConversationMessage) -> some View {
         HStack {
             Spacer(minLength: 28)
             VStack(alignment: .trailing, spacing: 7) {
-                SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding)), onHide: onHide, onReveal: onReveal, snug: true)
+                SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding), focus: focused(in: message)?.occurrence), onHide: onHide, onReveal: onReveal, snug: true)
                     .padding(.horizontal, 14).padding(.vertical, 12).background(Palette.bubble.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+                    .id("\(message.id)#0")
                 if let time = message.time { Text(time).font(.app(size: 10)).foregroundStyle(Palette.secondary) }
             }
         }
@@ -238,7 +274,7 @@ struct ChatView: View, Equatable {
                     Text(session.agent.name).font(.app(size: 12, weight: .semibold))
                     if let time = message.time { Text(time).font(.app(size: 10)).foregroundStyle(Palette.secondary) }
                 }
-                MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding), onHide: onHide, onReveal: onReveal).equatable()
+                MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding), idPrefix: message.id, focusBlock: focused(in: message)?.block, focusOccurrence: focused(in: message)?.occurrence, onHide: onHide, onReveal: onReveal).equatable()
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
                 } label: { Image(systemName: "doc.on.doc").font(.app(size: 12)).foregroundStyle(Palette.secondary) }.buttonStyle(.plain).help("复制回复").accessibilityLabel("复制回复")
@@ -250,21 +286,32 @@ struct ChatView: View, Equatable {
 struct MarkdownBody: View, Equatable {
     let text: String
     var hidden: [String] = []
+    /// When set, each block can be scrolled to by the id "<idPrefix>#<block number>".
+    var idPrefix: String? = nil
+    /// The red span to draw stronger: which block, and which red span within it.
+    var focusBlock: Int? = nil
+    var focusOccurrence: Int? = nil
     var onHide: ((String) -> Void)? = nil
     var onReveal: ((String) -> Void)? = nil
-    nonisolated static func == (lhs: MarkdownBody, rhs: MarkdownBody) -> Bool { lhs.text == rhs.text && lhs.hidden == rhs.hidden }
+    nonisolated static func == (lhs: MarkdownBody, rhs: MarkdownBody) -> Bool {
+        lhs.text == rhs.text && lhs.hidden == rhs.hidden && lhs.idPrefix == rhs.idPrefix && lhs.focusBlock == rhs.focusBlock && lhs.focusOccurrence == rhs.focusOccurrence
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(text.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, block in
-                if block.hasPrefix("```") {
-                    SelectableText(text: MessageText.code(block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n"), hidden: hidden), onHide: onHide, onReveal: onReveal)
-                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Palette.quiet, in: RoundedRectangle(cornerRadius: 6))
-                } else {
-                    SelectableText(text: MessageText.markdown(block, hidden: hidden), onHide: onHide, onReveal: onReveal)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            ForEach(Array(MessageText.replyBlocks(text).enumerated()), id: \.offset) { index, block in
+                blockView(block, focus: focusBlock == index ? focusOccurrence : nil)
+                    .id(idPrefix.map { "\($0)#\(index)" } ?? "block-\(index)")
             }
+        }
+    }
+    @ViewBuilder private func blockView(_ block: String, focus: Int?) -> some View {
+        if MessageText.isCode(block) {
+            SelectableText(text: MessageText.code(MessageText.codeBody(block), hidden: hidden, focus: focus), onHide: onHide, onReveal: onReveal)
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Palette.quiet, in: RoundedRectangle(cornerRadius: 6))
+        } else {
+            SelectableText(text: MessageText.markdown(block, hidden: hidden, focus: focus), onHide: onHide, onReveal: onReveal)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

@@ -120,17 +120,27 @@ enum MessageText {
         ]
     }
 
-    static func plain(_ text: String, hidden: [String]) -> NSAttributedString {
-        mark(NSMutableAttributedString(string: text, attributes: baseAttributes()), hidden: hidden)
+    /// A reply is laid out in blocks split on blank lines; a block that starts with a fence is code.
+    static func replyBlocks(_ text: String) -> [String] { text.components(separatedBy: "\n\n") }
+
+    static func isCode(_ block: String) -> Bool { block.hasPrefix("```") }
+
+    static func codeBody(_ block: String) -> String {
+        block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n")
     }
 
-    static func code(_ text: String, hidden: [String]) -> NSAttributedString {
-        mark(NSMutableAttributedString(string: text, attributes: baseAttributes(size: AppFont.size(12), monospaced: true)), hidden: hidden)
+    /// `focus` is the red span (counted from 0, top to bottom) the member was just taken to; it is drawn stronger than the rest.
+    static func plain(_ text: String, hidden: [String], focus: Int? = nil) -> NSAttributedString {
+        mark(NSMutableAttributedString(string: text, attributes: baseAttributes()), hidden: hidden, focus: focus)
     }
 
-    static func markdown(_ block: String, hidden: [String]) -> NSAttributedString {
+    static func code(_ text: String, hidden: [String], focus: Int? = nil) -> NSAttributedString {
+        mark(NSMutableAttributedString(string: text, attributes: baseAttributes(size: AppFont.size(12), monospaced: true)), hidden: hidden, focus: focus)
+    }
+
+    static func markdown(_ block: String, hidden: [String], focus: Int? = nil) -> NSAttributedString {
         guard let parsed = try? AttributedString(markdown: block, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else {
-            return plain(block, hidden: hidden)
+            return plain(block, hidden: hidden, focus: focus)
         }
         let out = NSMutableAttributedString()
         for run in parsed.runs {
@@ -148,11 +158,21 @@ enum MessageText {
             if let link = run.link { attributes[.link] = link }
             out.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
         }
-        return mark(out, hidden: hidden)
+        return mark(out, hidden: hidden, focus: focus)
+    }
+
+    /// One block of a reply as it reads on screen.
+    static func reply(block: String, hidden: [String], focus: Int? = nil) -> NSAttributedString {
+        isCode(block) ? code(codeBody(block), hidden: hidden, focus: focus) : markdown(block, hidden: hidden, focus: focus)
+    }
+
+    /// The words a block shows on screen, without any red marks. Markdown drops its own symbols, so this is what red spans are counted in.
+    static func shown(_ block: String, isAnswer: Bool) -> String {
+        isAnswer ? reply(block: block, hidden: []).string : block
     }
 
     /// Every occurrence of each hidden piece, matched by text because markdown changes the offsets.
-    private static func mark(_ text: NSMutableAttributedString, hidden: [String]) -> NSAttributedString {
+    private static func mark(_ text: NSMutableAttributedString, hidden: [String], focus: Int?) -> NSAttributedString {
         let source = text.string as NSString
         for piece in Set(hidden) where !piece.isEmpty {
             var from = 0
@@ -163,6 +183,12 @@ enum MessageText {
                 text.removeAttribute(.underlineStyle, range: range)
                 text.addAttributes([.foregroundColor: NSColor(Palette.red), .backgroundColor: NSColor(Palette.red).withAlphaComponent(0.14), .redactionPiece: piece], range: range)
                 from = range.location + range.length
+            }
+        }
+        if let focus {
+            let spans = RedactionRegions.ranges(in: text.string, hidden: hidden)
+            if spans.indices.contains(focus) {
+                text.addAttributes([.backgroundColor: NSColor(Palette.red).withAlphaComponent(0.4), .underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: NSColor(Palette.red)], range: spans[focus])
             }
         }
         return text
@@ -181,5 +207,43 @@ enum RedactionMarks {
         let value = SecretScrubber.analyze(text, hiding: hiding).hidden
         cache.setObject(Box(value), forKey: key)
         return value
+    }
+}
+
+/// One red span as the conversation lays it out: which message, which text block in it, and which red span in that block.
+struct RedRegion: Equatable {
+    let messageID: String
+    let block: Int
+    let occurrence: Int
+    /// Scroll target of the block that holds this span.
+    var blockID: String { "\(messageID)#\(block)" }
+}
+
+enum RedRegions {
+    private final class Box { let value: [Int]; init(_ value: [Int]) { self.value = value } }
+    // NSCache is thread-safe; the compiler just cannot see that.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, Box> = { let cache = NSCache<NSString, Box>(); cache.countLimit = 4000; return cache }()
+
+    /// Red spans in each text block of a message, found once per text and set of member decisions.
+    private static func counts(in message: ConversationMessage, hiding: SecretScrubber.Hiding) -> [Int] {
+        let key = "\(hiding.hashValue)-\(message.isAnswer)-\(message.text.hashValue)-\(message.text.utf8.count)" as NSString
+        if let box = cache.object(forKey: key) { return box.value }
+        let hidden = RedactionMarks.hidden(in: message.text, hiding: hiding)
+        var value: [Int] = []
+        if !hidden.isEmpty {
+            let blocks = message.isAnswer ? MessageText.replyBlocks(message.text) : [message.text]
+            value = blocks.map { RedactionRegions.ranges(in: MessageText.shown($0, isAnswer: message.isAnswer), hidden: hidden).count }
+        }
+        cache.setObject(Box(value), forKey: key)
+        return value
+    }
+
+    /// Every red span in the conversation, top to bottom.
+    static func all(in messages: [ConversationMessage], hiding: SecretScrubber.Hiding) -> [RedRegion] {
+        messages.flatMap { message in
+            counts(in: message, hiding: hiding).enumerated().flatMap { block, count in
+                (0..<count).map { RedRegion(messageID: message.id, block: block, occurrence: $0) }
+            }
+        }
     }
 }
