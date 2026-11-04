@@ -65,8 +65,8 @@ struct PrivacyView: View {
 
     private func fact(_ value: String, _ label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.system(size: 22, weight: .semibold)).monospacedDigit()
-            Text(label).font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            Text(value).font(.app(size: 22, weight: .semibold)).monospacedDigit()
+            Text(label).font(.app(size: 12)).foregroundStyle(Palette.secondary)
         }.frame(maxWidth: .infinity)
     }
 
@@ -78,7 +78,7 @@ struct PrivacyView: View {
             bullet("你取消的红色：自动标红的内容被你取消后，上传时保留原文，会列在下方，可以随时恢复。")
             HStack(spacing: 8) {
                 TextField("要隐藏的文字，例如客户名、内部项目代号", text: $newTerm)
-                    .textFieldStyle(.plain).font(.system(size: 13)).padding(.horizontal, 10).frame(height: 32)
+                    .textFieldStyle(.plain).font(.app(size: 13)).padding(.horizontal, 10).frame(height: 32)
                     .background(.white, in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.line))
                     .onSubmit(addTerm).accessibilityIdentifier("hidden-term-field")
@@ -87,12 +87,12 @@ struct PrivacyView: View {
                     .accessibilityIdentifier("hidden-term-add")
             }.padding(.leading, 28)
             if store.hiddenTerms.isEmpty {
-                Text("还没有标记。").font(.system(size: 12)).foregroundStyle(Palette.secondary).padding(.leading, 28)
+                Text("还没有标记。").font(.app(size: 12)).foregroundStyle(Palette.secondary).padding(.leading, 28)
             } else {
                 VStack(spacing: 0) {
                     ForEach(store.hiddenTerms, id: \.self) { term in
                         HStack(spacing: 10) {
-                            Text(term).font(.system(size: 13)).lineLimit(2).textSelection(.enabled)
+                            Text(term).font(.app(size: 13)).lineLimit(2).textSelection(.enabled)
                             Spacer(minLength: 8)
                             Button("移除") { store.unhideTerm(term) }.buttonStyle(QuietButtonStyle(compact: true))
                                 .help("之后的上传不再隐藏这段文字；已上传的内容不会改变")
@@ -102,11 +102,11 @@ struct PrivacyView: View {
                 }.padding(.leading, 28).accessibilityIdentifier("hidden-term-list")
             }
             if !store.allowedTerms.isEmpty {
-                Text("已取消隐藏（上传时保留原文）").font(.system(size: 12, weight: .semibold)).padding(.leading, 28).padding(.top, 6)
+                Text("已取消隐藏（上传时保留原文）").font(.app(size: 12, weight: .semibold)).padding(.leading, 28).padding(.top, 6)
                 VStack(spacing: 0) {
                     ForEach(store.allowedTerms, id: \.self) { term in
                         HStack(spacing: 10) {
-                            Text(term).font(.system(size: 13)).lineLimit(2).textSelection(.enabled)
+                            Text(term).font(.app(size: 13)).lineLimit(2).textSelection(.enabled)
                             Spacer(minLength: 8)
                             Button("恢复隐藏") { store.restoreAutomatic(term) }.buttonStyle(QuietButtonStyle(compact: true))
                                 .help("这段文字重新按自动规则处理；符合规则的话上传时会被隐藏")
@@ -147,7 +147,7 @@ struct PrivacyView: View {
 
     private func heading(_ title: String, symbol: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 15)).frame(width: 20).foregroundStyle(Palette.secondary)
+            Image(systemName: symbol).font(.app(size: 15)).frame(width: 20).foregroundStyle(Palette.secondary)
             SectionTitle(title: title)
         }
     }
@@ -155,7 +155,7 @@ struct PrivacyView: View {
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Circle().fill(Palette.secondary.opacity(0.6)).frame(width: 4, height: 4).offset(y: -2)
-            Text(text).font(.system(size: 13)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+            Text(text).font(.app(size: 13)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
         }.padding(.leading, 28)
     }
 }

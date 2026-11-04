@@ -7,16 +7,16 @@ struct SessionsView: View {
     var body: some View {
         VStack(spacing: 0) {
             PageHeading(title: "项目会话") {
-                if !store.isLive { Text("示例会话").font(.system(size: 11)).foregroundStyle(Palette.secondary) }
+                if !store.isLive { Text("示例会话").font(.app(size: 11)).foregroundStyle(Palette.secondary) }
             }
             HStack(spacing: 10) {
-                projectMenu.frame(width: 190)
-                agentMenu.frame(width: 155)
-                searchField.frame(width: 170)
-                Text("\(store.visibleSessions.count) 个会话").font(.system(size: 11)).foregroundStyle(Palette.secondary).padding(.leading, 4)
+                projectMenu.frame(width: AppFont.width(190))
+                agentMenu.frame(width: AppFont.width(155))
+                searchField.frame(width: AppFont.width(170))
+                Text("\(store.visibleSessions.count) 个会话").font(.app(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1).fixedSize().padding(.leading, 4)
                 Spacer(minLength: 0)
                 ViewThatFits {
-                    Label("已归档内容不扫描、不上传", systemImage: "checkmark.shield").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                    Label("已归档内容不扫描、不上传", systemImage: "checkmark.shield").font(.app(size: 11)).foregroundStyle(Palette.secondary)
                     Image(systemName: "checkmark.shield").foregroundStyle(Palette.secondary).help("已归档内容不扫描、不上传")
                 }
             }.padding(.horizontal, 28).padding(.bottom, 16)
@@ -24,7 +24,7 @@ struct SessionsView: View {
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
-                        Text("会话").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                        Text("会话").font(.app(size: 12)).foregroundStyle(Palette.secondary)
                         Spacer()
                         FilterTab(title: "全部", selected: store.uploadFilter == .all) { store.uploadFilter = .all }
                         FilterTab(title: "未上传", selected: store.uploadFilter == .pending) { store.uploadFilter = .pending }
@@ -39,11 +39,11 @@ struct SessionsView: View {
                             }
                         }
                     }
-                }.frame(width: 295)
+                }.frame(width: AppFont.width(295))
                 Rectangle().fill(Palette.line).frame(width: 1)
                 Group {
                     if store.loadingSessionID == store.selectedSessionID, store.selectedSessionID != nil {
-                        ProgressView("正在读取会话…").font(.system(size: 12)).frame(maxWidth: .infinity, maxHeight: .infinity)
+                        ProgressView("正在读取会话…").font(.app(size: 12)).frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if let error = store.readerError {
                         VStack {
                             EmptyMessage(symbol: "exclamationmark.circle", title: "暂时无法读取", subtitle: error)
@@ -83,8 +83,8 @@ struct SessionsView: View {
                 Button("禁止此项目采集") { store.decideProject(project.id, permission: .denied) }
             }
         } label: {
-            HStack { Image(systemName: "folder"); Text(store.projectName(store.selectedProjectID).isEmpty ? "选择项目" : store.projectName(store.selectedProjectID)).lineLimit(1).truncationMode(.middle); Spacer(minLength: 3); Image(systemName: "chevron.down").font(.system(size: 10)) }
-                .font(.system(size: 13)).padding(.horizontal, 10).frame(height: 34)
+            HStack { Image(systemName: "folder"); Text(store.projectName(store.selectedProjectID).isEmpty ? "选择项目" : store.projectName(store.selectedProjectID)).lineLimit(1).truncationMode(.middle); Spacer(minLength: 3); Image(systemName: "chevron.down").font(.app(size: 10)) }
+                .font(.app(size: 13)).padding(.horizontal, 10).frame(height: 34)
         }.menuStyle(.borderlessButton).menuIndicator(.visible).buttonStyle(.plain).frame(maxWidth: .infinity).frame(height: 34).background(.white, in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.line)).accessibilityIdentifier("project-filter")
     }
@@ -96,10 +96,10 @@ struct SessionsView: View {
     private func sessionRow(_ session: AgentSession) -> some View {
         Button { store.selectSession(session.id) } label: {
             VStack(alignment: .leading, spacing: 10) {
-                Text(session.title).font(.system(size: 14, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
-                HStack(spacing: 7) { AgentIcon(agent: session.agent, size: 17); Text(session.agent.name).font(.system(size: 12)).foregroundStyle(Palette.secondary) }
+                Text(session.title).font(.app(size: 14, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
+                HStack(spacing: 7) { AgentIcon(agent: session.agent, size: 17); Text(session.agent.name).font(.app(size: 12)).foregroundStyle(Palette.secondary) }
                 HStack {
-                    Text(session.turns.isEmpty ? session.updatedLabel : "\(session.updatedLabel) · \(session.turns.count) 轮").font(.system(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1)
+                    Text(session.turns.isEmpty ? session.updatedLabel : "\(session.updatedLabel) · \(session.turns.count) 轮").font(.app(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1)
                     Spacer(minLength: 4)
                     StatusLabel(text: statusText(session), color: statusColor(session), size: 6)
                 }
@@ -114,8 +114,8 @@ struct SessionsView: View {
     }
     private var searchField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Palette.secondary)
-            TextField("搜索会话", text: $store.query).textFieldStyle(.plain).font(.system(size: 13))
+            Image(systemName: "magnifyingglass").font(.app(size: 12)).foregroundStyle(Palette.secondary)
+            TextField("搜索会话", text: $store.query).textFieldStyle(.plain).font(.app(size: 13))
             if !store.query.isEmpty {
                 Button { store.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.secondary) }
                     .buttonStyle(.plain).help("清除搜索").accessibilityLabel("清除搜索")
@@ -151,21 +151,31 @@ struct SessionsView: View {
     /// Above the conversation: what will happen to this session, and the one control to change it.
     private func uploadBar(_ session: AgentSession) -> some View {
         let excluded = store.uploadState(of: session) == .excluded
-        return HStack(spacing: 12) {
-            StatusLabel(text: statusText(session), color: statusColor(session), size: 7)
-            Text(uploadHint(session, excluded: excluded)).font(.system(size: 12)).foregroundStyle(Palette.secondary).lineLimit(1)
-            let sensitive = sensitiveCount(session)
-            if sensitive > 0 {
-                Label("已标红 \(sensitive) 处隐私信息，上传时自动隐藏", systemImage: "eye.slash").font(.system(size: 12)).foregroundStyle(Palette.red).lineLimit(1)
-                    .help("密钥、邮箱、手机号、IP 地址、网址、本机路径和你标记的内容，上传时会替换为「[已隐藏]」；你本机看到的原文不会被修改")
-                    .accessibilityIdentifier("sensitive-notice")
+        let sensitive = sensitiveCount(session)
+        // Optional pieces are dropped, most dispensable first, when the bar is too narrow, instead of being cut off mid-word.
+        func bar(notice: Bool, hint: Bool) -> some View {
+            HStack(spacing: 12) {
+                StatusLabel(text: statusText(session), color: statusColor(session), size: 7)
+                Text(uploadHint(session, excluded: excluded)).font(.app(size: 12)).foregroundStyle(Palette.secondary).lineLimit(1)
+                if notice && sensitive > 0 {
+                    Label("已标红 \(sensitive) 处隐私信息，上传时自动隐藏", systemImage: "eye.slash").font(.app(size: 12)).foregroundStyle(Palette.red).lineLimit(1)
+                        .help("密钥、邮箱、手机号、IP 地址、网址、本机路径和你标记的内容，上传时会替换为「[已隐藏]」；你本机看到的原文不会被修改")
+                        .accessibilityIdentifier("sensitive-notice")
+                }
+                if hint {
+                    Text("红色=上传时隐藏").font(.app(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1)
+                        .help("选中文字右键「隐藏所选内容」可新增红色；在红色上右键「取消隐藏」，上传时就保留原文")
+                }
+                Spacer(minLength: 8)
+                Button(excluded ? "恢复上传" : "不上传此会话") { store.setUploadExcluded(!excluded, for: session.id) }
+                    .buttonStyle(QuietButtonStyle(compact: true)).accessibilityIdentifier("toggle-upload-excluded")
+                    .help(excluded ? "之后的上传会再次包含这个会话" : "之后的上传不再包含这个会话；已上传的内容仍保留在公司系统中")
             }
-            Text("红色=上传时隐藏").font(.system(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1).layoutPriority(-1)
-                .help("选中文字右键「隐藏所选内容」可新增红色；在红色上右键「取消隐藏」，上传时就保留原文")
-            Spacer(minLength: 8)
-            Button(excluded ? "恢复上传" : "不上传此会话") { store.setUploadExcluded(!excluded, for: session.id) }
-                .buttonStyle(QuietButtonStyle(compact: true)).accessibilityIdentifier("toggle-upload-excluded")
-                .help(excluded ? "之后的上传会再次包含这个会话" : "之后的上传不再包含这个会话；已上传的内容仍保留在公司系统中")
+        }
+        return ViewThatFits(in: .horizontal) {
+            bar(notice: true, hint: true)
+            bar(notice: true, hint: false)
+            bar(notice: false, hint: false)
         }.padding(.horizontal, 24).frame(height: 46)
     }
     private func uploadHint(_ session: AgentSession, excluded: Bool) -> String {
@@ -195,14 +205,14 @@ struct ChatView: View, Equatable {
                         if message.id == timeline.uploadBoundaryID, let checkpoint {
                             HStack(spacing: 12) {
                                 Rule()
-                                Text("上次上传至此 · \(checkpoint.uploadedAt.formatted(date: .omitted, time: .shortened))").font(.system(size: 10)).foregroundStyle(Palette.secondary).fixedSize()
+                                Text("上次上传至此 · \(checkpoint.uploadedAt.formatted(date: .omitted, time: .shortened))").font(.app(size: 10)).foregroundStyle(Palette.secondary).fixedSize()
                                 Rule()
                             }.padding(.vertical, 3)
                         }
                         if message.isAnswer { answer(message) } else { question(message) }
                     }
                     if session.turns.last?.answer == nil {
-                        Text("回复尚未完成").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                        Text("回复尚未完成").font(.app(size: 12)).foregroundStyle(Palette.secondary)
                     }
                     Color.clear.frame(height: 1).id("conversation-end")
                 }.padding(.horizontal, 28).padding(.top, 28).padding(.bottom, 24)
@@ -216,7 +226,7 @@ struct ChatView: View, Equatable {
             VStack(alignment: .trailing, spacing: 7) {
                 SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding)), onHide: onHide, onReveal: onReveal, snug: true)
                     .padding(.horizontal, 14).padding(.vertical, 12).background(Palette.bubble.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
-                if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
+                if let time = message.time { Text(time).font(.app(size: 10)).foregroundStyle(Palette.secondary) }
             }
         }
     }
@@ -225,13 +235,13 @@ struct ChatView: View, Equatable {
             AgentIcon(agent: session.agent, size: 25)
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 9) {
-                    Text(session.agent.name).font(.system(size: 12, weight: .semibold))
-                    if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
+                    Text(session.agent.name).font(.app(size: 12, weight: .semibold))
+                    if let time = message.time { Text(time).font(.app(size: 10)).foregroundStyle(Palette.secondary) }
                 }
                 MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding), onHide: onHide, onReveal: onReveal).equatable()
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
-                } label: { Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(Palette.secondary) }.buttonStyle(.plain).help("复制回复").accessibilityLabel("复制回复")
+                } label: { Image(systemName: "doc.on.doc").font(.app(size: 12)).foregroundStyle(Palette.secondary) }.buttonStyle(.plain).help("复制回复").accessibilityLabel("复制回复")
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
     }

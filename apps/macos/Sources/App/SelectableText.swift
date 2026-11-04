@@ -108,7 +108,7 @@ extension NSAttributedString.Key {
 
 /// Builds what the conversation shows: markdown styling plus red marks on what the upload will hide.
 enum MessageText {
-    private static let size: CGFloat = 13
+    private static let size: CGFloat = AppFont.size(13)
 
     private static func baseAttributes(size: CGFloat = size, monospaced: Bool = false) -> [NSAttributedString.Key: Any] {
         let style = NSMutableParagraphStyle()
@@ -125,7 +125,7 @@ enum MessageText {
     }
 
     static func code(_ text: String, hidden: [String]) -> NSAttributedString {
-        mark(NSMutableAttributedString(string: text, attributes: baseAttributes(size: 12, monospaced: true)), hidden: hidden)
+        mark(NSMutableAttributedString(string: text, attributes: baseAttributes(size: AppFont.size(12), monospaced: true)), hidden: hidden)
     }
 
     static func markdown(_ block: String, hidden: [String]) -> NSAttributedString {

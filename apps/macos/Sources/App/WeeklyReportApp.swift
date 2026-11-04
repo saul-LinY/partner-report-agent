@@ -277,7 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .milliseconds(500))
                 captureContent("notification-banner", folder: folder)
                 if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-                    window.setContentSize(NSSize(width: 960, height: 720))
+                    window.setContentSize(NSSize(width: 1040, height: 720))
                     try? await Task.sleep(for: .milliseconds(500))
                     captureContent("notification-banner-compact", folder: folder)
                     window.setContentSize(NSSize(width: 1280, height: 860))
@@ -290,7 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .milliseconds(500))
                 captureContent("approval-work-cards-processed", folder: folder)
                 if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-                    window.setContentSize(NSSize(width: 960, height: 720))
+                    window.setContentSize(NSSize(width: 1040, height: 720))
                     try? await Task.sleep(for: .milliseconds(500))
                     captureContent("approval-work-cards-compact", folder: folder)
                     window.setContentSize(NSSize(width: 1280, height: 860))
@@ -336,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 store.selectedUploadRecordID = nil
                 try? await Task.sleep(for: .milliseconds(500))
                 if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-                    window.setContentSize(NSSize(width: 960, height: 720))
+                    window.setContentSize(NSSize(width: 1040, height: 720))
                     for page in AppPage.allCases {
                         if page == .approvals { store.openApproval(.project("mobile")) }
                         store.page = page
@@ -362,7 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 HStack(spacing: 10) {
                     Text("\(count) 个来源").frame(maxWidth: .infinity, alignment: .leading)
                     AgentStack(agents: Array(Agent.allCases.prefix(count))).frame(width: 118, alignment: .trailing)
-                    Text("已登记").frame(width: 86, alignment: .leading)
+                    Text("已登记").frame(width: AppFont.width(86), alignment: .leading)
                 }.padding(16).frame(height: 64)
                 Rule()
             }
@@ -414,7 +414,7 @@ struct WindowSetup: NSViewRepresentable {
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.isMovableByWindowBackground = false
-            window.minSize = NSSize(width: 960, height: 720)
+            window.minSize = NSSize(width: 1040, height: 720)
             window.setContentSize(NSSize(width: 1280, height: 860))
             window.center()
         }

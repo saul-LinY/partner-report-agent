@@ -15,7 +15,7 @@ struct ProcessCPUIndicator: View {
             Spacer(minLength: 8)
             Text(value).monospacedDigit().foregroundStyle(Palette.ink)
         }
-        .font(.system(size: 12))
+        .font(.app(size: 12))
         .foregroundStyle(Palette.secondary)
         .frame(height: 20)
         .help("本 App 进程的 CPU 占用率，每秒更新；100% 表示占满一个逻辑核心。")

@@ -29,7 +29,7 @@ struct WorkCardsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("\(visible.count) 张工作卡片").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                Text("\(visible.count) 张工作卡片").font(.app(size: 12)).foregroundStyle(Palette.secondary)
                 Spacer()
                 Menu {
                     Button("全部周期") { scope = .all }
@@ -42,7 +42,7 @@ struct WorkCardsView: View {
             Rule()
             if let error = store.reviewError {
                 HStack(spacing: 12) {
-                    Text(error).font(.system(size: 12)).foregroundStyle(Palette.red)
+                    Text(error).font(.app(size: 12)).foregroundStyle(Palette.red)
                     Spacer()
                     Button("重试") { Task { await store.refreshReviews() } }.buttonStyle(QuietButtonStyle(compact: true))
                 }.padding(14)
@@ -54,7 +54,7 @@ struct WorkCardsView: View {
                         cardGroup("待审核", cards: pending, identifier: "pending")
                         cardGroup("已处理", cards: handled, identifier: "handled")
                     }
-                }.frame(width: 278)
+                }.frame(width: AppFont.width(278))
                 Rectangle().fill(Palette.line).frame(width: 1)
                 if let selected { detail(selected).id(selected.id) }
                 else {
@@ -82,16 +82,16 @@ struct WorkCardsView: View {
         Section {
             ForEach(projectGroups(cards), id: \.name) { group in
                 // A project appears once; its periods are single short lines beneath the name.
-                Text(group.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(group.name).font(.app(size: 13, weight: .semibold)).lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 4)
                 ForEach(group.cards) { card in
                     Button { selectedID = card.id } label: {
                         HStack(spacing: 8) {
-                            Text(PeriodLabel.text(batch(card)?.review.period_key)).font(.system(size: 12)).monospacedDigit()
+                            Text(PeriodLabel.text(batch(card)?.review.period_key)).font(.app(size: 12)).monospacedDigit()
                                 .foregroundStyle(Palette.secondary).lineLimit(1)
                             Spacer(minLength: 8)
                             if pendingIDs.contains(card.id) { StatusLabel(text: status(card), color: Palette.yellow, size: 6) }
-                            else { Text(status(card)).font(.system(size: 12)).foregroundStyle(Palette.secondary) }
+                            else { Text(status(card)).font(.app(size: 12)).foregroundStyle(Palette.secondary) }
                         }.padding(.leading, 32).padding(.trailing, 20).frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
                             .background(selectedID == card.id ? Palette.selected : .white)
                             .overlay(alignment: .leading) { if selectedID == card.id { Rectangle().fill(Palette.yellow).frame(width: 3) } }
@@ -102,7 +102,7 @@ struct WorkCardsView: View {
                 Rule().padding(.top, 8)
             }
             if cards.isEmpty {
-                Text("暂无\(title)卡片").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                Text("暂无\(title)卡片").font(.app(size: 12)).foregroundStyle(Palette.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 12)
             }
         } header: {
@@ -110,57 +110,57 @@ struct WorkCardsView: View {
                 Text(title).fontWeight(.semibold)
                 Text("\(cards.count)").monospacedDigit().foregroundStyle(Palette.secondary)
                 Spacer()
-            }.font(.system(size: 12)).padding(.horizontal, 20).frame(height: 30).background(Palette.quiet)
+            }.font(.app(size: 12)).padding(.horizontal, 20).frame(height: 30).background(Palette.quiet)
                 .accessibilityIdentifier("review-group-\(identifier)")
         }.id(identifier)
     }
     private func detail(_ card: ReviewCard) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
-                Text(card.displayName).font(.system(size: 20, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                Text(PeriodLabel.text(batch(card)?.review.period_key)).font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                Text(card.displayName).font(.app(size: 20, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                Text(PeriodLabel.text(batch(card)?.review.period_key)).font(.app(size: 12)).foregroundStyle(Palette.secondary)
                     .help(batch(card)?.review.period_key ?? "")
             }.padding(26).frame(maxWidth: .infinity, alignment: .leading)
             Rule()
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("本周进展总览").font(.system(size: 14, weight: .semibold))
+                        Text("本周进展总览").font(.app(size: 14, weight: .semibold))
                         MarkdownBody(text: card.payload.overview ?? card.payload.summary ?? "暂无内容")
                     }
                     if let progress = card.payload.dailyProgress, !progress.isEmpty {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("每日进展").font(.system(size: 14, weight: .semibold))
+                            Text("每日进展").font(.app(size: 14, weight: .semibold))
                             ForEach(Array(progress.enumerated()), id: \.offset) { _, entry in
                                 HStack(alignment: .top, spacing: 16) {
-                                    Text(entry.date).font(.system(size: 12)).monospacedDigit().foregroundStyle(Palette.secondary).frame(width: 82, alignment: .leading)
-                                    Text(entry.summary).font(.system(size: 13)).lineSpacing(5).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                                    Text(entry.date).font(.app(size: 12)).monospacedDigit().foregroundStyle(Palette.secondary).frame(width: AppFont.width(82), alignment: .leading)
+                                    Text(entry.summary).font(.app(size: 13)).lineSpacing(5).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                                 }
                             }
                         }
                     }
                     if let job = batch(card)?.job(for: card.id), let error = job.error_message, !error.isEmpty {
-                        Text(error).font(.system(size: 12)).foregroundStyle(Palette.red)
+                        Text(error).font(.app(size: 12)).foregroundStyle(Palette.red)
                     }
                 }.padding(26).frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: .infinity)
             if pendingIDs.contains(card.id) {
                 Rule()
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("修改意见").font(.system(size: 13, weight: .semibold))
+                    Text("修改意见").font(.app(size: 13, weight: .semibold))
                     ZStack(alignment: .topLeading) {
                         if instruction.isEmpty {
-                            Text("填写需要调整的内容").font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                            Text("填写需要调整的内容").font(.app(size: 13)).foregroundStyle(Palette.secondary)
                                 .padding(.horizontal, 12).padding(.top, 8).allowsHitTesting(false)
                         }
-                        TextEditor(text: $instruction).font(.system(size: 13)).scrollContentBackground(.hidden)
+                        TextEditor(text: $instruction).font(.app(size: 13)).scrollContentBackground(.hidden)
                             .padding(7).frame(height: 60)
                             .accessibilityLabel("修改意见").accessibilityIdentifier("review-instruction")
                     }.overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.line))
                     HStack {
                         if batch(card)?.isRegenerating(card.id) == true {
                             ProgressView().controlSize(.small)
-                            Text("正在重新生成").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                            Text("正在重新生成").font(.app(size: 12)).foregroundStyle(Palette.secondary)
                         }
                         Spacer()
                         Button { Task { await store.performCardAction(.regenerate(instruction), cardID: card.id) } } label: {
@@ -173,14 +173,14 @@ struct WorkCardsView: View {
                 Rule()
                 HStack(spacing: 12) {
                     Spacer()
-                    Button { confirmExclude = true } label: { Text("忽略").frame(width: 70) }
+                    Button { confirmExclude = true } label: { Text("忽略").frame(width: AppFont.width(70)) }
                         .buttonStyle(QuietButtonStyle()).accessibilityIdentifier("review-exclude")
                     Button { Task { await store.performCardAction(.approve, cardID: card.id) } } label: { Label("通过", systemImage: "checkmark").frame(width: 78) }
                         .buttonStyle(YellowButtonStyle()).accessibilityIdentifier("review-approve")
                 }.disabled(busy(card)).padding(.horizontal, 26).padding(.vertical, 18)
             } else {
                 Rule()
-                Text(status(card)).font(.system(size: 13)).foregroundStyle(Palette.secondary).padding(26)
+                Text(status(card)).font(.app(size: 13)).foregroundStyle(Palette.secondary).padding(26)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

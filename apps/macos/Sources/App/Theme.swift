@@ -14,6 +14,21 @@ enum Palette {
     static let bubble = Color(hex: 0xEFF0F2)
 }
 
+/// The one place that decides how large text is. Every font in the app goes through it, so making all text
+/// larger or smaller is a change to `scale`.
+enum AppFont {
+    static let scale: CGFloat = 1.15
+    static func size(_ points: CGFloat) -> CGFloat { (points * scale).rounded() }
+    /// A fixed column that holds text has to grow with the text, or its content wraps.
+    static func width(_ points: CGFloat) -> CGFloat { (points * scale).rounded() }
+}
+
+extension Font {
+    static func app(size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+        .system(size: AppFont.size(size), weight: weight, design: design)
+    }
+}
+
 extension Color {
     init(hex: UInt32) {
         self.init(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)
@@ -25,7 +40,7 @@ struct YellowButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: compact ? 13 : 14, weight: .medium))
+            .font(.app(size: compact ? 13 : 14, weight: .medium))
             .padding(.horizontal, compact ? 11 : 16)
             .padding(.vertical, compact ? 7 : 9)
             .foregroundStyle(Palette.ink)
@@ -43,7 +58,7 @@ struct YellowCheckboxStyle: ToggleStyle {
                 ZStack {
                     RoundedRectangle(cornerRadius: 3).fill(configuration.isOn ? Palette.yellow : .white)
                     if !configuration.isOn { RoundedRectangle(cornerRadius: 3).stroke(Palette.secondary.opacity(0.45), lineWidth: 1) }
-                    if configuration.isOn { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ink) }
+                    if configuration.isOn { Image(systemName: "checkmark").font(.app(size: 11, weight: .bold)).foregroundStyle(Palette.ink) }
                 }
                 .frame(width: 17, height: 17)
                 configuration.label.foregroundStyle(Palette.ink).multilineTextAlignment(.leading)
@@ -63,7 +78,7 @@ struct StatusLabel: View {
     var body: some View {
         HStack(spacing: 7) {
             Circle().fill(color).frame(width: size, height: size)
-            Text(text).font(.system(size: 13))
+            Text(text).font(.app(size: 13))
         }.foregroundStyle(Palette.ink)
     }
 }
@@ -87,7 +102,7 @@ struct AgentFilterMenu: NSViewRepresentable {
     func makeNSView(context: Context) -> NSPopUpButton {
         let button = NSPopUpButton(frame: .zero, pullsDown: false)
         button.isBordered = false
-        button.font = .systemFont(ofSize: 13)
+        button.font = .systemFont(ofSize: AppFont.size(13))
         button.imagePosition = .imageLeading
         button.target = context.coordinator
         button.action = #selector(Coordinator.changed(_:))
@@ -134,9 +149,9 @@ struct EmptyMessage: View {
     let subtitle: String
     var body: some View {
         VStack(spacing: 12) {
-            if let symbol { Image(systemName: symbol).font(.system(size: 26, weight: .light)).foregroundStyle(Palette.secondary) }
-            Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.ink)
-            if !subtitle.isEmpty { Text(subtitle).font(.system(size: 13)).foregroundStyle(Palette.secondary).multilineTextAlignment(.center) }
+            if let symbol { Image(systemName: symbol).font(.app(size: 26, weight: .light)).foregroundStyle(Palette.secondary) }
+            Text(title).font(.app(size: 15, weight: .medium)).foregroundStyle(Palette.ink)
+            if !subtitle.isEmpty { Text(subtitle).font(.app(size: 13)).foregroundStyle(Palette.secondary).multilineTextAlignment(.center) }
         }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -144,7 +159,7 @@ struct EmptyMessage: View {
 struct SectionTitle: View {
     let title: String
     var body: some View {
-        Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ink)
+        Text(title).font(.app(size: 17, weight: .semibold)).foregroundStyle(Palette.ink)
     }
 }
 
@@ -212,7 +227,7 @@ struct QuietButtonStyle: ButtonStyle {
     var compact = false
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: compact ? 12 : 13, weight: .medium))
+        configuration.label.font(.app(size: compact ? 12 : 13, weight: .medium))
             .padding(.horizontal, compact ? 10 : 13).frame(height: compact ? 30 : 36)
             .foregroundStyle(enabled ? Palette.ink : Palette.secondary)
             .background(configuration.isPressed ? Palette.line : Color.white, in: RoundedRectangle(cornerRadius: 6))
@@ -225,7 +240,7 @@ struct IconButton: View {
     let help: String
     var action: () -> Void
     var body: some View {
-        Button(action: action) { Image(systemName: symbol).font(.system(size: 15)).frame(width: 32, height: 32) }
+        Button(action: action) { Image(systemName: symbol).font(.app(size: 15)).frame(width: 32, height: 32) }
             .buttonStyle(.plain).background(.white, in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.line)).help(help).accessibilityLabel(help)
     }
@@ -234,7 +249,7 @@ struct IconButton: View {
 struct UpdateBadgeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 16, weight: .regular))
+            .font(.app(size: 16, weight: .regular))
             .foregroundStyle(.white)
             .frame(width: 52, height: 26)
             .background(Palette.red.opacity(configuration.isPressed ? 0.75 : 1), in: Capsule())
@@ -246,7 +261,7 @@ struct PageHeading<Actions: View>: View {
     let title: String
     @ViewBuilder var actions: Actions
     var body: some View {
-        HStack { Text(title).font(.system(size: 23, weight: .semibold)); Spacer(); actions }
+        HStack { Text(title).font(.app(size: 23, weight: .semibold)); Spacer(); actions }
             .frame(height: 72).padding(.horizontal, 28).padding(.top, 10)
     }
 }
@@ -260,8 +275,8 @@ struct FilterTab: View {
         Button(action: action) {
             HStack(spacing: 7) {
                 Text(title).fontWeight(selected ? .semibold : .regular)
-                if let count { Text("\(count)").font(.system(size: 11, weight: .medium)).monospacedDigit().padding(.horizontal, 6).frame(minHeight: 20).background(Palette.quiet, in: Capsule()) }
-            }.font(.system(size: 13)).padding(.horizontal, 10).frame(height: 44)
+                if let count { Text("\(count)").font(.app(size: 11, weight: .medium)).monospacedDigit().padding(.horizontal, 6).frame(minHeight: 20).background(Palette.quiet, in: Capsule()) }
+            }.font(.app(size: 13)).padding(.horizontal, 10).frame(height: 44)
                 .overlay(alignment: .bottom) { if selected { Rectangle().fill(Palette.yellow).frame(height: 3) } }.contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -271,7 +286,7 @@ struct AgentStack: View {
     var agents: [Agent]
     var body: some View {
         HStack(spacing: -7) {
-            if agents.count > 4 { Text("+\(agents.count - 4)").font(.system(size: 10)).padding(.trailing, 10) }
+            if agents.count > 4 { Text("+\(agents.count - 4)").font(.app(size: 10)).padding(.trailing, 10) }
             ForEach(Array(agents.prefix(4).enumerated()).reversed(), id: \.element.id) { index, agent in
                 AgentIcon(agent: agent, size: 21).padding(3).background(.white, in: RoundedRectangle(cornerRadius: 5)).zIndex(Double(4 - index))
             }
