@@ -41,8 +41,8 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
     <div className="auth-page auth-page-login">
       <section className="auth-panel">
         <div className="auth-brand">
-          <div className="brand-mark">PR</div>
-          <span>Partner Report Agent</span>
+          <img className="brand-mark" src="/app-icon.png" alt="" />
+          <span>Weekly Report</span>
         </div>
         <div className="auth-copy">
           <h1>登录工作台</h1>
@@ -244,8 +244,8 @@ export function AcceptInvite() {
     <div className="auth-page auth-page-single">
       <section className="auth-panel">
         <div className="auth-brand">
-          <div className="brand-mark">PR</div>
-          <span>Partner Report Agent</span>
+          <img className="brand-mark" src="/app-icon.png" alt="" />
+          <span>Weekly Report</span>
         </div>
         <div className="auth-copy">
           <h1>接受邀请</h1>

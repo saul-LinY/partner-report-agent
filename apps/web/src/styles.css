@@ -1,6 +1,6 @@
 :root {
-  color: #1f2937;
-  background: #f3f5f9;
+  color: #111111;
+  background: #f5f5f5;
   font-family:
     Inter,
     ui-sans-serif,
@@ -10,23 +10,24 @@
     sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --ink: #1f2937;
-  --muted: #667085;
-  --line: #e2e6ee;
+  --ink: #111111;
+  --muted: #6b6b6b;
+  --line: #e5e5e5;
   --surface: #ffffff;
-  --surface-alt: #f7f8fc;
-  --accent: #3563e9;
-  --accent-hover: #2749c0;
-  --accent-soft: #eaf0ff;
-  --blue: #0e8fc7;
-  --success: #1f9d6b;
-  --success-soft: #e6f6ef;
-  --danger: #d6453d;
-  --danger-soft: #fdeceb;
-  --warning: #c77a0a;
-  --warning-soft: #fff4de;
-  --sidebar: #1c2540;
-  --sidebar-text: #eef1fa;
+  --surface-alt: #fafafa;
+  --accent: #111111;
+  --accent-hover: #000000;
+  --accent-soft: #f0f0f0;
+  --blue: #2b6fd6;
+  --blue-soft: #e8f0fc;
+  --success: #3a8a5c;
+  --success-soft: #e8f4ec;
+  --danger: #c4443a;
+  --danger-soft: #fbebe8;
+  --warning: #b87510;
+  --warning-soft: #fbf1dc;
+  --sidebar: #0f0f0f;
+  --sidebar-text: #f5f5f5;
   --radius: 6px;
 }
 
@@ -58,7 +59,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid #3563e9;
+  outline: 2px solid #111111;
   outline-offset: 2px;
 }
 
@@ -83,7 +84,7 @@ select:focus-visible {
   flex-direction: column;
   color: var(--sidebar-text);
   background: var(--sidebar);
-  border-right: 1px solid #111518;
+  border-right: 1px solid #000000;
   z-index: 20;
 }
 .brand,
@@ -99,13 +100,8 @@ select:focus-visible {
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  color: #fff;
-  background: #287469;
-  font-size: 12px;
-  font-weight: 800;
+  display: block;
+  border-radius: 8px;
 }
 .brand strong,
 .brand span,
@@ -156,14 +152,14 @@ select:focus-visible {
   align-items: center;
   gap: 10px;
   border-radius: 5px;
-  color: #b8c0c5;
+  color: #bdbdbd;
   font-size: 13px;
   font-weight: 600;
 }
 .sidebar nav a:hover,
 .sidebar nav a.active {
   color: #fff;
-  background: #2e3b66;
+  background: #2a2a2a;
 }
 .sidebar-user {
   margin-top: auto;
@@ -171,7 +167,7 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  border-top: 1px solid #3a4146;
+  border-top: 1px solid #333333;
 }
 .sidebar-user > div {
   min-width: 0;
@@ -185,7 +181,7 @@ select:focus-visible {
 .sidebar-user span {
   margin-top: 2px;
   overflow: hidden;
-  color: #939da4;
+  color: #8f8f8f;
   font-size: 11px;
   text-overflow: ellipsis;
 }
@@ -549,7 +545,7 @@ td {
   place-items: center;
   border-radius: 5px;
   color: #285b88;
-  background: #eef2ff;
+  background: #f0f0f0;
 }
 .summary-icon svg {
   width: 18px;
@@ -773,7 +769,7 @@ td {
   display: grid;
   place-items: center;
   color: #2f628b;
-  background: #eef2ff;
+  background: #f0f0f0;
   border-radius: 5px;
 }
 .partner-icon {
@@ -1131,7 +1127,7 @@ td {
 .work-item-version-tabs button:hover,
 .work-item-version-tabs button.active {
   border-color: #8baaa3;
-  background: #eef2ff;
+  background: #f0f0f0;
 }
 .report-source-cards button strong {
   margin-left: 4px;
@@ -1208,7 +1204,7 @@ td {
 }
 .locked-notice {
   color: #175e4b;
-  background: #eef2ff;
+  background: #f0f0f0;
   border: 1px solid #bddfce;
 }
 .quality-warnings {
@@ -1471,7 +1467,7 @@ select:focus {
 }
 
 .permission-backup-meta .allowed strong {
-  color: #1f9d6b;
+  color: #3a8a5c;
 }
 
 .permission-backup-groups {
@@ -1581,7 +1577,7 @@ select:focus {
   grid-template-columns: 22px minmax(0, 1fr);
   gap: 10px;
   border-bottom: 1px solid var(--line);
-  background: #f3f6ff;
+  background: #f5f5f5;
 }
 
 .execution-diagnosis-warning {
@@ -1646,8 +1642,8 @@ select:focus {
   place-items: center;
   border: 1px solid #c9dfd7;
   border-radius: 5px;
-  color: #1f9d6b;
-  background: #eef2ff;
+  color: #3a8a5c;
+  background: #f0f0f0;
 }
 
 .system-component-warning .system-component-icon {
@@ -1907,7 +1903,7 @@ select:focus {
     box-shadow 140ms ease;
 }
 .ops-metric-link:hover {
-  background: #f7f8fc;
+  background: #fafafa;
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 .ops-metric-link.danger:hover {
@@ -1929,7 +1925,7 @@ select:focus {
   display: grid;
   place-items: center;
   color: var(--accent);
-  background: #eef2ff;
+  background: #f0f0f0;
   border-radius: 5px;
 }
 .ops-metric.danger > span {

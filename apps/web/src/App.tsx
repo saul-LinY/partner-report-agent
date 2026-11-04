@@ -95,11 +95,13 @@ function AuthenticatedApp({ me }: { me: Me }) {
       <aside className="sidebar">
         <div className="sidebar-heading">
           <div className="brand">
-            <div className="brand-mark" title="Partner Report">
-              PR
-            </div>
+            <img
+              className="brand-mark"
+              src="/app-icon.png"
+              alt="Weekly Report"
+            />
             <div className="brand-copy">
-              <strong>Partner Report</strong>
+              <strong>Weekly Report</strong>
               <span>{me.teamName}</span>
             </div>
           </div>

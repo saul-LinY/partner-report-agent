@@ -53,7 +53,7 @@
   color: white;
 }
 .sidebar-toggle:focus-visible {
-  outline: 2px solid #8fa8f2;
+  outline: 2px solid #9a9a9a;
   outline-offset: 3px;
 }
 
@@ -77,7 +77,7 @@
     padding-inline: 0;
   }
   .sidebar-collapsed .nav-group + .nav-group {
-    border-top: 1px solid #3a4146;
+    border-top: 1px solid #333333;
     padding-top: 16px;
   }
   .app-shell.sidebar-collapsed .sidebar-user {
@@ -113,7 +113,7 @@
 }
 
 .app-shell .sidebar nav a.active {
-  box-shadow: inset 3px 0 0 #8fa8f2;
+  box-shadow: inset 3px 0 0 #9a9a9a;
 }
 
 .app-shell .sidebar-user {

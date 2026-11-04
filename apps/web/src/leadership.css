@@ -115,8 +115,8 @@
   white-space: nowrap;
 }
 .lc-badge.is-ok {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--blue);
+  background: var(--blue-soft);
 }
 .lc-badge.is-stalled {
   color: var(--warning);
@@ -142,7 +142,7 @@
   background: var(--success);
 }
 .lc-stage-bar span.is-current {
-  background: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--blue) 60%, var(--line));
 }
 .lc-stage small,
 .lc-card footer small {
@@ -277,7 +277,7 @@
   aspect-ratio: 1;
   max-height: 26px;
   border-radius: 3px;
-  background: #eceff5;
+  background: #ececec;
 }
 .lc-empty,
 .lc-note {

@@ -156,7 +156,7 @@
   color: var(--muted);
 }
 .sm-search:focus-within {
-  outline: 2px solid #3563e9;
+  outline: 2px solid #111111;
   outline-offset: 2px;
 }
 .monitoring-page .sm-filters .sm-search input {
@@ -285,10 +285,10 @@
   padding: 0;
 }
 .sm-record-table tbody tr:hover {
-  background: #f7f8fc;
+  background: #fafafa;
 }
 .sm-record-table tr.is-selected {
-  background: #eef2ff;
+  background: #f0f0f0;
 }
 .sm-record-table tr.is-selected td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);
@@ -370,11 +370,11 @@
 }
 .sm-member-list > li:hover,
 .sm-finding-list > li:hover {
-  background: #f7f8fc;
+  background: #fafafa;
 }
 .sm-member-list > li.is-selected,
 .sm-finding-list > li.is-selected {
-  background: #eef2ff;
+  background: #f0f0f0;
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .sm-member-title {
@@ -549,7 +549,7 @@
   gap: 6px;
   border: 1px solid #a9cfc0;
   border-radius: 5px;
-  background: #f3f6ff;
+  background: #f5f5f5;
   color: #1e6d53;
   font-size: 11px;
 }
