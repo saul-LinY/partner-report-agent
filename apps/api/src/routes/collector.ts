@@ -470,6 +470,8 @@ export async function collectorRoutes(app: FastifyInstance) {
             .string()
             .max(23 * 1024 * 1024)
             .regex(/^[A-Za-z0-9+/]*={0,2}$/),
+          // Texts the member explicitly chose to upload even though the automatic rules would hide them.
+          allowedTerms: z.array(z.string().min(1).max(500)).max(500).optional(),
         })
         .strict()
         .parse(request.body);
@@ -522,7 +524,7 @@ export async function collectorRoutes(app: FastifyInstance) {
         // The checksum above vouches for what the App sent; what is kept has credentials removed.
         if (run.status !== "completed")
           await tx`insert into collector_upload_parts (upload_id,part_index,checksum,sessions)
-        values (${id},${input.partIndex},${input.checksum},${JSON.stringify(redactSessionText(sessions))}::jsonb) on conflict (upload_id,part_index) do nothing`;
+        values (${id},${input.partIndex},${input.checksum},${JSON.stringify(redactSessionText(sessions, input.allowedTerms))}::jsonb) on conflict (upload_id,part_index) do nothing`;
         await tx`update collector_uploads set updated_at=now() where id=${id}`;
         return { ok: true, partIndex: input.partIndex };
       });

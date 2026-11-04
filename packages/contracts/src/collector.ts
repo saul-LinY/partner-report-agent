@@ -38,14 +38,17 @@ export type CollectorSession = z.infer<typeof collectorSessionSchema>;
 /** Credentials and identifying details never reach storage; ids, times and every other word stay as sent. */
 export function redactSessionText(
   sessions: CollectorSession[],
+  allowed: readonly string[] = [],
 ): CollectorSession[] {
   return sessions.map((session) => ({
     ...session,
-    title: redactSensitive(session.title),
+    title: redactSensitive(session.title, allowed),
     turns: session.turns.map((turn) => ({
       ...turn,
-      prompt: redactSensitive(turn.prompt),
-      answer: turn.answer == null ? turn.answer : redactSensitive(turn.answer),
+      prompt: redactSensitive(turn.prompt, allowed),
+      answer: turn.answer == null
+          ? turn.answer
+          : redactSensitive(turn.answer, allowed),
     })),
   }));
 }

@@ -56,7 +56,7 @@ struct SessionsView: View {
                             if session.turns.isEmpty {
                                 EmptyMessage(symbol: "bubble.left.and.text.bubble.right", title: "此会话暂无可显示的问答", subtitle: "")
                             } else {
-                                ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id], terms: store.hiddenTerms, onHide: { store.hideTerm($0) }).equatable()
+                                ChatView(session: session, checkpoint: store.uploadCheckpoints[session.id], hiding: store.hiding, onHide: { store.hideTerm($0) }, onReveal: { store.revealTerm($0) }).equatable()
                             }
                         }
                     } else {
@@ -160,8 +160,8 @@ struct SessionsView: View {
                     .help("密钥、邮箱、手机号、IP 地址、网址、本机路径和你标记的内容，上传时会替换为「[已隐藏]」；你本机看到的原文不会被修改")
                     .accessibilityIdentifier("sensitive-notice")
             }
-            Text("选中文字，右键可隐藏").font(.system(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1).layoutPriority(-1)
-                .help("选中任意文字后右键，选「隐藏所选内容」：之后所有上传里相同的文字都会被隐藏")
+            Text("红色=上传时隐藏").font(.system(size: 11)).foregroundStyle(Palette.secondary).lineLimit(1).layoutPriority(-1)
+                .help("选中文字右键「隐藏所选内容」可新增红色；在红色上右键「取消隐藏」，上传时就保留原文")
             Spacer(minLength: 8)
             Button(excluded ? "恢复上传" : "不上传此会话") { store.setUploadExcluded(!excluded, for: session.id) }
                 .buttonStyle(QuietButtonStyle(compact: true)).accessibilityIdentifier("toggle-upload-excluded")
@@ -173,20 +173,21 @@ struct SessionsView: View {
         return session.uploaded ? "有新内容时会继续上传" : "下次上传时会包含这个会话"
     }
     private func sensitiveCount(_ session: AgentSession) -> Int {
-        UploadCheckpoint.messages(in: session.turns).reduce(0) { $0 + RedactionMarks.hidden(in: $1.text, terms: store.hiddenTerms).count }
+        UploadCheckpoint.messages(in: session.turns).reduce(0) { $0 + RedactionMarks.hidden(in: $1.text, hiding: store.hiding).count }
     }
 }
 
 struct ChatView: View, Equatable {
     let session: AgentSession
     var checkpoint: UploadCheckpoint?
-    var terms: [String] = []
+    var hiding: SecretScrubber.Hiding = .none
     var onHide: (String) -> Void = { _ in }
+    var onReveal: (String) -> Void = { _ in }
     nonisolated static func == (lhs: ChatView, rhs: ChatView) -> Bool {
-        lhs.session == rhs.session && lhs.checkpoint == rhs.checkpoint && lhs.terms == rhs.terms
+        lhs.session == rhs.session && lhs.checkpoint == rhs.checkpoint && lhs.hiding == rhs.hiding
     }
     var body: some View {
-        let timeline = ConversationTimeline(turns: session.turns, checkpoint: checkpoint, hiding: terms)
+        let timeline = ConversationTimeline(turns: session.turns, checkpoint: checkpoint, hiding: hiding)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 26) {
@@ -213,7 +214,7 @@ struct ChatView: View, Equatable {
         HStack {
             Spacer(minLength: 28)
             VStack(alignment: .trailing, spacing: 7) {
-                SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, terms: terms)), onHide: onHide)
+                SelectableText(text: MessageText.plain(message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding)), onHide: onHide, onReveal: onReveal)
                     .padding(.horizontal, 14).padding(.vertical, 12).background(Palette.bubble.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                 if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
             }
@@ -227,7 +228,7 @@ struct ChatView: View, Equatable {
                     Text(session.agent.name).font(.system(size: 12, weight: .semibold))
                     if let time = message.time { Text(time).font(.system(size: 10)).foregroundStyle(Palette.secondary) }
                 }
-                MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text, terms: terms), onHide: onHide).equatable()
+                MarkdownBody(text: message.text, hidden: RedactionMarks.hidden(in: message.text, hiding: hiding), onHide: onHide, onReveal: onReveal).equatable()
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
                 } label: { Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(Palette.secondary) }.buttonStyle(.plain).help("复制回复").accessibilityLabel("复制回复")
@@ -240,16 +241,17 @@ struct MarkdownBody: View, Equatable {
     let text: String
     var hidden: [String] = []
     var onHide: (String) -> Void = { _ in }
+    var onReveal: (String) -> Void = { _ in }
     nonisolated static func == (lhs: MarkdownBody, rhs: MarkdownBody) -> Bool { lhs.text == rhs.text && lhs.hidden == rhs.hidden }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(text.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, block in
                 if block.hasPrefix("```") {
-                    SelectableText(text: MessageText.code(block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n"), hidden: hidden), onHide: onHide)
+                    SelectableText(text: MessageText.code(block.components(separatedBy: "\n").dropFirst().filter { !$0.hasPrefix("```") }.joined(separator: "\n"), hidden: hidden), onHide: onHide, onReveal: onReveal)
                         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Palette.quiet, in: RoundedRectangle(cornerRadius: 6))
                 } else {
-                    SelectableText(text: MessageText.markdown(block, hidden: hidden), onHide: onHide)
+                    SelectableText(text: MessageText.markdown(block, hidden: hidden), onHide: onHide, onReveal: onReveal)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

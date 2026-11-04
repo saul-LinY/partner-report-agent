@@ -290,6 +290,37 @@ suite("collector end-to-end persistence and privacy boundary", () => {
     expect(stored.turns[1]).toEqual(values[0]!.turns[1]);
     expect(stored.id).toBe("with-secret");
   });
+  it("keeps exactly the texts the member let through and still hides every other match", async () => {
+    const values = [
+      {
+        ...session("let-through"),
+        turns: [
+          {
+            id: "t1",
+            prompt: "联系 a@b.com 或 c@d.com，服务器 10.0.0.8",
+            questionTime: "12:00",
+          },
+        ],
+      },
+    ];
+    const run = await create(values);
+    const response = await send(run.id, {
+      ...run.part,
+      allowedTerms: ["a@b.com"],
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    await finish(run.id);
+    const [stored] = (
+      await sql`select sessions from collector_upload_parts where upload_id=${run.id}`
+    )[0]!.sessions;
+    expect(stored.turns[0].prompt).toBe(
+      "联系 a@b.com 或 [已隐藏]，服务器 [已隐藏]",
+    );
+    // Anything else in the body is still rejected.
+    expect(
+      (await send(run.id, { ...run.part, other: true })).statusCode,
+    ).toBe(400);
+  });
 
   it("retains unsent sessions older than the period but analyses only in-period ones", async () => {
     const day = 86400_000;

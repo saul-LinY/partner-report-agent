@@ -104,3 +104,16 @@ describe("shared redaction vectors", () => {
     expect(redactSensitive(input)).toBe(expected);
   });
 });
+
+describe("redactSensitive with texts the member let through", () => {
+  it("keeps exactly those matches and hides the rest", () => {
+    const text = "联系 a@b.com 或 c@d.com，服务器 10.0.0.8";
+    expect(redactSensitive(text, ["a@b.com"])).toBe(
+      `联系 a@b.com 或 ${HIDDEN}，服务器 ${HIDDEN}`,
+    );
+    // Exact text only: a longer address that merely contains it is still hidden.
+    expect(redactSensitive("x a@b.com.cn y", ["a@b.com"])).toBe(
+      `x ${HIDDEN} y`,
+    );
+  });
+});

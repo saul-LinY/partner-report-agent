@@ -23,7 +23,8 @@ struct PrivacyView: View {
                         "密钥、令牌和口令：sk- 开头的密钥、Bearer 令牌、password=… 这样的写法，以及「口令是……」这样写在句子里的口令。",
                         "能识别出你或你的设备的信息：邮箱、手机号、IP 地址、网址和本机文件路径。",
                         "你自己标记的内容（见下方）。",
-                        "这些内容会先替换成「[已隐藏]」再上传；在「项目会话」里它们会标红，你本机看到的原文不会被修改。",
+                        "这些内容在「项目会话」里都会标红，红色就表示「上传时隐藏」，替换成「[已隐藏]」；你本机看到的原文不会被修改。",
+                        "标红是自动识别的，你可以随时增减：选中文字右键「隐藏所选内容」新增，在红色上右键「取消隐藏」，上传时就保留原文。",
                         "自动识别只覆盖常见写法，不能保证发现所有隐私信息，请尽量不要把密钥直接贴进对话。",
                     ])
                     hiddenTermsSection
@@ -35,7 +36,7 @@ struct PrivacyView: View {
                     controls
                     section("已经上传的内容", symbol: "clock.arrow.circlepath", lines: [
                         "之后才生效的设置（不上传某个会话、禁止某个项目、暂停自动上传）不会撤回已经上传的内容。",
-                        "新标记的隐藏内容会让相关会话重新上传隐藏后的版本；公司系统里更早的版本不会因此被删除。",
+                        "调整标红会让相关会话重新上传：新增的红色上传隐藏后的版本，取消的红色上传原文。公司系统里更早的版本不会因此被删除。",
                         "已上传的内容仍保存在公司系统中，需要删除请联系团队管理员。",
                     ])
                 }.padding(.horizontal, 28).padding(.vertical, 26).frame(maxWidth: 760, alignment: .leading)
@@ -52,7 +53,7 @@ struct PrivacyView: View {
                 Rectangle().fill(Palette.line).frame(width: 1, height: 40)
                 fact("\(store.excludedSessionCount)", "个会话不上传")
                 Rectangle().fill(Palette.line).frame(width: 1, height: 40)
-                fact("\(store.hiddenTerms.count)", "条自己标记的隐藏内容")
+                fact("\(store.hiddenTerms.count + store.allowedTerms.count)", "处自己调整的标红")
                 Rectangle().fill(Palette.line).frame(width: 1, height: 40)
                 fact(store.preferences.autoUpload ? "开启" : "暂停", "自动上传")
             }
@@ -72,9 +73,9 @@ struct PrivacyView: View {
     /// Terms marked by hand: hidden in every session and every later upload until removed.
     private var hiddenTermsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("你标记的隐藏内容", symbol: "highlighter")
-            bullet("在「项目会话」里选中文字，右键选「隐藏所选内容」；也可以在这里直接添加。")
-            bullet("所有会话里相同的文字都会被隐藏。至少 2 个字。")
+            heading("你对标红的调整", symbol: "highlighter")
+            bullet("你新增的红色：在「项目会话」里选中文字，右键选「隐藏所选内容」；也可以在这里直接添加。所有会话里相同的文字都会被隐藏，至少 2 个字。")
+            bullet("你取消的红色：自动标红的内容被你取消后，上传时保留原文，会列在下方，可以随时恢复。")
             HStack(spacing: 8) {
                 TextField("要隐藏的文字，例如客户名、内部项目代号", text: $newTerm)
                     .textFieldStyle(.plain).font(.system(size: 13)).padding(.horizontal, 10).frame(height: 32)
@@ -100,6 +101,20 @@ struct PrivacyView: View {
                     }
                 }.padding(.leading, 28).accessibilityIdentifier("hidden-term-list")
             }
+            if !store.allowedTerms.isEmpty {
+                Text("已取消隐藏（上传时保留原文）").font(.system(size: 12, weight: .semibold)).padding(.leading, 28).padding(.top, 6)
+                VStack(spacing: 0) {
+                    ForEach(store.allowedTerms, id: \.self) { term in
+                        HStack(spacing: 10) {
+                            Text(term).font(.system(size: 13)).lineLimit(2).textSelection(.enabled)
+                            Spacer(minLength: 8)
+                            Button("恢复隐藏") { store.restoreAutomatic(term) }.buttonStyle(QuietButtonStyle(compact: true))
+                                .help("这段文字重新按自动规则处理；符合规则的话上传时会被隐藏")
+                        }.padding(.vertical, 8)
+                        Rule()
+                    }
+                }.padding(.leading, 28).accessibilityIdentifier("allowed-term-list")
+            }
         }
     }
 
@@ -113,7 +128,7 @@ struct PrivacyView: View {
             heading("你可以决定", symbol: "hand.raised")
             bullet("哪些项目可以被采集：随时在「待审批项」里允许或禁止。")
             bullet("某个会话不上传：在「项目会话」里选中会话，点「不上传此会话」，也可以随时恢复。")
-            bullet("某段文字不上传：在「项目会话」里选中文字，右键选「隐藏所选内容」；在上方列表里可以移除。")
+            bullet("某段文字上传不上传：在「项目会话」里，选中文字右键「隐藏所选内容」，或在红色上右键「取消隐藏」；在上方列表里可以撤销。")
             bullet("是否自动上传：在「系统设置」的「自动上传」里暂停。")
             HStack(spacing: 10) {
                 Button("管理项目") { store.page = .approvals }.buttonStyle(QuietButtonStyle())

@@ -39,7 +39,7 @@ final class SecretScrubberTests: XCTestCase {
     }
 
     func testMarkedTermsAreHiddenEverywhereAndAnalysisAgreesWithRedaction() throws {
-        let terms = ["张三科技", "三科技有限", "客户A"]
+        let terms = SecretScrubber.Hiding(terms: ["张三科技", "三科技有限", "客户A"])
         let samples = ["给张三科技有限公司报价，客户A不同意；客户A再说", "没有可隐藏的内容", "张三科技 sk-0123456789abcdef0123456789abcdef01234567 张三科技"]
         for sample in samples {
             let analysis = SecretScrubber.analyze(sample, hiding: terms)
@@ -51,13 +51,28 @@ final class SecretScrubberTests: XCTestCase {
         XCTAssertEqual(SecretScrubber.redact("没有可隐藏的内容", hiding: terms), "没有可隐藏的内容")
     }
 
+    func testAnAutomaticMatchTheMemberLetThroughIsKeptAndEverythingElseStillHidden() throws {
+        let text = "联系 a@b.com 或 c@d.com，服务器 10.0.0.8"
+        let hiding = SecretScrubber.Hiding(allowed: ["a@b.com"])
+        let analysis = SecretScrubber.analyze(text, hiding: hiding)
+        XCTAssertEqual(analysis.text, "联系 a@b.com 或 [已隐藏]，服务器 [已隐藏]")
+        XCTAssertEqual(Set(analysis.hidden), ["c@d.com", "10.0.0.8"])
+        XCTAssertEqual(analysis.text, SecretScrubber.redact(text, hiding: hiding))
+        // Letting a piece through is by exact text: a longer secret that merely contains it is still hidden.
+        XCTAssertEqual(SecretScrubber.redact("x a@b.com.cn y", hiding: hiding), "x [已隐藏] y")
+        // A marked term wins over an allowed one only if it is also marked.
+        XCTAssertEqual(SecretScrubber.redact("a@b.com 客户A", hiding: .init(terms: ["客户A"], allowed: ["a@b.com"])), "a@b.com [已隐藏]")
+    }
+
     func testCheckpointTreatsASessionAsPendingWhenNewRulesOrTermsChangeWhatWouldBeUploaded() throws {
         let turn = ChatTurn(id: "t", prompt: "客户A的报价见 http://10.0.0.8/x", answer: "好的", questionTime: "12:00")
         // Uploaded earlier under the current rules.
         let uploaded = UploadCheckpoint(turns: [SecretScrubber.redact(turn)])
         XCTAssertTrue(uploaded.pendingMessages(in: [turn]).isEmpty)
         // The member then marks a term: the same session must go out again, redacted.
-        XCTAssertEqual(uploaded.pendingMessages(in: [turn], hiding: ["客户A"]).map(\.id), ["t:prompt"])
+        XCTAssertEqual(uploaded.pendingMessages(in: [turn], hiding: .init(terms: ["客户A"])).map(\.id), ["t:prompt"])
+        // Taking an automatic red back changes what would be uploaded, so that session goes out again as written.
+        XCTAssertEqual(uploaded.pendingMessages(in: [turn], hiding: .init(allowed: ["http://10.0.0.8/x"])).map(\.id), ["t:prompt"])
         // Content that was uploaded before the address rule existed (raw) is pending as well.
         XCTAssertEqual(UploadCheckpoint(turns: [turn]).pendingMessages(in: [turn]).map(\.id), ["t:prompt"])
     }

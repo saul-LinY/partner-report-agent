@@ -11,6 +11,15 @@ import Foundation
 public enum SecretScrubber {
     public static let hidden = "[已隐藏]"
 
+    /// What the member decided on top of the automatic rules: `terms` are hidden wherever they occur, and an
+    /// automatic match whose text is exactly one of `allowed` is let through. Red in the UI means "hidden on upload".
+    public struct Hiding: Hashable, Sendable, Codable {
+        public var terms: [String] = []
+        public var allowed: [String] = []
+        public init(terms: [String] = [], allowed: [String] = []) { self.terms = terms; self.allowed = allowed }
+        public static let none = Hiding()
+    }
+
     private static func compile(_ pattern: String, caseInsensitive: Bool = false) -> NSRegularExpression {
         // The patterns are constants covered by tests, so a failure here is a programming error.
         try! NSRegularExpression(pattern: pattern, options: caseInsensitive ? [.caseInsensitive] : [])
@@ -42,11 +51,17 @@ public enum SecretScrubber {
         compile(#"(?<![A-Za-z0-9_.])(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(?::[0-9]{1,5})?(?![A-Za-z0-9_])(?!\.[0-9])"#),
         compile(#"(?<![0-9])(?:\+?86[ -]?)?1[3-9][0-9]{9}(?![0-9])"#),
     ]
-    private static let hiddenTemplate = NSRegularExpression.escapedTemplate(for: hidden)
 
-    private static func replaceAll(_ regex: NSRegularExpression, in text: String) -> String {
-        regex.stringByReplacingMatches(
-            in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length), withTemplate: hiddenTemplate)
+    private static func replaceAll(_ regex: NSRegularExpression, in text: String, allowing allowed: Set<String>) -> String {
+        let ranges = matchRanges(regex, in: text, allowing: allowed)
+        guard !ranges.isEmpty else { return text }
+        let source = text as NSString
+        var out = "", cursor = 0
+        for range in ranges {
+            out += source.substring(with: NSRange(location: cursor, length: range.location - cursor)) + hidden
+            cursor = range.location + range.length
+        }
+        return out + source.substring(from: cursor)
     }
 
     /// Terms the member marked by hand are hidden everywhere they occur, before the automatic rules run.
@@ -62,9 +77,10 @@ public enum SecretScrubber {
         return out + source.substring(from: cursor)
     }
 
-    public static func redact(_ text: String, hiding terms: [String] = []) -> String {
-        var out = replaceTerms(terms, in: text)
-        for pattern in credentialPatterns { out = replaceAll(pattern, in: out) }
+    public static func redact(_ text: String, hiding: Hiding = .none) -> String {
+        let allowed = Set(hiding.allowed)
+        var out = replaceTerms(hiding.terms, in: text)
+        for pattern in credentialPatterns { out = replaceAll(pattern, in: out, allowing: allowed) }
         let source = out as NSString
         var result = ""
         var last = 0
@@ -72,11 +88,11 @@ public enum SecretScrubber {
             result += source.substring(with: NSRange(location: last, length: match.range.location - last))
             let keyword = source.substring(with: match.range(at: 1))
             let rest = source.substring(with: match.range(at: 2))
-            result += keyword + replaceAll(contextToken, in: rest)
+            result += keyword + replaceAll(contextToken, in: rest, allowing: allowed)
             last = match.range.location + match.range.length
         }
         out = result + source.substring(from: last)
-        for pattern in identifyingPatterns { out = replaceAll(pattern, in: out) }
+        for pattern in identifyingPatterns { out = replaceAll(pattern, in: out, allowing: allowed) }
         return out
     }
 
@@ -114,8 +130,10 @@ public enum SecretScrubber {
         }
     }
 
-    private static func matchRanges(_ regex: NSRegularExpression, in text: String) -> [NSRange] {
-        regex.matches(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)).map(\.range)
+    private static func matchRanges(_ regex: NSRegularExpression, in text: String, allowing allowed: Set<String> = []) -> [NSRange] {
+        let source = text as NSString
+        return regex.matches(in: text, options: [], range: NSRange(location: 0, length: source.length)).map(\.range)
+            .filter { allowed.isEmpty || !allowed.contains(source.substring(with: $0)) }
     }
 
     private static func termRanges(_ terms: [String], in text: String) -> [NSRange] {
@@ -141,21 +159,22 @@ public enum SecretScrubber {
 
     /// Same rules as `redact`, applied in the same order, additionally reporting what was hidden.
     /// Kept separate so the upload path stays a plain string rewrite; tests require identical output.
-    public static func analyze(_ text: String, hiding terms: [String] = []) -> Analysis {
+    public static func analyze(_ text: String, hiding: Hiding = .none) -> Analysis {
+        let terms = hiding.terms, allowed = Set(hiding.allowed)
         let units = Array(text.utf16)
         var working = Working(units: units, origin: Array(0..<units.count))
         working.hide(termRanges(terms, in: text))
-        for pattern in credentialPatterns { working.hide(matchRanges(pattern, in: working.string)) }
+        for pattern in credentialPatterns { working.hide(matchRanges(pattern, in: working.string, allowing: allowed)) }
         let current = working.string
         let source = current as NSString
         var tokens: [NSRange] = []
         for match in credentialContext.matches(in: current, options: [], range: NSRange(location: 0, length: source.length)) {
             let rest = match.range(at: 2)
-            tokens += matchRanges(contextToken, in: source.substring(with: rest))
+            tokens += matchRanges(contextToken, in: source.substring(with: rest), allowing: allowed)
                 .map { NSRange(location: rest.location + $0.location, length: $0.length) }
         }
         working.hide(tokens)
-        for pattern in identifyingPatterns { working.hide(matchRanges(pattern, in: working.string)) }
+        for pattern in identifyingPatterns { working.hide(matchRanges(pattern, in: working.string, allowing: allowed)) }
         var merged: [Range<Int>] = []
         for span in working.spans.sorted(by: { $0.lowerBound < $1.lowerBound }) {
             if let last = merged.last, span.lowerBound <= last.upperBound { merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, span.upperBound) }
@@ -165,17 +184,17 @@ public enum SecretScrubber {
         return Analysis(text: working.string, hidden: merged.map { original.substring(with: NSRange(location: $0.lowerBound, length: $0.count)) })
     }
 
-    public static func redact(_ turn: ChatTurn, hiding terms: [String] = []) -> ChatTurn {
+    public static func redact(_ turn: ChatTurn, hiding: Hiding = .none) -> ChatTurn {
         var copy = turn
-        copy.prompt = redact(turn.prompt, hiding: terms)
-        copy.answer = turn.answer.map { redact($0, hiding: terms) }
+        copy.prompt = redact(turn.prompt, hiding: hiding)
+        copy.answer = turn.answer.map { redact($0, hiding: hiding) }
         return copy
     }
 
-    public static func redact(_ session: CollectorSession, hiding terms: [String] = []) -> CollectorSession {
+    public static func redact(_ session: CollectorSession, hiding: Hiding = .none) -> CollectorSession {
         var copy = session
-        copy.title = redact(session.title, hiding: terms)
-        copy.turns = session.turns.map { redact($0, hiding: terms) }
+        copy.title = redact(session.title, hiding: hiding)
+        copy.turns = session.turns.map { redact($0, hiding: hiding) }
         return copy
     }
 }

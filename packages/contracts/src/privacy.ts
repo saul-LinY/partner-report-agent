@@ -59,17 +59,24 @@ const INJECTED_BLOCKS: RegExp[] = [
 
 export const HIDDEN = "[已隐藏]";
 
-/** Hides credentials and identifying details and changes nothing else, whitespace included. */
-export function redactSensitive(text: string | null | undefined) {
+/**
+ * Hides credentials and identifying details and changes nothing else, whitespace included.
+ * `allowed` lists exact texts the member chose to let through; a match with exactly that text stays.
+ */
+export function redactSensitive(
+  text: string | null | undefined,
+  allowed: readonly string[] = [],
+) {
+  const keep = new Set(allowed);
+  const hide = (match: string) => (keep.has(match) ? match : HIDDEN);
   let out = text ?? "";
-  for (const pattern of CREDENTIAL_PATTERNS) out = out.replace(pattern, HIDDEN);
+  for (const pattern of CREDENTIAL_PATTERNS) out = out.replace(pattern, hide);
   out = out.replace(
     CREDENTIAL_CONTEXT,
     (_match, keyword: string, rest: string) =>
-      keyword + rest.replace(CONTEXT_TOKEN, HIDDEN),
+      keyword + rest.replace(CONTEXT_TOKEN, hide),
   );
-  for (const pattern of IDENTIFYING_PATTERNS)
-    out = out.replace(pattern, HIDDEN);
+  for (const pattern of IDENTIFYING_PATTERNS) out = out.replace(pattern, hide);
   return out;
 }
 

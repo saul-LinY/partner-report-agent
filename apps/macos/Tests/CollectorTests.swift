@@ -374,6 +374,14 @@ final class CollectorTests: XCTestCase {
         XCTAssertEqual(sent.first?.turns.first?.prompt, "A [已隐藏]-only session")
         XCTAssertEqual(store.uploadState(of: try XCTUnwrap(store.sessions.first)), .uploaded)
 
+        // Taking back an automatic red uploads the original next time and tells the server not to hide it again.
+        store.revealTerm("complete question")
+        XCTAssertTrue(store.hiddenTerms.isEmpty)
+        XCTAssertEqual(store.allowedTerms, ["complete question"])
+        store.restoreAutomatic("complete question")
+        XCTAssertTrue(store.allowedTerms.isEmpty)
+        store.hideTerm("complete question")
+
         // The marks survive a restart and a new binding.
         let relaunched = AppStore(stateURL: state, live: true, reader: reader, discoveryHome: home, discoveryEnvironment: [:], metadataReader: nil, collectorService: service)
         XCTAssertEqual(relaunched.hiddenTerms, ["complete question"])

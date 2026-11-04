@@ -78,16 +78,18 @@ public struct CollectorPackage: Codable, Sendable {
     public var policyVersion: Int
     public var sessionCount: Int
     public var parts: [Data]
+    /// Automatic matches the member let through; the server must not hide them again. Absent in older queued packages.
+    public var allowedTerms: [String]?
     public var partDigests: [String] { parts.map(Self.digest) }
     public static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     /// `start` may precede the period: older unsent sessions are retained, analysis stays period-bound.
-    public init(period: CollectorPolicy.Period, start: Date, end: Date, version: Int, sessions: [CollectorSession], targetBytes: Int = 2 * 1024 * 1024, hiding terms: [String] = []) throws {
+    public init(period: CollectorPolicy.Period, start: Date, end: Date, version: Int, sessions: [CollectorSession], targetBytes: Int = 2 * 1024 * 1024, hiding: SecretScrubber.Hiding = .none) throws {
         id = UUID().uuidString; periodKey = period.periodKey
         endsAt = min(end, period.endsAt); startsAt = min(start, endsAt); policyVersion = version; sessionCount = sessions.count
         let encoder = CollectorJSON.encoder()
         var chunks: [Data] = [], current: [CollectorSession] = [], size = 2
         // Credentials, identifying details and anything the member marked never leave this Mac; everything else is sent as written.
-        for session in sessions.map({ SecretScrubber.redact($0, hiding: terms) }) {
+        for session in sessions.map({ SecretScrubber.redact($0, hiding: hiding) }) {
             let bytes = try encoder.encode(session).count + 1
             guard bytes < 16 * 1024 * 1024 else { throw CollectorError(status: 413, message: "单个会话超过 16 MB，未上传，请联系管理员。") }
             if !current.isEmpty && size + bytes > targetBytes { chunks.append(try encoder.encode(current)); current = []; size = 2 }
@@ -95,6 +97,7 @@ public struct CollectorPackage: Codable, Sendable {
         }
         if !current.isEmpty || chunks.isEmpty { chunks.append(try encoder.encode(current)) }
         parts = chunks
+        allowedTerms = hiding.allowed.isEmpty ? nil : hiding.allowed
     }
 }
 
@@ -403,7 +406,7 @@ public actor HTTPCollectorService: CollectorServing {
         for (index, bytes) in package.parts.enumerated() {
             let started = ContinuousClock.now
             do {
-                _ = try await request(binding, "uploads/\(package.id)/parts", body: ["partIndex": index, "checksum": digests[index], "data": bytes.base64EncodedString()])
+                _ = try await request(binding, "uploads/\(package.id)/parts", body: ["partIndex": index, "checksum": digests[index], "data": bytes.base64EncodedString()].merging(package.allowedTerms.map { ["allowedTerms": $0] } ?? [:]) { first, _ in first })
             } catch {
                 recordPart(of: package, index: index, bytes: bytes.count, since: started, failure: error)
                 throw error
