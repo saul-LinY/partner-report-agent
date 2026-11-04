@@ -1087,7 +1087,7 @@ function BindingCodeModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [label, setLabel] = useState("Codex Plugin");
+  const [label, setLabel] = useState("Weekly Report App");
   const [result, setResult] = useState<any | null>(
     partner.existingCode?.code_value
       ? { code: partner.existingCode.code_value }

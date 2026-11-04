@@ -52,11 +52,6 @@ const copy: Record<string, { title: string; body: string; target: string }> = {
     body: "本期工作卡片均已忽略。",
     target: "review",
   },
-  "plugin.binding.recovery.requested": {
-    title: "连接需要恢复",
-    body: "旧连接已申请恢复，请在 App 中使用名字和绑定码重新绑定。",
-    target: "app",
-  },
 };
 export const suppressedAppNotificationKinds = [
   "team_report.ready",
@@ -91,11 +86,6 @@ export async function dispatchAppNotifications(limit = 100, tenantId?: string) {
           await tx`select r.tenant_id,r.team_id,r.partner_id,r.id::text as target_id,r.version
           from reviews r where r.tenant_id=${event.tenant_id} and
           (r.id::text=${event.aggregate_id} or r.id=(select review_id from work_item_snapshots where id::text=${event.aggregate_id} and tenant_id=${event.tenant_id} limit 1))`;
-      } else if (message?.target === "app") {
-        recipients =
-          await tx`select tenant_id,team_id,partner_id,id::text as target_id,null::integer as version
-          from plugin_device_authorizations where id::text=${event.aggregate_id} and tenant_id=${event.tenant_id}
-            and partner_id is not null and status='pending' and expires_at>now()`;
       }
       for (const recipient of recipients) {
         const inserted = await tx`insert into app_notifications

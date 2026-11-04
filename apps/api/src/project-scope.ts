@@ -41,17 +41,6 @@ export const projectScopeDecisionSchema = z
   })
   .strict();
 
-export const projectScopeBootstrapSchema = z
-  .object({
-    baseVersion: z.number().int().positive(),
-    reason: z.enum([
-      "local_scope_missing",
-      "local_scope_invalid",
-      "local_scope_identity_conflict",
-    ]),
-  })
-  .strict();
-
 export const projectScopeReapprovalSchema = z
   .object({
     baseVersion: z.number().int().positive(),
@@ -113,7 +102,7 @@ async function projectScopeIdentityConfirmed(
 
 export function projectScopeEffectiveFrom(input: { now: Date }) {
   // Approval is the privacy boundary. Once the user has made a decision, it
-  // applies immediately; the plugin decides whether to append the project to
+  // applies immediately; the app decides whether to append the project to
   // the active run or backfill it on the next run.
   return input.now;
 }
@@ -393,59 +382,6 @@ export async function registerProjectScopeCandidates(
       `;
     }
   });
-  return loadProjectScopePolicy(identity, database);
-}
-
-export async function beginProjectScopeBootstrap(
-  identity: ScopeIdentity,
-  rawInput: unknown,
-  database: Database = defaultDatabase,
-) {
-  const input = projectScopeBootstrapSchema.parse(rawInput);
-  await database.begin(async (tx) => {
-    await ensurePolicy(tx, identity);
-    const policies = await tx<PolicyRow[]>`
-      select version, initialized, initialized_at
-      from project_scope_policies
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and tenant_id = ${identity.tenantId} and team_id = ${identity.teamId}
-        and partner_id = ${identity.partnerId}
-      for update
-    `;
-    const policy = policies[0];
-    if (!policy)
-      throw new ApiError(404, "PROJECT_SCOPE_NOT_FOUND", "采集权限不存在。");
-    if (policy.version !== input.baseVersion)
-      throw new ApiError(
-        409,
-        "VERSION_CONFLICT",
-        "权限已更新，请重新发起采集。",
-        { currentVersion: policy.version },
-      );
-
-    const entries = await tx<Array<{ count: number }>>`
-      select count(*)::int as count from project_scope_entries
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and tenant_id = ${identity.tenantId}
-    `;
-    if (!policy.initialized && (entries[0]?.count ?? 0) === 0) return;
-
-    await createProjectScopeBackup(identity, input.reason, tx);
-
-    await tx`
-      delete from project_scope_entries
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and tenant_id = ${identity.tenantId}
-    `;
-    await tx`
-      update project_scope_policies set
-        version = version + 1, initialized = false, initialized_at = null,
-        updated_at = now()
-      where plugin_instance_id = ${identity.pluginInstanceId}
-        and tenant_id = ${identity.tenantId}
-    `;
-  });
-
   return loadProjectScopePolicy(identity, database);
 }
 

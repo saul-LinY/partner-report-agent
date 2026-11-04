@@ -5,10 +5,17 @@ if (!baseUrl)
 
 const checks = [
   { method: "GET", path: "/health", status: 200 },
-  { method: "GET", path: "/v1/project-scope", status: 401 },
-  { method: "GET", path: "/v2/project-scope", status: 401 },
-  { method: "POST", path: "/v1/project-scope/candidates", status: 401 },
-  { method: "POST", path: "/v2/project-scope/resolve", status: 401 },
+  { method: "GET", path: "/v1/collector/project-scope", status: 401 },
+  {
+    method: "POST",
+    path: "/v1/collector/project-scope/candidates",
+    status: 401,
+  },
+  {
+    method: "POST",
+    path: "/v1/collector/project-scope/decisions",
+    status: 401,
+  },
 ];
 
 // No credentials are sent: successful routing must reach API authentication.

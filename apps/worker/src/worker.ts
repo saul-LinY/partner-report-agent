@@ -70,10 +70,6 @@ async function schedulerStep() {
     console.log("Inspection run finished", inspection);
   }
   await sql`
-    update plugin_device_authorizations set status = 'expired'
-    where status in ('pending', 'approved') and expires_at < now()
-  `;
-  await sql`
     update agent_jobs set
       status = case when attempt_count < max_attempts then 'PENDING' else 'FAILED' end,
       lease_token_hash = null,

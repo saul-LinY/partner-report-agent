@@ -35,5 +35,3 @@ jobs:
       - run: npm run db:migrate
       - run: RUN_DB_TESTS=1 npx vitest run apps/api/src/authorization.integration.test.ts apps/worker/src/weekly.integration.test.ts
       - run: npm run build
-      - name: Verify committed Plugin bundle
-        run: git diff --exit-code -- plugins/partner-report/dist/cli.mjs plugins/partner-report/schemas

@@ -25,15 +25,6 @@ export type WebActor = DomainActor & {
   displayName: string;
 };
 
-export type PluginActor = DomainActor & {
-  type: "plugin";
-  pluginInstanceId: string;
-  partnerId: string;
-  userId: null;
-  status: string;
-  version: string;
-};
-
 export function sha256(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -117,40 +108,6 @@ export async function requireWebActor(
   }
 
   await sql`update web_sessions set last_seen_at = now() where token_hash = ${sha256(token)}`;
-  return actor;
-}
-
-export async function requirePluginActor(request: FastifyRequest) {
-  const authorization = request.headers.authorization;
-  if (!authorization?.startsWith("Bearer ")) {
-    throw new ApiError(401, "UNAUTHENTICATED", "缺少 Plugin Access Token。");
-  }
-  const token = authorization.slice("Bearer ".length);
-  const rows = await sql<PluginActor[]>`
-    select
-      'plugin' as type,
-      'plugin' as "actorType",
-      id as "actorId",
-      null::uuid as "userId",
-      id as "pluginInstanceId",
-      tenant_id as "tenantId",
-      team_id as "teamId",
-      partner_id as "partnerId",
-      status,
-      version
-    from plugin_instances
-    where access_token_hash = ${sha256(token)}
-      and access_expires_at > now()
-    limit 1
-  `;
-  const actor = rows[0];
-  if (!actor || actor.status !== "active") {
-    throw new ApiError(
-      401,
-      "PLUGIN_BINDING_INVALID",
-      "Plugin 绑定已过期或被撤销。",
-    );
-  }
   return actor;
 }
 

@@ -35,21 +35,11 @@ API_PORT=4310
 WEB_ORIGIN=http://172.20.10.14:4311
 VITE_API_URL=http://172.20.10.14:4310
 SESSION_COOKIE_SECURE=false
-PARTNER_REPORT_SERVER_URL=http://172.20.10.14:4310
 ```
 
-局域网 IP 改变后，更新三个公开 URL 并重启 API、Web。Docker Compose 只把 PostgreSQL 发布到 `127.0.0.1:54329`，不得为了插件连接而开放数据库端口。
+局域网 IP 改变后，更新两个公开 URL 并重启 API、Web。Docker Compose 只把 PostgreSQL 发布到 `127.0.0.1:54329`，不得为了设备连接而开放数据库端口。
 
-Partner 设备连接局域网 HTTP 时必须明确接受明文传输风险。正常用户流程应在 Codex 对话中由 `partner-report` MCP 的 `connect` 工具完成；下面的 CLI 仅用于部署排障：
-
-```bash
-node "<installed-plugin-path>/dist/cli.mjs" connect \
-  --server http://172.20.10.14:4310 \
-  --binding-code PR-XXXX-XXXX \
-  --allow-insecure-http
-```
-
-这种方式只用于同一可信、隔离的测试局域网。跨网段、共享办公网络或长期运行时必须使用 HTTPS。
+macOS App 的服务地址由构建配置 `WEEKLY_REPORT_SERVICE_URL` 固定，生产地址要求 HTTPS，见 [macOS App 说明](../apps/macos/README.md)。局域网 HTTP 只用于同一可信、隔离的测试网络，跨网段、共享办公网络或长期运行时必须使用 HTTPS。
 
 典型启动顺序：
 
@@ -67,36 +57,6 @@ npm run preview -w @partner-report/web -- --host 172.20.10.14
 
 ## Partner 设备
 
-用户通过 Marketplace 安装或升级插件时，统一运行仓库中的安装脚本：
+用户安装 macOS App，输入名字和管理员提供的绑定码完成绑定，之后由 App 采集并上传会话。打包、安装和更新见 [macOS App 说明](../apps/macos/README.md)。
 
-```bash
-npm run plugin:install
-```
-
-该脚本先构建插件、刷新 Codex cachebuster、幂等执行插件安装并校验运行产物，然后通过 Codex 配置接口只设置：
-
-```toml
-[plugins."partner-report".mcp_servers."partner-report"]
-enabled = true
-default_tools_approval_mode = "approve"
-tool_timeout_sec = 700
-```
-
-它不修改全局权限模式。升级时插件名和 MCP Server 名保持不变，因此原授权继续有效；脚本仍会复核配置，并把旧 Keychain Token 一次性迁移到稳定 `0600` 文件。完成后重启 Codex 桌面端，在新会话中先手动验证一次。需要读取本机 Session 的定时任务运行时，电脑必须开机且桌面端保持运行。在新会话中说：
-
-```text
-使用 $partner-report-sync 连接 https://report-api.example.com
-```
-
-等 Partner 在 Web 确认设备码后，插件把该 API 地址写入本地配置。地址可包含部署前缀，例如 `https://example.com/partner-api`；查询参数、锚点和 URL 内嵌账号密码会被拒绝。
-
-也可以通过环境变量连接：
-
-```bash
-PARTNER_REPORT_SERVER_URL=https://report-api.example.com \
-  node "<installed-plugin-path>/dist/cli.mjs" connect
-```
-
-非本机 HTTP 会被拒绝，因为访问令牌、Fact 和任务结果都需要传输保护。本机开发允许回环 HTTP；仅在明确隔离的测试网络里，才可使用 `--allow-insecure-http`。
-
-更换服务器时重新运行 `connect --server <new-url>` 完成新的设备授权。插件只会在新服务器签发凭据后切换保存地址，并清理旧的本地 Token。
+更换服务器时，修改 `project.yml` 的 `WEEKLY_REPORT_SERVICE_URL` 并重新构建 App；切换地址后需要重新绑定。

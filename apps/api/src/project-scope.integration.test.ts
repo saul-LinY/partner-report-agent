@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
 import { ApiError, type DomainActor } from "./common.js";
 import {
-  beginProjectScopeBootstrap,
   decideProjectScopes,
   registerProjectScopeCandidates,
   reopenProjectScopeReview,
@@ -315,77 +314,12 @@ suite("project scope persistence", () => {
       code: "PROJECT_SCOPE_REVIEW_IN_PROGRESS",
     } satisfies Partial<ApiError>);
 
-    const reapproved = await decideProjectScopes(
-      collectorActor,
-      fixture.pluginInstanceId,
-      {
-        baseVersion: reopened.version,
-        decisions: reopened.entries.map((entry) => ({
-          scopeKey: entry.scopeKey,
-          decision: "allow" as const,
-        })),
-      },
-    );
-
-    const reset = await beginProjectScopeBootstrap(identity, {
-      baseVersion: reapproved.version,
-      reason: "local_scope_invalid",
-    });
-    expect(reset).toMatchObject({
-      version: reapproved.version + 1,
-      initialized: false,
-      initializedAt: null,
-      entries: [],
-    });
-    const bootstrapBackups = await sql<
-      Array<{
-        reason: string;
-        entry_count: number;
-        allowed_count: number;
-      }>
-    >`
-      select reason, entry_count, allowed_count
-      from project_scope_backup_snapshots
-      where plugin_instance_id = ${fixture.pluginInstanceId}
-      order by created_at desc, id desc
-      limit 1
-    `;
-    expect(bootstrapBackups).toEqual([
-      {
-        reason: "local_scope_invalid",
-        entry_count: 3,
-        allowed_count: 3,
-      },
-    ]);
-    await expect(
-      beginProjectScopeBootstrap(identity, {
-        baseVersion: reapproved.version,
-        reason: "local_scope_missing",
-      }),
-    ).rejects.toMatchObject({
-      code: "VERSION_CONFLICT",
-    } satisfies Partial<ApiError>);
-
-    const rediscovered = await registerProjectScopeCandidates(identity, {
-      periodKey: "scope-period",
-      candidates: [
-        {
-          scopeKey: "c".repeat(64),
-          displayName: "rediscovered-project",
-          sessionCount: 3,
-        },
-      ],
-    });
-    expect(rediscovered).toMatchObject({
-      version: reset.version + 1,
-      initialized: false,
-      entries: [
-        {
-          scopeKey: "c".repeat(64),
-          status: "pending",
-          effectiveFrom: null,
-        },
-      ],
+    await decideProjectScopes(collectorActor, fixture.pluginInstanceId, {
+      baseVersion: reopened.version,
+      decisions: reopened.entries.map((entry) => ({
+        scopeKey: entry.scopeKey,
+        decision: "allow" as const,
+      })),
     });
   });
 

@@ -9,7 +9,7 @@
 - 角色始终从 `memberships.roles` 读取，不接受前端或 Google 提交的角色。
 - `GOOGLE_ALLOWED_DOMAIN` 和 `GOOGLE_ALLOWED_EMAILS` 都为空时，允许任意 Google 域名，但用户仍必须已在应用中预置。
 - 配置任一限制后，邮箱列表或 Workspace 域名匹配其一即可。Workspace 域名同时校验邮箱后缀和 Google `hd` 声明。
-- 管理页面和管理 API 要求 `admin`；Partner 页面和写接口要求 `partner`。Plugin API 继续使用独立的 Plugin Access Token。
+- 管理页面和管理 API 要求 `admin`；Partner 页面和写接口要求 `partner`。App 采集接口使用设备绑定令牌。
 
 ## 环境变量
 

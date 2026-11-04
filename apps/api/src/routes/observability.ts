@@ -1,23 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { pluginLogBatchSchema } from "@partner-report/contracts";
 import { sqlClient as sql } from "@partner-report/db";
-import {
-  ApiError,
-  audit,
-  requirePluginActor,
-  requireWebActor,
-} from "../common.js";
+import { ApiError, audit, requireWebActor } from "../common.js";
 import {
   projectSystemComponents,
   type MonitoringSeverity,
 } from "../monitoring.js";
-import {
-  logDateSchema,
-  sanitizePluginLogDetails,
-  sanitizePluginLogText,
-} from "../sanitize.js";
+import { logDateSchema, sanitizePluginLogText } from "../sanitize.js";
 import { runSystemProbe, systemProbeKeys } from "../system-probes.js";
 import {
   projectSystemLogExecutions,
@@ -45,66 +35,6 @@ const systemProbeParamsSchema = z
   .strict();
 
 export async function observabilityRoutes(app: FastifyInstance) {
-  app.post("/v1/plugin-instances/me/log-events", async (request) => {
-    const actor = await requirePluginActor(request);
-    const input = pluginLogBatchSchema.parse(request.body) as {
-      events: Array<{
-        eventId: string;
-        invocationId?: string;
-        runId?: string;
-        sequence?: number;
-        command?: string;
-        eventType?: string;
-        level: string;
-        stage: string;
-        eventCode: string;
-        message: string;
-        stack?: string;
-        occurredAt: string;
-        retryable: boolean;
-        attempt?: number;
-        durationMs?: number;
-        requestId?: string;
-        details?: Record<string, unknown>;
-      }>;
-    };
-    let accepted = 0;
-    await sql.begin(async (tx) => {
-      for (const event of input.events) {
-        const rows = await tx<{ id: string }[]>`
-          insert into plugin_log_events (
-            id, tenant_id, team_id, partner_id, plugin_instance_id,
-            invocation_id, run_id, sequence, command, event_type,
-            level, stage, event_code, message, stack, retryable, attempt,
-            duration_ms, request_id, details, occurred_at
-          ) values (
-            ${event.eventId}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId},
-            ${actor.pluginInstanceId}, ${event.invocationId ?? null},
-            ${event.runId ?? null}, ${event.sequence ?? null},
-            ${event.command ?? null}, ${event.eventType ?? null}, ${event.level},
-            ${event.stage}, ${event.eventCode}, ${sanitizePluginLogText(event.message)},
-            ${event.stack ? sanitizePluginLogText(event.stack) : null},
-            ${event.retryable}, ${event.attempt ?? null}, ${event.durationMs ?? null},
-            ${event.requestId ?? request.id},
-            ${JSON.stringify(sanitizePluginLogDetails(event.details ?? {}))}::jsonb,
-            ${event.occurredAt}
-          ) on conflict (id) do nothing
-          returning id
-        `;
-        accepted += rows.length;
-      }
-    });
-    await audit(
-      request,
-      actor,
-      "plugin.logs.received",
-      "plugin_instance",
-      actor.pluginInstanceId,
-      { accepted, submitted: input.events.length },
-    );
-    return { ok: true, accepted, submitted: input.events.length };
-  });
-
   app.get("/v1/admin/system-logs", async (request) => {
     const actor = await requireWebActor(request, "admin");
     const query = systemLogQuerySchema.parse(request.query);
@@ -126,7 +56,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
     const window = windows[0]!;
     const [jobs, notifications, outbox, reports, workerRows] =
       await Promise.all([
-      sql<any[]>`
+        sql<any[]>`
         select aj.*, p.display_name as partner_name, link.upload_id, link.period_key
         from agent_jobs aj
         left join partners p on p.id = aj.partner_id and p.tenant_id = aj.tenant_id
@@ -147,7 +77,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
           )
         order by aj.updated_at desc limit ${query.limit}
       `,
-      sql<any[]>`
+        sql<any[]>`
         select n.*,p.display_name as partner_name from app_notifications n
         join partners p on p.id=n.partner_id and p.tenant_id=n.tenant_id
         where n.tenant_id=${actor.tenantId} and n.team_id=${actor.teamId}
@@ -155,7 +85,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
             or (n.delivered_at >= ${window.window_start} and n.delivered_at < ${window.window_end}))
         order by n.created_at desc limit ${query.limit}
       `,
-      sql<any[]>`
+        sql<any[]>`
         select * from outbox_events
         where tenant_id = ${actor.tenantId}
           and (
@@ -182,7 +112,7 @@ export async function observabilityRoutes(app: FastifyInstance) {
           )
         order by created_at desc limit ${query.limit}
       `,
-      sql<any[]>`
+        sql<any[]>`
         select tr.*, rp.period_key
         from team_reports tr
         join report_periods rp on rp.id = tr.period_id
@@ -196,11 +126,11 @@ export async function observabilityRoutes(app: FastifyInstance) {
           )
         order by tr.updated_at desc limit ${query.limit}
       `,
-      sql<any[]>`
+        sql<any[]>`
         select heartbeat_at, last_tick_at, status, error_code, capabilities
         from service_heartbeats where name = 'worker'
       `,
-    ]);
+      ]);
     const projected = projectSystemLogExecutions({
       jobs,
       notifications,
@@ -438,7 +368,9 @@ export async function observabilityRoutes(app: FastifyInstance) {
     const jobs = jobRows[0] ?? {};
     const notifications = notificationRows[0] ?? {};
     const reports = reportRows[0] ?? {};
-    const [worker] = await sql<any[]>`select heartbeat_at,last_tick_at,status,error_code,capabilities from service_heartbeats where name='worker'`;
+    const [worker] = await sql<
+      any[]
+    >`select heartbeat_at,last_tick_at,status,error_code,capabilities from service_heartbeats where name='worker'`;
     const components = projectSystemComponents(
       {
         worker: worker ?? null,

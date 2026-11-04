@@ -638,7 +638,7 @@ test("binding codes support viewing, copying, recovery and new connection", asyn
   await expect(page.getByRole("dialog")).toContainText("PR-RECOVERY-1234");
   expect(
     calls.find((c) => c.path.includes("partner-1/binding-codes"))?.body,
-  ).toEqual({ label: "Codex Plugin", pluginInstanceId: "plugin-1" });
+  ).toEqual({ label: "Weekly Report App", pluginInstanceId: "plugin-1" });
   await page.getByRole("dialog").getByTitle("关闭", { exact: true }).click();
   await page.getByRole("button", { name: "查看 王宁 的详情" }).click();
   await page.getByRole("button", { name: "生成绑定码", exact: true }).click();
@@ -650,7 +650,7 @@ test("binding codes support viewing, copying, recovery and new connection", asyn
     .poll(
       () => calls.find((c) => c.path.includes("partner-2/binding-codes"))?.body,
     )
-    .toEqual({ label: "Codex Plugin" });
+    .toEqual({ label: "Weekly Report App" });
 });
 
 test("project permission review preserves approval confirmation and version", async ({

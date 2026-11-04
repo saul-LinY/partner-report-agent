@@ -60,7 +60,7 @@ const partnerCreateSchema = z.object({
 });
 
 const bindingCodeSchema = z.object({
-  label: z.string().min(1).max(120).default("Codex Plugin"),
+  label: z.string().min(1).max(120).default("Weekly Report App"),
   pluginInstanceId: z.string().uuid().optional(),
 });
 
@@ -1159,37 +1159,6 @@ export async function adminRoutes(app: FastifyInstance) {
     `;
     if (!rows[0]) throw new ApiError(404, "NOT_FOUND", "任务不存在。");
     return rows[0];
-  });
-
-  app.post("/v1/admin/plugin-instances/:id/rescan", async (request) => {
-    const actor = await requireWebActor(request, "admin");
-    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const plugins = await sql<any[]>`
-      select * from plugin_instances where id = ${id} and tenant_id = ${actor.tenantId} and team_id = ${actor.teamId}
-    `;
-    const plugin = plugins[0];
-    if (!plugin)
-      throw new ApiError(404, "NOT_FOUND", "Plugin Instance 不存在。");
-    const jobId = randomUUID();
-    const key = `rescan:${id}:${new Date().toISOString().slice(0, 13)}`;
-    const jobs = await sql<any[]>`
-      insert into agent_jobs (
-        id, tenant_id, team_id, partner_id, plugin_instance_id, type, idempotency_key, input_payload
-      ) values (
-        ${jobId}, ${actor.tenantId}, ${actor.teamId}, ${plugin.partner_id}, ${id},
-        'RESCAN_SESSIONS', ${key}, ${JSON.stringify({ reason: "admin_requested" })}::jsonb
-      ) on conflict (tenant_id, idempotency_key) do update set updated_at = agent_jobs.updated_at
-      returning *
-    `;
-    await audit(
-      request,
-      actor,
-      "plugin.rescan_requested",
-      "plugin_instance",
-      id,
-      { jobId: jobs[0].id },
-    );
-    return jobs[0];
   });
 
   app.delete("/v1/admin/plugin-instances/:id", async (request) => {

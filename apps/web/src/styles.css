@@ -337,8 +337,7 @@ select:focus-visible {
   background: #eaf2f8;
   border-color: #bfd4e4;
 }
-.section-block,
-.tool-panel {
+.section-block {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1858,24 +1857,6 @@ select:focus {
   gap: 7px;
   color: var(--muted);
   font-size: 10px;
-}
-.connect-panel {
-  max-width: 520px;
-  padding: 28px;
-}
-.connect-panel form {
-  display: grid;
-  gap: 15px;
-}
-.panel-icon {
-  width: 46px;
-  height: 46px;
-  margin-bottom: 24px;
-  display: grid;
-  place-items: center;
-  color: #265f8c;
-  background: #eaf2f7;
-  border-radius: 6px;
 }
 
 .ops-metrics {

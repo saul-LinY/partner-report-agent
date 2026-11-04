@@ -13,26 +13,9 @@ Partner Report 通过 macOS App 绑定用户、确认项目采集权限，并上
 
 完整会话包接收后自动进入会话分析；工作卡片在每期截止时间之后统一生成（每个周期每个项目一次），之后进入项目成果整合；本人审核后形成不可变快照，并按团队周期汇总周报。管理端“监控与排障”提供用户日志、系统日志和异常巡检，任务失败的重试入口在异常巡检。启动、恢复和验收见 [完整处理流水线](docs/APP_PIPELINE_OPERATIONS.md)。
 
-## 安装插件
+## 安装 App
 
-```bash
-codex plugin marketplace add saul-LinY/partner-report-agent
-npm run plugin:install
-codex plugin list
-```
-
-安装命令会构建插件、刷新 Codex cachebuster，并校验缓存中的运行产物与仓库一致。
-
-重启 Codex 后在新对话中发送：
-
-```text
-使用 $partner-report-sync 连接 Partner Report。
-数据中台地址是：https://report-api.example.com
-绑定码是：PR-XXXX-XXXX
-```
-
-详细步骤见 [插件安装与绑定](docs/PLUGIN_SETUP.md)。Google 登录服务配置见 [Google 登录配置](docs/GOOGLE_AUTH.md)。
-App 工作流与本机验证见 [App 采集工作流](docs/APP_COLLECTION_WORKFLOW.md)。
+数据只通过 macOS App 采集，不再提供 Codex 插件。安装、打包与更新见 [macOS App 说明](apps/macos/README.md)，App 工作流与本机验证见 [App 采集工作流](docs/APP_COLLECTION_WORKFLOW.md)。Google 登录服务配置见 [Google 登录配置](docs/GOOGLE_AUTH.md)。
 
 ## 开发验证
 

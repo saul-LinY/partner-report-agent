@@ -187,9 +187,6 @@ function AuthenticatedApp({ me }: { me: Me }) {
           <Route path="/admin/inspection">
             <InspectionPage />
           </Route>
-          <Route path="/admin/plugin-logs">
-            <Redirect to="/admin/user-logs" replace />
-          </Route>
           <Route path="/admin/jobs">
             <Redirect to="/admin/inspection" replace />
           </Route>

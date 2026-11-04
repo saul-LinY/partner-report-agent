@@ -9,10 +9,7 @@ import { closeDatabase, dispatchAppNotifications } from "@partner-report/db";
 import { ApiError } from "./api-error.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes, type AuthRouteOptions } from "./routes/auth.js";
-import { factRoutes } from "./routes/facts.js";
-import { jobRoutes } from "./routes/jobs.js";
 import { observabilityRoutes } from "./routes/observability.js";
-import { pluginRoutes } from "./routes/plugin.js";
 import { collectorRoutes } from "./routes/collector.js";
 import { collectorSessionRoutes } from "./routes/collector-sessions.js";
 import { sessionPreprocessRoutes } from "./routes/session-preprocess.js";
@@ -136,7 +133,6 @@ export async function buildApp(
   }));
   await app.register(authRoutes, options.auth ?? {});
   await app.register(adminRoutes);
-  await app.register(pluginRoutes);
   await app.register(collectorRoutes);
   await app.register(collectorSessionRoutes);
   await app.register(sessionPreprocessRoutes);
@@ -145,8 +141,6 @@ export async function buildApp(
   await app.register(observabilityRoutes);
   await app.register(userLogRoutes);
   await app.register(inspectionRoutes);
-  await app.register(factRoutes);
-  await app.register(jobRoutes);
   await app.register(reviewRoutes);
   await app.register(projectProgressRoutes);
   await app.register(teamReportRoutes);

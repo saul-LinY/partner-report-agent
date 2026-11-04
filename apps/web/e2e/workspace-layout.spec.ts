@@ -218,11 +218,6 @@ test("the monitoring group has exactly three pages and old routes redirect", asy
   await expect(
     navigation.getByRole("link", { name: "异常巡检", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  await page.goto("/admin/plugin-logs");
-  await expect(page).toHaveURL(/\/admin\/user-logs$/);
-  await expect(
-    page.getByRole("heading", { name: "用户日志", exact: true }),
-  ).toBeVisible();
   await page.goto("/admin/system-monitoring");
   await expect(page).toHaveURL(/\/admin\/system-logs$/);
   await expect(

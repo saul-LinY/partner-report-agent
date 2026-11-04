@@ -5,13 +5,10 @@
   "type": "module",
   "workspaces": [
     "apps/*",
-    "packages/*",
-    "plugins/partner-report",
-    "plugins/v2/partner-report"
+    "packages/*"
   ],
   "scripts": {
-    "build": "npm run contracts:generate && npm run build --workspaces --if-present",
-    "contracts:generate": "node --import tsx packages/contracts/src/generate-json-schema.ts",
+    "build": "npm run build --workspaces --if-present",
     "db:generate": "drizzle-kit generate --config packages/db/drizzle.config.ts",
     "db:migrate": "node --import tsx packages/db/src/migrate.ts",
     "db:seed": "node --import tsx packages/db/src/seed.ts",
@@ -19,8 +16,6 @@
     "app:services": "node scripts/local-app-services.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "plugin:install": "node scripts/install-partner-report.mjs",
-    "plugin:build:v2": "npm run build -w @partner-report/plugin-v2",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces --if-present"
