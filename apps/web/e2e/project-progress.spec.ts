@@ -692,6 +692,16 @@ test("charts a member's AI interactions by hour and by month, and pages between 
     "时间（小时）",
     "交互轮数（轮）",
   ]);
+  // With several projects an extra "总计" line adds them up: 9:00 has two Partner Report turns and none elsewhere.
+  await expect(panel.getByRole("button", { name: "总计" })).toBeVisible();
+  const chart = (await panel.locator("svg").boundingBox())!;
+  await page.mouse.move(
+    chart.x + chart.width * ((52 + 9 * ((720 - 52 - 12) / 23)) / 720),
+    chart.y + chart.height / 2,
+  );
+  await expect(panel.locator(".lc-tip")).toContainText(
+    "9:00–9:59 · Partner Report 2 · 数据服务 0 · 总计 2",
+  );
   await panel.getByRole("button", { name: "按月看" }).click();
   await expect(panel.getByRole("heading")).toHaveText("2026年9月 会话活跃度");
   await expect(panel.locator(".lc-axis-title")).toHaveText([
@@ -702,9 +712,9 @@ test("charts a member's AI interactions by hour and by month, and pages between 
   await expect(panel.getByRole("button", { name: "上一月" })).toBeDisabled();
   await expect(panel.getByRole("button", { name: "下一月" })).toBeDisabled();
   // A legend entry hides that project's line.
-  await expect(panel.locator("svg polyline")).toHaveCount(2);
+  await expect(panel.locator("svg polyline")).toHaveCount(3);
   await panel.getByRole("button", { name: "数据服务" }).click();
-  await expect(panel.locator("svg polyline")).toHaveCount(1);
+  await expect(panel.locator("svg polyline")).toHaveCount(2);
   await panel.getByRole("button", { name: "按天看" }).click();
   await expect(panel.getByRole("heading")).toHaveText(
     "2026年9月8日 会话活跃度",

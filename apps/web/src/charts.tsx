@@ -72,7 +72,13 @@ export function LineChart({
   hint = "移动到图上查看具体数值",
 }: {
   categories: string[];
-  series: Array<{ name: string; color: string; values: number[] }>;
+  series: Array<{
+    name: string;
+    color: string;
+    values: number[];
+    /** Drawn dashed, for a line that sums the others and would otherwise hide where it overlaps one. */
+    dashed?: boolean;
+  }>;
   label: string;
   xTitle: string;
   yTitle: string;
@@ -205,7 +211,8 @@ export function LineChart({
             key={line.name}
             fill="none"
             stroke={line.color}
-            strokeWidth={2}
+            strokeWidth={line.dashed ? 2.5 : 2}
+            strokeDasharray={line.dashed ? "7 4" : undefined}
             strokeLinejoin="round"
             points={line.values.map((v, i) => `${x(i)},${y(v)}`).join(" ")}
           />

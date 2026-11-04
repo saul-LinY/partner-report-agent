@@ -133,6 +133,21 @@ export function MemberDetailPage() {
     );
   const dayTotal = total(hourLines);
   const monthTotal = total(monthLines);
+  // With several projects, one extra dashed line adds them all up. With one project that line already is the total.
+  const withSum = <T extends { values: number[] }>(series: T[]) =>
+    projects.length > 1
+      ? [
+          ...series,
+          {
+            name: "总计",
+            color: "var(--ink)",
+            dashed: true,
+            values: (series[0]?.values ?? []).map((_, i) =>
+              series.reduce((sum, line) => sum + (line.values[i] ?? 0), 0),
+            ),
+          },
+        ]
+      : series;
   const recentDays = new Set(
     events
       .map((event) => event.t.slice(0, 10))
@@ -330,7 +345,7 @@ export function MemberDetailPage() {
                 dayTotal ? (
                   <LineChart
                     categories={hours}
-                    series={hourLines}
+                    series={withSum(hourLines)}
                     xTitle="时间（小时）"
                     yTitle="交互轮数（轮）"
                     formatCategory={(hour) => String(Number(hour))}
@@ -346,7 +361,7 @@ export function MemberDetailPage() {
               ) : monthTotal ? (
                 <LineChart
                   categories={monthDays}
-                  series={monthLines}
+                  series={withSum(monthLines)}
                   xTitle="日期（日）"
                   yTitle="交互轮数（轮）"
                   formatCategory={(date) => String(Number(date))}
