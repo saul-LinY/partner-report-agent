@@ -18,12 +18,22 @@ export async function backfillCollectorUploads(onlyTenantId?: string) {
   return uploads.length;
 }
 
-export async function scheduleCollectorCards(onlyTenantId?: string) {
+/**
+ * Queue one card-generation job per member for periods whose cutoff has passed, so a project's card is generated and
+ * reviewed once per period instead of after every upload. Gating on the cutoff time rather than the period status
+ * matters: the status only flips to `closing` inside the weekly freeze, which would then run before any card job
+ * existed and fall back to the fact-based weekly path.
+ */
+export async function scheduleCollectorCards(
+  onlyTenantId?: string,
+  now = new Date(),
+) {
   const members =
     await sql`select distinct d.tenant_id,d.team_id,d.partner_id,rp.id as period_id
     from collector_uploads u join collector_devices d on d.id=u.device_id
     join report_periods rp on rp.tenant_id=d.tenant_id and rp.team_id=d.team_id and rp.period_key=u.period_key
     where u.status='completed' and d.status<>'test' and rp.status in ('open','closing')
+      and rp.cutoff_at <= ${now.toISOString()}
       and (${onlyTenantId ?? null}::uuid is null or d.tenant_id=${onlyTenantId ?? null})`;
   let queued = 0;
   for (const member of members)

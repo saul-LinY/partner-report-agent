@@ -10,7 +10,10 @@ import {
 } from "./project-scope.js";
 import { processNextGenerationJob } from "../../worker/src/generation.js";
 import { scheduleCollectorCards } from "../../worker/src/collector-pipeline.js";
-import { scheduleDueTeamReports } from "../../worker/src/weekly.js";
+import {
+  scheduleDueTeamReports,
+  scheduleDueWeeklyReports,
+} from "../../worker/src/weekly.js";
 
 const suite = process.env.RUN_DB_TESTS === "1" ? describe : describe.skip;
 suite("native upload to reviewed report pipeline", () => {
@@ -28,6 +31,8 @@ suite("native upload to reviewed report pipeline", () => {
     periodKey = `pipeline-${randomUUID()}`;
   const start = new Date(Date.now() - 86_400_000).toISOString(),
     end = new Date(Date.now() + 4 * 86_400_000).toISOString();
+  // Cards are generated once per period, after its cutoff.
+  const afterCutoff = new Date(Date.parse(end) + 60_000);
   const bearer = { authorization: `Bearer ${token}` };
   const identity = {
     tenantId: tenant,
@@ -310,7 +315,25 @@ suite("native upload to reviewed report pipeline", () => {
           c.input.evidence.some((e: any) => e.role === "assistant"),
       ),
     ).toHaveLength(1);
-    expect(await scheduleCollectorCards(tenant)).toBe(1);
+    // Uploads during the period never produce cards, however many there are...
+    expect(await scheduleCollectorCards(tenant)).toBe(0);
+    expect(
+      (await sql`select id from work_items where tenant_id=${tenant}`).length,
+    ).toBe(0);
+    // ...they are generated once the cutoff has passed.
+    expect(await scheduleCollectorCards(tenant, afterCutoff)).toBe(1);
+    // The weekly freeze at the same cutoff must wait for those card jobs instead of generating cards fact-first.
+    const frozen = await scheduleDueWeeklyReports(afterCutoff, period);
+    expect(frozen.aggregationJobs).toBe(0);
+    expect(
+      (
+        await sql`select id from agent_jobs where tenant_id=${tenant} and input_payload->>'aggregationMode'='weekly_report'`
+      ).length,
+    ).toBe(0);
+    expect(
+      (await sql`select status from report_periods where id=${period}`)[0]!
+        .status,
+    ).not.toBe("facts_frozen");
     await drain();
     const card = await row("work_items");
     expect(card.review_status).toBe("pending");
@@ -332,7 +355,7 @@ suite("native upload to reviewed report pipeline", () => {
     )[0]!.n;
     await upload([meaningful, questionOnly]);
     await drain();
-    expect(await scheduleCollectorCards(tenant)).toBe(0);
+    expect(await scheduleCollectorCards(tenant, afterCutoff)).toBe(0);
     expect(
       (
         await sql`select count(*)::int as n from agent_jobs where tenant_id=${tenant}`
@@ -352,7 +375,7 @@ suite("native upload to reviewed report pipeline", () => {
     await sql`update reviews set state='ITEMS_APPROVED',pending_count=0,approved_count=1 where tenant_id=${tenant}`;
     await upload([session("Implemented amended upload receipt checks.")]);
     await drain();
-    expect(await scheduleCollectorCards(tenant)).toBe(1);
+    expect(await scheduleCollectorCards(tenant, afterCutoff)).toBe(1);
     await drain();
     const updated = await row("work_items");
     expect(updated.id).toBe(card.id);
