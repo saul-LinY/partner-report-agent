@@ -322,7 +322,7 @@ export async function completeReview(
     select 1 from agent_jobs j where j.tenant_id = ${actor.tenantId}
       and j.team_id = ${review.team_id} and j.partner_id = ${actor.partnerId}
       and (j.status in ('PENDING', 'LEASED', 'RETRY_WAIT') or (j.type='EXTRACT_COLLECTOR_SESSION' and j.status='FAILED'))
-      and j.type in ('EXTRACT_COLLECTOR_SESSION', 'AGGREGATE_WORK_ITEMS', 'REANALYZE_SESSIONS')
+      and j.type in ('EXTRACT_COLLECTOR_SESSION', 'AGGREGATE_WORK_ITEMS')
       and (
         j.input_payload->>'reviewId' = ${reviewId}
         or (
@@ -334,10 +334,6 @@ export async function completeReview(
               where wi.tenant_id = j.tenant_id and wi.review_id = ${reviewId}
                 and wi.id::text = j.input_payload->>'targetWorkItemId'
             )
-            or (
-              j.type = 'REANALYZE_SESSIONS'
-              and starts_with(j.idempotency_key, ${`reanalysis:${reviewId}:`})
-            )
           )
         )
       )
@@ -347,7 +343,7 @@ export async function completeReview(
     throw new ApiError(
       409,
       "AGENT_JOB_PENDING",
-      "仍有待处理的聚合或重新分析任务。",
+      "仍有待处理的分析或聚合任务。",
     );
 
   const approvedItems = items.filter(
@@ -1233,8 +1229,6 @@ export async function reviewRoutes(app: FastifyInstance) {
         );
       }
       after = { sourceId: source.id, groups: split.groups };
-    } else if (input.operation === "change_period") {
-      after = { action: "create_reanalysis_job", scope: input.value };
     } else {
       after = items.map((item) =>
         patchWorkItem(item, input.operation, input.value),
@@ -1398,31 +1392,6 @@ export async function reviewRoutes(app: FastifyInstance) {
           for (const factId of group.factIds)
             await tx`insert into work_item_facts (work_item_id, fact_id) values (${newId}, ${factId})`;
         }
-      } else if (change.operation === "change_period") {
-        const activePlugins = await tx<any[]>`
-          select id from plugin_instances
-          where tenant_id = ${actor.tenantId} and partner_id = ${actor.partnerId} and status = 'active'
-          order by created_at desc limit 1
-        `;
-        const plugin = activePlugins[0];
-        if (!plugin)
-          throw new ApiError(
-            409,
-            "PLUGIN_OFFLINE",
-            "没有可领取重新分析任务的活动 Plugin。",
-          );
-        await tx`
-          insert into agent_jobs (
-            id, tenant_id, team_id, partner_id, plugin_instance_id, type, idempotency_key, input_payload
-          ) values (
-            ${randomUUID()}, ${actor.tenantId}, ${actor.teamId}, ${actor.partnerId}, ${plugin.id}, 'REANALYZE_SESSIONS',
-            ${`reanalysis:${id}:${change.id}`}, ${JSON.stringify({
-              ...change.after_payload,
-              reviewId: id,
-              period: { id: review.period_id },
-            })}::jsonb
-          )
-        `;
       } else {
         throw new ApiError(
           422,
@@ -1437,9 +1406,6 @@ export async function reviewRoutes(app: FastifyInstance) {
         id,
         lockedReview.version,
       );
-      if (change.operation === "change_period") {
-        await tx`update reviews set state = 'WAITING_LOCAL_REANALYSIS', updated_at = now() where id = ${id}`;
-      }
       await tx`update review_changes set status = 'applied', applied_at = now() where id = ${changeId}`;
       return { ...completion, idempotent: false };
     });

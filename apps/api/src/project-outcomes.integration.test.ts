@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { centralModelIds } from "@partner-report/contracts/models";
 import { sqlClient as sql } from "@partner-report/db";
 import {
   regenerateReviewWorkItem,
@@ -28,7 +29,8 @@ suite("fixed outcomes and App instruction regeneration", () => {
     partnerId: partner,
   };
   const calls: Array<{ name: string; input: any; model: string }> = [];
-  let failWriting = true;
+  // Project "a" fails on every model in the fallback chain once, so the first job attempt fails.
+  let writingFailuresLeft = centralModelIds.length;
   let originalDrafts: any[];
   let cards: any[];
 
@@ -72,8 +74,8 @@ suite("fixed outcomes and App instruction regeneration", () => {
         const bucket = input.projectBuckets[0];
         expect(bucket).not.toHaveProperty("facts");
         expect(bucket).not.toHaveProperty("factIds");
-        if (bucket.projectKey === "a" && failWriting) {
-          failWriting = false;
+        if (bucket.projectKey === "a" && writingFailuresLeft > 0) {
+          writingFailuresLeft--;
           return new Response("busy", {
             status: 503,
             headers: { "retry-after": "120" },
@@ -200,7 +202,7 @@ suite("fixed outcomes and App instruction regeneration", () => {
     ).toHaveLength(2);
     expect(
       calls.filter((call) => call.name === "partner_work_item_aggregation"),
-    ).toHaveLength(4);
+    ).toHaveLength(centralModelIds.length + 3);
     expect(
       await sql`select * from project_outcome_drafts where tenant_id = ${tenant} order by project_key`,
     ).toEqual(originalDrafts);
@@ -257,9 +259,9 @@ suite("fixed outcomes and App instruction regeneration", () => {
     ).toHaveLength(2);
     expect(
       calls.filter((call) => call.name === "partner_work_item_aggregation"),
-    ).toHaveLength(6);
+    ).toHaveLength(centralModelIds.length + 5);
     expect(new Set(calls.map((call) => call.model))).toEqual(
-      new Set(["deepseek-v4-flash:cloud"]),
+      new Set(centralModelIds),
     );
     expect(
       await sql`select * from project_outcome_drafts where tenant_id = ${tenant} order by project_key`,

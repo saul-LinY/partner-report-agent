@@ -160,8 +160,8 @@ suite("durable model retry scheduling", () => {
   });
 
   it("leases enough time for every bounded project batch", async () => {
-    const projectBuckets = ["a", "b", "c", "d", "e"].map((projectKey) => ({
-      projectKey,
+    const projectBuckets = Array.from({ length: 13 }, (_, i) => ({
+      projectKey: `p${i}`,
     }));
     const id = await createJob("AGGREGATE_WORK_ITEMS", {
       projectBuckets,
@@ -170,12 +170,13 @@ suite("durable model retry scheduling", () => {
     const fetchMock = vi.fn(async () => {
       const [row] =
         await sql`select extract(epoch from lease_until - updated_at) as lease_seconds from agent_jobs where id = ${id}`;
-      expect(Number(row!.lease_seconds)).toBe(3 * 2 * 240 + 60);
+      // 13 projects at 6 per batch = 3 batches, 2 stages, and a fallback chain budget of 2 timeouts.
+      expect(Number(row!.lease_seconds)).toBe(3 * 2 * 2 * 240 + 60);
       return new Response("unauthorized", { status: 401 });
     });
     vi.stubGlobal("fetch", fetchMock);
     await processNextGenerationJob(tenant);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it("leases time for all weekly project batches and the final summary", async () => {
@@ -184,9 +185,9 @@ suite("durable model retry scheduling", () => {
         {
           partnerId: randomUUID(),
           snapshotId: randomUUID(),
-          workItems: ["a", "b", "c", "d", "e"].map((projectKey) => ({
-            projectKey,
-            title: projectKey,
+          workItems: Array.from({ length: 13 }, (_, i) => ({
+            projectKey: `p${i}`,
+            title: `p${i}`,
           })),
         },
       ],
@@ -194,11 +195,11 @@ suite("durable model retry scheduling", () => {
     const fetchMock = vi.fn(async () => {
       const [row] =
         await sql`select extract(epoch from lease_until - updated_at) as lease_seconds from agent_jobs where id = ${id}`;
-      expect(Number(row!.lease_seconds)).toBe((3 + 1) * 240 + 60);
+      expect(Number(row!.lease_seconds)).toBe((3 + 1) * 2 * 240 + 60);
       return new Response("unauthorized", { status: 401 });
     });
     vi.stubGlobal("fetch", fetchMock);
     await processNextGenerationJob(tenant);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 });

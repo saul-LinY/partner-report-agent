@@ -160,7 +160,6 @@ export const reviewOperationSchema: z.ZodTypeAny = z.enum([
   "update_status",
   "merge",
   "split",
-  "change_period",
 ]);
 
 export const reviewChangeRequestSchema: z.ZodTypeAny = z.object({
