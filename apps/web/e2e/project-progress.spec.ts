@@ -725,11 +725,15 @@ test("charts a member's AI interactions by hour and by month, and pages between 
   ]);
   // With several projects an extra "总计" line adds them up: 9:00 has two Partner Report turns and none elsewhere.
   await expect(panel.getByRole("button", { name: "总计" })).toBeVisible();
-  const chart = (await panel.locator("svg").boundingBox())!;
-  await page.mouse.move(
-    chart.x + chart.width * ((52 + 9 * ((720 - 52 - 12) / 23)) / 720),
-    chart.y + chart.height / 2,
-  );
+  const svg = panel.locator("svg");
+  const box = (await svg.boundingBox())!;
+  // hover() scrolls the chart into view first; raw page coordinates miss it when it sits below the fold.
+  await svg.hover({
+    position: {
+      x: box.width * ((52 + 9 * ((720 - 52 - 12) / 23)) / 720),
+      y: box.height / 2,
+    },
+  });
   await expect(panel.locator(".lc-tip")).toContainText(
     "9:00–9:59 · Partner Report 2 · 数据服务 0 · 总计 2",
   );
