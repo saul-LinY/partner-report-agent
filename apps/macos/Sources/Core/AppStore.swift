@@ -28,6 +28,7 @@ private struct SavedState: Codable {
     var uploadExcludedSessionIDs: Set<String>?
     var hiddenTerms: [String]?
     var allowedTerms: [String]?
+    var hiddenPatterns: [String]?
 }
 private struct DiscoveryReport: Codable {
     var version = 1
@@ -92,7 +93,9 @@ public final class AppStore: ObservableObject {
     @Published public private(set) var hiddenTerms: [String] = []
     /// Automatic matches the member un-marked: shown normally and uploaded as written.
     @Published public private(set) var allowedTerms: [String] = []
-    public var hiding: SecretScrubber.Hiding { .init(terms: hiddenTerms, allowed: allowedTerms) }
+    /// Regular expressions the member wrote; whatever they match is hidden like a marked term. Kept across re-binding.
+    @Published public private(set) var hiddenPatterns: [String] = []
+    public var hiding: SecretScrubber.Hiding { .init(terms: hiddenTerms, allowed: allowedTerms, patterns: hiddenPatterns) }
     @Published public var settingsTab: SettingsTab = .account
     @Published public var selectedUploadRecordID: String?
     @Published public private(set) var uploadCheckpoints: [String: UploadCheckpoint] = [:]
@@ -222,6 +225,7 @@ public final class AppStore: ObservableObject {
                 uploadExcludedSessionIDs = saved.uploadExcludedSessionIDs ?? []
                 hiddenTerms = saved.hiddenTerms ?? []
                 allowedTerms = saved.allowedTerms ?? []
+                hiddenPatterns = saved.hiddenPatterns ?? []
                 uploadRecords = localRecords + (live ? [] : DemoRepository.uploadRecords)
                 if live, let sources = saved.discoveredSources {
                     let active = sources.filter { !SessionSourcePolicy.isArchived($0.source) && (scanWindow?.contains($0.modifiedAt) ?? true) }
@@ -1061,6 +1065,7 @@ public final class AppStore: ObservableObject {
             var stored = saved
             stored.hiddenTerms = hiddenTerms
             stored.allowedTerms = allowedTerms
+            stored.hiddenPatterns = hiddenPatterns
             try JSONEncoder().encode(stored).write(to: stateURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: stateURL.path)
         } catch {
@@ -1327,6 +1332,23 @@ extension AppStore {
         let wasAllowed = allowedTerms.contains(term)
         allowedTerms.removeAll { $0 == term }
         if !hiddenTerms.contains(term) { hiddenTerms.append(term) } else if !wasAllowed { return }
+        hidingChanged()
+    }
+    /// Hide whatever a regular expression matches, in every session and every later upload, like `hideTerm`.
+    /// Returns why the expression was refused, or nil once it is in use (or already was).
+    @discardableResult
+    public func hidePattern(_ raw: String) -> SecretScrubber.PatternProblem? {
+        let pattern = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard pattern.count >= 2, pattern.count <= 500 else { return nil }
+        if let problem = SecretScrubber.problem(withPattern: pattern) { return problem }
+        guard !hiddenPatterns.contains(pattern) else { return nil }
+        hiddenPatterns.append(pattern)
+        hidingChanged()
+        return nil
+    }
+    public func unhidePattern(_ pattern: String) {
+        guard hiddenPatterns.contains(pattern) else { return }
+        hiddenPatterns.removeAll { $0 == pattern }
         hidingChanged()
     }
     /// Take a red piece back: it is shown normally and uploaded as written, whether the member or an automatic rule

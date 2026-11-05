@@ -86,7 +86,9 @@ struct RootView: View {
             HStack(spacing: 9) {
                 Image(systemName: "person.crop.circle.fill").font(.app(size: 31)).foregroundStyle(Palette.secondary.opacity(0.5))
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("本机用户").font(.app(size: 12, weight: .medium))
+                    Text(store.binding.isBound && !store.binding.name.isEmpty ? store.binding.name : "本机用户")
+                        .font(.app(size: 12, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                        .accessibilityIdentifier("sidebar-user-name")
                     Text(store.hasCollectorService ? (store.binding.isBound ? "已绑定系统" : "未绑定") : "本地演示").font(.app(size: 10)).foregroundStyle(Palette.secondary)
                 }
                 Spacer(minLength: 0)

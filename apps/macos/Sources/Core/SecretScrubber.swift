@@ -11,13 +11,64 @@ import Foundation
 public enum SecretScrubber {
     public static let hidden = "[已隐藏]"
 
-    /// What the member decided on top of the automatic rules: `terms` are hidden wherever they occur, and an
-    /// automatic match whose text is exactly one of `allowed` is let through. Red in the UI means "hidden on upload".
+    /// What the member decided on top of the automatic rules: `terms` are hidden wherever they occur, `patterns`
+    /// (regular expressions the member wrote) hide whatever they match, and an automatic or pattern match whose
+    /// text is exactly one of `allowed` is let through. Red in the UI means "hidden on upload".
     public struct Hiding: Hashable, Sendable, Codable {
         public var terms: [String] = []
         public var allowed: [String] = []
-        public init(terms: [String] = [], allowed: [String] = []) { self.terms = terms; self.allowed = allowed }
+        public var patterns: [String] = []
+        public init(terms: [String] = [], allowed: [String] = [], patterns: [String] = []) { self.terms = terms; self.allowed = allowed; self.patterns = patterns }
         public static let none = Hiding()
+    }
+
+    /// Why a regular expression written by the member cannot be used.
+    public enum PatternProblem: Equatable, Sendable {
+        case invalid, matchesEmptyText, tooSlow
+        public var message: String {
+            switch self {
+            case .invalid: "正则表达式写法有误，请检查括号、转义和方括号是否成对。"
+            case .matchesEmptyText: "这条规则会匹配空文字，范围过宽，请写得更具体一些。"
+            case .tooSlow: "这条规则匹配起来太慢，可能会卡住 App，请换一种写法。"
+            }
+        }
+    }
+
+    private final class RegexBox { let value: NSRegularExpression?; init(_ value: NSRegularExpression?) { self.value = value } }
+    // NSCache is thread-safe; the compiler just cannot see that.
+    nonisolated(unsafe) private static let userRegexCache: NSCache<NSString, RegexBox> = { let cache = NSCache<NSString, RegexBox>(); cache.countLimit = 200; return cache }()
+    /// A text longer than this on any one rule is not worth waiting for: see `termRanges`.
+    private static let patternBudget: TimeInterval = 1
+
+    private static func userRegex(_ pattern: String) -> NSRegularExpression? {
+        if let box = userRegexCache.object(forKey: pattern as NSString) { return box.value }
+        let regex = try? NSRegularExpression(pattern: pattern)
+        userRegexCache.setObject(RegexBox(regex), forKey: pattern as NSString)
+        return regex
+    }
+
+    /// Non-empty matches of a member's expression, or nil if matching ran past `budget` (a runaway expression).
+    private static func userMatches(_ regex: NSRegularExpression, in text: String, budget: TimeInterval) -> [NSRange]? {
+        let deadline = Date.now.addingTimeInterval(budget)
+        var found: [NSRange] = []
+        var timedOut = false
+        regex.enumerateMatches(in: text, options: [.reportProgress], range: NSRange(location: 0, length: (text as NSString).length)) { result, _, stop in
+            if Date.now > deadline { timedOut = true; stop.pointee = true; return }
+            if let range = result?.range, range.length > 0 { found.append(range) }
+        }
+        return timedOut ? nil : found
+    }
+
+    /// nil when the expression can be used; otherwise the reason it was refused. Syntax is ICU's (what macOS provides):
+    /// case-sensitive unless it starts with `(?i)`.
+    public static func problem(withPattern pattern: String) -> PatternProblem? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return .invalid }
+        if regex.firstMatch(in: "", options: [], range: NSRange(location: 0, length: 0)) != nil { return .matchesEmptyText }
+        // Typical runaway shapes such as `(a+)+$` stall on a long near-match; refuse them now instead of freezing later.
+        for probe in [String(repeating: "a", count: 40) + "!", String(repeating: "ab ", count: 25) + "!"] {
+            if userMatches(regex, in: probe, budget: 0.15) == nil { return .tooSlow }
+        }
+        return nil
     }
 
     private static func compile(_ pattern: String, caseInsensitive: Bool = false) -> NSRegularExpression {
@@ -64,9 +115,9 @@ public enum SecretScrubber {
         return out + source.substring(from: cursor)
     }
 
-    /// Terms the member marked by hand are hidden everywhere they occur, before the automatic rules run.
-    private static func replaceTerms(_ terms: [String], in text: String) -> String {
-        let ranges = termRanges(terms, in: text)
+    /// Terms and expressions the member marked by hand are hidden everywhere they occur, before the automatic rules run.
+    private static func replaceTerms(_ hiding: Hiding, in text: String) -> String {
+        let ranges = termRanges(hiding, in: text)
         guard !ranges.isEmpty else { return text }
         let source = text as NSString
         var out = "", cursor = 0
@@ -79,7 +130,7 @@ public enum SecretScrubber {
 
     public static func redact(_ text: String, hiding: Hiding = .none) -> String {
         let allowed = Set(hiding.allowed)
-        var out = replaceTerms(hiding.terms, in: text)
+        var out = replaceTerms(hiding, in: text)
         for pattern in credentialPatterns { out = replaceAll(pattern, in: out, allowing: allowed) }
         let source = out as NSString
         var result = ""
@@ -136,10 +187,10 @@ public enum SecretScrubber {
             .filter { allowed.isEmpty || !allowed.contains(source.substring(with: $0)) }
     }
 
-    private static func termRanges(_ terms: [String], in text: String) -> [NSRange] {
+    private static func termRanges(_ hiding: Hiding, in text: String) -> [NSRange] {
         let source = text as NSString
         var found: [NSRange] = []
-        for term in Set(terms) where !term.isEmpty {
+        for term in Set(hiding.terms) where !term.isEmpty {
             var from = 0
             while from < source.length {
                 let range = source.range(of: term, options: [.literal], range: NSRange(location: from, length: source.length - from))
@@ -147,7 +198,14 @@ public enum SecretScrubber {
                 found.append(range); from = range.location + range.length
             }
         }
-        // Overlapping terms collapse into one hidden piece.
+        let allowed = Set(hiding.allowed)
+        for pattern in Set(hiding.patterns) where !pattern.isEmpty {
+            guard let regex = userRegex(pattern) else { continue }
+            // An expression that runs away on this text must not let anything through unhidden: hide all of it.
+            guard let matches = userMatches(regex, in: text, budget: patternBudget) else { return [NSRange(location: 0, length: source.length)] }
+            found += matches.filter { allowed.isEmpty || !allowed.contains(source.substring(with: $0)) }
+        }
+        // Overlapping matches collapse into one hidden piece.
         var merged: [NSRange] = []
         for range in found.sorted(by: { $0.location < $1.location }) {
             if let last = merged.last, range.location < last.location + last.length {
@@ -160,10 +218,10 @@ public enum SecretScrubber {
     /// Same rules as `redact`, applied in the same order, additionally reporting what was hidden.
     /// Kept separate so the upload path stays a plain string rewrite; tests require identical output.
     public static func analyze(_ text: String, hiding: Hiding = .none) -> Analysis {
-        let terms = hiding.terms, allowed = Set(hiding.allowed)
+        let allowed = Set(hiding.allowed)
         let units = Array(text.utf16)
         var working = Working(units: units, origin: Array(0..<units.count))
-        working.hide(termRanges(terms, in: text))
+        working.hide(termRanges(hiding, in: text))
         for pattern in credentialPatterns { working.hide(matchRanges(pattern, in: working.string, allowing: allowed)) }
         let current = working.string
         let source = current as NSString

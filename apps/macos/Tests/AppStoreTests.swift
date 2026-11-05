@@ -87,6 +87,25 @@ final class AppStoreTests: XCTestCase {
         XCTAssertEqual(second.pendingSessions.count, waiting)
         XCTAssertEqual(second.excludedSessionCount, 0)
     }
+    func testHiddenExpressionsAreCheckedKeptAcrossRelaunchAndRemovable() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "weekly-report-tests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "state.json")
+        let first = AppStore(stateURL: url)
+        XCTAssertEqual(first.hidePattern("客户[A-Z"), .invalid)
+        XCTAssertEqual(first.hidePattern("a*"), .matchesEmptyText)
+        XCTAssertTrue(first.hiddenPatterns.isEmpty)
+        XCTAssertNil(first.hidePattern(#"客户[A-Z]\d+"#))
+        XCTAssertNil(first.hidePattern(#"客户[A-Z]\d+"#))
+        XCTAssertEqual(first.hiddenPatterns, [#"客户[A-Z]\d+"#])
+        XCTAssertEqual(first.hiding.patterns, first.hiddenPatterns)
+
+        let second = AppStore(stateURL: url)
+        XCTAssertEqual(second.hiddenPatterns, [#"客户[A-Z]\d+"#])
+        second.unhidePattern(#"客户[A-Z]\d+"#)
+        XCTAssertTrue(second.hiddenPatterns.isEmpty)
+        XCTAssertTrue(AppStore(stateURL: url).hiddenPatterns.isEmpty)
+    }
     func testPreferencesAndLocalStateSurviveRelaunch() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "weekly-report-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

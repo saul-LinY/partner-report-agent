@@ -6,6 +6,8 @@ import WeeklyReportCore
 struct PrivacyView: View {
     @EnvironmentObject private var store: AppStore
     @State private var newTerm = ""
+    @State private var newIsRegex = false
+    @State private var patternProblem: SecretScrubber.PatternProblem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,9 +30,9 @@ struct PrivacyView: View {
 
     private var yourSettings: some View {
         HStack(spacing: 12) {
-            stat("\(store.approvedProjects.count)", "个项目允许采集", symbol: "folder.badge.checkmark", tint: Palette.green)
+            stat("\(store.approvedProjects.count)", "个项目允许采集", symbol: "folder", tint: Palette.green)
             stat("\(store.excludedSessionCount)", "个会话不上传", symbol: "eye.slash", tint: Palette.secondary)
-            stat("\(store.hiddenTerms.count + store.allowedTerms.count)", "处自己调整的标红", symbol: "highlighter", tint: Palette.red)
+            stat("\(store.hiddenTerms.count + store.hiddenPatterns.count + store.allowedTerms.count)", "处自己调整的标红", symbol: "highlighter", tint: Palette.red)
             stat(store.preferences.autoUpload ? "开启" : "暂停", "自动上传", symbol: "icloud.and.arrow.up", tint: store.preferences.autoUpload ? Palette.green : Palette.secondary)
         }
         .accessibilityElement(children: .combine)
@@ -94,19 +96,35 @@ struct PrivacyView: View {
     private var hiddenTermsSection: some View {
         card("你对标红的调整", symbol: "highlighter", tint: Palette.red) {
             bullet("你新增的红色：在「项目会话」里选中文字，右键选「隐藏所选内容」；也可以在这里直接添加。所有会话里相同的文字都会被隐藏，至少 2 个字。")
+            bullet("按规则隐藏：勾选「正则表达式」后，所有匹配这条规则的内容都会被隐藏，例如 1[3-9]\\d{9} 匹配手机号，客户[A-Z]\\d+ 匹配「客户A12」这类名字。使用 macOS 的正则语法，区分大小写（需要时在开头写 (?i)），只在你的电脑上生效。")
             bullet("你取消的红色：自动标红的内容被你取消后，上传时保留原文，会列在下方，可以随时恢复。")
-            HStack(spacing: 8) {
-                TextField("要隐藏的文字，例如客户名、内部项目代号", text: $newTerm)
-                    .textFieldStyle(.plain).font(.app(size: 13)).padding(.horizontal, 12).frame(height: 36)
+            HStack(spacing: 10) {
+                TextField(newIsRegex ? "正则表达式，例如 客户[A-Z]\\d+" : "要隐藏的文字，例如客户名、内部项目代号", text: $newTerm)
+                    .textFieldStyle(.plain).font(newIsRegex ? .system(size: AppFont.size(13), design: .monospaced) : .app(size: 13))
+                    .padding(.horizontal, 12).frame(height: 36)
                     .background(Palette.quiet, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.line))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(patternProblem == nil ? Palette.line : Palette.red))
                     .onSubmit(addTerm).accessibilityIdentifier("hidden-term-field")
+                    .onChange(of: newTerm) { patternProblem = nil }
+                Toggle("正则表达式", isOn: $newIsRegex).toggleStyle(.checkbox).font(.app(size: 12)).fixedSize()
+                    .onChange(of: newIsRegex) { patternProblem = nil }
+                    .help("勾选后，上面写的是正则表达式，所有匹配的内容都会被隐藏")
+                    .accessibilityIdentifier("hidden-term-regex")
                 Button("添加", action: addTerm).buttonStyle(QuietButtonStyle())
                     .disabled(newTerm.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
                     .accessibilityIdentifier("hidden-term-add")
             }
-            termList(title: "已隐藏的文字", terms: store.hiddenTerms, empty: "还没有标记。", action: "移除",
-                     help: "之后的上传不再隐藏这段文字；已上传的内容不会改变", identifier: "hidden-term-list") { store.unhideTerm($0) }
+            if let patternProblem {
+                Text(patternProblem.message).font(.app(size: 12)).foregroundStyle(Palette.red).accessibilityIdentifier("hidden-term-error")
+            }
+            if !store.hiddenTerms.isEmpty || store.hiddenPatterns.isEmpty {
+                termList(title: "已隐藏的文字", terms: store.hiddenTerms, empty: "还没有标记。", action: "移除",
+                         help: "之后的上传不再隐藏这段文字；已上传的内容不会改变", identifier: "hidden-term-list") { store.unhideTerm($0) }
+            }
+            if !store.hiddenPatterns.isEmpty {
+                termList(title: "已设置的正则规则", terms: store.hiddenPatterns, empty: "", action: "移除",
+                         help: "之后的上传不再按这条规则隐藏；已上传的内容不会改变", identifier: "hidden-pattern-list") { store.unhidePattern($0) }
+            }
             if !store.allowedTerms.isEmpty {
                 termList(title: "已取消隐藏（上传时保留原文）", terms: store.allowedTerms, empty: "", action: "恢复隐藏",
                          help: "这段文字重新按自动规则处理；符合规则的话上传时会被隐藏", identifier: "allowed-term-list") { store.restoreAutomatic($0) }
@@ -139,7 +157,12 @@ struct PrivacyView: View {
     // MARK: Pieces
 
     private func addTerm() {
-        store.hideTerm(newTerm)
+        if newIsRegex {
+            if let problem = store.hidePattern(newTerm) { patternProblem = problem; return }
+        } else {
+            store.hideTerm(newTerm)
+        }
+        patternProblem = nil
         newTerm = ""
     }
 

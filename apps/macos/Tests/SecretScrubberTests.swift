@@ -64,6 +64,44 @@ final class SecretScrubberTests: XCTestCase {
         XCTAssertEqual(SecretScrubber.redact("a@b.com 客户A", hiding: .init(terms: ["客户A"], allowed: ["a@b.com"])), "a@b.com [已隐藏]")
     }
 
+    func testMemberRegularExpressionsHideEveryMatchAndAnalysisAgreesWithRedaction() throws {
+        let hiding = SecretScrubber.Hiding(patterns: [#"客户[A-Z]\d+"#, #"(?i)acme-[a-z]+"#])
+        let text = "客户A12 和 客户B7 都问过 ACME-corp，客户C 不算，acme-x 也是"
+        let analysis = SecretScrubber.analyze(text, hiding: hiding)
+        XCTAssertEqual(analysis.text, "[已隐藏] 和 [已隐藏] 都问过 [已隐藏]，客户C 不算，[已隐藏] 也是")
+        XCTAssertEqual(analysis.text, SecretScrubber.redact(text, hiding: hiding))
+        XCTAssertEqual(Set(analysis.hidden), ["客户A12", "客户B7", "ACME-corp", "acme-x"])
+        // A match that overlaps a literal term is one hidden piece, and the automatic rules still run afterwards.
+        let mixed = SecretScrubber.Hiding(terms: ["客户A"], patterns: [#"A\d+"#])
+        XCTAssertEqual(SecretScrubber.redact("客户A12 a@b.com", hiding: mixed), "[已隐藏] [已隐藏]")
+    }
+
+    func testALetThroughPieceIsAlsoKeptWhenAMemberExpressionMatchesIt() throws {
+        let hiding = SecretScrubber.Hiding(allowed: ["客户A12"], patterns: [#"客户[A-Z]\d+"#])
+        XCTAssertEqual(SecretScrubber.redact("客户A12 客户B7", hiding: hiding), "客户A12 [已隐藏]")
+    }
+
+    func testOnlyUsableExpressionsAreAccepted() throws {
+        XCTAssertNil(SecretScrubber.problem(withPattern: #"1[3-9]\d{9}"#))
+        XCTAssertNil(SecretScrubber.problem(withPattern: #"(?i)token_[a-z0-9]+"#))
+        XCTAssertEqual(SecretScrubber.problem(withPattern: "客户[A-Z"), .invalid)
+        XCTAssertEqual(SecretScrubber.problem(withPattern: "(abc"), .invalid)
+        // Too broad: matches without consuming anything.
+        XCTAssertEqual(SecretScrubber.problem(withPattern: "a*"), .matchesEmptyText)
+        XCTAssertEqual(SecretScrubber.problem(withPattern: "^"), .matchesEmptyText)
+        // Backtracking that explodes on a long near-match is refused instead of freezing the app later.
+        let started = Date.now
+        XCTAssertEqual(SecretScrubber.problem(withPattern: "(a+)+$"), .tooSlow)
+        XCTAssertLessThan(Date.now.timeIntervalSince(started), 2)
+    }
+
+    func testCheckpointTreatsASessionAsPendingWhenAnExpressionStartsHidingSomething() throws {
+        let turn = ChatTurn(id: "t", prompt: "客户A12 要报价", answer: "好的", questionTime: "12:00")
+        let uploaded = UploadCheckpoint(turns: [SecretScrubber.redact(turn)])
+        XCTAssertTrue(uploaded.pendingMessages(in: [turn]).isEmpty)
+        XCTAssertEqual(uploaded.pendingMessages(in: [turn], hiding: .init(patterns: [#"客户[A-Z]\d+"#])).map(\.id), ["t:prompt"])
+    }
+
     func testCheckpointTreatsASessionAsPendingWhenNewRulesOrTermsChangeWhatWouldBeUploaded() throws {
         let turn = ChatTurn(id: "t", prompt: "客户A的报价见 http://10.0.0.8/x", answer: "好的", questionTime: "12:00")
         // Uploaded earlier under the current rules.

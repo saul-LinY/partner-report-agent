@@ -25,7 +25,7 @@ public struct UploadCheckpoint: Codable, Equatable, Sendable {
     /// Redacting is the costly part and the same text is compared on every refresh, so remember the result.
     nonisolated(unsafe) private static let digestCache: NSCache<NSString, NSString> = { let cache = NSCache<NSString, NSString>(); cache.countLimit = 20_000; return cache }()
     private static func uploadedDigest(of text: String, hiding: SecretScrubber.Hiding) -> String {
-        let key = (digest((hiding.terms + ["\u{2}"] + hiding.allowed).joined(separator: "\u{1}")) + digest(text)) as NSString
+        let key = (digest((hiding.terms + ["\u{2}"] + hiding.allowed + ["\u{3}"] + hiding.patterns).joined(separator: "\u{1}")) + digest(text)) as NSString
         if let cached = digestCache.object(forKey: key) { return cached as String }
         let value = digest(SecretScrubber.redact(text, hiding: hiding))
         digestCache.setObject(value as NSString, forKey: key)
