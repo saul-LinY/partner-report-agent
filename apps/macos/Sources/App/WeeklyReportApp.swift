@@ -18,7 +18,7 @@ struct WeeklyReportApp: App {
         let reader = LocalReader(executable: executable, workingDirectory: folder.appending(path: "ReaderWork"))
         var roots: [String] = []
         for index in args.indices where args[index] == "--authorize-project" && args.indices.contains(index + 1) { roots.append(args[index + 1]) }
-        let appStore = AppStore(stateURL: stateURL, live: !demo, reader: reader, authorizedRoots: roots, reviewService: nil, collectorService: demo ? nil : HTTPCollectorService(), serviceURL: demo ? nil : AppConfiguration.serviceURL)
+        let appStore = AppStore(stateURL: stateURL, live: !demo, reader: reader, authorizedRoots: roots, reviewService: nil, collectorService: demo ? nil : HTTPCollectorService(pinnedCertificateSHA256: AppConfiguration.pinnedCertificateSHA256), serviceURL: demo ? nil : AppConfiguration.serviceURL)
         _store = StateObject(wrappedValue: appStore)
         delegate.prepare(store: appStore)
         if args.contains("--diagnose-startup") { NSLog("weekly report startup: state=%@ bound=%@", String(describing: appStore.startupStage), appStore.binding.isBound ? "yes" : "no") }

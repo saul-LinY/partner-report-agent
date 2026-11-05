@@ -10,4 +10,13 @@ enum AppConfiguration {
               url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return nil }
         return url
     }
+
+    /// For a test server on the office network that has no publicly issued certificate: the SHA-256 of the one
+    /// certificate it may present (WEEKLY_REPORT_PINNED_CERT_SHA256). Empty in normal builds. A value that is set but
+    /// malformed is passed through on purpose: the connection then fails instead of silently falling back to no pin.
+    static var pinnedCertificateSHA256: String? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "WeeklyReportPinnedCertSHA256") as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.hasPrefix("$(") ? nil : trimmed
+    }
 }

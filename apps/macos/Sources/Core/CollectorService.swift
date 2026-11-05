@@ -343,7 +343,17 @@ public extension CollectorServing {
 }
 
 private final class CollectorRedirectPolicy: NSObject, URLSessionTaskDelegate {
+    /// SHA-256 of the one certificate the server may present, or nil to use the system's normal trust rules.
+    let pin: String?
+    init(pin: String?) { self.pin = pin }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard let pin, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else { return completionHandler(.performDefaultHandling, nil) }
+        // With a pin the certificate itself is the credential, so a name or date mismatch does not matter, and any other certificate fails.
+        if CertificatePin.accepts(trust, pin: pin) { completionHandler(.useCredential, URLCredential(trust: trust)) }
+        else { completionHandler(.cancelAuthenticationChallenge, nil) }
+    }
 }
 
 /// The bearer token is stored only in Keychain; neither state.json nor diagnostics contain it.
@@ -357,9 +367,9 @@ public actor HTTPCollectorService: CollectorServing {
     }
     private let session: URLSession
     private var transportLogs: [CollectorLog] = []
-    public init(configuration: URLSessionConfiguration = .ephemeral) {
+    public init(configuration: URLSessionConfiguration = .ephemeral, pinnedCertificateSHA256: String? = nil) {
         configuration.timeoutIntervalForRequest = 60; configuration.urlCache = nil
-        session = URLSession(configuration: configuration, delegate: CollectorRedirectPolicy(), delegateQueue: nil)
+        session = URLSession(configuration: configuration, delegate: CollectorRedirectPolicy(pin: pinnedCertificateSHA256), delegateQueue: nil)
     }
     deinit { session.invalidateAndCancel() }
     private func credentialQuery(_ binding: LocalBinding) -> [String: Any] {
