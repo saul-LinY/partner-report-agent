@@ -15,6 +15,7 @@ import { collectorSessionRoutes } from "./routes/collector-sessions.js";
 import { sessionPreprocessRoutes } from "./routes/session-preprocess.js";
 import { aiActivityRoutes } from "./routes/ai-activity.js";
 import { projectProfileRoutes } from "./routes/project-profiles.js";
+import { personalDataRoutes } from "./routes/personal-data.js";
 import { userLogRoutes } from "./routes/user-logs.js";
 import { inspectionRoutes } from "./routes/inspection.js";
 import { teamReportRoutes } from "./routes/team-reports.js";
@@ -138,6 +139,7 @@ export async function buildApp(
   await app.register(sessionPreprocessRoutes);
   await app.register(aiActivityRoutes);
   await app.register(projectProfileRoutes);
+  await app.register(personalDataRoutes);
   await app.register(observabilityRoutes);
   await app.register(userLogRoutes);
   await app.register(inspectionRoutes);

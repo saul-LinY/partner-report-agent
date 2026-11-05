@@ -325,6 +325,8 @@ public protocol CollectorServing: Sendable {
     func acknowledgeNotifications(binding: LocalBinding, ids: [String]) async throws
     func reviews(binding: LocalBinding) async throws -> [ReviewBatch]
     func perform(binding: LocalBinding, action: CardAction, cardID: String, reviewID: String, version: Int) async throws
+    /// The member's own member-detail page; `month` ("YYYY-MM") pages the progress calendar, nil is the current month.
+    func personalData(binding: LocalBinding, month: String?) async throws -> PersonalData
     /// Events recorded by the transport itself (per-part upload outcomes); returned once and cleared.
     func drainLogs() async -> [CollectorLog]
 }
@@ -336,6 +338,7 @@ public extension CollectorServing {
     func acknowledgeNotifications(binding: LocalBinding, ids: [String]) async throws { throw CollectorError(status: 501, message: "通知回执服务不可用。") }
     func reviews(binding: LocalBinding) async throws -> [ReviewBatch] { [] }
     func perform(binding: LocalBinding, action: CardAction, cardID: String, reviewID: String, version: Int) async throws { throw CollectorError(status: 501, message: "审核服务不可用。") }
+    func personalData(binding: LocalBinding, month: String?) async throws -> PersonalData { throw CollectorError(status: 501, message: "个人数据服务不可用。") }
     func drainLogs() async -> [CollectorLog] { [] }
 }
 
@@ -451,6 +454,9 @@ public actor HTTPCollectorService: CollectorServing {
         let receipt = try JSONDecoder().decode(Receipt.self, from: data)
         guard receipt.ok, Set(receipt.accepted) == Set(ids) else { throw CollectorError(status: 502, message: "通知回执尚未确认，将自动重试。") }
     }
+    public func personalData(binding: LocalBinding, month: String?) async throws -> PersonalData {
+        try JSONDecoder().decode(PersonalData.self, from: await request(binding, "personal-data", query: month.map { [URLQueryItem(name: "month", value: $0)] } ?? []))
+    }
     public func reviews(binding: LocalBinding) async throws -> [ReviewBatch] {
         struct Index: Decodable { var reviews: [ReviewBatch.Header] }
         let index = try JSONDecoder().decode(Index.self, from: await request(binding, "v1/partner/work-cards", collectorPath: false))
@@ -475,9 +481,11 @@ public actor HTTPCollectorService: CollectorServing {
         }
         _ = try await request(binding, "v1/reviews/\(reviewID)/items/\(cardID)/\(command)", body: body, collectorPath: false)
     }
-    private func request(_ binding: LocalBinding, _ path: String, body: [String: Any]? = nil, authenticated: Bool = true, collectorPath: Bool = true) async throws -> Data {
+    private func request(_ binding: LocalBinding, _ path: String, body: [String: Any]? = nil, authenticated: Bool = true, collectorPath: Bool = true, query: [URLQueryItem] = []) async throws -> Data {
         guard binding.isValid, let base = URL(string: binding.serviceAddress) else { throw URLError(.badURL) }
-        var request = URLRequest(url: base.appending(path: collectorPath ? "v1/collector/" + path : path))
+        var url = base.appending(path: collectorPath ? "v1/collector/" + path : path)
+        if !query.isEmpty { url.append(queryItems: query) }
+        var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if authenticated { request.setValue("Bearer " + (try token(binding)), forHTTPHeaderField: "Authorization") }
         if let body { request.httpMethod = "POST"; request.httpBody = try JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }

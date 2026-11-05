@@ -1,14 +1,15 @@
 import Foundation
 
 public enum AppPage: String, CaseIterable, Identifiable, Sendable {
-    // Declaration order is the sidebar order and the ⌘1…⌘5 shortcuts.
-    case approvals, sessions, uploads, settings, privacy
+    // Declaration order is the sidebar order and the ⌘1…⌘6 shortcuts. `privacy` stays last: insert any new page before it.
+    case approvals, sessions, uploads, settings, personal, privacy
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .sessions: "项目会话"
         case .approvals: "待审批项"
         case .uploads: "上传记录"
+        case .personal: "个人数据"
         case .privacy: "隐私说明"
         case .settings: "系统设置"
         }
@@ -16,6 +17,7 @@ public enum AppPage: String, CaseIterable, Identifiable, Sendable {
     public var symbol: String {
         switch self {
         case .sessions: "bubble.left.and.bubble.right"
+        case .personal: "person.text.rectangle"
         case .approvals: "checklist"
         case .uploads: "icloud.and.arrow.up"
         case .privacy: "lock.shield"

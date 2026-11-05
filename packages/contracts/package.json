@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./hash": "./src/hash.ts",
     "./models": "./src/models.ts",
+    "./member-overview": "./src/member-overview.ts",
     "./project-progress": "./src/project-progress.ts",
     "./project-status": "./src/project-status.ts",
     "./privacy": "./src/privacy.ts",

@@ -5,10 +5,9 @@ import { Sparkline } from "./charts.js";
 import {
   memberProjects,
   stateLabels,
-  useLeadershipData,
-  useProjectProfiles,
   type ProjectState,
-} from "./leadership-data.js";
+} from "@partner-report/contracts/member-overview";
+import { useLeadershipData, useProjectProfiles } from "./leadership-data.js";
 import "./leadership.css";
 
 /** Leadership landing: one card per person, since each person owns their projects. */

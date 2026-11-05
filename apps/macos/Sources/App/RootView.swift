@@ -29,6 +29,7 @@ struct RootView: View {
                     case .sessions: SessionsView()
                     case .uploads: UploadsView()
                     case .privacy: PrivacyView()
+                    case .personal: PersonalDataView()
                     case .settings: SettingsView()
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)

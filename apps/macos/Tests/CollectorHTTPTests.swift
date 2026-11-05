@@ -97,4 +97,22 @@ final class CollectorHTTPTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(request.url?.path, "/v1/collector/pipeline")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token-only")
     }
+
+    func testPersonalDataSendsMonthAsQueryNotPathAndDecodesTheReply() async throws {
+        let service = service(), device = UUID().uuidString
+        var binding = LocalBinding(serviceAddress: "https://collector-\(UUID()).example.test", name: "Member")
+        CollectorHTTPProtocol.state.reset([(200, claimReply(device))])
+        binding.deviceID = try await service.claim(binding: binding, code: "TEST-CODE").deviceId
+        defer { removeCredential(binding) }
+        let reply = #"{"today":"2026-11-05","timezone":"Asia/Shanghai","member":{"id":"m","name":"林宇"},"headline":{"projectCount":0,"attention":0,"activeDays28":0,"lastActiveDate":null},"projects":[],"calendar":{"month":"2026-10","from":"2026-10-01","to":"2026-10-31"},"activity":{"timezone":"Asia/Shanghai","from":"2026-08-07","to":"2026-11-05","days":90,"events":[]}}"#
+        CollectorHTTPProtocol.state.reset([(200, reply), (200, reply)])
+        let october = try await service.personalData(binding: binding, month: "2026-10")
+        _ = try await service.personalData(binding: binding, month: nil)
+        XCTAssertEqual(october.member.name, "林宇")
+        let requests = CollectorHTTPProtocol.state.recorded()
+        XCTAssertEqual(requests[0].url?.path, "/v1/collector/personal-data")
+        XCTAssertEqual(requests[0].url?.query, "month=2026-10")
+        XCTAssertNil(requests[1].url?.query)
+        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer test-token-only")
+    }
 }

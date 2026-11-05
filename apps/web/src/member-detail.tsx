@@ -6,17 +6,12 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { LineChart, seriesColor } from "./charts.js";
 import { ProjectProgress } from "./project-progress.js";
 import {
+  memberHeadline,
   memberProjects,
   stateLabels,
-  useLeadershipData,
-  useProjectProfiles,
-} from "./leadership-data.js";
+} from "@partner-report/contracts/member-overview";
+import { useLeadershipData, useProjectProfiles } from "./leadership-data.js";
 import "./leadership.css";
-
-const shiftDate = (date: string, offset: number) =>
-  new Date(Date.parse(`${date}T00:00:00Z`) + offset * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
 
 const formatDay = (day: string) =>
   `${Number(day.slice(0, 4))}年${Number(day.slice(5, 7))}月${Number(day.slice(8))}日`;
@@ -71,10 +66,6 @@ export function MemberDetailPage() {
   const profiles = useProjectProfiles().data?.items;
   const projects = a && p ? memberProjects(id, p, a, profiles) : [];
   const active = a?.members.find((item) => item.id === id);
-  const lastActive = Object.values(active?.byProject ?? {})
-    .map((entry) => entry.lastActiveDate)
-    .sort()
-    .at(-1);
   const events = active?.events ?? [];
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [pickedMonth, setPickedMonth] = useState<string | null>(null);
@@ -148,12 +139,19 @@ export function MemberDetailPage() {
           },
         ]
       : series;
-  const recentDays = new Set(
-    events
-      .map((event) => event.t.slice(0, 10))
-      .filter((date) => a && date >= shiftDate(a.to, -27)),
-  ).size;
-  const attention = projects.filter((item) => item.state !== "ok").length;
+  const headline = memberHeadline(
+    id,
+    projects,
+    a ?? {
+      timezone: "",
+      from: "",
+      to: "",
+      days: 0,
+      totals: { dropped: 0 },
+      daily: [],
+      members: [],
+    },
+  );
   return (
     <div className="page admin-page management-page">
       <WorkspaceHeader
@@ -183,22 +181,24 @@ export function MemberDetailPage() {
               </div>
               <div className="lc-kpi">
                 <span>需要关注</span>
-                <strong className={attention ? "is-warn" : ""}>
-                  {attention}
+                <strong className={headline.attention ? "is-warn" : ""}>
+                  {headline.attention}
                 </strong>
                 <small className="lc-delta">有卡点或停滞的项目</small>
               </div>
               <div className="lc-kpi">
                 <span>近 28 天活跃</span>
-                <strong>{recentDays}</strong>
+                <strong>{headline.activeDays28}</strong>
                 <small className="lc-delta">天</small>
               </div>
               <div className="lc-kpi">
                 <span>最近活跃</span>
                 <strong className="lc-kpi-date">
-                  {lastActive?.slice(5) ?? "--"}
+                  {headline.lastActiveDate?.slice(5) ?? "--"}
                 </strong>
-                <small className="lc-delta">{lastActive?.slice(0, 4)}</small>
+                <small className="lc-delta">
+                  {headline.lastActiveDate?.slice(0, 4)}
+                </small>
               </div>
             </div>
 

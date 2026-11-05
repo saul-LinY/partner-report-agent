@@ -16,6 +16,7 @@
 - `GET /v1/collector/project-scope`：当前权限及当前采集周期。
 - `POST /v1/collector/project-scope/candidates`：只登记项目名与匿名 scopeKey，不发送文件夹路径或会话正文。
 - `POST /v1/collector/project-scope/decisions`：携带 baseVersion 的允许／拒绝修改。
+- `GET /v1/collector/personal-data[?month=YYYY-MM]`：只读返回绑定成员自己的「成员详情页」数据，与管理端同一套计算（`packages/contracts/src/member-overview.ts`）：四项汇总、项目卡片（状态、简介、阶段、卡点）、近 90 天逐分钟会话活跃度、所选月份的项目日历与每日进展。成员只取自绑定 Token，不接受成员参数（多余参数返回 400），也不返回其他成员的数据；`month` 不能是未来月份。
 - `POST /v1/collector/uploads`：固定批次 UUID、周期时间窗、权限版本、会话数、每个分包的 SHA-256 清单。
 - `POST /v1/collector/uploads/:id/parts`：序号、SHA-256、完整会话数组 JSON 的 Base64。常规目标 2 MiB；单个会话超过 16 MiB 时明确报错，不静默截断。分包解码上限 16 MiB，路由请求上限 24 MiB；反向代理也需要相应放行。
 - `POST /v1/collector/uploads/:id/complete`：核验所有分包、总数、全批次会话 ID 唯一性与最新授权，返回整批回执。缺包或权限变化时不能完成。

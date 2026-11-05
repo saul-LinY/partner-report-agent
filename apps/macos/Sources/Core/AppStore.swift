@@ -154,6 +154,11 @@ public final class AppStore: ObservableObject {
     @Published public private(set) var isPerformingReviewAction = false
     @Published public private(set) var reviewError: String?
     @Published public var selectedApproval: ApprovalTarget?
+    /// The member's own member-detail page (个人数据); nil until the first load succeeds.
+    @Published public private(set) var personalData: PersonalData?
+    @Published public private(set) var isLoadingPersonalData = false
+    @Published public private(set) var personalDataError: String?
+    private var personalDataRequest = 0
     public private(set) var notifiedApprovalKeys: Set<String> = []
     public let isLive: Bool
     private var sourceGroups: [String: [LocalSessionSource]] = [:]
@@ -508,6 +513,31 @@ public final class AppStore: ObservableObject {
         reviewBatches = []
         reviewError = nil
         try? await reviewService.logout()
+    }
+    /// Loads the member's own page. `month` ("YYYY-MM") pages the progress calendar; nil is the current month.
+    /// Without a service (demo mode) the sample data stands in, so the page and its month controls still work.
+    public func loadPersonalData(month: String? = nil) async {
+        guard let collectorService else {
+            if isLive { personalDataError = "未连接系统，暂时无法查看个人数据。" }
+            else { personalData = DemoRepository.personalData(month: month); personalDataError = nil }
+            return
+        }
+        guard binding.isBound else { personalDataError = "绑定后才能查看个人数据。"; return }
+        // The newest request wins: a slow answer for a month the member has already left must not replace the page.
+        personalDataRequest += 1
+        let ticket = personalDataRequest, identity = binding
+        isLoadingPersonalData = true
+        defer { if ticket == personalDataRequest { isLoadingPersonalData = false } }
+        do {
+            let data = try await collectorService.personalData(binding: identity, month: month)
+            guard ticket == personalDataRequest, binding == identity else { return }
+            personalData = data
+            personalDataError = nil
+        } catch {
+            guard ticket == personalDataRequest, binding == identity else { return }
+            if (error as? CollectorError)?.status == 401 { handleCollectorError(error) }
+            personalDataError = (error as? CollectorError)?.message ?? "个人数据暂时无法加载，请检查网络后重试。"
+        }
     }
     public func refreshReviews() async {
         guard hasReviewService, isReviewSignedIn, !isRefreshingReviews, !isPerformingReviewAction else { return }
@@ -1446,6 +1476,7 @@ extension AppStore {
             try? discardCollectorOutbox()
             binding.savedAt = nil
             isReviewSignedIn = false; reviewBatches = []; appMessages = []
+            personalData = nil; personalDataError = nil
             processingSummaries = []; processingError = nil; lastTelemetryAttempt = nil
             persist()
         }
