@@ -680,6 +680,37 @@ test("shows each project's plain-language profile", async ({ page }) => {
   ).toHaveCount(0);
 });
 
+test("folds a long project list on the overview card and toggles it without opening the member", async ({
+  page,
+}) => {
+  const { data } = await setup(page);
+  const first = data.projects.find((p) => p.partnerId === "member-a")!;
+  for (const n of [1, 2, 3, 4])
+    data.projects.push({
+      ...first,
+      projectId: `extra-${n}`,
+      projectName: `附加项目 ${n}`,
+    });
+  await page.goto("/admin");
+  const card = page.locator(".lc-member", { hasText: "陈明" });
+  const rows = card.locator(".lc-member-projects li");
+  await expect(card.getByText("6 个项目")).toBeVisible();
+  await expect(rows).toHaveCount(4);
+  await card.getByRole("button", { name: "展开其余 2 个项目" }).click();
+  // The card itself is a link: the toggle must not take the user to the member page.
+  await expect(page).toHaveURL(/\/admin$/);
+  await expect(rows).toHaveCount(6);
+  await card.getByRole("button", { name: "收起" }).click();
+  await expect(rows).toHaveCount(4);
+  await expect(page).toHaveURL(/\/admin$/);
+  // Opening the card still works, and a member with few projects has no toggle at all.
+  await expect(
+    page.locator(".lc-member", { hasText: "林安" }).getByRole("button"),
+  ).toHaveCount(0);
+  await card.getByRole("heading", { name: "陈明" }).click();
+  await expect(page).toHaveURL(/\/admin\/members\/member-a$/);
+});
+
 test("charts a member's AI interactions by hour and by month, and pages between months", async ({
   page,
 }) => {
