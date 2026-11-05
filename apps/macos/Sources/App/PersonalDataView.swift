@@ -77,12 +77,15 @@ struct PersonalDataView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(store.personalData?.member.name ?? "个人数据").font(.app(size: 23, weight: .semibold)).accessibilityIdentifier("personal-member-name")
                 Text("该成员负责的项目进展与工作活跃度").font(.app(size: 13)).foregroundStyle(Palette.secondary)
+                Text("数据更新周期：会话活跃度和项目简介随本 App 的每次上传（每天或每周定时，也可手动）与分析更新；项目状态、阶段和进展在每期截止后生成工作卡片，经你审核确认后更新。打开本页或点右上角刷新时重新读取。")
+                    .font(.app(size: 12)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("personal-update-cycle")
             }
             Spacer()
             if store.isLoadingPersonalData { ProgressView().controlSize(.small) }
             IconButton(symbol: "arrow.clockwise", help: "刷新个人数据") { reload() }
                 .disabled(store.isLoadingPersonalData).accessibilityIdentifier("personal-data-refresh")
-        }.frame(height: 72).padding(.horizontal, 28).padding(.top, 10)
+        }.frame(minHeight: 72).padding(.horizontal, 28).padding(.vertical, 8)
     }
 
     private func errorBanner(_ message: String) -> some View {

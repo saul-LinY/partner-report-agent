@@ -105,6 +105,20 @@
   color: var(--accent);
   border-color: var(--accent);
 }
+.lc-member-more {
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px 0;
+  border: 0;
+  border-top: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.lc-member-more:hover {
+  color: var(--accent);
+}
 .lc-badge {
   flex: none;
   padding: 1px 9px;
