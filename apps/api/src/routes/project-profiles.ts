@@ -24,7 +24,7 @@ export async function loadProjectProfiles(scope: {
       partner_id: string;
       project_name: string;
       note: unknown;
-      updated_at: Date;
+      updated_at: Date | string;
       last_error: string | null;
       sessions: number;
     }[]
@@ -43,7 +43,7 @@ export async function loadProjectProfiles(scope: {
     projectName: row.project_name,
     // Re-checked on every read so tightened wording rules apply to stored notes too.
     note: dropInvalidClaims(projectProfileNoteSchema.parse(row.note)).note,
-    updatedAt: row.updated_at.toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
     sessions: row.sessions,
     failed: Boolean(row.last_error),
   }));

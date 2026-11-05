@@ -6,6 +6,7 @@ import {
   progressToday,
 } from "@partner-report/contracts/project-progress";
 import type { PersonalData } from "@partner-report/contracts/member-overview";
+import { emptyProfileNote } from "@partner-report/contracts/project-profile";
 import { buildApp } from "../server.js";
 
 const sha256 = (value: string) =>
@@ -51,6 +52,11 @@ suite("personal data API", () => {
         await tx`insert into collector_devices (id, tenant_id, team_id, partner_id, scope_instance_id, binding_code_id, device_name, version, token_hash)
           values (${randomUUID()}, ${f.tenant!}, ${f.team!}, ${partner}, ${instance}, ${binding}, 'Mac', '0.3', ${sha256(tokens[who])})`;
         await tx`insert into projects (id, tenant_id, team_id, name, aliases, allowed_paths, external_ids) values (${f[project]!}, ${f.tenant!}, ${f.team!}, ${name}, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)`;
+        await tx`insert into project_scope_entries (id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key, display_name, status, first_seen_period_key)
+          values (${randomUUID()}, ${f.tenant!}, ${f.team!}, ${partner}, ${instance}, ${`scope-${who}`}, ${name}, 'allowed', 'business-week')`;
+        await tx`insert into project_profiles (id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key, note)
+          values (${randomUUID()}, ${f.tenant!}, ${f.team!}, ${partner}, ${instance}, ${`scope-${who}`},
+            ${JSON.stringify({ ...emptyProfileNote, oneLine: { text: who === "alice" ? "甲的一句话" : "乙的一句话", refs: [] } })}::jsonb)`;
         await tx`insert into reviews (id, tenant_id, team_id, partner_id, period_id, state) values (${review}, ${f.tenant!}, ${f.team!}, ${partner}, ${f.period!}, 'IN_PROGRESS')`;
         await tx`insert into work_items (id, tenant_id, team_id, partner_id, period_id, review_id, project_id, title, status, review_status, fact_ids, payload)
           values (${randomUUID()}, ${f.tenant!}, ${f.team!}, ${partner}, ${f.period!}, ${review}, ${f[project]!}, ${name}, 'completed', 'approved', '[]'::jsonb,
@@ -64,6 +70,8 @@ suite("personal data API", () => {
     await app?.close();
     await sql.begin(async (tx) => {
       for (const table of [
+        "project_profiles",
+        "project_scope_entries",
         "work_items",
         "reviews",
         "collector_devices",
@@ -121,6 +129,9 @@ suite("personal data API", () => {
       ]);
       expect(data.projects[0]!.project.partnerId).toBe(f[who]);
       expect(data.headline.projectCount).toBe(1);
+      expect(data.projects[0]!.profile?.note.oneLine.text).toBe(
+        who === "alice" ? "甲的一句话" : "乙的一句话",
+      );
       expect(JSON.stringify(data)).not.toContain(
         who === "alice" ? "bob 今天" : "alice 今天",
       );
