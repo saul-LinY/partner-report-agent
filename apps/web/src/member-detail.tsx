@@ -157,7 +157,15 @@ export function MemberDetailPage() {
       <WorkspaceHeader
         title={member?.name ?? "成员"}
         icon={UserRound}
-        context="该成员负责的项目进展与工作活跃度"
+        context={
+          <div>
+            <p>该成员负责的项目进展与工作活跃度</p>
+            <p className="lc-update-cycle">
+              数据更新周期：会话活跃度和项目简介随成员 App
+              的每次上传（每天或每周定时，也可手动）与分析更新；项目状态、阶段和进展在每期截止后生成工作卡片，经本人审核确认后更新。页面每分钟自动刷新。
+            </p>
+          </div>
+        }
       >
         <Link className="button button-ghost" href="/admin">
           <ArrowLeft size={14} />

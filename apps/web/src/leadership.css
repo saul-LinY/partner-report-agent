@@ -631,3 +631,11 @@ a.lc-member:hover {
   opacity: 0.35;
   cursor: default;
 }
+
+.aw-context p {
+  margin: 0;
+}
+.aw-context .lc-update-cycle {
+  margin-top: 4px;
+  max-width: 72ch;
+}
