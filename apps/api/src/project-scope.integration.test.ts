@@ -8,6 +8,7 @@ import { sqlClient as sql } from "@partner-report/db";
 import { ApiError, type DomainActor } from "./common.js";
 import {
   decideProjectScopes,
+  loadProjectScopePolicy,
   registerProjectScopeCandidates,
   reopenProjectScopeReview,
 } from "./project-scope.js";
@@ -397,6 +398,71 @@ suite("project scope persistence", () => {
       `;
       expect(events).toEqual([
         { event_type: "project_scope.candidates.changed" },
+      ]);
+    } finally {
+      await sql`delete from outbox_events where aggregate_id = ${pluginInstanceId}`;
+      await sql`delete from project_scope_entries where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from project_scope_policies where plugin_instance_id = ${pluginInstanceId}`;
+      await sql`delete from plugin_instances where id = ${pluginInstanceId}`;
+      await sql`delete from partners where id = ${partnerId}`;
+    }
+  });
+
+  it("keeps entries imported from the plugin-era system out of the App's list without losing them", async () => {
+    const partnerId = randomUUID();
+    const pluginInstanceId = randomUUID();
+    const legacyAllowed = "a".repeat(64);
+    const legacyPending = "c".repeat(64);
+    const localKey = "b".repeat(64);
+    const newKey = "d".repeat(64);
+    const legacyIdentity = {
+      tenantId: fixture.tenantId,
+      teamId: fixture.teamId,
+      partnerId,
+      pluginInstanceId,
+    };
+    await sql.begin(async (tx) => {
+      await tx`insert into partners (id, tenant_id, team_id, email, display_name)
+        values (${partnerId}, ${fixture.tenantId}, ${fixture.teamId}, ${`legacy-${partnerId}@local.test`}, 'Legacy Partner')`;
+      await tx`insert into plugin_instances (id, tenant_id, team_id, partner_id, device_name, version, access_token_hash, refresh_token_hash, access_expires_at)
+        values (${pluginInstanceId}, ${fixture.tenantId}, ${fixture.teamId}, ${partnerId}, 'Legacy Device', '2.1.0', 'access', 'refresh', ${new Date(Date.now() + 60_000).toISOString()})`;
+      await tx`insert into project_scope_policies (plugin_instance_id, tenant_id, team_id, partner_id, version, initialized, initialized_at)
+        values (${pluginInstanceId}, ${fixture.tenantId}, ${fixture.teamId}, ${partnerId}, 5, true, now())`;
+      for (const [scopeKey, name, status, legacy] of [
+        [legacyAllowed, "Shared Name", "allowed", true],
+        [legacyPending, "Old Pending", "pending", true],
+        [localKey, "Local Project", "allowed", false],
+      ] as const)
+        await tx`insert into project_scope_entries (id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key, display_name, status, effective_from, decided_at, first_seen_period_key, session_count, legacy_import)
+          values (${randomUUID()}, ${fixture.tenantId}, ${fixture.teamId}, ${partnerId}, ${pluginInstanceId}, ${scopeKey}, ${name}, ${status}, now(), now(), 'scope-period', 1, ${legacy})`;
+    });
+    try {
+      // The App is offered only what it can map to a folder.
+      const seen = await loadProjectScopePolicy(legacyIdentity);
+      expect(seen.entries.map((entry) => entry.scopeKey)).toEqual([localKey]);
+      // A newly discovered project with the same name as a legacy one starts pending: nothing is inherited by name.
+      const afterDiscovery = await registerProjectScopeCandidates(
+        legacyIdentity,
+        {
+          periodKey: "scope-period",
+          candidates: [
+            { scopeKey: newKey, displayName: "Shared Name", sessionCount: 3 },
+          ],
+        },
+      );
+      const offered = Object.fromEntries(
+        afterDiscovery.entries.map((entry) => [entry.scopeKey, entry.status]),
+      );
+      expect(Object.keys(offered).sort()).toEqual([localKey, newKey]);
+      expect(offered[newKey]).toBe("pending");
+      // The imported rows are still there: they keep supplying project names to imported history.
+      const stored = await sql<Array<{ scope_key: string; status: string }>>`
+        select scope_key, status from project_scope_entries
+        where plugin_instance_id = ${pluginInstanceId} and legacy_import
+        order by scope_key`;
+      expect(stored).toEqual([
+        { scope_key: legacyAllowed, status: "allowed" },
+        { scope_key: legacyPending, status: "pending" },
       ]);
     } finally {
       await sql`delete from outbox_events where aggregate_id = ${pluginInstanceId}`;

@@ -330,6 +330,13 @@
       "when": 1794470410128,
       "tag": "0046_central_model_gateway_models",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794818132411,
+      "tag": "0047_legacy_scope_entries",
+      "breakpoints": true
     }
   ]
 }

@@ -71,7 +71,9 @@ export const collectorUploads = pgTable(
     partDigests: jsonb("part_digests").notNull(),
     status: text("status").notNull().default("receiving"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
-    analysisEnqueuedAt: timestamp("analysis_enqueued_at", { withTimezone: true }),
+    analysisEnqueuedAt: timestamp("analysis_enqueued_at", {
+      withTimezone: true,
+    }),
     ...timestamps(),
   },
   (t) => [index("collector_uploads_device_idx").on(t.deviceId, t.createdAt)],
@@ -119,9 +121,15 @@ export const appNotifications = pgTable(
   "app_notifications",
   {
     id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
-    teamId: uuid("team_id").notNull().references(() => teams.id),
-    partnerId: uuid("partner_id").notNull().references(() => partners.id),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
     sourceEventId: uuid("source_event_id").notNull(),
     kind: text("kind").notNull(),
     title: text("title").notNull(),
@@ -130,12 +138,24 @@ export const appNotifications = pgTable(
     targetId: text("target_id"),
     reviewVersion: integer("review_version"),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
-    deliveredDeviceId: uuid("delivered_device_id").references(() => collectorDevices.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deliveredDeviceId: uuid("delivered_device_id").references(
+      () => collectorDevices.id,
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    uniqueIndex("app_notifications_event_partner_unique").on(t.sourceEventId, t.partnerId),
-    index("app_notifications_pending_idx").on(t.tenantId, t.teamId, t.partnerId, t.createdAt),
+    uniqueIndex("app_notifications_event_partner_unique").on(
+      t.sourceEventId,
+      t.partnerId,
+    ),
+    index("app_notifications_pending_idx").on(
+      t.tenantId,
+      t.teamId,
+      t.partnerId,
+      t.createdAt,
+    ),
   ],
 );
 
@@ -569,6 +589,8 @@ export const projectScopeEntries = pgTable(
       .notNull()
       .defaultNow(),
     sessionCount: integer("session_count").notNull().default(0),
+    /** Imported from the plugin-era system: kept for project names and history, never offered to the App (it cannot map them to a local folder). */
+    legacyImport: boolean("legacy_import").notNull().default(false),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     ...timestamps(),
   },
@@ -1460,14 +1482,27 @@ export const agentJobs = pgTable(
   ],
 );
 
-export const collectorUploadJobs = pgTable("collector_upload_jobs", {
-  uploadId: uuid("upload_id").notNull().references(() => collectorUploads.id, { onDelete: "cascade" }),
-  jobId: uuid("job_id").notNull().references(() => agentJobs.id, { onDelete: "cascade" }),
-}, (t) => [primaryKey({ columns: [t.uploadId, t.jobId] }), index("collector_upload_jobs_job_idx").on(t.jobId)]);
+export const collectorUploadJobs = pgTable(
+  "collector_upload_jobs",
+  {
+    uploadId: uuid("upload_id")
+      .notNull()
+      .references(() => collectorUploads.id, { onDelete: "cascade" }),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => agentJobs.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.uploadId, t.jobId] }),
+    index("collector_upload_jobs_job_idx").on(t.jobId),
+  ],
+);
 
 export const serviceHeartbeats = pgTable("service_heartbeats", {
   name: text("name").primaryKey(),
-  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
   lastTickAt: timestamp("last_tick_at", { withTimezone: true }),
   status: text("status").notNull().default("starting"),
   errorCode: text("error_code"),
@@ -1478,8 +1513,12 @@ export const inspectionFindings = pgTable(
   "inspection_findings",
   {
     id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
-    teamId: uuid("team_id").notNull().references(() => teams.id),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
     fingerprint: text("fingerprint").notNull(),
     chain: text("chain").notNull(),
     rule: text("rule").notNull(),
@@ -1489,17 +1528,31 @@ export const inspectionFindings = pgTable(
     title: text("title").notNull(),
     evidence: jsonb("evidence").notNull().default({}),
     status: text("status").notNull().default("open"),
-    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
-    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     occurrences: integer("occurrences").notNull().default(1),
     analysis: jsonb("analysis"),
     analysisStatus: text("analysis_status").notNull().default("none"),
-    analyzedFingerprintAt: timestamp("analyzed_fingerprint_at", { withTimezone: true }),
+    analyzedFingerprintAt: timestamp("analyzed_fingerprint_at", {
+      withTimezone: true,
+    }),
   },
   (t) => [
-    uniqueIndex("inspection_findings_fingerprint_unique").on(t.tenantId, t.fingerprint),
-    index("inspection_findings_team_status_idx").on(t.tenantId, t.teamId, t.status, t.lastSeenAt),
+    uniqueIndex("inspection_findings_fingerprint_unique").on(
+      t.tenantId,
+      t.fingerprint,
+    ),
+    index("inspection_findings_team_status_idx").on(
+      t.tenantId,
+      t.teamId,
+      t.status,
+      t.lastSeenAt,
+    ),
   ],
 );
 
@@ -1507,17 +1560,25 @@ export const inspectionRuns = pgTable(
   "inspection_runs",
   {
     id: uuid("id").primaryKey(),
-    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
-    teamId: uuid("team_id").notNull().references(() => teams.id),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
     trigger: text("trigger").notNull(),
-    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     openedCount: integer("opened_count").notNull().default(0),
     resolvedCount: integer("resolved_count").notNull().default(0),
     openCount: integer("open_count").notNull().default(0),
     error: text("error"),
   },
-  (t) => [index("inspection_runs_team_idx").on(t.tenantId, t.teamId, t.startedAt)],
+  (t) => [
+    index("inspection_runs_team_idx").on(t.tenantId, t.teamId, t.startedAt),
+  ],
 );
 
 export const teamReports = pgTable(

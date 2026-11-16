@@ -80,7 +80,7 @@ export async function dispatchAppNotifications(limit = 100, tenantId?: string) {
         recipients =
           await tx`select tenant_id,team_id,partner_id,id::text as target_id,null::integer as version
           from plugin_instances pi where id::text=${event.aggregate_id} and tenant_id=${event.tenant_id} and status in ('active','collector')
-            and exists (select 1 from project_scope_entries e where e.plugin_instance_id=pi.id and e.status='pending')`;
+            and exists (select 1 from project_scope_entries e where e.plugin_instance_id=pi.id and e.status='pending' and not e.legacy_import)`;
       } else if (message?.target === "review") {
         recipients =
           await tx`select r.tenant_id,r.team_id,r.partner_id,r.id::text as target_id,r.version

@@ -1,0 +1,1 @@
+ALTER TABLE "project_scope_entries" ADD COLUMN "legacy_import" boolean DEFAULT false NOT NULL;

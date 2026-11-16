@@ -140,6 +140,7 @@ export async function loadProjectScopePolicy(
       from project_scope_entries
       where plugin_instance_id = ${identity.pluginInstanceId}
         and tenant_id = ${identity.tenantId}
+        and not legacy_import
       order by first_seen_at asc, display_name asc
     `,
     database<any[]>`
@@ -215,6 +216,7 @@ export async function registerProjectScopeCandidates(
               updated_at = now()
             where plugin_instance_id = ${identity.pluginInstanceId}
               and tenant_id = ${identity.tenantId} and status = 'allowed'
+              and not legacy_import
             returning scope_key
           `
         : [];
@@ -362,6 +364,7 @@ export async function registerProjectScopeCandidates(
           select 1 from project_scope_entries
           where plugin_instance_id = ${identity.pluginInstanceId}
             and tenant_id = ${identity.tenantId} and status = 'pending'
+            and not legacy_import
         )
         and exists (
           select 1 from plugin_binding_codes
@@ -435,7 +438,7 @@ export async function reopenProjectScopeReview(
 
     const entries = await tx<Array<{ count: number; pending: number }>>`
       select count(*)::int as count,
-        count(*) filter (where status = 'pending')::int as pending
+        count(*) filter (where status = 'pending' and not legacy_import)::int as pending
       from project_scope_entries
       where plugin_instance_id = ${pluginInstanceId}
         and tenant_id = ${actor.tenantId}
@@ -461,6 +464,7 @@ export async function reopenProjectScopeReview(
         updated_at = now()
       where plugin_instance_id = ${pluginInstanceId}
         and tenant_id = ${actor.tenantId}
+        and not legacy_import
     `;
     const versions = await tx<Array<{ version: number }>>`
       update project_scope_policies set
