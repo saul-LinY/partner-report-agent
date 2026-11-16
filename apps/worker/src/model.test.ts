@@ -686,6 +686,26 @@ describe("central structured model client", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it("does not fall back when the response was cut off by the output limit", async () => {
+      process.env.MODEL_API_KEY = "test-only-key";
+      const fetchMock = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: "incomplete",
+              incomplete_details: { reason: "max_output_tokens" },
+              output_text: "{",
+            }),
+          ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(run("deepseek-v4.1-flash")).rejects.toMatchObject({
+        code: "MODEL_OUTPUT_TOKEN_LIMIT",
+      });
+      // One request to the configured model, none to the rest of the chain.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("tries every model once and reports the configured model's failure", async () => {
       process.env.MODEL_API_KEY = "test-only-key";
       const fetchMock = vi

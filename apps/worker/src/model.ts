@@ -18,11 +18,13 @@ type GenerateInput = {
 // A fallback chain may spend up to this many request timeouts; job leases are sized to match.
 export const MODEL_CHAIN_TIME_FACTOR = 2;
 const MIN_FALLBACK_BUDGET_MS = 5_000;
-// Same API key for every model, so retrying another model cannot help these.
+// Retrying another model cannot help these: the API key is shared by every model, and a response cut off by the output
+// budget (the same for every model in the chain) is cut off again, after minutes of waiting per model.
 const NO_FALLBACK_CODES: Record<string, true> = {
   MODEL_NOT_CONFIGURED: true,
   MODEL_AUTH_FAILED: true,
   MODEL_QUOTA_EXHAUSTED: true,
+  MODEL_OUTPUT_TOKEN_LIMIT: true,
 };
 const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 240_000;
 const MAX_MODEL_REQUEST_TIMEOUT_MS = 900_000;
