@@ -3,6 +3,7 @@ import {
   isAllowedClient,
   isAllowedRequest,
   normalizeAddress,
+  parseAllowEntry,
 } from "./lan-gateway.mjs";
 
 describe("LAN gateway request filter", () => {
@@ -72,5 +73,54 @@ describe("LAN gateway client list", () => {
     expect(isAllowedClient(undefined, allow)).toBe(false);
     expect(isAllowedClient("", allow)).toBe(false);
     expect(isAllowedClient("172.20.10.208", [])).toBe(false);
+  });
+});
+
+describe("LAN gateway networks", () => {
+  const office = ["172.20.10.0/23"];
+
+  it("covers exactly the /23: both halves in, the neighbours out", () => {
+    for (const inside of [
+      "172.20.10.0",
+      "172.20.10.13",
+      "172.20.10.255",
+      "172.20.11.0",
+      "172.20.11.41",
+      "172.20.11.255",
+    ])
+      expect(isAllowedClient(inside, office), inside).toBe(true);
+    for (const outside of [
+      "172.20.9.255",
+      "172.20.12.0",
+      "172.21.10.5",
+      "10.20.10.13",
+      "192.168.1.5",
+    ])
+      expect(isAllowedClient(outside, office), outside).toBe(false);
+  });
+
+  it("works for mapped IPv4 peers and mixed lists, and never matches IPv6 or junk", () => {
+    expect(isAllowedClient("::ffff:172.20.11.41", office)).toBe(true);
+    expect(isAllowedClient("172.30.0.1", [...office, "172.30.0.1"])).toBe(true);
+    expect(isAllowedClient("fe80::1", office)).toBe(false);
+    expect(isAllowedClient("172.20.10.999", office)).toBe(false);
+    expect(isAllowedClient("not an address", office)).toBe(false);
+  });
+
+  it("refuses entries that are malformed or would let a whole region in", () => {
+    for (const bad of [
+      "0.0.0.0/0",
+      "172.20.0.0/8",
+      "10.0.0.0/15",
+      "172.20.10.0/33",
+      "172.20.10.0/x",
+      "172.20.10/23",
+      "a.b.c.d",
+      "1.2.3.4/24/3",
+      "",
+    ])
+      expect(() => parseAllowEntry(bad), bad).toThrow();
+    expect(() => parseAllowEntry("172.20.10.0/16")).not.toThrow();
+    expect(() => parseAllowEntry("172.20.10.208")).not.toThrow();
   });
 });

@@ -3,13 +3,15 @@
 //
 // Only what the App needs gets through: the collector endpoints, work cards and reviews, and /health. Everything else
 // (web login, admin API, other tenants' routes) answers 404, so the local admin account is never reachable from the LAN.
-// Only listed client addresses may even finish a TLS handshake. Requests are logged without headers or bodies.
+// Only listed clients (addresses or networks such as 172.20.10.0/23) may even finish a TLS handshake. Requests are
+// logged without headers or bodies.
 //
-//   LAN_GATEWAY_HOST=172.20.10.194 LAN_GATEWAY_ALLOW=172.20.10.208 node scripts/lan-gateway.mjs
+//   LAN_GATEWAY_ALLOW=172.20.10.0/23 node scripts/lan-gateway.mjs
 //   node scripts/lan-gateway.mjs fingerprint     # SHA-256 of the certificate, to build into the App
 //
-// Settings (environment): LAN_GATEWAY_HOST (required, one interface address; never 0.0.0.0), LAN_GATEWAY_ALLOW (required,
-// comma-separated client addresses), LAN_GATEWAY_PORT (4315), LAN_GATEWAY_UPSTREAM (http://127.0.0.1:4314),
+// Settings (environment): LAN_GATEWAY_ALLOW (required, comma-separated IPv4 addresses or CIDR networks, no wider than /16),
+// LAN_GATEWAY_HOST (0.0.0.0: the Mac's address changes with DHCP, so the allow list is the access control, not the bind
+// address), LAN_GATEWAY_PORT (4315), LAN_GATEWAY_UPSTREAM (http://127.0.0.1:4314),
 // LAN_GATEWAY_CERT / LAN_GATEWAY_KEY (.local/lan/server.crt, .local/lan/server.key).
 import http from "node:http";
 import https from "node:https";
@@ -42,9 +44,42 @@ export function normalizeAddress(address) {
   return typeof address === "string" ? address.replace(/^::ffff:/i, "") : "";
 }
 
+function ipv4ToNumber(text) {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (!match) return null;
+  const parts = match.slice(1).map(Number);
+  if (parts.some((part) => part > 255)) return null;
+  return ((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3];
+}
+
+/** `a.b.c.d` or `a.b.c.d/n`. Anything wider than /16 is refused so a typo cannot open the gateway to everyone. */
+export function parseAllowEntry(entry) {
+  const [address, bits, ...rest] = entry.split("/");
+  const base = ipv4ToNumber(address ?? "");
+  const prefix = bits === undefined ? 32 : Number(bits);
+  if (
+    base === null ||
+    rest.length > 0 ||
+    !Number.isInteger(prefix) ||
+    prefix < 16 ||
+    prefix > 32
+  )
+    throw new Error(`Invalid LAN_GATEWAY_ALLOW entry: ${entry}`);
+  const size = 2 ** (32 - prefix);
+  return { first: Math.floor(base / size) * size, size };
+}
+
 export function isAllowedClient(address, allowList) {
-  const client = normalizeAddress(address);
-  return client !== "" && allowList.includes(client);
+  const client = ipv4ToNumber(normalizeAddress(address));
+  if (client === null) return false;
+  return allowList.some((entry) => {
+    try {
+      const { first, size } = parseAllowEntry(entry);
+      return client >= first && client < first + size;
+    } catch {
+      return false;
+    }
+  });
 }
 
 const HOP_BY_HOP = new Set([
@@ -152,15 +187,12 @@ function main() {
     );
     return;
   }
-  const host = process.env.LAN_GATEWAY_HOST ?? "";
+  const host = process.env.LAN_GATEWAY_HOST ?? "0.0.0.0";
   const allow = (process.env.LAN_GATEWAY_ALLOW ?? "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
-  if (!host || host === "0.0.0.0" || host === "::")
-    throw new Error(
-      "Set LAN_GATEWAY_HOST to one interface address, not a wildcard.",
-    );
+  for (const entry of allow) parseAllowEntry(entry);
   if (allow.length === 0)
     throw new Error(
       "Set LAN_GATEWAY_ALLOW to the client addresses that may connect.",

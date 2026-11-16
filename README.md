@@ -34,7 +34,7 @@
 
 中台只使用云端模型网关，不使用本机模型。网关需要提供 OpenAI 兼容的 `/v1/responses`，在 `.env` 里配置 `MODEL_API_BASE_URL` 和 `MODEL_API_KEY`（见 `.env.example`）。
 
-团队可选模型及降级顺序在 `packages/contracts/src/models.ts`：`deepseek-v4.1-flash:cloud`（默认）、`deepseek-v4-pro:cloud`、`glm-5.2:cloud`、`kimi-k2.6:cloud`、`kimi-k2.7-code:cloud`、`minimax-m3:cloud`。某个模型失败时自动换下一个；密钥失效、额度耗尽、未配置这类所有模型共有的错误不降级。思考等级默认 `none`。细节见 [完整处理流水线](docs/APP_PIPELINE_OPERATIONS.md)。
+团队可选模型及降级顺序在 `packages/contracts/src/models.ts`，与模型网关 `/v1/models` 实际开放的模型一致：`deepseek-v4.1-flash`（默认）、`glm-5.3-flash`、`hy4`、`hy4-preview`、`mimo-v2.6-flash`。网关对没开放的模型返回 404（`model_not_found`），改网关密钥后要同步核对这份列表。某个模型失败时自动换下一个；密钥失效、额度耗尽、未配置这类所有模型共有的错误不降级。思考等级默认 `none`。细节见 [完整处理流水线](docs/APP_PIPELINE_OPERATIONS.md)。
 
 ## 本地运行
 

@@ -33,7 +33,7 @@ npm run app:services -- stop
 
 网关须提供 `/v1/responses`。不支持 developer 消息角色的网关设置 `MODEL_INSTRUCTION_ROLE=system`，默认为 `developer`。结构化输出仍经本地 Schema 和证据校验，不接受不匹配结果。
 
-**模型顺序与降级**：可选模型及降级优先级在 `packages/contracts/src/models.ts` 的 `centralModelIds`：`deepseek-v4.1-flash:cloud`（默认）、`deepseek-v4-pro:cloud`、`glm-5.2:cloud`、`kimi-k2.6:cloud`、`kimi-k2.7-code:cloud`、`minimax-m3:cloud`。每次生成先用团队设置的模型，失败（网关错误、超时、输出不合格）后按上述顺序换下一个模型，整条链最多占用 2 个请求超时时间。密钥失效、额度耗尽、未配置模型这类所有模型共有的错误不会降级。全部失败时抛出团队所选模型的错误，由任务队列按原规则延后重试。系统健康探测只检测所选模型，不降级。思考等级默认 `none`（`MODEL_REASONING_EFFORT` 可覆盖）。
+**模型顺序与降级**：可选模型及降级优先级在 `packages/contracts/src/models.ts` 的 `centralModelIds`：`deepseek-v4.1-flash`（默认）、`glm-5.3-flash`、`hy4`、`hy4-preview`、`mimo-v2.6-flash`（与网关 `/v1/models` 开放的模型一致）。每次生成先用团队设置的模型，失败（网关错误、超时、输出不合格）后按上述顺序换下一个模型，整条链最多占用 2 个请求超时时间。密钥失效、额度耗尽、未配置模型这类所有模型共有的错误不会降级。全部失败时抛出团队所选模型的错误，由任务队列按原规则延后重试。系统健康探测只检测所选模型，不降级。思考等级默认 `none`（`MODEL_REASONING_EFFORT` 可覆盖）。
 
 **Worker 循环**：Worker 由互相独立的循环组成——调度（每 15 秒：补登记、排卡片任务、审核超时、周报调度、巡检、清理）、2 个生成执行器（各自领一个任务，空闲每 5 秒取一次）和项目档案处理。模型调用不再阻塞调度；单个循环出错只在心跳里标记，不影响其他循环。每个任务的项目并发为 6，两个执行器合计最多约 12 个在途模型请求，网关约在 23 个在途时开始返回 429。
 

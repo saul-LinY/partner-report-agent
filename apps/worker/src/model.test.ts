@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { z } from "zod";
 import { aggregationResultSchema } from "@partner-report/contracts";
+import { centralModelIds } from "@partner-report/contracts/models";
 import { generateStructured, retryAfterMs } from "./model.js";
 
 const result = {
@@ -652,10 +653,10 @@ describe("central structured model client", () => {
         .mockResolvedValueOnce(new Response("{}", { status: 400 }))
         .mockImplementation(async () => success());
       vi.stubGlobal("fetch", fetchMock);
-      await run("deepseek-v4.1-flash:cloud");
+      await run("deepseek-v4.1-flash");
       expect(requestedModels(fetchMock)).toEqual([
-        "deepseek-v4.1-flash:cloud",
-        "deepseek-v4-pro:cloud",
+        "deepseek-v4.1-flash",
+        "glm-5.3-flash",
       ]);
     });
 
@@ -667,11 +668,11 @@ describe("central structured model client", () => {
         .mockResolvedValueOnce(new Response("{}", { status: 400 }))
         .mockImplementation(async () => success());
       vi.stubGlobal("fetch", fetchMock);
-      await run("glm-5.2:cloud");
+      await run("hy4");
       expect(requestedModels(fetchMock)).toEqual([
-        "glm-5.2:cloud",
-        "deepseek-v4.1-flash:cloud",
-        "deepseek-v4-pro:cloud",
+        "hy4",
+        "deepseek-v4.1-flash",
+        "glm-5.3-flash",
       ]);
     });
 
@@ -679,7 +680,7 @@ describe("central structured model client", () => {
       process.env.MODEL_API_KEY = "test-only-key";
       const fetchMock = vi.fn(async () => new Response("{}", { status: 401 }));
       vi.stubGlobal("fetch", fetchMock);
-      await expect(run("deepseek-v4.1-flash:cloud")).rejects.toMatchObject({
+      await expect(run("deepseek-v4.1-flash")).rejects.toMatchObject({
         code: "MODEL_AUTH_FAILED",
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -692,10 +693,10 @@ describe("central structured model client", () => {
         .mockResolvedValueOnce(new Response("{}", { status: 422 }))
         .mockImplementation(async () => new Response("{}", { status: 400 }));
       vi.stubGlobal("fetch", fetchMock);
-      await expect(run("deepseek-v4.1-flash:cloud")).rejects.toMatchObject({
+      await expect(run("deepseek-v4.1-flash")).rejects.toMatchObject({
         status: 422,
       });
-      expect(fetchMock).toHaveBeenCalledTimes(6);
+      expect(fetchMock).toHaveBeenCalledTimes(centralModelIds.length);
     });
   });
 });
