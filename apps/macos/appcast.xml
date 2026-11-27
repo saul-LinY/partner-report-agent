@@ -4,16 +4,16 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>weekly report</title>
         <item>
-            <title>0.2.11</title>
-            <pubDate>Thu, 05 Nov 2026 16:17:57 +0800</pubDate>
-            <sparkle:version>15</sparkle:version>
-            <sparkle:shortVersionString>0.2.11</sparkle:shortVersionString>
+            <title>0.2.13</title>
+            <pubDate>Thu, 26 Nov 2026 18:22:54 +0800</pubDate>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>0.2.13</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/saul-LinY/partner-report-agent/releases/download/macos-v0.2.11/weekly-report-0.2.11-15.zip" length="7803336" type="application/octet-stream" sparkle:edSignature="nlu4iCAYziFInXlSHmRwD+W89XoNyCyODZyZ1Sb9/W9+NQVOpFmwKq29DNzshVuh+76iKsTDyz2m+Jt11DCxBg=="></enclosure>
+            <enclosure url="https://github.com/saul-LinY/partner-report-agent/releases/download/macos-v0.2.13/weekly-report-0.2.13-17.zip" length="7820072" type="application/octet-stream" sparkle:edSignature="znOQolWX8+Hz/dgo2VyLNTu/T/QrEoFWskQpi+tSo1Zc+GSPuCz5UmKv7LoHggsnw0CGgwkv/sR0YztW/Y/CBw=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: qHdjvPCc0spc2Olc1Hafqt7xyJec0B2QOkoEZP6FzhvZpaYi/C9+GukxiYoUO06fP+6tDBUBJF8aMdqUr6DvCA==
+edSignature: 7qGEAFzwiC0OJ9XxO99vIMSW2180c/MLGpD5Ub7t4d389fFMSHB9ZfjUk1GNRsM9/Oy/55jeThgtm+0LjG88BQ==
 length: 1157
 -->
