@@ -128,6 +128,7 @@ export const collectorLogDetailsSchema = z
         "omp",
         "grokbuild",
         "agy",
+        "deepseek",
       ])
       .optional(),
     retryAttempt: z.number().int().min(0).max(1_000).optional(),

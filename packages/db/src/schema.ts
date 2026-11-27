@@ -192,7 +192,7 @@ export const teams = pgTable(
       frequency: "weekly",
       weekStartsOn: 1,
       factCutoffWeekday: 5,
-      factCutoffTime: "17:00",
+      factCutoffTime: "16:00",
     }),
     evidenceExcerptEnabled: boolean("evidence_excerpt_enabled")
       .notNull()
@@ -1741,6 +1741,79 @@ export const projectParticipationVersions = pgTable(
     uniqueIndex("project_participation_version_unique").on(
       table.participationId,
       table.version,
+    ),
+  ],
+);
+
+/** A person's explicit resolve/reopen of one blocker on a member's project; overrides work-card judgments. */
+export const projectBlockerMarks = pgTable(
+  "project_blocker_marks",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id),
+    blockerDate: text("blocker_date").notNull(),
+    blockerTitle: text("blocker_title").notNull(),
+    resolved: boolean("resolved").notNull(),
+    resolvedOn: text("resolved_on").notNull(),
+    actorType: text("actor_type").notNull(),
+    actorId: uuid("actor_id").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_blocker_mark_unique").on(
+      table.tenantId,
+      table.teamId,
+      table.partnerId,
+      table.projectId,
+      table.blockerDate,
+      table.blockerTitle,
+    ),
+  ],
+);
+
+/**
+ * The weekly leadership panel's data, frozen when it is published (Monday 13:00 after the period cutoff).
+ * Leadership pages read the newest row; later member decisions never rewrite it.
+ */
+export const leadershipSnapshots = pgTable(
+  "leadership_snapshots",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id),
+    periodId: uuid("period_id")
+      .notNull()
+      .references(() => reportPeriods.id),
+    periodKey: text("period_key").notNull(),
+    cutoffAt: timestamp("cutoff_at", { withTimezone: true }).notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("leadership_snapshot_period_unique").on(
+      table.tenantId,
+      table.teamId,
+      table.periodId,
     ),
   ],
 );

@@ -151,6 +151,7 @@ suite("native upload to reviewed report pipeline", () => {
                   {
                     kind: "outcome",
                     text: "完成上传回执校验，连接中断后可安全续传。",
+                    plain: "上传中断后可以接着传",
                     confidence: "high",
                     date: evidence.date,
                     evidenceRefs: [evidence.ref],
@@ -200,6 +201,7 @@ suite("native upload to reviewed report pipeline", () => {
               status: "in_progress",
               projectStatus: "development",
               projectStatusReason: "已实现回执",
+              currentFocus: "校验上传回执",
               overview: "完成整包回执校验，避免上传状态误报。",
               dailyProgress: b.outcomeMaterial.daily.map((d: any) => ({
                 date: d.date,

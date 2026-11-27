@@ -17,6 +17,8 @@ public struct CollectorPolicy: Codable, Equatable, Sendable {
     public var version: Int
     public var entries: [Entry]
     public var currentPeriod: Period?
+    /// Server-side member name; follows admin renames without re-binding.
+    public var partnerName: String?
     public struct Entry: Codable, Equatable, Identifiable, Sendable {
         public var scopeKey: String
         public var displayName: String
@@ -152,7 +154,7 @@ public struct CollectorLogDetails: Codable, Equatable, Sendable {
         return Int(elapsed.seconds) * 1000 + Int(elapsed.attoseconds / 1_000_000_000_000_000)
     }
 
-    private static let environment: (appVersion: String, osVersion: String) = {
+    static let environment: (appVersion: String, osVersion: String) = {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         return (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.1",
                 "macOS \(version.majorVersion).\(version.minorVersion).\(version.patchVersion)")
@@ -325,8 +327,8 @@ public protocol CollectorServing: Sendable {
     func acknowledgeNotifications(binding: LocalBinding, ids: [String]) async throws
     func reviews(binding: LocalBinding) async throws -> [ReviewBatch]
     func perform(binding: LocalBinding, action: CardAction, cardID: String, reviewID: String, version: Int) async throws
-    /// The member's own member-detail page; `month` ("YYYY-MM") pages the progress calendar, nil is the current month.
-    func personalData(binding: LocalBinding, month: String?) async throws -> PersonalData
+    /// The member's own 本周进展 page for the current weekly period, read fresh from the system.
+    func personalData(binding: LocalBinding) async throws -> PersonalData
     /// Events recorded by the transport itself (per-part upload outcomes); returned once and cleared.
     func drainLogs() async -> [CollectorLog]
 }
@@ -338,7 +340,7 @@ public extension CollectorServing {
     func acknowledgeNotifications(binding: LocalBinding, ids: [String]) async throws { throw CollectorError(status: 501, message: "通知回执服务不可用。") }
     func reviews(binding: LocalBinding) async throws -> [ReviewBatch] { [] }
     func perform(binding: LocalBinding, action: CardAction, cardID: String, reviewID: String, version: Int) async throws { throw CollectorError(status: 501, message: "审核服务不可用。") }
-    func personalData(binding: LocalBinding, month: String?) async throws -> PersonalData { throw CollectorError(status: 501, message: "个人数据服务不可用。") }
+    func personalData(binding: LocalBinding) async throws -> PersonalData { throw CollectorError(status: 501, message: "本周进展服务不可用。") }
     func drainLogs() async -> [CollectorLog] { [] }
 }
 
@@ -390,7 +392,7 @@ public actor HTTPCollectorService: CollectorServing {
         return CollectorError(status: 503, message: "钥匙串暂时不可用，解锁后将自动重试。")
     }
     public func claim(binding: LocalBinding, code: String) async throws -> CollectorClaim {
-        let data = try await request(binding, "bindings/claim", body: ["bindingCode": code, "name": binding.name, "deviceName": Host.current().localizedName ?? "Mac", "version": "0.2.1"], authenticated: false)
+        let data = try await request(binding, "bindings/claim", body: ["bindingCode": code, "name": binding.name, "deviceName": Host.current().localizedName ?? "Mac", "version": CollectorLogDetails.environment.appVersion], authenticated: false)
         struct Secret: Decodable { var token: String }
         let claim = try CollectorJSON.decoder().decode(CollectorClaim.self, from: data)
         let secret = try JSONDecoder().decode(Secret.self, from: data)
@@ -464,8 +466,8 @@ public actor HTTPCollectorService: CollectorServing {
         let receipt = try JSONDecoder().decode(Receipt.self, from: data)
         guard receipt.ok, Set(receipt.accepted) == Set(ids) else { throw CollectorError(status: 502, message: "通知回执尚未确认，将自动重试。") }
     }
-    public func personalData(binding: LocalBinding, month: String?) async throws -> PersonalData {
-        try JSONDecoder().decode(PersonalData.self, from: await request(binding, "personal-data", query: month.map { [URLQueryItem(name: "month", value: $0)] } ?? []))
+    public func personalData(binding: LocalBinding) async throws -> PersonalData {
+        try JSONDecoder().decode(PersonalData.self, from: await request(binding, "personal-data"))
     }
     public func reviews(binding: LocalBinding) async throws -> [ReviewBatch] {
         struct Index: Decodable { var reviews: [ReviewBatch.Header] }
@@ -491,10 +493,9 @@ public actor HTTPCollectorService: CollectorServing {
         }
         _ = try await request(binding, "v1/reviews/\(reviewID)/items/\(cardID)/\(command)", body: body, collectorPath: false)
     }
-    private func request(_ binding: LocalBinding, _ path: String, body: [String: Any]? = nil, authenticated: Bool = true, collectorPath: Bool = true, query: [URLQueryItem] = []) async throws -> Data {
+    private func request(_ binding: LocalBinding, _ path: String, body: [String: Any]? = nil, authenticated: Bool = true, collectorPath: Bool = true) async throws -> Data {
         guard binding.isValid, let base = URL(string: binding.serviceAddress) else { throw URLError(.badURL) }
-        var url = base.appending(path: collectorPath ? "v1/collector/" + path : path)
-        if !query.isEmpty { url.append(queryItems: query) }
+        let url = base.appending(path: collectorPath ? "v1/collector/" + path : path)
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if authenticated { request.setValue("Bearer " + (try token(binding)), forHTTPHeaderField: "Authorization") }

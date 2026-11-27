@@ -4,9 +4,11 @@ import {
   readProjectStatus,
 } from "@partner-report/contracts/project-status";
 import { stableJsonHash } from "@partner-report/contracts/hash";
-import { sqlClient as sql } from "@partner-report/db";
-
-export const REVIEW_AUTO_APPROVAL_DELAY_MS = 3 * 24 * 60 * 60 * 1_000;
+import {
+  REVIEW_DEADLINE_ACTOR,
+  sqlClient as sql,
+  weeklyReviewSchedule,
+} from "@partner-report/db";
 
 type ExpiredReview = {
   id: string;
@@ -15,7 +17,9 @@ type ExpiredReview = {
   partner_id: string;
   period_id: string;
   version: number;
-  first_sent_at: Date | string;
+  /** The shared client returns timestamps as strings (drizzle replaces the driver's date parsers). */
+  cutoff_at: string;
+  timezone: string;
 };
 
 export type AutoApprovalResult = {
@@ -24,19 +28,17 @@ export type AutoApprovalResult = {
   skippedReviews: number;
 };
 
+/** The instant unanswered cards of a period are approved: Monday 12:00 (team time) after its cutoff. */
+export function reviewAutoApprovalAt(cutoffAt: Date, timezone: string) {
+  return weeklyReviewSchedule(cutoffAt, timezone).autoApproveAt;
+}
+
 export function isReviewAutoApprovalDue(
-  firstSentAt: Date | string | null | undefined,
+  cutoffAt: Date,
+  timezone: string,
   now = new Date(),
 ) {
-  if (!firstSentAt) return false;
-  const timestamp =
-    firstSentAt instanceof Date
-      ? firstSentAt.getTime()
-      : Date.parse(firstSentAt);
-  return (
-    Number.isFinite(timestamp) &&
-    timestamp <= now.getTime() - REVIEW_AUTO_APPROVAL_DELAY_MS
-  );
+  return reviewAutoApprovalAt(cutoffAt, timezone).getTime() <= now.getTime();
 }
 
 function autoApprovedPayload(
@@ -46,41 +48,37 @@ function autoApprovedPayload(
 ) {
   return {
     ...payload,
+    autoApproved: true,
     projectStatus:
       readProjectStatus(payload) ?? defaultProjectStatus(workStatus),
     projectStatusConfirmedAt: confirmedAt,
   };
 }
 
-/** Approve unanswered work cards after three days and enqueue the normal completion flow. */
+/** Approve still-pending work cards once the period's Monday 12:00 deadline has passed. */
 export async function autoApproveExpiredReviews(
   now = new Date(),
 ): Promise<AutoApprovalResult> {
-  const deadline = new Date(now.getTime() - REVIEW_AUTO_APPROVAL_DELAY_MS);
-  const candidates = await sql<ExpiredReview[]>`
+  // The deadline always falls after the cutoff, so a future cutoff can never be due.
+  const open = await sql<ExpiredReview[]>`
     select r.id, r.tenant_id, r.team_id, r.partner_id, r.period_id, r.version,
-      first_delivery.first_sent_at
+      rp.cutoff_at, rp.timezone
     from reviews r
-    join lateral (
-      -- The review window restarts when cards are regenerated, counted from the
-      -- first message that carried the new content; reminders do not restart it.
-      select min(d.delivered_at) as first_sent_at
-      from app_notifications d
-      where d.tenant_id = r.tenant_id and d.team_id = r.team_id
-        and d.partner_id = r.partner_id and d.target_type = 'review'
-        and d.kind = 'work_items.draft.created' and d.target_id = r.id::text
-        and d.review_version = r.version
-        and d.delivered_at is not null
-        and d.delivered_at >= coalesce((
-          select max(v.created_at) from work_item_versions v
-          where v.tenant_id = r.tenant_id and v.review_id = r.id
-            and v.source in ('generated', 'regenerated')
-        ), '-infinity'::timestamptz)
-    ) first_delivery on true
+    join report_periods rp on rp.id = r.period_id and rp.tenant_id = r.tenant_id
     where r.state = 'IN_PROGRESS' and r.pending_count > 0
-      and first_delivery.first_sent_at <= ${deadline.toISOString()}
-    order by first_delivery.first_sent_at, r.id
+      and rp.cutoff_at <= ${now.toISOString()}
+      -- A card being regenerated is not final; wait for the new content.
+      and not exists (
+        select 1 from agent_jobs j
+        where j.tenant_id = r.tenant_id and j.type = 'AGGREGATE_WORK_ITEMS'
+          and j.status in ('PENDING', 'LEASED', 'RETRY_WAIT')
+          and j.input_payload->>'reviewId' = r.id::text
+      )
+    order by rp.cutoff_at, r.id
   `;
+  const candidates = open.filter((review) =>
+    isReviewAutoApprovalDue(new Date(review.cutoff_at), review.timezone, now),
+  );
 
   let approvedReviews = 0;
   let approvedItems = 0;
@@ -236,7 +234,7 @@ export async function autoApproveExpiredReviews(
           ${snapshotId}, ${candidate.tenant_id}, ${candidate.team_id},
           ${candidate.partner_id}, ${candidate.period_id}, ${candidate.id},
           ${nextVersion}, ${checksum}, ${JSON.stringify(snapshotPayload)}::jsonb,
-          null, 'system', 'review-timeout-3d', now()
+          null, 'system', ${REVIEW_DEADLINE_ACTOR}, now()
         )
       `;
       await tx`
@@ -250,7 +248,7 @@ export async function autoApproveExpiredReviews(
             snapshotId,
             checksum,
             excludedWorkItemIds,
-            source: "review-timeout-3d",
+            source: REVIEW_DEADLINE_ACTOR,
           })}::jsonb
         )
       `;
@@ -260,11 +258,13 @@ export async function autoApproveExpiredReviews(
           target_type, target_id, request_id, metadata
         ) values (
           ${randomUUID()}, ${candidate.tenant_id}, ${candidate.team_id},
-          'system', 'review-timeout-3d', 'review.auto_approved_after_timeout',
+          'system', ${REVIEW_DEADLINE_ACTOR}, 'review.auto_approved_at_deadline',
           'review', ${candidate.id}, ${randomUUID()},
           ${JSON.stringify({
-            firstSentAt: candidate.first_sent_at,
-            delayHours: 72,
+            autoApproveAt: reviewAutoApprovalAt(
+              new Date(candidate.cutoff_at),
+              candidate.timezone,
+            ).toISOString(),
             approvedItemCount: pendingItems.length,
           })}::jsonb
         )

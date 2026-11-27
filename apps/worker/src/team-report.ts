@@ -9,7 +9,8 @@ import { z } from "zod";
 import { generateStructured } from "./model.js";
 
 export const TEAM_REPORT_PROMPT_VERSION = "2026-09-21.team.v23";
-const PROJECT_CONCURRENCY = 6;
+// Matches PROJECT_GENERATION_CONCURRENCY in generation.ts: three jobs share the gateway's ~16 in-flight requests.
+const PROJECT_CONCURRENCY = 4;
 type Progress = z.infer<typeof teamReportProjectProgressSchema>;
 type Project = Omit<Progress, "progress"> & {
   ref: string;

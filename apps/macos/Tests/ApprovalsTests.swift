@@ -175,4 +175,42 @@ final class ApprovalsTests: XCTestCase {
         XCTAssertTrue(store.pendingCards.isEmpty)
         XCTAssertFalse(store.hasReviewService)
     }
+    func testCardDecodesFocusBlockersAndResolvedBlockersAndIgnoresRetiredDailyProgress() throws {
+        let json = """
+        {"review":{"id":"r1","state":"IN_PROGRESS","version":3},
+         "period":{"periodKey":"2026-W46","startsAt":"2026-11-06T08:00:00.000Z","cutoffAt":"2026-11-13T08:00:00.000Z",
+                   "autoApproveAt":"2026-11-16T04:00:00.000Z","publishAt":"2026-11-16T05:00:00.000Z","timezone":"Asia/Shanghai"},
+         "regenerationJobs":[],
+         "items":[{"id":"c1","title":"app_novel","project_name":"app_novel","status":"in_progress","review_status":"pending",
+           "payload":{"overview":"完成订阅接入。","currentFocus":"接入订阅付费，准备首次上架",
+             "dailyProgress":[{"date":"2026-11-10","summary":"旧的每日进展"}],
+             "keyEvents":[
+               {"date":"2026-11-12","type":"blocker","title":"内容安全审核方案未定","detail":"只靠模型把关。","neededSupport":"决定是否人工复核"},
+               {"date":"2026-11-11","type":"decision","title":"先隐藏订阅入口","detail":"首版不上线购买。"}],
+             "resolvedBlockers":[{"date":"2026-11-01","title":"订阅入口只是空壳","resolvedOn":"2026-11-11","evidence":"11月11日决定首版先隐藏订阅入口"}]}}]}
+        """
+        let batch = try JSONDecoder().decode(ReviewBatch.self, from: Data(json.utf8))
+        let payload = batch.items[0].payload
+        XCTAssertEqual(payload.currentFocus, "接入订阅付费，准备首次上架")
+        XCTAssertEqual(payload.blockers.map(\.title), ["内容安全审核方案未定"])
+        XCTAssertEqual(payload.blockers.first?.neededSupport, "决定是否人工复核")
+        XCTAssertEqual(payload.resolvedBlockers?.first?.evidence, "11月11日决定首版先隐藏订阅入口")
+        let period = try XCTUnwrap(batch.period)
+        XCTAssertEqual(period.publishText, "11月16日（周一）13:00")
+        XCTAssertEqual(period.autoApproveText, "11月16日 12:00")
+        // Cutoff to the automatic approval is exactly 2 days 20 hours.
+        let now = try XCTUnwrap(period.cutoffDate)
+        XCTAssertEqual(period.countdown(now: now), "2 天 20 小时")
+        XCTAssertNil(period.countdown(now: try XCTUnwrap(period.autoApproveDate)))
+    }
+    func testOlderCardsWithoutFocusOrPeriodStillDecode() throws {
+        let json = """
+        {"review":{"id":"r1","state":"IN_PROGRESS","version":1},"regenerationJobs":[],
+         "items":[{"id":"c1","title":"旧卡","status":"in_progress","review_status":"approved","payload":{"summary":"旧总结"}}]}
+        """
+        let batch = try JSONDecoder().decode(ReviewBatch.self, from: Data(json.utf8))
+        XCTAssertNil(batch.period)
+        XCTAssertNil(batch.items[0].payload.currentFocus)
+        XCTAssertTrue(batch.items[0].payload.blockers.isEmpty)
+    }
 }

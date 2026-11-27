@@ -5,7 +5,7 @@ import { z } from "zod";
 import { generateStructured, ModelGatewayError } from "./model.js";
 
 export const OUTCOME_PROMPT_VERSION = "2026-09-07.project-outcomes.v1";
-export const CARD_PROMPT_VERSION = "2026-11-03.project-card.v11";
+export const CARD_PROMPT_VERSION = "2026-11-18.project-card.v14";
 
 const outcomeSchema = z
   .object({
@@ -202,7 +202,6 @@ export async function loadProjectOutcomeDraft(
       instructions: projectOutcomeInstructions,
       input,
       model,
-      maxOutputTokens: 8192,
     }),
     input,
   );
@@ -241,6 +240,7 @@ export function projectCardWritingInput(
           input.projectBuckets?.[0]?.previousProjectStatus ?? null,
         previousProjectOutlook:
           input.projectBuckets?.[0]?.previousProjectOutlook ?? null,
+        openBlockers: input.projectBuckets?.[0]?.openBlockers ?? [],
       },
     ],
     ...(input.currentCard ? { currentCard: input.currentCard } : {}),

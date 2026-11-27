@@ -153,7 +153,7 @@ describe("project progress sources", () => {
       expect(result.memberDays.size).toBe(0);
     },
   );
-  it("does not replace missing daily progress with a weekly summary or creation date", () => {
+  it("does not replace missing daily progress with a weekly summary or creation date, nor flag the card as undated", () => {
     const result = assembleProjectProgress({
       ...defaults,
       cards: [{ ...card, payload: { summary: "整周摘要" } }],
@@ -164,8 +164,60 @@ describe("project progress sources", () => {
       contributionDays: 0,
       firstContributionDate: null,
       lastContributionDate: null,
-      undatedCount: 1,
+      undatedCount: 0,
     });
+  });
+  it("carries a blocker's needed support and the evidence that resolved it", () => {
+    const blocker = {
+      type: "blocker",
+      title: "等待审批",
+      detail: "审批未通过，无法上线。",
+    };
+    const result = assembleProjectProgress({
+      ...defaults,
+      cards: [
+        {
+          ...card,
+          payload: {
+            keyEvents: [
+              {
+                ...blocker,
+                date: "2026-09-02",
+                neededSupport: " 请leader批准上线 ",
+              },
+              { ...blocker, date: "2026-09-03", title: "接口超时" },
+              {
+                date: "2026-09-04",
+                type: "milestone",
+                title: "联调完成",
+                detail: "主要链路已跑通。",
+                neededSupport: "不属于里程碑",
+              },
+            ],
+            resolvedBlockers: [
+              {
+                date: "2026-09-03",
+                title: "接口超时",
+                resolvedOn: "2026-09-05",
+                evidence: "已扩容，连续三天无超时",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const events = result.projects[0]!.keyEvents;
+    const byTitle = (title: string) => events.find((e) => e.title === title);
+    expect(byTitle("等待审批")).toMatchObject({
+      neededSupport: "请leader批准上线",
+    });
+    expect(byTitle("等待审批")?.resolvedOn).toBeUndefined();
+    expect(byTitle("接口超时")).toMatchObject({
+      neededSupport: null,
+      resolvedOn: "2026-09-05",
+      resolvedEvidence: "已扩容，连续三天无超时",
+    });
+    expect(byTitle("联调完成")).not.toHaveProperty("neededSupport");
   });
   it("deduplicates overlapping member days, without summing project duration", () => {
     const result = assembleProjectProgress({

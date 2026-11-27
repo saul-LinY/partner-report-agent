@@ -9,7 +9,7 @@ public enum AppPage: String, CaseIterable, Identifiable, Sendable {
         case .sessions: "项目会话"
         case .approvals: "待审批项"
         case .uploads: "上传记录"
-        case .personal: "个人数据"
+        case .personal: "本周进展"
         case .privacy: "隐私说明"
         case .settings: "系统设置"
         }
@@ -45,7 +45,7 @@ public enum SessionUploadFilter: CaseIterable, Sendable {
 }
 
 public enum Agent: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude, opencode, pi, hermes, omp, grokbuild, agy
+    case codex, claude, opencode, pi, hermes, omp, grokbuild, agy, deepseek
     public var id: String { rawValue }
     public var name: String {
         switch self {
@@ -57,6 +57,7 @@ public enum Agent: String, Codable, CaseIterable, Identifiable, Sendable {
         case .hermes: "Hermes"
         case .grokbuild: "Grok Build"
         case .agy: "Antigravity"
+        case .deepseek: "DeepSeek Harness"
         }
     }
     public var defaultPath: String {
@@ -69,6 +70,7 @@ public enum Agent: String, Codable, CaseIterable, Identifiable, Sendable {
         case .hermes: "~/.hermes"
         case .grokbuild: "~/.grok/sessions"
         case .agy: "~/.gemini/antigravity-cli/brain"
+        case .deepseek: "~/Library/Application Support/dsh-desktop/harness/sessions"
         }
     }
     /// A detected directory is not evidence that the complete reading flow works.

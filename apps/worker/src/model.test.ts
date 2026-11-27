@@ -686,6 +686,24 @@ describe("central structured model client", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it("reports a model the gateway does not serve apart from rejected input, still trying the other models", async () => {
+      process.env.MODEL_API_KEY = "test-only-key";
+      const missing = vi.fn(async () => new Response("{}", { status: 404 }));
+      vi.stubGlobal("fetch", missing);
+      await expect(run("deepseek-v4.1-flash")).rejects.toMatchObject({
+        code: "MODEL_NOT_FOUND",
+        retryable: false,
+      });
+      expect(missing.mock.calls.length).toBeGreaterThan(1);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response("{}", { status: 400 })),
+      );
+      await expect(run("deepseek-v4.1-flash")).rejects.toMatchObject({
+        code: "MODEL_REQUEST_REJECTED",
+      });
+    });
+
     it("does not fall back when the response was cut off by the output limit", async () => {
       process.env.MODEL_API_KEY = "test-only-key";
       const fetchMock = vi.fn(

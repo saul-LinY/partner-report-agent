@@ -141,8 +141,6 @@ export function ReviewQueuePage() {
     <div className="page admin-page management-page review-queue-page">
       <AdminHeader
         title="工作卡审核"
-        icon={ClipboardCheck}
-        context="项目工作卡片"
         refreshing={query.isFetching}
         onRefresh={() => void query.refetch()}
       />

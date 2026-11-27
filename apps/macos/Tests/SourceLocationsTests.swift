@@ -85,6 +85,30 @@ final class SourceLocationsTests: XCTestCase {
         XCTAssertEqual(snapshot.sessions.filter { $0.agent == .omp }.count, 2)
         XCTAssertEqual(snapshot.sessions.filter { $0.agent == .grokbuild }.count, 0)
     }
+    func testDeepSeekHarnessDesktopCLIDSHHomeAndManualStoresAreAllResolved() throws {
+        let home = try home(); defer { try? FileManager.default.removeItem(at: home) }
+        let desktop = try folder(home, "Library/Application Support/dsh-desktop/harness/sessions")
+        let cli = try folder(home, ".dsh/sessions")
+        let custom = try folder(home, "elsewhere/dsh/sessions")
+        let manual = try folder(home, "manual-dsh")
+        func deepseek(_ environment: [String: String], _ overrides: [String: String] = [:]) -> Set<String> {
+            Set(SourceLocations(home: home, overrides: overrides, environment: environment).resolve().locations.filter { $0.agent == .deepseek && $0.exists }.map(\.sessionPath))
+        }
+        XCTAssertEqual(deepseek([:]), Set([desktop, cli].map { $0.resolvingSymlinksInPath().path }))
+        XCTAssertTrue(deepseek(["DSH_HOME": custom.deletingLastPathComponent().path]).contains(custom.resolvingSymlinksInPath().path))
+        // A manual folder with no `sessions` child is itself the session store.
+        XCTAssertTrue(deepseek([:], ["deepseek": manual.path]).contains(manual.resolvingSymlinksInPath().path))
+    }
+    func testDeepSeekHarnessWithoutLocatorStaysUnreadAndNamesTheMissingComponent() throws {
+        let home = try home(); defer { try? FileManager.default.removeItem(at: home) }
+        let project = try folder(home, "work/project/.git").deletingLastPathComponent()
+        let session = try folder(home, ".dsh/sessions/--work-project--/session-1")
+        try Data("compressed".utf8).write(to: session.appending(path: "session.v4.jsonl.zstd"))
+        _ = project
+        let snapshot = LocalDiscovery(home: home, temporaryRoots: [], metadataReader: nil).scan()
+        XCTAssertEqual(snapshot.sessions.filter { $0.agent == .deepseek }.count, 0)
+        XCTAssertTrue(snapshot.issues.contains("DeepSeek Harness：压缩历史需要本机定位组件。"))
+    }
     func testCodexWithoutIndexAndExternalSQLiteAllVersions() throws {
         let home = try home(); defer { try? FileManager.default.removeItem(at: home) }
         let project = try folder(home, "work/project/.git").deletingLastPathComponent()

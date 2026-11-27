@@ -12,7 +12,6 @@ import {
   RefreshCw,
   RotateCw,
   TerminalSquare,
-  UserRound,
   Users,
 } from "lucide-react";
 import { Link, useSearchParams } from "wouter";
@@ -277,11 +276,7 @@ export function UserLogsPage() {
 
   return (
     <div className="page admin-page monitoring-page user-logs-page">
-      <WorkspaceHeader
-        title="用户日志"
-        icon={UserRound}
-        context="按成员查看 App 的运行状态、会话包上传批次与运行日志"
-      >
+      <WorkspaceHeader title="用户日志">
         <div className="sm-refresh-time">
           <span className={`sm-live-dot ${autoRefresh ? "" : "is-paused"}`} />
           <span>

@@ -28,7 +28,7 @@ Worker 在每轮循环里处理一个会话（`apps/worker/src/project-profile.t
 
 ## 接口
 
-- `GET /v1/admin/project-profiles`：该团队全部简介。领导页不展示引用依据；引用只在生成时用来校验每个字段确有出处。
+- `GET /v1/admin/project-profiles`：该团队全部简介。leader页不展示引用依据；引用只在生成时用来校验每个字段确有出处。
 
 ## 运维
 

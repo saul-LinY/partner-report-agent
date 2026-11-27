@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Filter, RefreshCw, RotateCcw, X } from "lucide-react";
+import { RefreshCw, RotateCcw, X } from "lucide-react";
 import { api } from "./api.js";
 import { EmptyState, ErrorBanner } from "./components.js";
 import {
@@ -178,7 +178,6 @@ export function SessionPreprocessPage() {
     <div className="page admin-page management-page sessions-page">
       <AdminHeader
         title="会话预处理"
-        icon={Filter}
         refreshing={list.isFetching || overview.isFetching || rerun.isPending}
         onRefresh={() => {
           void list.refetch();

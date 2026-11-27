@@ -92,5 +92,17 @@
     "source_type": "official project/website asset",
     "checked_date": "2026-10-29",
     "sha256": "193ba1805de11c23cd0c7a1df92aa0a886708e57350f6f7766100afe5befed73"
+  },
+  {
+    "provider": "deepseek",
+    "name": "DeepSeek Harness",
+    "path": "docs/assets/agent-icons/deepseek.png",
+    "url": "file:///Applications/DeepSeek Harness.app/Contents/Resources/icon.png",
+    "content_type": "image/png",
+    "bytes": 128820,
+    "status": "copied",
+    "source_type": "installed DeepSeek Harness app icon",
+    "checked_date": "2026-11-16",
+    "sha256": "12064ff340e65872715cb18e56cfa9d3afe294fed98c81807d39e230a030d972"
   }
 ]

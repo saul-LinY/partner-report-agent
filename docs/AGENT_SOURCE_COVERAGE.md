@@ -2,7 +2,7 @@
 
 更新：2026-10-29。按会话存储源覆盖，不将 CLI、IDE 扩展、桌面 UI 简单看成同一条路径。已有工具图标不代表所有存储格式已验收。
 
-范围按用户最新要求保留 8 种来源，顺序沿用截图。DeepSeek Harness、OpenClaw、MiniMax Code、Gemini CLI、Kimi Code 已从 App 枚举、图标及内置 Reader 移除；原始 CC Switch 调研记录保留作历史参考。
+范围按用户最新要求保留 9 种来源，顺序沿用截图。OpenClaw、MiniMax Code、Gemini CLI、Kimi Code 已从 App 枚举、图标及内置 Reader 移除；DeepSeek Harness 于 2026-11-16 按用户要求重新加回。原始 CC Switch 调研记录保留作历史参考。
 
 ## 刷新行为
 
@@ -23,6 +23,7 @@
 | Hermes       | 默认 state.db 和自定义目录                                                         | HERMES_HOME／CC Switch 自定义目录、SQLite 和带头部的 JSONL；正式 finish_reason 已接通并与本机两条原文核对；无项目元数据的旧记录保留定位提示                       |
 | Antigravity  | 默认 CLI brain、桌面 brain、自定义 brain、CC Switch profile brain                  | 本机桌面真实会话已验证；以独立 workspace 元数据授权，排除 GENERIC MODEL 过程内容 |
 | Grok Build   | 默认／自定义 sessions、默认 archived_sessions 的 summary 元数据 | 已验证真实提问、工具结果过滤、generated_title、events 轮次结束；不把仍在执行的回复标为正式输出 |
+| DeepSeek Harness | 桌面端 `dsh-desktop/harness/sessions`、CLI `~/.dsh/sessions`、`DSH_HOME`、自定义路径 | zstd 压缩 JSONL 由定位组件读取头部；排除 `delegationDepth > 0` 子代理会话；`turn/end completed` 判定正式回复，推理块丢弃；原生标题暂未读取 |
 
 自定义目录是补充来源，不应该使默认目录完全失效。相同路径先 canonicalize 去重，同一工具原生会话身份聚合续接文件；不同工具的相同模型名称不能合并为一个来源。
 
@@ -66,3 +67,11 @@ Grok 本轮 3 个样本、12 轮提问和 12 条正式回复，已不再出现�
 目录解析、发现、来源上下文与正式回复已按新的链路验收。47 项 App 测试、36 项 Rust 测试通过；本机 4 个已允许项目共 518 个会话，509 个返回内容，4 个为空，5 个跨项目记录被阻止，读取 4,181 轮提问与 3,583 条正式回复。8 种保留工具均读到真实正式回复。Hermes 两条回复与原文一致，另外 6 份无可靠项目元数据的历史文件保留提示。
 
 首次打开扫描实际 Agent／会话目录并记住路径，后续复查，不再只显示预设路径。逐项补齐范围、可复现验证及不能自动定位的边界见 [CC Switch 链路复查](CC_SWITCH_EXTRACTION_AUDIT.md)。
+
+## 2026-11-16 DeepSeek Harness 重新接入
+
+用本机构建的读取程序对桌面端 3 个、CLI 9 个真实会话执行定位与提取：12 个全部定位成功，分属 8 个项目根。目录仍存在的 6 个项目根下 10 个会话全部解析，共返回 62 轮提问，完成轮次标记为 `native_turn_completed` 并带模型名；另 2 个项目根是已删除的临时目录，被授权根校验拒绝，与其它来源行为一致。7 项 DeepSeek Rust 集成测试、184 项 App 测试通过。
+
+App 同一发现与读取链路（`audit-agents.swift`，本机 state.json）复查：CLI 默认目录与桌面端均识别；DeepSeek Harness 发现 1 个项目会话（其余会话的 cwd 不是 git 项目或为临时目录，按统一规则不作为项目），已允许 1 个，读出 1 轮提问和 1 条正式回复，无错误、无定位问题。其它 8 种来源结果不变。
+
+2026-11-16 项目识别规则调整：没有 git 仓库的会话目录也作为候选项目（排除家目录、系统临时目录与家目录下隐藏目录，规则见 [App 采集工作流](APP_COLLECTION_WORKFLOW.md)）。调整后同一本机复查：DeepSeek Harness 发现 5 个会话（新增 `~/Documents/ChatGPT/测试放心删`、`~/Documents`、`~/Documents/deepseek-harness/default-workspace` 为候选项目），Codex 由 504 增至 610、Claude Code 由 43 增至 49，9 种来源抽样均无错误；新增会话在项目获准前不读取正文。同时修正了系统临时目录排除：`resolvingSymlinksInPath` 会把 `/private/var/folders` 变为 `/var/folders`，原排除列表未覆盖。

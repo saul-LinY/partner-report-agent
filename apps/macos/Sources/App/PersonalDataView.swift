@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WeeklyReportCore
 
@@ -10,37 +11,12 @@ enum WebTone {
     static let dangerSoft = Color(hex: 0xFBEBE8)
     static let warning = Color(hex: 0xB87510)
     static let warningSoft = Color(hex: 0xFBF1DC)
-    static let series: [Color] = [0x376B58, 0x48658E, 0x866830, 0x80608E, 0x9B6250, 0x5F7F86].map { Color(hex: $0) }
+    static let successSoft = Color(hex: 0xE8F4EC)
+    static let series: [Color] = [0x2563EB, 0xC026D3, 0xF08C00, 0x0EA5B7, 0x9B6250, 0x80608E, 0x376B58, 0x866830].map { Color(hex: $0) }
     static func series(_ index: Int) -> Color { series[index % series.count] }
 }
 
-extension ProjectState {
-    var foreground: Color {
-        switch self {
-        case .ok: WebTone.blue
-        case .stalled: WebTone.warning
-        case .blocked: WebTone.danger
-        }
-    }
-    var background: Color {
-        switch self {
-        case .ok: WebTone.blueSoft
-        case .stalled: WebTone.warningSoft
-        case .blocked: WebTone.dangerSoft
-        }
-    }
-}
-
-struct StateBadge: View {
-    let state: ProjectState
-    var body: some View {
-        Text(state.label).font(.app(size: 11, weight: .medium)).foregroundStyle(state.foreground)
-            .padding(.horizontal, 9).padding(.vertical, 2).background(state.background, in: Capsule())
-            .accessibilityLabel("状态：\(state.label)")
-    }
-}
-
-/// 个人数据: the member's own, read-only copy of the Web member detail page.
+/// 本周进展: what the system has already recorded about the member's current weekly period.
 struct PersonalDataView: View {
     @EnvironmentObject private var store: AppStore
 
@@ -50,40 +26,46 @@ struct PersonalDataView: View {
             Rule()
             if let data = store.personalData {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 18) {
                         if let error = store.personalDataError { errorBanner(error) }
-                        PersonalKPIs(headline: data.headline)
-                        PersonalProjectCards(projects: data.projects)
-                        PersonalActivityChart(data: data)
-                        PersonalProgressView(data: data)
+                        PersonalWeekBar(data: data)
+                        PersonalKPIs(data: data)
+                        PersonalInvestment(data: data)
+                        PersonalOwnedProjects(data: data)
                     }.padding(.horizontal, 28).padding(.vertical, 22).frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if let error = store.personalDataError {
                 VStack(spacing: 14) {
-                    EmptyMessage(symbol: "exclamationmark.circle", title: "个人数据暂不可用", subtitle: error)
+                    EmptyMessage(symbol: "exclamationmark.circle", title: "本周进展暂不可用", subtitle: error)
                     Button("重试") { reload() }.buttonStyle(YellowButtonStyle()).accessibilityIdentifier("personal-data-retry")
                 }.frame(maxHeight: .infinity)
             } else {
-                VStack { ProgressView().controlSize(.small); Text("加载成员…").font(.app(size: 13)).foregroundStyle(Palette.secondary) }
+                VStack { ProgressView().controlSize(.small); Text("加载本周进展…").font(.app(size: 13)).foregroundStyle(Palette.secondary) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityIdentifier("personal-data-loading")
             }
         }
         .accessibilityIdentifier("personal-data-page")
-        .task { await store.loadPersonalData() }
+        // The open page follows the system instead of keeping the first answer: on open, every minute, and when the App
+        // comes to the front (uploads trigger a reload from the store).
+        .task {
+            while !Task.isCancelled {
+                await store.loadPersonalData()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in reload() }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(store.personalData?.member.name ?? "个人数据").font(.app(size: 23, weight: .semibold)).accessibilityIdentifier("personal-member-name")
-                Text("该成员负责的项目进展与工作活跃度").font(.app(size: 13)).foregroundStyle(Palette.secondary)
-                Text("数据更新周期：会话活跃度和项目简介随本 App 的每次上传（每天或每周定时，也可手动）与分析更新；项目状态、阶段和进展在每期截止后生成工作卡片，经你审核确认后更新。打开本页或点右上角刷新时重新读取。")
-                    .font(.app(size: 12)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("personal-update-cycle")
+                Text("本周进展").font(.app(size: 23, weight: .semibold)).accessibilityIdentifier("personal-page-title")
+                Text("本周记录进度，以及与leader面板相同的工作投入和负责的项目，实时读取")
+                    .font(.app(size: 13)).foregroundStyle(Palette.secondary).accessibilityIdentifier("personal-page-subtitle")
             }
             Spacer()
             if store.isLoadingPersonalData { ProgressView().controlSize(.small) }
-            IconButton(symbol: "arrow.clockwise", help: "刷新个人数据") { reload() }
+            IconButton(symbol: "arrow.clockwise", help: "刷新本周进展") { reload() }
                 .disabled(store.isLoadingPersonalData).accessibilityIdentifier("personal-data-refresh")
         }.frame(minHeight: 72).padding(.horizontal, 28).padding(.vertical, 8)
     }
@@ -96,53 +78,101 @@ struct PersonalDataView: View {
         }.padding(14).overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.red.opacity(0.4)))
     }
 
-    /// Reloads the month the member is looking at, so a refresh does not jump the calendar back.
     private func reload() {
-        let month = store.personalData?.calendar.month
-        Task { await store.loadPersonalData(month: month) }
+        Task { await store.loadPersonalData() }
     }
 }
 
-private struct PersonalKPIs: View {
-    let headline: MemberHeadline
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            tile("负责的项目", "\(headline.projectCount)", id: "projects")
-            tile("需要关注", "\(headline.attention)", note: "有卡点或停滞的项目", warn: headline.attention > 0, id: "attention")
-            tile("近 28 天活跃", "\(headline.activeDays28)", note: "天", id: "active-days")
-            tile("最近活跃", headline.lastActiveDate.map { String($0.dropFirst(5)) } ?? "--", note: headline.lastActiveDate.map { String($0.prefix(4)) } ?? "", id: "last-active")
-        }
-    }
-    private func tile(_ title: String, _ value: String, note: String = "", warn: Bool = false, id: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.app(size: 12)).foregroundStyle(Palette.secondary)
-            Text(value).font(.app(size: 26, weight: .semibold)).monospacedDigit().foregroundStyle(warn ? WebTone.warning : Palette.ink)
-            Text(note.isEmpty ? " " : note).font(.app(size: 11)).foregroundStyle(Palette.secondary)
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.white, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.line))
-            .accessibilityElement(children: .combine).accessibilityIdentifier("personal-kpi-\(id)")
-    }
-}
+/// "W47 · 11月17日 11:10 – 11月20日（周五）16:00", the four steps of the week, and the countdown to the cutoff.
+private struct PersonalWeekBar: View {
+    let data: PersonalData
 
-/// Section frame shared by the page's blocks.
-struct PersonalSection<Content: View, Controls: View>: View {
-    let title: String
-    @ViewBuilder var controls: Controls
-    @ViewBuilder var content: Content
+    private struct Step { var title: String; var note: String }
+    private var steps: [Step] {
+        let zone = data.timezone
+        return [
+            Step(title: "本周记录中", note: "每次上传后更新这页"),
+            Step(title: PersonalActivity.stamp(data.period.cutoffAt, timezone: zone), note: "截止，生成工作卡给你审核"),
+            Step(title: "\(PersonalActivity.stamp(data.period.autoApproveAt, timezone: zone)) 前", note: "审核，逾期自动通过"),
+            Step(title: PersonalActivity.stamp(data.period.publishAt, timezone: zone), note: "发布到leader面板"),
+        ]
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 12) {
-                Text(title).font(.app(size: 17, weight: .semibold))
-                Spacer(minLength: 8)
-                controls
+        // Re-evaluated every half minute so the countdown and the current step follow the clock.
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let current = data.currentStep(now: context.date)
+            HStack(alignment: .center, spacing: 18) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("\(data.weekLabel) · \(data.rangeLabel)").font(.app(size: 16, weight: .semibold))
+                        .accessibilityIdentifier("personal-week-range")
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                            stepView(step, on: index == current, last: index == steps.count - 1)
+                        }
+                    }
+                }
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("距本周截止").font(.app(size: 12)).foregroundStyle(Palette.secondary)
+                    Text(PersonalActivity.countdown(to: data.period.cutoffAt, now: context.date)).font(.app(size: 22, weight: .semibold)).monospacedDigit()
+                        .accessibilityIdentifier("personal-week-countdown")
+                }.fixedSize()
             }
-            content
+            .padding(.horizontal, 20).padding(.vertical, 16).background(Palette.quiet, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.line))
         }
+    }
+
+    private func stepView(_ step: Step, on: Bool, last: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ZStack(alignment: .leading) {
+                if !last { Rectangle().fill(Palette.line).frame(height: 2).padding(.leading, 14).padding(.trailing, 4) }
+                Circle().fill(on ? Palette.yellow : .white).frame(width: 10, height: 10)
+                    .overlay(Circle().stroke(on ? Palette.ink : Palette.line, lineWidth: 2))
+            }.frame(height: 10).padding(.bottom, 6)
+            Text(step.title).font(.app(size: 12, weight: on ? .semibold : .regular)).foregroundStyle(on ? Palette.ink : Palette.secondary)
+            Text(step.note).font(.app(size: 11)).foregroundStyle(Palette.secondary)
+        }
+        .padding(.trailing, 8).frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine).accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
-extension PersonalSection where Controls == EmptyView {
-    init(title: String, @ViewBuilder content: () -> Content) {
-        self.init(title: title, controls: { EmptyView() }, content: content)
+/// 本周会话 / 本周交互 / 活跃天数 / 上次上传.
+private struct PersonalKPIs: View {
+    let data: PersonalData
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            tile("本周会话", "\(data.totals.sessions)", note: "涉及 \(data.activeProjectCount) 个项目", id: "sessions")
+            tile("本周交互", "\(data.totals.turns) 轮", note: "已剔除测试、闲聊", id: "turns")
+            tile("活跃天数", "\(data.totals.activeDays) / \(data.totals.elapsedDays) 天", note: "本周已过 \(data.totals.elapsedDays) 天", id: "active-days")
+            uploadTile
+        }.fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var uploadTile: some View {
+        let value = data.lastUpload.map { "\(PersonalActivity.stamp($0.at, timezone: data.timezone)) · \($0.label)" } ?? "还没有上传"
+        return card(id: "last-upload") {
+            Text("上次上传").font(.app(size: 12)).foregroundStyle(Palette.secondary)
+            Text(value).font(.app(size: 15, weight: .semibold)).foregroundStyle(data.todayNotUploaded ? WebTone.warning : Palette.ink)
+                .padding(.top, 6).fixedSize(horizontal: false, vertical: true)
+            if data.todayNotUploaded { Text("今天的会话还没上传").font(.app(size: 12)).foregroundStyle(WebTone.warning) }
+        }
+    }
+
+    private func tile(_ title: String, _ value: String, note: String, id: String) -> some View {
+        card(id: id) {
+            Text(title).font(.app(size: 12)).foregroundStyle(Palette.secondary)
+            Text(value).font(.app(size: 22, weight: .semibold)).monospacedDigit()
+            Text(note).font(.app(size: 12)).foregroundStyle(Palette.secondary)
+        }
+    }
+
+    private func card<Content: View>(id: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 2) { content() }
+            .padding(.horizontal, 16).padding(.vertical, 14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(.white, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.line))
+            .accessibilityElement(children: .combine).accessibilityIdentifier("personal-kpi-\(id)")
     }
 }

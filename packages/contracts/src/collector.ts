@@ -14,6 +14,7 @@ export const collectorSessionSchema = z
       "omp",
       "grokbuild",
       "agy",
+      "deepseek",
     ]),
     title: z.string().max(4096),
     modifiedAt: z.string().datetime(),
@@ -46,7 +47,8 @@ export function redactSessionText(
     turns: session.turns.map((turn) => ({
       ...turn,
       prompt: redactSensitive(turn.prompt, allowed),
-      answer: turn.answer == null
+      answer:
+        turn.answer == null
           ? turn.answer
           : redactSensitive(turn.answer, allowed),
     })),
@@ -71,6 +73,8 @@ export const collectorExtractionSchema = z
               "next_step",
             ]),
             text: z.string().min(1).max(600),
+            /** One plain sentence a non-engineer understands; the member's own App shows it instead of `text`. */
+            plain: z.string().trim().min(1).max(60),
             confidence: z.enum(["high", "medium", "low"]),
             date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
             evidenceRefs: z.array(z.string().min(1)).min(1).max(20),

@@ -91,6 +91,9 @@ pub(crate) struct Metadata {
     #[serde(rename = "isSubagent")]
     is_subagent_camel: Option<bool>,
     is_subagent: Option<bool>,
+    /// DeepSeek Harness: 0 for a session the member started, above 0 for one a delegated sub-agent opened.
+    #[serde(rename = "delegationDepth")]
+    delegation_depth: Option<u64>,
     session_kind: Option<String>,
     source: Option<Origin>,
     #[serde(default, deserialize_with = "map_only")]
@@ -273,6 +276,7 @@ impl Metadata {
             || self.is_sidechain == Some(true)
             || self.is_subagent_camel == Some(true)
             || self.is_subagent == Some(true)
+            || self.delegation_depth.is_some_and(|depth| depth > 0)
             || self
                 .session_kind
                 .as_deref()
@@ -400,6 +404,10 @@ pub(crate) fn open_lines(provider: &str, path: &Path) -> Result<Box<dyn BufRead>
             .map(|r| r as Box<dyn BufRead>)
             .map_err(|_| MetadataError::Invalid("cannot open Codex metadata stream"));
     }
+    if provider == "deepseek" {
+        return crate::session_manager::providers::deepseek::open_records(path)
+            .map_err(|_| MetadataError::Invalid("cannot open DeepSeek metadata stream"));
+    }
     File::open(path)
         .map(|f| Box::new(BufReader::new(f)) as Box<dyn BufRead>)
         .map_err(|_| MetadataError::Invalid("cannot open metadata stream"))
@@ -483,6 +491,7 @@ pub(crate) fn locate_file(provider: &str, path: &Path) -> Result<Location, Metad
             .ok_or(MetadataError::Invalid("Codex session metadata missing"))?,
         "claude" | "opencode" => &header,
         "pi" | "omp" if header.kind.as_deref() == Some("session") => &header,
+        "deepseek" if header.kind.as_deref() == Some("session") => &header,
         "hermes" if matches!(header.kind.as_deref(), Some("session" | "init")) => &header,
         _ => {
             return Err(MetadataError::Invalid(
@@ -545,7 +554,7 @@ pub fn locate_batch(requests: &[LocateRequest]) -> Vec<LocateResult> {
                 cwd: None,
                 error: None,
             };
-            if !["codex", "claude", "pi", "omp", "hermes", "opencode"]
+            if !["codex", "claude", "pi", "omp", "hermes", "opencode", "deepseek"]
                 .contains(&request.provider.as_str())
             {
                 return row;

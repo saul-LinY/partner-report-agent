@@ -16,8 +16,9 @@ echoed exactly, without canonicalization. Successful rows contain string
 - `unsupported`: provider is not supported by this discovery command.
 
 Supported inputs are Codex JSONL / JSONL.zst, Claude JSONL, Pi/OMP session headers
-(including OMP's leading title slot), Hermes `session`/`init` JSONL headers, and
-OpenCode legacy `storage/session/<project>/<id>.json` metadata files. Hermes
+(including OMP's leading title slot), Hermes `session`/`init` JSONL headers,
+OpenCode legacy `storage/session/<project>/<id>.json` metadata files, and DeepSeek
+Harness `session.v4.jsonl.zstd` session headers (`delegationDepth > 0` is excluded). Hermes
 JSONL may use a `.json` extension. JSON arrays and body-derived locations are
 rejected. Metadata objects/lines are limited to 8 MiB (8,388,608 bytes, including
 the line ending for JSONL), matching the former Swift discovery budget. Larger

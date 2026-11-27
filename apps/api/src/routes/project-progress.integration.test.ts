@@ -4,6 +4,7 @@ import { sqlClient as sql } from "@partner-report/db";
 import {
   addProgressDays,
   progressToday,
+  type ProjectProgressResponse,
 } from "@partner-report/contracts/project-progress";
 import { buildApp } from "../server.js";
 
@@ -424,5 +425,94 @@ suite("project participation API", () => {
       },
       metrics: { state: "unknown" },
     });
+  });
+  it("marks a project stopped only while every current App source mapped to it is denied", async () => {
+    const instance = randomUUID();
+    const keys = ["d".repeat(64), "e".repeat(64), "f".repeat(64)];
+    const entry = (key: string, status: string, legacy = false) =>
+      sql`insert into project_scope_entries (id, tenant_id, team_id, partner_id, plugin_instance_id, scope_key, display_name, status, effective_from, decided_at, first_seen_period_key, session_count, legacy_import)
+        values (${randomUUID()}, ${f.tenant!}, ${f.team!}, ${f.member!}, ${instance}, ${key}, '项目 A', ${status}, now(), now(), 'business-week', 1, ${legacy})`;
+    const stopped = async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/admin/project-progress",
+        headers,
+      });
+      const body = response.json<ProjectProgressResponse>();
+      const project = body.projects.find(
+        (p) => p.partnerId === f.member && p.projectId === f.project,
+      );
+      return project?.collectionStopped ?? false;
+    };
+    await sql`insert into plugin_instances (id, tenant_id, team_id, partner_id, device_name, version, status, access_token_hash, refresh_token_hash, access_expires_at)
+      values (${instance}, ${f.tenant!}, ${f.team!}, ${f.member!}, 'App', '1', 'collector', ${randomUUID()}, ${randomUUID()}, now())`;
+    await sql`insert into project_scope_policies (plugin_instance_id, tenant_id, team_id, partner_id, version, initialized, initialized_at)
+      values (${instance}, ${f.tenant!}, ${f.team!}, ${f.member!}, 1, true, now())`;
+    await sql`update projects set external_ids = ${JSON.stringify(keys.map((key) => `scope:${instance}:${key}`))}::jsonb where id = ${f.project!}`;
+    try {
+      // A plugin-era decision the member cannot change in the App does not stop the project.
+      await entry(keys[0]!, "denied", true);
+      expect(await stopped()).toBe(false);
+      await entry(keys[1]!, "denied");
+      expect(await stopped()).toBe(true);
+      // Another folder of the same project still allowed keeps it collecting.
+      await entry(keys[2]!, "allowed");
+      expect(await stopped()).toBe(false);
+    } finally {
+      await sql`update projects set external_ids = '[]'::jsonb where id = ${f.project!}`;
+      await sql`delete from project_scope_entries where plugin_instance_id = ${instance}`;
+      await sql`delete from project_scope_policies where plugin_instance_id = ${instance}`;
+      await sql`delete from plugin_instances where id = ${instance}`;
+    }
+  });
+  it("resolves blockers from later approved cards and applies stored manual marks", async () => {
+    const blocker = {
+      date: first,
+      type: "blocker",
+      title: "真机连不上服务",
+      detail: "影响上架测试",
+    };
+    const later = randomUUID();
+    const mark = (resolved: boolean) =>
+      sql`insert into project_blocker_marks (id, tenant_id, team_id, partner_id, project_id, blocker_date, blocker_title, resolved, resolved_on, actor_type, actor_id)
+        values (${randomUUID()}, ${f.tenant!}, ${f.team!}, ${f.member!}, ${f.project!}, ${first}, ${blocker.title}, ${resolved}, ${today}, 'user', ${f.member!})
+        on conflict (tenant_id, team_id, partner_id, project_id, blocker_date, blocker_title)
+        do update set resolved = excluded.resolved, resolved_on = excluded.resolved_on`;
+    const shown = async () => {
+      const body = (
+        await app.inject({
+          method: "GET",
+          url: "/v1/admin/project-progress",
+          headers,
+        })
+      ).json<ProjectProgressResponse>();
+      return body.projects
+        .find((p) => p.partnerId === f.member && p.projectId === f.project)
+        ?.keyEvents.find((event) => event.type === "blocker");
+    };
+    await sql`update work_items set payload = payload || ${JSON.stringify({ keyEvents: [blocker] })}::jsonb where id = ${f.card!}`;
+    try {
+      expect(await shown()).not.toHaveProperty("resolvedOn");
+      // A later approved card closes it from evidence.
+      await sql`insert into work_items (id, tenant_id, team_id, partner_id, period_id, review_id, project_id, title, status, review_status, fact_ids, payload)
+        values (${later}, ${f.tenant!}, ${f.team!}, ${f.member!}, ${f.period!}, ${f.review!}, ${f.project!}, '项目 A', 'completed', 'approved', '[]'::jsonb,
+          ${JSON.stringify({ resolvedBlockers: [{ date: first, title: blocker.title, resolvedOn: today }] })}::jsonb)`;
+      expect(await shown()).toMatchObject({
+        resolvedOn: today,
+        resolvedBy: "model",
+      });
+      // A stored mark that reopens it overrides the card; a stored resolve then wins again.
+      await mark(false);
+      expect(await shown()).not.toHaveProperty("resolvedOn");
+      await mark(true);
+      expect(await shown()).toMatchObject({
+        resolvedOn: today,
+        resolvedBy: "manual",
+      });
+    } finally {
+      await sql`delete from work_items where id = ${later}`;
+      await sql`delete from project_blocker_marks where tenant_id = ${f.tenant!}`;
+      await sql`update work_items set payload = payload - 'keyEvents' where id = ${f.card!}`;
+    }
   });
 });

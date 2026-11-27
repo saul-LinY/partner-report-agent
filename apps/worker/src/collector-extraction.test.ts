@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   evidenceDate,
   extractionChunks,
+  extractWithinOutputBudget,
+  modelExtractionSchema,
   validateExtraction,
 } from "./collector-extraction.js";
+import { ModelGatewayError } from "./model.js";
 
 describe("collector evidence boundaries", () => {
   it("uses the source date and timezone across relative days and year boundaries", () => {
@@ -116,6 +119,7 @@ describe("collector evidence boundaries", () => {
         {
           kind: "outcome",
           text: "Completed",
+          plain: "已完成",
           confidence: "high",
           date: "2026-11-02",
           evidenceRefs: ["U1"],
@@ -136,5 +140,166 @@ describe("collector evidence boundaries", () => {
     expect(() => validateExtraction(output, evidence)).toThrow(
       "Contribution references",
     );
+  });
+  it("requires a plain sentence of at most 60 characters on every contribution", () => {
+    const evidence = [
+      {
+        ref: "A1",
+        date: "2026-11-02",
+        role: "assistant" as const,
+        text: "Done",
+      },
+    ];
+    const output = (plain?: string) => ({
+      decision: "include",
+      reason: "work",
+      title: "title",
+      summary: "summary",
+      contributions: [
+        {
+          kind: "outcome",
+          text: "Completed",
+          ...(plain === undefined ? {} : { plain }),
+          confidence: "high",
+          date: "2026-11-02",
+          evidenceRefs: ["A1"],
+        },
+      ],
+    });
+    expect(
+      validateExtraction(output("后台改名后，App 里的名字会自动更新"), evidence)
+        .contributions[0]!.plain,
+    ).toBe("后台改名后，App 里的名字会自动更新");
+    expect(() => validateExtraction(output(), evidence)).toThrow();
+    expect(() => validateExtraction(output("  "), evidence)).toThrow();
+    expect(() =>
+      validateExtraction(output("字".repeat(61)), evidence),
+    ).toThrow();
+  });
+  it("accepts an over-long or missing model plain and truncates it to 60 characters", () => {
+    const output = (plain?: string) => ({
+      decision: "include",
+      reason: "work",
+      title: "title",
+      summary: "summary",
+      contributions: [
+        {
+          kind: "outcome",
+          text: "文".repeat(100),
+          ...(plain === undefined ? {} : { plain }),
+          confidence: "high",
+          date: "2026-11-02",
+          evidenceRefs: ["A1"],
+        },
+      ],
+    });
+    expect(
+      modelExtractionSchema.parse(output("字".repeat(61))).contributions[0]
+        ?.plain,
+    ).toBe("字".repeat(60));
+    expect(
+      modelExtractionSchema.parse(output()).contributions[0]?.plain,
+    ).toBe("文".repeat(60));
+  });
+});
+
+describe("answers cut off by the output budget", () => {
+  const cutOff = () =>
+    new ModelGatewayError("MODEL_OUTPUT_TOKEN_LIMIT", "cut off", false);
+  type Piece = {
+    ref: string;
+    date: string;
+    role: "user" | "assistant";
+    text: string;
+  };
+  // Answers only while the piece is small enough, citing every reference it was given; `answered` keeps what got through.
+  const answerUnder =
+    (limit: number, seen: Piece[][], answered: Piece[][] = []) =>
+    async (part: Piece[]) => {
+      seen.push(part);
+      if (part.reduce((sum, item) => sum + item.text.length, 0) > limit)
+        throw cutOff();
+      answered.push(part);
+      return {
+        decision: "include",
+        reason: "",
+        title: "进展",
+        summary: "完成了一部分",
+        contributions: [
+          {
+            kind: "progress",
+            text: "完成了一部分",
+            plain: "完成了一部分",
+            confidence: "high",
+            date: part[0]!.date,
+            evidenceRefs: part.map((item) => item.ref),
+          },
+        ],
+      };
+    };
+
+  it("halves by messages, then a long message by text, keeping every character and valid references", async () => {
+    const evidence: Piece[] = [
+      {
+        ref: "T1:user:0",
+        date: "2026-11-16",
+        role: "user",
+        text: "a".repeat(3_000),
+      },
+      {
+        ref: "T1:assistant:0",
+        date: "2026-11-16",
+        role: "assistant",
+        text: "b".repeat(9_000),
+      },
+    ];
+    const seen: Piece[][] = [],
+      answered: Piece[][] = [];
+    const result = await extractWithinOutputBudget(
+      evidence,
+      answerUnder(5_000, seen, answered),
+    );
+    expect(result.refs.map((item) => item.ref)).toEqual([
+      "T1:user:0",
+      "T1:assistant:0",
+      "T1:assistant:4500",
+    ]);
+    expect(result.outputs).toHaveLength(3);
+    expect(
+      answered
+        .flat()
+        .map((item) => item.text)
+        .join(""),
+    ).toBe("a".repeat(3_000) + "b".repeat(9_000));
+    // Saved answers stay valid against the saved references when a retry resumes the chunk.
+    for (const output of result.outputs)
+      expect(() => validateExtraction(output, result.refs)).not.toThrow();
+  });
+
+  it("fails instead of splitting on other errors or when a piece cannot shrink further", async () => {
+    const short: Piece[] = [
+      {
+        ref: "T1:assistant:0",
+        date: "2026-11-16",
+        role: "assistant",
+        text: "b".repeat(500),
+      },
+    ];
+    const seen: Piece[][] = [];
+    await expect(
+      extractWithinOutputBudget(short, answerUnder(100, seen)),
+    ).rejects.toMatchObject({
+      code: "MODEL_OUTPUT_TOKEN_LIMIT",
+    });
+    expect(seen).toHaveLength(1);
+    const auth = new ModelGatewayError("MODEL_AUTH_FAILED", "bad key", false);
+    let calls = 0;
+    await expect(
+      extractWithinOutputBudget([...short, ...short], async () => {
+        calls++;
+        throw auth;
+      }),
+    ).rejects.toBe(auth);
+    expect(calls).toBe(1);
   });
 });

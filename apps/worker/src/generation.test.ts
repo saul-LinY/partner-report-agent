@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { aggregationGroupSchema } from "@partner-report/contracts";
 import {
-  aggregationInstructions,
   bucketHasCompletionSupport,
   buildNoActivityTeamReport,
   formatReportDate,
@@ -11,31 +11,31 @@ import {
   normalizeTeamReportSummary,
   projectAggregationInputs,
   projectStatusWithCompletionSupport,
+  verifiedResolutions,
 } from "./generation.js";
 
-describe("reader-facing generation instructions", () => {
-  it("asks work cards to use concise, plain Chinese", () => {
-    const instructions = aggregationInstructions("test-model");
-
-    expect(instructions).toContain("simplified Chinese");
-    expect(instructions).toContain("plain, direct, everyday Chinese");
-    expect(instructions).toContain("120 to 180 Chinese characters");
-    expect(instructions).toContain("50 to 90 Chinese characters");
-    expect(instructions).toContain("fixed outcomeMaterial");
-    expect(instructions).toContain("currentCard");
-    expect(instructions).toContain("reviewInstructions");
-    expect(instructions).toContain("authoritative first-hand correction");
-    expect(instructions).toContain("do not output a project description");
-    expect(instructions).toContain("2026-11-03.project-card.v11");
-  });
-  it("writes project progress fields for a manager who does not know the project", () => {
-    const instructions = aggregationInstructions("test-model");
-
-    expect(instructions).toContain(
-      "team manager who does not work on this project",
-    );
-    expect(instructions).toContain("previousProjectOutlook");
-    expect(instructions).toContain("roadmap step name it belongs to");
+describe("model-proposed blocker resolutions", () => {
+  const open = [{ date: "2026-11-04", title: "iPhone 真机连不上故事服务" }];
+  it("keeps only blockers it was given as open, on a valid day not before the blocker", () => {
+    expect(
+      verifiedResolutions(
+        [
+          { ...open[0], resolvedOn: "2026-11-10" },
+          { ...open[0], resolvedOn: "2026-11-11" },
+          {
+            date: "2026-11-04",
+            title: "从未出现的卡点",
+            resolvedOn: "2026-11-10",
+          },
+          { date: "2026-11-01", title: "早已关闭", resolvedOn: "2026-11-10" },
+        ],
+        open,
+      ),
+    ).toEqual([{ ...open[0], resolvedOn: "2026-11-10" }]);
+    for (const resolvedOn of ["2026-11-03", "2026-02-30", "下周"])
+      expect(verifiedResolutions([{ ...open[0], resolvedOn }], open)).toEqual(
+        [],
+      );
   });
 });
 
@@ -102,10 +102,21 @@ describe("inspection analysis output schema", () => {
     expect(inspectionAnalysisSchema.parse(valid)).toEqual(valid);
   });
   it("rejects extra keys, empty actions and unknown enum values", () => {
-    expect(inspectionAnalysisSchema.safeParse({ ...valid, evidence: [] }).success).toBe(false);
-    expect(inspectionAnalysisSchema.safeParse({ ...valid, recommendedActions: [] }).success).toBe(false);
-    expect(inspectionAnalysisSchema.safeParse({ ...valid, confidence: "certain" }).success).toBe(false);
-    expect(inspectionAnalysisSchema.safeParse({ ...valid, relatedChain: "web" }).success).toBe(false);
+    expect(
+      inspectionAnalysisSchema.safeParse({ ...valid, evidence: [] }).success,
+    ).toBe(false);
+    expect(
+      inspectionAnalysisSchema.safeParse({ ...valid, recommendedActions: [] })
+        .success,
+    ).toBe(false);
+    expect(
+      inspectionAnalysisSchema.safeParse({ ...valid, confidence: "certain" })
+        .success,
+    ).toBe(false);
+    expect(
+      inspectionAnalysisSchema.safeParse({ ...valid, relatedChain: "web" })
+        .success,
+    ).toBe(false);
   });
 });
 
@@ -190,6 +201,14 @@ describe("work card model output normalization", () => {
                 type: "milestone",
                 title: "接口联调完成",
                 detail: "主要链路已跑通。",
+                neededSupport: "不应出现在非卡点事件上",
+              },
+              {
+                date: "2026-08-27",
+                type: "blocker",
+                title: "等待审批",
+                detail: "审批未下来，无法上线。",
+                neededSupport: "请leader本周内批准上线",
               },
             ],
             overview: "概".repeat(121),
@@ -219,6 +238,13 @@ describe("work card model output normalization", () => {
         type: "milestone",
         title: "接口联调完成",
         detail: "主要链路已跑通。",
+      },
+      {
+        date: "2026-08-27",
+        type: "blocker",
+        title: "等待审批",
+        detail: "审批未下来，无法上线。",
+        neededSupport: "请leader本周内批准上线",
       },
     ]);
     expect(
@@ -366,6 +392,7 @@ describe("project status presets", () => {
             status: "in_progress",
             projectStatus: "paused",
             projectStatusReason: "本周没有新的记录",
+            currentFocus: "推进交付",
             overview: "本周继续处理交付事项",
             dailyProgress: [],
           },
@@ -408,6 +435,7 @@ describe("project status presets", () => {
             status: "in_progress",
             projectStatus: "development",
             projectStatusReason: "有修复记录",
+            currentFocus: "修复线上问题",
             overview: "本周修复问题",
             dailyProgress: [],
           },
@@ -428,5 +456,61 @@ describe("project status presets", () => {
       status: "in_progress",
       overview: "本周修复问题",
     });
+  });
+});
+
+describe("work card blocker fields", () => {
+  const open = [{ date: "2026-08-20", title: "等待审批", detail: "" }];
+
+  it("keeps the evidence of a verified resolution", () => {
+    expect(
+      verifiedResolutions(
+        [
+          {
+            date: "2026-08-20",
+            title: "等待审批",
+            resolvedOn: "2026-08-25",
+            evidence: " 审批已通过，已上线 ",
+          },
+        ],
+        open,
+      ),
+    ).toEqual([
+      {
+        date: "2026-08-20",
+        title: "等待审批",
+        resolvedOn: "2026-08-25",
+        evidence: "审批已通过，已上线",
+      },
+    ]);
+  });
+
+  it("still rejects a resolution for a blocker that was not open", () => {
+    expect(
+      verifiedResolutions(
+        [{ date: "2026-08-01", title: "其他", resolvedOn: "2026-08-25" }],
+        open,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("work card contract", () => {
+  const group = {
+    projectKey: "a",
+    status: "in_progress",
+    overview: "本周完成接口联调。",
+  };
+
+  it("requires a currentFocus of at most 25 characters", () => {
+    expect(aggregationGroupSchema.safeParse(group).success).toBe(false);
+    expect(
+      aggregationGroupSchema.safeParse({ ...group, currentFocus: "字".repeat(26) })
+        .success,
+    ).toBe(false);
+    expect(
+      aggregationGroupSchema.safeParse({ ...group, currentFocus: "字".repeat(25) })
+        .success,
+    ).toBe(true);
   });
 });

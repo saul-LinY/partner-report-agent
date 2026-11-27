@@ -10,6 +10,7 @@ import {
 } from "vitest";
 import { sqlClient as sql } from "@partner-report/db";
 import { processNextGenerationJob } from "./generation.js";
+import { recoverGatewayFailures } from "./model-recovery.js";
 
 const suite = process.env.RUN_DB_TESTS === "1" ? describe : describe.skip;
 
@@ -167,16 +168,18 @@ suite("durable model retry scheduling", () => {
       projectBuckets,
       reviewId: randomUUID(),
     });
+    const leases: number[] = [];
     const fetchMock = vi.fn(async () => {
       const [row] =
         await sql`select extract(epoch from lease_until - updated_at) as lease_seconds from agent_jobs where id = ${id}`;
-      // 13 projects at 6 per batch = 3 batches, 2 stages, and a fallback chain budget of 2 timeouts.
-      expect(Number(row!.lease_seconds)).toBe(3 * 2 * 2 * 240 + 60);
+      leases.push(Number(row!.lease_seconds));
       return new Response("unauthorized", { status: 401 });
     });
     vi.stubGlobal("fetch", fetchMock);
     await processNextGenerationJob(tenant);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    // 13 projects at 4 per batch = 4 batches, 2 stages, and a fallback chain budget of 2 timeouts.
+    expect(leases[0]).toBe(4 * 2 * 2 * 240 + 60);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("leases time for all weekly project batches and the final summary", async () => {
@@ -192,14 +195,70 @@ suite("durable model retry scheduling", () => {
         },
       ],
     });
+    const leases: number[] = [];
     const fetchMock = vi.fn(async () => {
       const [row] =
         await sql`select extract(epoch from lease_until - updated_at) as lease_seconds from agent_jobs where id = ${id}`;
-      expect(Number(row!.lease_seconds)).toBe((3 + 1) * 2 * 240 + 60);
+      leases.push(Number(row!.lease_seconds));
       return new Response("unauthorized", { status: 401 });
     });
     vi.stubGlobal("fetch", fetchMock);
     await processNextGenerationJob(tenant);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    // 13 projects at 4 per batch = 4 batches, plus the final summary.
+    expect(leases[0]).toBe((4 + 1) * 2 * 240 + 60);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("requeues gateway-caused failures once a probe of the team model succeeds, and nothing else", async () => {
+    const start = Date.now();
+    const failed = async (
+      code: string,
+      type = "EXTRACT_COLLECTOR_SESSION",
+      attempts = 1,
+    ) => {
+      const id = await createJob(type, {}, 3);
+      await sql`update agent_jobs set status = 'FAILED', error_code = ${code}, attempt_count = ${attempts} where id = ${id}`;
+      return id;
+    };
+    const auth = await failed("MODEL_AUTH_FAILED");
+    const missing = await failed("MODEL_NOT_FOUND", "AGGREGATE_WORK_ITEMS");
+    const rejected = await failed("MODEL_REQUEST_REJECTED");
+    const cutOff = await failed("MODEL_OUTPUT_TOKEN_LIMIT");
+    const exhausted = await failed(
+      "MODEL_AUTH_FAILED",
+      "EXTRACT_COLLECTOR_SESSION",
+      12,
+    );
+    const status = async () =>
+      Object.fromEntries(
+        (
+          await sql<{ id: string; status: string; max_attempts: number }[]>`
+          select id, status, max_attempts from agent_jobs where tenant_id = ${tenant}`
+        ).map((row) => [row.id, row]),
+      );
+
+    // The gateway still refuses: nothing moves.
+    const refused = vi.fn(async () => new Response("{}", { status: 401 }));
+    vi.stubGlobal("fetch", refused);
+    expect(await recoverGatewayFailures(tenant, start)).toBe(0);
+    expect(refused).toHaveBeenCalledTimes(1);
+    // Probes are throttled to one per five minutes per team.
+    expect(await recoverGatewayFailures(tenant, start + 60_000)).toBe(0);
+    expect(refused).toHaveBeenCalledTimes(1);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ output_text: '{"ok":true}' })),
+      ),
+    );
+    expect(await recoverGatewayFailures(tenant, start + 10 * 60_000)).toBe(2);
+    const after = await status();
+    expect(after[auth]).toMatchObject({ status: "PENDING", max_attempts: 4 });
+    expect(after[missing]!.status).toBe("PENDING");
+    // Input-specific and size failures need a different fix; a job retried this often waits for a person.
+    for (const id of [rejected, cutOff, exhausted])
+      expect(after[id]!.status).toBe("FAILED");
   });
 });

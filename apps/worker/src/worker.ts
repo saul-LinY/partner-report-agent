@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { closeDatabase, sqlClient as sql } from "@partner-report/db";
 import { autoApproveExpiredReviews } from "./review-timeout.js";
+import { publishDueLeadershipSnapshots } from "./leadership.js";
 import { scheduleDueWeeklyReports } from "./weekly.js";
 import {
   processNextGenerationJob,
@@ -13,11 +14,14 @@ import {
 import { modelGatewayConfigured } from "./model.js";
 import { runScheduledInspections } from "./inspection-analysis.js";
 import { processNextProjectProfile } from "./project-profile.js";
+import { recoverGatewayFailures } from "./model-recovery.js";
 
-const GENERATION_JOBS_IN_FLIGHT = 2;
+// Each job sends at most 4 model requests at once (see PROJECT_GENERATION_CONCURRENCY), keeping the worker under the gateway limit.
+const GENERATION_JOBS_IN_FLIGHT = 3;
 const SCHEDULER_IDLE_MS = 15_000;
 const EXECUTOR_IDLE_MS = 5_000;
 const BUSY_MS = 250;
+const RECOVERY_IDLE_MS = 60_000;
 let stopping = false;
 let workerState = "starting";
 let workerError: string | null = null;
@@ -46,7 +50,19 @@ async function schedulerStep() {
   const reviewTimeout = await autoApproveExpiredReviews();
   if (reviewTimeout.approvedReviews > 0) {
     console.log(
-      `Auto-approved ${reviewTimeout.approvedItems} work card(s) in ${reviewTimeout.approvedReviews} expired review(s).`,
+      `Auto-approved ${reviewTimeout.approvedItems} work card(s) in ${reviewTimeout.approvedReviews} review(s) at the Monday deadline.`,
+    );
+  }
+  try {
+    const leadership = await publishDueLeadershipSnapshots();
+    if (leadership.published > 0) {
+      console.log(`Published ${leadership.published} leadership snapshot(s).`);
+    }
+  } catch (error) {
+    // Per-period failures are isolated inside; this covers the candidate query so the rest of the sweep still runs.
+    console.error(
+      "Leadership snapshot sweep failed",
+      error instanceof Error ? error.message : error,
     );
   }
   const weekly = await scheduleDueWeeklyReports();
@@ -108,6 +124,13 @@ async function profileStep() {
     : SCHEDULER_IDLE_MS;
 }
 
+/** Model probes can take seconds, so recovery of gateway-caused failures runs apart from the scheduler. */
+async function recoveryStep() {
+  if (!modelGatewayConfigured()) return RECOVERY_IDLE_MS;
+  await recoverGatewayFailures();
+  return RECOVERY_IDLE_MS;
+}
+
 /** One failing loop is reported in the heartbeat but never stops the others. */
 async function runLoop(name: string, step: () => Promise<number>) {
   while (!stopping) {
@@ -154,4 +177,5 @@ await Promise.all([
     runLoop(`generation-${index + 1}`, generationStep),
   ),
   runLoop("profile", profileStep),
+  runLoop("model-recovery", recoveryStep),
 ]);

@@ -74,6 +74,7 @@ export type ProjectScopeEntryView = {
 export type ProjectScopePolicyView = {
   pluginInstanceId: string;
   identityConfirmed: boolean;
+  partnerName: string;
   version: number;
   initialized: boolean;
   initializedAt: string | null;
@@ -124,7 +125,7 @@ export async function loadProjectScopePolicy(
   database: Database = defaultDatabase,
 ): Promise<ProjectScopePolicyView> {
   await ensurePolicy(database, identity);
-  const [policies, entries, periods, identityConfirmed] = await Promise.all([
+  const [policies, entries, periods, identityConfirmed, partners] = await Promise.all([
     database<PolicyRow[]>`
       select version, initialized, initialized_at
       from project_scope_policies
@@ -150,12 +151,18 @@ export async function loadProjectScopePolicy(
       order by starts_at desc limit 1
     `,
     projectScopeIdentityConfirmed(identity, database),
+    database<Array<{ display_name: string }>>`
+      select display_name from partners
+      where id = ${identity.partnerId} and tenant_id = ${identity.tenantId}
+      limit 1
+    `,
   ]);
   const policy = policies[0]!;
   const period = periods[0];
   return {
     pluginInstanceId: identity.pluginInstanceId,
     identityConfirmed,
+    partnerName: partners[0]?.display_name ?? "",
     version: policy.version,
     initialized: policy.initialized,
     initializedAt: policy.initialized_at

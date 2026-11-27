@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "opencode",
         "hermes",
         "grokbuild",
+        "deepseek",
         "agy",
     ] {
         let selected: Vec<_> = rows.iter().filter(|r| r["provider"] == provider).collect();

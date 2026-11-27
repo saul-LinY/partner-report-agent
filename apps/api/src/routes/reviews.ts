@@ -11,7 +11,7 @@ import {
   reviewChangeRequestSchema,
   workStatusSchema,
 } from "@partner-report/contracts";
-import { sqlClient as sql } from "@partner-report/db";
+import { reviewPeriodSchedule, sqlClient as sql } from "@partner-report/db";
 import {
   ApiError,
   audit,
@@ -644,6 +644,7 @@ export async function regenerateReviewWorkItem(
             currentFocus: item.payload.currentFocus,
             projectOutlook: item.payload.projectOutlook ?? null,
             keyEvents: item.payload.keyEvents ?? [],
+            resolvedBlockers: item.payload.resolvedBlockers ?? [],
             overview: item.payload.overview,
             dailyProgress: item.payload.dailyProgress ?? [],
           },
@@ -991,7 +992,7 @@ export async function reviewRoutes(app: FastifyInstance) {
     const actor = await requireReviewActor(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const review = await loadReview(actor, id);
-    const [items, regenerationJobs] = await Promise.all([
+    const [items, regenerationJobs, [period]] = await Promise.all([
       sql<any[]>`
         select wi.*, p.name as project_name
         from work_items wi left join projects p on p.id = wi.project_id
@@ -1007,11 +1008,25 @@ export async function reviewRoutes(app: FastifyInstance) {
           and input_payload ? 'targetWorkItemId'
         order by created_at desc limit 30
       `,
+      // The shared client returns timestamps as strings (drizzle replaces the driver's date parsers).
+      sql<{ period_key: string; starts_at: string; cutoff_at: string; timezone: string }[]>`
+        select period_key, starts_at, cutoff_at, timezone
+        from report_periods
+        where id = ${review.period_id} and tenant_id = ${actor.tenantId}
+      `,
     ]);
     return {
       review,
       items,
       regenerationJobs,
+      period: period
+        ? reviewPeriodSchedule({
+            periodKey: period.period_key,
+            startsAt: new Date(period.starts_at),
+            cutoffAt: new Date(period.cutoff_at),
+            timezone: period.timezone,
+          })
+        : null,
     };
   });
 

@@ -40,7 +40,7 @@ struct SettingsView: View {
     }
     private var account: some View {
         Group {
-            settingRow("当前成员") { Text(store.binding.name.isEmpty ? "未绑定" : store.binding.name).foregroundStyle(Palette.secondary) }
+            settingRow("当前成员") { Text(store.memberName.isEmpty ? "未绑定" : store.memberName).foregroundStyle(Palette.secondary) }
             settingRow("连接状态") { StatusLabel(text: store.binding.isBound ? "已绑定" : "未绑定", color: store.binding.isBound ? Palette.green : Palette.secondary) }
             settingRow("后台运行") {
                 HStack(spacing: 12) {

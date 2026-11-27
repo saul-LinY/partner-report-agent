@@ -9,8 +9,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { Link, useLocation } from "wouter";
-import { navigationGroupLabel } from "./navigation.js";
+import { Link } from "wouter";
 import "./admin-workspace.css";
 
 export function AdminFilterBar({
@@ -31,52 +30,39 @@ export function AdminFilterBar({
   );
 }
 
+/** Pages carry no visible title bar: the title stays for screen readers, and only the page's actions show. */
 export function WorkspaceHeader({
   title,
-  icon: Icon,
-  context,
   children,
 }: {
   title: string;
-  icon: LucideIcon;
-  context?: ReactNode;
   children?: ReactNode;
 }) {
-  const [location] = useLocation();
   return (
-    <header className="aw-header">
-      <div className="aw-header-copy">
-        <span className="aw-breadcrumb">
-          管理台 / {navigationGroupLabel(location) ?? "进展与成果"}
-        </span>
-        <h1>
-          <Icon size={24} />
-          {title}
-        </h1>
-        {context && <div className="aw-context">{context}</div>}
-      </div>
-      {children && <div className="aw-header-actions">{children}</div>}
-    </header>
+    <>
+      <h1 className="aw-sr-only">{title}</h1>
+      {children && (
+        <header className="aw-header">
+          <div className="aw-header-actions">{children}</div>
+        </header>
+      )}
+    </>
   );
 }
 
 export function AdminHeader({
   title,
-  icon: Icon,
-  context,
   refreshing,
   onRefresh,
   children,
 }: {
   title: string;
-  icon: LucideIcon;
-  context?: ReactNode;
   refreshing?: boolean;
   onRefresh: () => void;
   children?: ReactNode;
 }) {
   return (
-    <WorkspaceHeader title={title} icon={Icon} context={context}>
+    <WorkspaceHeader title={title}>
       {children}
       <button
         className="icon-button"

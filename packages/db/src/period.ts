@@ -18,7 +18,7 @@ export const DEFAULT_WEEKLY_PERIOD_RULE: Required<WeeklyPeriodRule> = {
   frequency: "weekly",
   weekStartsOn: 1,
   factCutoffWeekday: 5,
-  factCutoffTime: "17:00",
+  factCutoffTime: "16:00",
 };
 
 export function weeklyPeriodKeyCandidates(period: {
@@ -113,7 +113,7 @@ export function weeklyPeriodAt(
   configured: WeeklyPeriodRule = DEFAULT_WEEKLY_PERIOD_RULE,
 ) {
   const rule = { ...DEFAULT_WEEKLY_PERIOD_RULE, ...configured };
-  const cutoffClock = clock(rule.factCutoffTime, "17:00");
+  const cutoffClock = clock(rule.factCutoffTime, "16:00");
   const local = partsInZone(now, timezone);
   const localDate = new Date(Date.UTC(local.year, local.month - 1, local.day));
   const day = localDate.getUTCDay() || 7;
@@ -156,4 +156,36 @@ export function weeklyPeriodAt(
     // Kept as a storage compatibility value; Team Report generation is approval-driven.
     submissionDeadlineAt: endsAt,
   };
+}
+
+/** Members review until Monday 12:00 after the cutoff; the leadership panel updates at 13:00. */
+const REVIEW_DEADLINE_CLOCK = { hour: 12, minute: 0 };
+const PANEL_PUBLISH_CLOCK = { hour: 13, minute: 0 };
+const MONDAY = 1;
+
+/**
+ * The first Monday 12:00 (team time) strictly after the cutoff is when still-pending cards are
+ * approved automatically; the panel is published an hour later on the same Monday.
+ */
+export function weeklyReviewSchedule(cutoffAt: Date, timezone: string) {
+  const local = partsInZone(cutoffAt, timezone);
+  for (let offset = 0; offset <= 7; offset += 1) {
+    const date = new Date(Date.UTC(local.year, local.month - 1, local.day + offset));
+    if (date.getUTCDay() !== MONDAY) continue;
+    const at = (clockTime: { hour: number; minute: number }) =>
+      zonedDate(
+        {
+          year: date.getUTCFullYear(),
+          month: date.getUTCMonth() + 1,
+          day: date.getUTCDate(),
+          ...clockTime,
+          second: 0,
+        },
+        timezone,
+      );
+    const autoApproveAt = at(REVIEW_DEADLINE_CLOCK);
+    if (autoApproveAt.getTime() <= cutoffAt.getTime()) continue;
+    return { autoApproveAt, publishAt: at(PANEL_PUBLISH_CLOCK) };
+  }
+  throw new Error(`No review deadline after ${cutoffAt.toISOString()}`);
 }

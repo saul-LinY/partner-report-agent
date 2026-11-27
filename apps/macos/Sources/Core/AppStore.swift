@@ -154,7 +154,7 @@ public final class AppStore: ObservableObject {
     @Published public private(set) var isPerformingReviewAction = false
     @Published public private(set) var reviewError: String?
     @Published public var selectedApproval: ApprovalTarget?
-    /// The member's own member-detail page (个人数据); nil until the first load succeeds.
+    /// The member's own 本周进展 page; nil until the first load succeeds.
     @Published public private(set) var personalData: PersonalData?
     @Published public private(set) var isLoadingPersonalData = false
     @Published public private(set) var personalDataError: String?
@@ -479,6 +479,12 @@ public final class AppStore: ObservableObject {
     public var pendingCards: [ReviewCard] { reviewBatches.flatMap(\.pendingCards) }
     public var approvalTargets: [ApprovalTarget] { pendingProjects.map { .project($0.id) } + pendingCards.map { .card($0.id) } }
     public var approvalCount: Int { newProjectCount + pendingCards.count }
+    /// Bound member's name: the server's current name wins over the name typed at binding time.
+    public var memberName: String {
+        guard binding.isBound else { return "" }
+        if let name = collectorPolicy?.partnerName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+        return binding.name
+    }
     public func openApproval(_ target: ApprovalTarget? = nil) {
         page = .approvals
         switch target {
@@ -514,29 +520,28 @@ public final class AppStore: ObservableObject {
         reviewError = nil
         try? await reviewService.logout()
     }
-    /// Loads the member's own page. `month` ("YYYY-MM") pages the progress calendar; nil is the current month.
-    /// Without a service (demo mode) the sample data stands in, so the page and its month controls still work.
-    public func loadPersonalData(month: String? = nil) async {
+    /// Loads the member's own page from the system. Without a service (demo mode) the sample data stands in.
+    public func loadPersonalData() async {
         guard let collectorService else {
-            if isLive { personalDataError = "未连接系统，暂时无法查看个人数据。" }
-            else { personalData = DemoRepository.personalData(month: month); personalDataError = nil }
+            if isLive { personalDataError = "未连接系统，暂时无法查看本周进展。" }
+            else { personalData = DemoRepository.personalData(); personalDataError = nil }
             return
         }
-        guard binding.isBound else { personalDataError = "绑定后才能查看个人数据。"; return }
-        // The newest request wins: a slow answer for a month the member has already left must not replace the page.
+        guard binding.isBound else { personalDataError = "绑定后才能查看本周进展。"; return }
+        // The newest request wins: the periodic refresh and a foreground reload can overlap.
         personalDataRequest += 1
         let ticket = personalDataRequest, identity = binding
         isLoadingPersonalData = true
         defer { if ticket == personalDataRequest { isLoadingPersonalData = false } }
         do {
-            let data = try await collectorService.personalData(binding: identity, month: month)
+            let data = try await collectorService.personalData(binding: identity)
             guard ticket == personalDataRequest, binding == identity else { return }
             personalData = data
             personalDataError = nil
         } catch {
             guard ticket == personalDataRequest, binding == identity else { return }
             if (error as? CollectorError)?.status == 401 { handleCollectorError(error) }
-            personalDataError = (error as? CollectorError)?.message ?? "个人数据暂时无法加载，请检查网络后重试。"
+            personalDataError = (error as? CollectorError)?.message ?? "本周进展暂时无法加载，请检查网络后重试。"
         }
     }
     public func refreshReviews() async {
@@ -1589,6 +1594,8 @@ extension AppStore {
             try FileManager.default.removeItem(at: outbox)
             recordCollectorLog("upload", "UPLOAD_COMPLETED", uploadID: package.id, details: .forPackage(package))
             uploadNotice = "系统已确认接收本次上传的 \(package.sessionCount) 个完整会话。"
+            // The 本周进展 page follows each upload; the open page also rereads every minute.
+            Task { await loadPersonalData() }
         } catch {
             handleCollectorError(error)
             if let index = localRecords.firstIndex(where: { $0.id == activeID }) { localRecords[index].status = .failed; localRecords[index].errorMessage = error.localizedDescription }

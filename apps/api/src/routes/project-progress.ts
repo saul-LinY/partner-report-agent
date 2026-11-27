@@ -1,17 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { sqlClient as sql } from "@partner-report/db";
+import { loadProjectProgress, sqlClient as sql } from "@partner-report/db";
 import {
-  type ProjectProgressResponse,
   progressDateSchema,
-  progressDayDistance,
   progressEventSchema,
   progressToday,
   validateProgressEvents,
 } from "@partner-report/contracts/project-progress";
-import { ApiError, requireWebActor } from "../common.js";
-import { assembleProjectProgress } from "../project-progress.js";
+import { ApiError, leadershipRead, requireWebActor } from "../common.js";
 
 const paramsSchema = z.object({
   partnerId: z.string().uuid(),
@@ -39,73 +36,6 @@ async function participationScope(request: FastifyRequest) {
   };
 }
 
-export type TeamScope = { tenantId: string; teamId: string };
-
-/** Approved progress for a team: one consistent snapshot over `from`..`to` (default: this month). */
-export async function loadProjectProgress(
-  scope: TeamScope,
-  query: { from?: string | undefined; to?: string | undefined } = {},
-): Promise<ProjectProgressResponse> {
-  const [team] = await sql<
-    { timezone: string }[]
-  >`select timezone from teams where id = ${scope.teamId} and tenant_id = ${scope.tenantId}`;
-  if (!team) throw new ApiError(404, "TEAM_NOT_FOUND", "团队不存在。");
-  const today = progressToday(team.timezone);
-  const to = query.to ?? today;
-  const from = query.from ?? `${to.slice(0, 7)}-01`;
-  if (from > to || progressDayDistance(from, to) > 92 || to > today)
-    throw new ApiError(
-      400,
-      "INVALID_DATE_RANGE",
-      "请查看今天及之前不超过 93 天的日期范围。",
-    );
-  // Read approved daily progress and project timing from one consistent snapshot.
-  return sql.begin("isolation level repeatable read read only", async (tx) => {
-    const members = await tx<
-      { id: string; name: string; status: string }[]
-    >`select id, display_name as name, status from partners where tenant_id = ${scope.tenantId} and team_id = ${scope.teamId} order by display_name`;
-    const cards = await tx<any[]>`
-        select wi.id, wi.partner_id, wi.project_id, p.name as project_name, wi.review_id,
-          p.description as project_description, rp.period_key, wi.review_status, wi.payload, wi.updated_at,
-          coalesce((
-            select array_agg(distinct sf.session_id)
-            from work_item_facts wif
-            join session_facts sf on sf.id = wif.fact_id
-            where wif.work_item_id = wi.id
-          ), array[]::text[]) as session_ids
-        from work_items wi join projects p on p.id = wi.project_id and p.tenant_id = wi.tenant_id and p.team_id = wi.team_id
-        join report_periods rp on rp.id = wi.period_id and rp.tenant_id = wi.tenant_id and rp.team_id = wi.team_id
-        where wi.tenant_id = ${scope.tenantId} and wi.team_id = ${scope.teamId}
-          and wi.review_status = 'approved'
-        order by rp.starts_at desc, wi.updated_at desc
-      `;
-    const participations = await tx<any[]>`
-        select pp.partner_id, pp.project_id, p.name as project_name, p.description as project_description, pp.version, pp.events, pp.updated_at
-        from project_participations pp join projects p on p.id = pp.project_id and p.tenant_id = pp.tenant_id and p.team_id = pp.team_id
-        where pp.tenant_id = ${scope.tenantId} and pp.team_id = ${scope.teamId}
-      `;
-    const assembled = assembleProjectProgress({
-      cards,
-      participations,
-      today,
-      from,
-      to,
-    });
-    return {
-      today,
-      timezone: team.timezone,
-      from,
-      to,
-      generatedAt: new Date().toISOString(),
-      members: members.map((m) => ({
-        ...m,
-        contributionDays: assembled.memberDays.get(m.id)?.size ?? 0,
-      })),
-      projects: assembled.projects,
-    };
-  });
-}
-
 export async function projectProgressRoutes(app: FastifyInstance) {
   app.get("/v1/admin/project-progress", async (request) => {
     const actor = await requireWebActor(request, "admin");
@@ -115,7 +45,7 @@ export async function projectProgressRoutes(app: FastifyInstance) {
         to: progressDateSchema.optional(),
       })
       .parse(request.query);
-    return loadProjectProgress(actor, query);
+    return leadershipRead(() => loadProjectProgress(actor, query));
   });
 
   app.get(

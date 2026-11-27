@@ -247,6 +247,12 @@ public struct LocalDiscovery: Sendable {
                 pendingHeaders.append((.hermes, file))
             }
         }
+        for location in existing(.deepseek, .transcript) {
+            for file in files(in: URL(fileURLWithPath: location.sessionPath), maximumDepth: 3) where file.lastPathComponent == "session.v4.jsonl.zstd" {
+                guard inWindow(file) else { continue }
+                pendingHeaders.append((.deepseek, file))
+            }
+        }
         // Antigravity CLI and Desktop have separate brains; neither is a substitute for the other.
         let agyBrains = existing(.agy, .brain).map { URL(fileURLWithPath: $0.sessionPath) }
         var agyRoots: Set<String> = []
@@ -315,18 +321,37 @@ public struct LocalDiscovery: Sendable {
     public func projectRoot(for folder: String) -> String? {
         guard folder.hasPrefix("/") else { return nil }
         let canonical = URL(fileURLWithPath: folder).standardizedFileURL.resolvingSymlinksInPath()
-        let excluded = temporaryRoots ?? ["/tmp", "/private/tmp", "/var/tmp", "/private/var", home.appending(path: "Documents/Codex").path, home.appending(path: ".codex/worktrees").path]
-        guard canonical != home, !excluded.contains(where: { canonical.path == $0 || canonical.path.hasPrefix($0 + "/") }) else { return nil }
+        let homePath = home.standardizedFileURL.resolvingSymlinksInPath().path
+        // resolvingSymlinksInPath turns /private/var/folders/… into /var/folders/…, so both spellings are listed.
+        // A folder inside home is never a system temporary folder, even when home itself lives under one.
+        let systemTemporary = canonical.path.hasPrefix(homePath + "/") ? [] : ["/tmp", "/private/tmp", "/var", "/private/var"]
+        let excluded = temporaryRoots ?? systemTemporary + [home.appending(path: "Documents/Codex").path, home.appending(path: ".codex/worktrees").path]
+        guard canonical.path != homePath, !excluded.contains(where: { canonical.path == $0 || canonical.path.hasPrefix($0 + "/") }) else { return nil }
+        // A registered folder directly under home (Documents, Desktop…) is a container: it owns only sessions started in
+        // it, so one approved or denied session there never swallows every project folder created below it later.
         let matching = registeredRoots.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL.resolvingSymlinksInPath() }
-            .filter { canonical.path == $0.path || canonical.path.hasPrefix($0.path + "/") }.sorted { $0.path.count > $1.path.count }
+            .filter { root in
+                canonical.path == root.path
+                    || (canonical.path.hasPrefix(root.path + "/") && root.deletingLastPathComponent().path != homePath)
+            }.sorted { $0.path.count > $1.path.count }
         if let match = matching.first { return match.path }
         var path = canonical
         var gitRoot: String?
-        while path.path != "/", path != home {
+        while path.path != "/", path.path != homePath {
             if FileManager.default.fileExists(atPath: path.appending(path: ".git").path) { gitRoot = path.path }
             path.deleteLastPathComponent()
         }
-        return gitRoot
+        if let gitRoot { return gitRoot }
+        // Without a repository the session's own folder is the candidate project; it still needs approval.
+        // Hidden folders below home hold tool and bot workspaces, not member projects.
+        let relative = canonical.path.hasPrefix(homePath + "/") ? canonical.path.dropFirst(homePath.count + 1) : ""
+        guard !relative.split(separator: "/").contains(where: { $0.hasPrefix(".") }) else { return nil }
+        // A session started in / or a system folder is not a member project.
+        let systemRoots = ["/System", "/usr", "/Library", "/private"]
+        guard canonical.path != "/", !systemRoots.contains(where: { canonical.path == $0 || canonical.path.hasPrefix($0 + "/") }) else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: canonical.path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
+        return canonical.path
     }
     private func modified(_ url: URL) -> Date {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
@@ -377,7 +402,7 @@ public struct LocalDiscovery: Sendable {
             do {
                 let record: MetadataRecord?
                 if agent == .opencode { record = try JSONDecoder().decode(MetadataRecord.self, from: Data(contentsOf: file)) }
-                else if file.pathExtension == "zst" { issues.append("Codex：压缩历史需要本机定位组件。") ; continue }
+                else if ["zst", "zstd"].contains(file.pathExtension) { issues.append("\(agent.name)：压缩历史需要本机定位组件。") ; continue }
                 else { record = try leadingMetadata(file, maximumLines: agent == .claude || agent == .hermes ? 30 : 5) }
                 guard let record, record.archived != true, (record.time?.archived ?? 0) == 0, record.isSidechain != true, (record.parentID ?? record.parent_session_id ?? "").isEmpty,
                       let cwd = record.cwd ?? record.directory ?? record.payload?.cwd else { continue }

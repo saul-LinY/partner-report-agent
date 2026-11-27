@@ -123,7 +123,7 @@ pub enum SessionBlock {
     Thinking {
         /// 可见正文的预览（可能为空：Claude 只有 signature / Codex 只有 encrypted_content）
         text: String,
-        /// Codex summary_text、Gemini thoughts.subject 之类的短摘要
+        /// Codex summary_text 之类的短摘要
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
         /// 正文不可见（加密/只留签名）
@@ -266,9 +266,7 @@ pub enum EventKind {
     PrLink,
     /// Claude <command-name>
     SlashCommand,
-    /// Gemini info
-    Info,
-    /// Gemini error
+    /// OpenCode / Pi 错误消息
     Error,
     /// Codex agent_message / SubAgentActivity
     SubAgent,

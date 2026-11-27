@@ -49,12 +49,36 @@ final class LocalDiscoveryTests: XCTestCase {
         XCTAssertEqual(Set(snapshot.sessions.map(\.agent)), [.claude, .omp])
         XCTAssertEqual(snapshot.sessions.count, 2)
     }
-    func testOrdinaryFolderIsIgnoredUnlessExplicitlyRegistered() throws {
-        let (home, _) = try fixture(); defer { try? FileManager.default.removeItem(at: home) }
+    func testFolderWithoutRepositoryIsItsOwnProjectExceptHiddenToolWorkspaces() throws {
+        let (home, project) = try fixture(); defer { try? FileManager.default.removeItem(at: home) }
         let ordinary = home.appending(path: "documents/client-materials")
-        try FileManager.default.createDirectory(at: ordinary, withIntermediateDirectories: true)
-        XCTAssertNil(LocalDiscovery(home: home, temporaryRoots: []).projectRoot(for: ordinary.path))
+        let hidden = home.appending(path: ".dsh-qqbot/workspace")
+        for folder in [ordinary, hidden] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        let scanner = LocalDiscovery(home: home, temporaryRoots: [])
+        XCTAssertEqual(scanner.projectRoot(for: ordinary.path), ordinary.resolvingSymlinksInPath().path)
+        // A subfolder of a repository still belongs to the repository.
+        let nested = project.appending(path: "docs")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        XCTAssertEqual(scanner.projectRoot(for: nested.path), project.resolvingSymlinksInPath().path)
+        XCTAssertNil(scanner.projectRoot(for: hidden.path))
+        XCTAssertNil(scanner.projectRoot(for: home.appending(path: "deleted-folder").path))
+        XCTAssertNil(scanner.projectRoot(for: home.path))
+        XCTAssertNil(scanner.projectRoot(for: "/"))
+        XCTAssertNil(scanner.projectRoot(for: "/System"))
+        XCTAssertNil(scanner.projectRoot(for: "/usr/local"))
+        XCTAssertNil(scanner.projectRoot(for: "/Library"))
         XCTAssertEqual(LocalDiscovery(home: home, registeredRoots: [ordinary.path], temporaryRoots: []).projectRoot(for: ordinary.appending(path: "notes").path), ordinary.resolvingSymlinksInPath().path)
+        let documents = home.appending(path: "Documents")
+        let inside = documents.appending(path: "ChatGPT/idea")
+        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        let container = LocalDiscovery(home: home, registeredRoots: [documents.path], temporaryRoots: [])
+        XCTAssertEqual(container.projectRoot(for: inside.path), inside.resolvingSymlinksInPath().path)
+        XCTAssertEqual(container.projectRoot(for: documents.path), documents.resolvingSymlinksInPath().path)
+    }
+    func testSystemTemporaryFolderIsNeverAProjectWithDefaultExclusions() throws {
+        let temporary = FileManager.default.temporaryDirectory.appending(path: "weekly-temp-\(UUID())")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: temporary) }
+        XCTAssertNil(LocalDiscovery(home: URL(fileURLWithPath: "/Users/weekly-test-home")).projectRoot(for: temporary.path))
     }
     func testTemporaryLocationIsExcludedEvenWhenRegistered() throws {
         let (home, project) = try fixture(); defer { try? FileManager.default.removeItem(at: home) }

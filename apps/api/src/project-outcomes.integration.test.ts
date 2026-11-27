@@ -101,6 +101,7 @@ suite("fixed outcomes and App instruction regeneration", () => {
                   status: "in_progress",
                   projectStatus: "development",
                   projectStatusReason: "本周在实现功能。",
+                  currentFocus: "完善培训材料",
                   overview,
                   dailyProgress: [
                     { date: corrected ? "2026-09-02" : "2026-09-01", summary },

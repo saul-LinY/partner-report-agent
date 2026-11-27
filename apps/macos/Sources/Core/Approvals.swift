@@ -47,15 +47,27 @@ public enum CardProjectStatus: String, Codable, CaseIterable, Identifiable, Send
 }
 
 public struct ReviewCard: Codable, Identifiable, Equatable, Sendable {
-    public struct Progress: Codable, Equatable, Sendable {
-        public var date: String
-        public var summary: String
-    }
     public struct Payload: Codable, Equatable, Sendable {
+        /// A blocker the card reports this week; `neededSupport` is what leadership must decide or provide.
+        public struct Blocker: Codable, Equatable, Sendable {
+            public var type: String
+            public var title: String
+            public var detail: String?
+            public var neededSupport: String?
+        }
+        /// A blocker from an earlier week that the card says is resolved, with the one-line reason.
+        public struct ResolvedBlocker: Codable, Equatable, Sendable {
+            public var title: String
+            public var resolvedOn: String?
+            public var evidence: String?
+        }
         public var overview: String?
         public var summary: String?
-        public var dailyProgress: [Progress]?
+        public var currentFocus: String?
+        public var keyEvents: [Blocker]?
+        public var resolvedBlockers: [ResolvedBlocker]?
         public var projectStatus: CardProjectStatus?
+        public var blockers: [Blocker] { (keyEvents ?? []).filter { $0.type == "blocker" } }
     }
     public var id: String
     public var title: String
@@ -81,9 +93,49 @@ public struct ReviewBatch: Codable, Identifiable, Equatable, Sendable {
         public var status: String
         public var error_message: String?
     }
+    /// The weekly schedule of this review; every instant is an ISO timestamp.
+    public struct Period: Codable, Equatable, Sendable {
+        public var periodKey: String
+        public var startsAt: String
+        public var cutoffAt: String
+        public var autoApproveAt: String
+        public var publishAt: String
+        public var timezone: String
+        public var autoApproveDate: Date? { Self.date(autoApproveAt) }
+        public var publishDate: Date? { Self.date(publishAt) }
+        public var startsDate: Date? { Self.date(startsAt) }
+        public var cutoffDate: Date? { Self.date(cutoffAt) }
+        static func date(_ value: String) -> Date? {
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        }
+        private func text(_ date: Date?, _ format: String) -> String {
+            guard let date else { return "" }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.timeZone = TimeZone(identifier: timezone) ?? .current
+            formatter.dateFormat = format
+            return formatter.string(from: date)
+        }
+        /// "11月16日（周一）13:00": when approved cards reach the leadership panel.
+        public var publishText: String { text(publishDate, "M月d日（EEE）HH:mm") }
+        /// "11月16日 12:00": the moment pending cards are approved as they are.
+        public var autoApproveText: String { text(autoApproveDate, "M月d日 HH:mm") }
+        /// "2 天 20 小时" until the automatic approval; nil once it has passed.
+        public func countdown(now: Date) -> String? {
+            guard let deadline = autoApproveDate, deadline > now else { return nil }
+            let minutes = Int(deadline.timeIntervalSince(now) / 60)
+            let (days, hours, rest) = (minutes / 1440, minutes % 1440 / 60, minutes % 60)
+            if days > 0 { return "\(days) 天 \(hours) 小时" }
+            if hours > 0 { return "\(hours) 小时 \(rest) 分钟" }
+            return "\(max(rest, 1)) 分钟"
+        }
+    }
     public var review: Header
     public var items: [ReviewCard]
     public var regenerationJobs: [Job]
+    public var period: Period?
     public var id: String { review.id }
     public var pendingCards: [ReviewCard] {
         review.state == "IN_PROGRESS" ? items.filter { $0.review_status == "pending" } : []

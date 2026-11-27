@@ -22,7 +22,7 @@
 4. 用户选择对应的本机项目目录后，App 仅扫描、导入已授权项目最近一个月的会话。
 5. App 按采集周期打包上传获准项目会话，并上传运行日志；中台监控实际上传结果。
 6. App 拉取中台通知并调用 macOS 系统通知。已生成的工作卡片可在 App 审核，审核结果用于团队汇总。
-7. App 的「个人数据」页只读展示本人的项目进展、卡点和会话活跃度，内容与管理端成员详情页一致；同一套用户名和绑定码即个人账号，只能看到自己的数据。
+7. App 的「本周进展」页只读展示本人本周（当前开放周期）的项目进展、交互数据和截止流程；同一套用户名和绑定码即个人账号，只能看到自己的数据。
 
 完整会话包接收后自动进入会话分析；工作卡片在每期截止时间之后统一生成（每个周期每个项目一次），之后进入项目成果整合；本人审核后形成不可变快照，并按团队周期汇总周报。管理端“监控与排障”提供用户日志、系统日志和异常巡检，任务失败的重试入口在异常巡检。启动、恢复和验收见 [完整处理流水线](docs/APP_PIPELINE_OPERATIONS.md)。
 
@@ -51,7 +51,7 @@ npm run dev                 # API、Web、Worker 一起启动
 npm run app:services -- start     # 也支持 status / restart api|worker / stop
 ```
 
-该脚本必须能读到 `MODEL_API_BASE_URL`，没配置会直接报错。部署见 [部署与远程连接](docs/DEPLOYMENT.md)，Google 登录见 [Google 登录配置](docs/GOOGLE_AUTH.md)，App 工作流与本机验证见 [App 采集工作流](docs/APP_COLLECTION_WORKFLOW.md)。
+该脚本按「环境变量 → `.env` → `.local/collector-dev-config.json`」取模型网关地址和密钥，启动前先校验网关和密钥，校验失败不启动、也不停掉正在运行的服务。网关恢复后，因网关原因失败的分析任务会自动重新排队。部署见 [部署与远程连接](docs/DEPLOYMENT.md)，Google 登录见 [Google 登录配置](docs/GOOGLE_AUTH.md)，App 工作流与本机验证见 [App 采集工作流](docs/APP_COLLECTION_WORKFLOW.md)。
 
 ## 安装与发布 App
 

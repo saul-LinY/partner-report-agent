@@ -10,7 +10,6 @@ import {
   ClipboardCheck,
   Copy,
   KeyRound,
-  LayoutDashboard,
   Pencil,
   Plus,
   RefreshCw,
@@ -20,7 +19,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { Link } from "wouter";
-import { MemberOverview } from "./member-overview.js";
 import { api } from "./api.js";
 import { selectCurrentOpenPeriod } from "./period-selection.js";
 import {
@@ -145,32 +143,20 @@ import {
   AdminTabs,
   AdminWorkspace,
   AdminPagination,
-  WorkspaceHeader,
 } from "./admin-workspace.js";
 
 export function TeamSettingsPage() {
-  return <AdminConsole page="settings" />;
-}
-
-export function AdminConsole({
-  page = "overview",
-}: {
-  page?: "overview" | "settings";
-}) {
   const title = "团队管理";
   const query = useQuery({
     queryKey: ["admin-overview"],
-    enabled: page === "settings",
     queryFn: () => api<Overview>("/v1/admin/overview"),
     refetchInterval: 15_000,
   });
-  if (page === "overview") return <ProgressOverview />;
   if (!query.data)
     return (
       <div className="page management-page">
         <AdminHeader
           title={title}
-          icon={Settings2}
           onRefresh={() => void query.refetch()}
           refreshing={query.isFetching}
         />
@@ -204,23 +190,6 @@ export function AdminConsole({
   );
 }
 
-function ProgressOverview() {
-  return (
-    <div className="page admin-page management-page overview-page">
-      <section className="aw-view aw-operations-view">
-        <div className="lc-stack">
-          <WorkspaceHeader
-            title="项目进展"
-            icon={LayoutDashboard}
-            context="按负责人查看项目进展与工作活跃度"
-          />
-          <MemberOverview />
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function TeamSettingsContent({
   data,
   refreshing,
@@ -242,10 +211,7 @@ function TeamSettingsContent({
   const [removePartner, setRemovePartner] = useState<any | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const refresh = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
-      queryClient.invalidateQueries({ queryKey: ["project-progress"] }),
-    ]);
+    queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
   const openPeriod = selectCurrentOpenPeriod(data.periods);
   const pageCount = Math.max(1, Math.ceil(data.connections.length / 10));
   const currentPage = Math.min(page, pageCount);
@@ -310,19 +276,8 @@ function TeamSettingsContent({
     <div className="page admin-page management-page team-settings-page">
       <AdminHeader
         title="团队管理"
-        icon={Settings2}
         onRefresh={() => void refresh()}
         refreshing={refreshing}
-        context={
-          openPeriod ? (
-            <>
-              <span>{openPeriod.period_key}</span>
-              <span>下次聚合 {formatFullTime(openPeriod.cutoff_at)}</span>
-            </>
-          ) : (
-            "暂无开放周期"
-          )
-        }
       >
         {tab === "people" && (
           <Button icon={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
@@ -908,7 +863,7 @@ function ScheduleSettings({
     String(defaults.factCutoffWeekday ?? 5),
   );
   const [cutoffTime, setCutoffTime] = useState(
-    defaults.factCutoffTime ?? "17:00",
+    defaults.factCutoffTime ?? "16:00",
   );
   const saveDefaults = useMutation({
     mutationFn: () =>

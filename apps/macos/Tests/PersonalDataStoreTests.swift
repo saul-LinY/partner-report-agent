@@ -2,11 +2,13 @@ import XCTest
 @testable import WeeklyReportCore
 
 private actor PersonalDataCollector: CollectorServing {
-    var requestedMonths: [String?] = []
-    var delayed: Set<String> = []
+    var requests = 0
+    var delayFirst = false
     var failure: (any Error)?
-    func setDelayed(_ months: Set<String>) { delayed = months }
+    var pages: [PersonalData] = []
+    func setDelayFirst(_ value: Bool) { delayFirst = value }
     func setFailure(_ error: (any Error)?) { failure = error }
+    func setPages(_ value: [PersonalData]) { pages = value }
     func claim(binding: LocalBinding, code: String) async throws -> CollectorClaim {
         CollectorClaim(deviceId: "device", name: binding.name, policy: CollectorPolicy(version: 1, entries: [], currentPeriod: nil))
     }
@@ -15,11 +17,12 @@ private actor PersonalDataCollector: CollectorServing {
     func register(binding: LocalBinding, scopeKey: String, name: String, periodKey: String, sessionCount: Int) async throws -> CollectorPolicy { try await policy(binding: binding) }
     func upload(binding: LocalBinding, package: CollectorPackage) async throws {}
     func logs(binding: LocalBinding, events: [CollectorLog]) async throws {}
-    func personalData(binding: LocalBinding, month: String?) async throws -> PersonalData {
-        requestedMonths.append(month)
-        if let month, delayed.contains(month) { try await Task.sleep(for: .milliseconds(200)) }
+    func personalData(binding: LocalBinding) async throws -> PersonalData {
+        requests += 1
+        let index = requests - 1
+        if delayFirst && index == 0 { try await Task.sleep(for: .milliseconds(200)) }
         if let failure { throw failure }
-        return DemoRepository.personalData(month: month ?? "2026-11", now: Date(timeIntervalSince1970: 1_793_000_000))
+        return pages.indices.contains(index) ? pages[index] : DemoRepository.personalData(now: Date(timeIntervalSince1970: 1_793_000_000))
     }
 }
 
@@ -30,32 +33,34 @@ final class PersonalDataStoreTests: XCTestCase {
         await store.bindCollector(LocalBinding(serviceAddress: "https://company.example", name: "Member"), code: "ANY")
         return store
     }
+    private func page(member: String) -> PersonalData {
+        var data = DemoRepository.personalData(now: Date(timeIntervalSince1970: 1_793_000_000))
+        data.member.name = member
+        return data
+    }
 
-    func testMonthPagingRequestsThatMonthAndKeepsDataOnFailure() async {
+    func testFailedRefreshKeepsWhatIsOnScreen() async {
         let service = PersonalDataCollector()
         let store = await boundStore(service)
         await store.loadPersonalData()
-        await store.loadPersonalData(month: "2026-10")
-        let requested = await service.requestedMonths
-        XCTAssertEqual(requested, [nil, "2026-10"])
-        XCTAssertEqual(store.personalData?.calendar.month, "2026-10")
-
+        let shown = store.personalData
         await service.setFailure(URLError(.notConnectedToInternet))
-        await store.loadPersonalData(month: "2026-09")
-        XCTAssertEqual(store.personalData?.calendar.month, "2026-10", "a failed page change keeps what is on screen")
+        await store.loadPersonalData()
+        XCTAssertEqual(store.personalData, shown)
         XCTAssertNotNil(store.personalDataError)
         XCTAssertFalse(store.isLoadingPersonalData)
     }
 
-    func testSlowAnswerForAnEarlierMonthDoesNotReplaceTheNewestRequest() async {
+    func testSlowEarlierAnswerDoesNotReplaceTheNewestOne() async {
         let service = PersonalDataCollector()
-        await service.setDelayed(["2026-09"])
+        await service.setPages([page(member: "旧"), page(member: "新")])
+        await service.setDelayFirst(true)
         let store = await boundStore(service)
-        async let slow: Void = store.loadPersonalData(month: "2026-09")
+        async let slow: Void = store.loadPersonalData()
         try? await Task.sleep(for: .milliseconds(50))
-        await store.loadPersonalData(month: "2026-10")
+        await store.loadPersonalData()
         await slow
-        XCTAssertEqual(store.personalData?.calendar.month, "2026-10")
+        XCTAssertEqual(store.personalData?.member.name, "新")
         XCTAssertFalse(store.isLoadingPersonalData)
     }
 
@@ -68,12 +73,5 @@ final class PersonalDataStoreTests: XCTestCase {
         await store.loadPersonalData()
         XCTAssertNil(store.personalData)
         XCTAssertEqual(store.startupStage, .binding)
-    }
-
-    func testDemoStoreServesSampleDataForAnyMonth() async {
-        let store = AppStore()
-        await store.loadPersonalData(month: "2026-02")
-        XCTAssertEqual(store.personalData?.calendar.month, "2026-02")
-        XCTAssertNil(store.personalDataError)
     }
 }

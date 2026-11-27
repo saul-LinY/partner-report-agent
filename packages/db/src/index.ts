@@ -7,6 +7,9 @@ export * from "./config.js";
 export * from "./project-scope-projects.js";
 export { dispatchAppNotifications, suppressedAppNotificationKinds } from "./app-notifications.js";
 export { enqueueCollectorUpload, collectorSessionKey, loadCollectorPipeline } from "./collector-pipeline.js";
+export * from "./project-progress.js";
+export * from "./leadership-data.js";
+export * from "./leadership-snapshot.js";
 export * from "./inspection-rules.js";
 export * from "./inspection.js";
 

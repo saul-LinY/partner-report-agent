@@ -56,7 +56,8 @@ export const aggregationGroupSchema: z.ZodTypeAny = z
     status: workStatusSchema,
     projectStatus: projectStatusSchema.optional(),
     projectStatusReason: z.string().trim().max(500).optional(),
-    currentFocus: z.string().trim().min(1).max(240).optional(),
+    // One sentence a leader can scan; stored cards from earlier prompt versions may hold longer text.
+    currentFocus: z.string().trim().min(1).max(25),
     projectOutlook: projectOutlookSchema.optional(),
     keyEvents: z
       .array(
@@ -73,10 +74,27 @@ export const aggregationGroupSchema: z.ZodTypeAny = z
             title: z.string().trim().min(1).max(160),
             detail: z.string().trim().min(1).max(500),
             step: z.string().trim().max(40).optional(),
+            // blocker only: what leadership must decide or provide.
+            neededSupport: z.string().trim().min(1).max(200).optional(),
           })
           .strict(),
       )
       .max(5)
+      .default([]),
+    // Earlier blockers (from openBlockers) this period's evidence shows are no longer obstacles.
+    resolvedBlockers: z
+      .array(
+        z
+          .object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            title: z.string().trim().min(1).max(160),
+            resolvedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            // One line on why the blocker is no longer an obstacle.
+            evidence: z.string().trim().min(1).max(200).optional(),
+          })
+          .strict(),
+      )
+      .max(10)
       .default([]),
     overview: z.string().trim().min(1),
     dailyProgress: z

@@ -85,9 +85,16 @@ struct RootView: View {
             ProcessCPUIndicator().padding(.horizontal, 20).padding(.bottom, 12)
             Rule().padding(.horizontal, 16)
             HStack(spacing: 9) {
-                Image(systemName: "person.crop.circle.fill").font(.app(size: 31)).foregroundStyle(Palette.secondary.opacity(0.5))
+                if let initial = store.memberName.first {
+                    Text(String(initial).uppercased())
+                        .font(.app(size: 14, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: 31, height: 31).background(Palette.secondary.opacity(0.5), in: Circle())
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: "person.crop.circle.fill").font(.app(size: 31)).foregroundStyle(Palette.secondary.opacity(0.5))
+                }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(store.binding.isBound && !store.binding.name.isEmpty ? store.binding.name : "本机用户")
+                    Text(store.memberName.isEmpty ? "本机用户" : store.memberName)
                         .font(.app(size: 12, weight: .medium)).lineLimit(1).truncationMode(.tail)
                         .accessibilityIdentifier("sidebar-user-name")
                     Text(store.hasCollectorService ? (store.binding.isBound ? "已绑定系统" : "未绑定") : "本地演示").font(.app(size: 10)).foregroundStyle(Palette.secondary)

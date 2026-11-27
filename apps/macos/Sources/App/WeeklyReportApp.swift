@@ -343,6 +343,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         try? await Task.sleep(for: .milliseconds(500))
                         captureContent("\(page.rawValue)-compact", folder: folder)
                     }
+                    // The 本周进展 page scrolls: capture it scrolled to the project cards, then to the end.
+                    window.setContentSize(NSSize(width: 1280, height: 860))
+                    store.page = .personal
+                    try? await Task.sleep(for: .milliseconds(700))
+                    if let scroll = window.contentView.flatMap({ Self.firstScrollView(in: $0) }), let document = scroll.documentView {
+                        let maxY = max(0, document.frame.height - scroll.contentView.bounds.height)
+                        for (name, fraction) in [("personal-scrolled", 0.5), ("personal-end", 1.0)] {
+                            scroll.contentView.scroll(to: NSPoint(x: 0, y: document.isFlipped ? maxY * fraction : maxY * (1 - fraction)))
+                            scroll.reflectScrolledClipView(scroll.contentView)
+                            try? await Task.sleep(for: .milliseconds(500))
+                            captureContent(name, folder: folder)
+                        }
+                    }
                     window.setContentSize(NSSize(width: 1280, height: 860))
                 }
             }
@@ -350,6 +363,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? Data("complete".utf8).write(to: folder.appending(path: "capture-complete.txt"))
             if args.contains("--capture-exit") { NSApp.terminate(nil) }
         }
+    }
+    private static func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView, scroll.documentView != nil { return scroll }
+        return view.subviews.lazy.compactMap { firstScrollView(in: $0) }.first
     }
     private func captureContent(_ name: String, folder: URL) {
         guard let window = NSApp.windows.first(where: { $0.canBecomeMain }), let view = window.contentView else { return }

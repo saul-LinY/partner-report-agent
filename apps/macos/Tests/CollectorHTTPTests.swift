@@ -98,21 +98,21 @@ final class CollectorHTTPTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token-only")
     }
 
-    func testPersonalDataSendsMonthAsQueryNotPathAndDecodesTheReply() async throws {
+    func testPersonalDataReadsTheMembersWeek() async throws {
         let service = service(), device = UUID().uuidString
         var binding = LocalBinding(serviceAddress: "https://collector-\(UUID()).example.test", name: "Member")
         CollectorHTTPProtocol.state.reset([(200, claimReply(device))])
         binding.deviceID = try await service.claim(binding: binding, code: "TEST-CODE").deviceId
         defer { removeCredential(binding) }
-        let reply = #"{"today":"2026-11-05","timezone":"Asia/Shanghai","member":{"id":"m","name":"林宇"},"headline":{"projectCount":0,"attention":0,"activeDays28":0,"lastActiveDate":null},"projects":[],"calendar":{"month":"2026-10","from":"2026-10-01","to":"2026-10-31"},"activity":{"timezone":"Asia/Shanghai","from":"2026-08-07","to":"2026-11-05","days":90,"events":[]}}"#
-        CollectorHTTPProtocol.state.reset([(200, reply), (200, reply)])
-        let october = try await service.personalData(binding: binding, month: "2026-10")
-        _ = try await service.personalData(binding: binding, month: nil)
-        XCTAssertEqual(october.member.name, "林宇")
+        let reply = #"{"generatedAt":"2026-11-18T02:40:00.000Z","timezone":"Asia/Shanghai","member":{"id":"m","name":"林宇"},"period":{"periodKey":"2026-W47","startsAt":"2026-11-17T03:10:00.000Z","cutoffAt":"2026-11-20T08:00:00.000Z","autoApproveAt":"2026-11-23T04:00:00.000Z","publishAt":"2026-11-23T05:00:00.000Z"},"lastUpload":null,"totals":{"sessions":0,"turns":0,"activeDays":0,"elapsedDays":2},"events":[],"projects":[]}"#
+        CollectorHTTPProtocol.state.reset([(200, reply)])
+        let data = try await service.personalData(binding: binding)
+        XCTAssertEqual(data.member.name, "林宇")
+        XCTAssertEqual(data.period.periodKey, "2026-W47")
         let requests = CollectorHTTPProtocol.state.recorded()
+        XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].url?.path, "/v1/collector/personal-data")
-        XCTAssertEqual(requests[0].url?.query, "month=2026-10")
-        XCTAssertNil(requests[1].url?.query)
+        XCTAssertNil(requests[0].url?.query)
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer test-token-only")
     }
 }

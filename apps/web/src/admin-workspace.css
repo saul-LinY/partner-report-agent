@@ -26,38 +26,20 @@
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+.aw-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 .aw-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 20px;
-  margin-bottom: 24px;
-}
-.aw-breadcrumb {
-  display: block;
-  margin-bottom: 9px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.aw-header h1 {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin: 0;
-  font-size: 25px;
-  line-height: 1.3;
-}
-.aw-header h1 svg {
-  color: var(--accent);
-}
-.aw-context {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 9px;
-  font-size: 11px;
-  color: var(--muted);
+  margin-bottom: 16px;
 }
 .aw-header-actions {
   display: flex;
@@ -932,12 +914,8 @@
     flex-basis: calc(50% - 4px);
   }
   .aw-header {
-    align-items: flex-start;
     gap: 10px;
-    margin-bottom: 18px;
-  }
-  .aw-header h1 {
-    font-size: 22px;
+    margin-bottom: 12px;
   }
   .aw-header-actions {
     justify-content: flex-end;

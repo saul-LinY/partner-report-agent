@@ -3,57 +3,20 @@ import { useState } from "react";
 // Small dependency-free SVG charts for the leadership pages. Colours come from
 // the shared palette so every project keeps one colour across charts.
 export const SERIES_COLORS = [
-  "#376b58",
-  "#48658e",
-  "#866830",
-  "#80608e",
+  "#2563eb",
+  "#c026d3",
+  "#f08c00",
+  "#0ea5b7",
   "#9b6250",
-  "#5f7f86",
+  "#80608e",
+  "#376b58",
+  "#866830",
 ];
 export const seriesColor = (index: number) =>
   SERIES_COLORS[index % SERIES_COLORS.length]!;
 
 const shortDate = (date: string) =>
   `${Number(date.slice(5, 7))}/${Number(date.slice(8))}`;
-
-export function Sparkline({
-  values,
-  color = "var(--accent)",
-  label,
-}: {
-  values: number[];
-  color?: string;
-  label: string;
-}) {
-  const max = Math.max(1, ...values);
-  const width = 84;
-  const height = 28;
-  const gap = 3;
-  const bar = (width - gap * (values.length - 1)) / values.length;
-  return (
-    <svg
-      className="lc-spark"
-      viewBox={`0 0 ${width} ${height}`}
-      role="img"
-      aria-label={label}
-    >
-      {values.map((value, i) => {
-        const h = value ? Math.max(3, (value / max) * height) : 1.5;
-        return (
-          <rect
-            key={i}
-            x={i * (bar + gap)}
-            y={height - h}
-            width={bar}
-            height={h}
-            rx={1.5}
-            fill={value ? color : "var(--line)"}
-          />
-        );
-      })}
-    </svg>
-  );
-}
 
 const NICE_STEPS = [
   1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 100, 150, 200,

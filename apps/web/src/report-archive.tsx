@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileStack } from "lucide-react";
 import { api } from "./api.js";
 import { EmptyState, ErrorBanner } from "./components.js";
 import { AdminHeader } from "./admin-workspace.js";
@@ -71,8 +70,6 @@ export function ReportArchivePage() {
     <div className="page admin-page management-page reports-page">
       <AdminHeader
         title="周报与工作卡"
-        icon={FileStack}
-        context="各成员负责项目的每周工作总结"
         refreshing={archive.isFetching}
         onRefresh={() => void archive.refetch()}
       />

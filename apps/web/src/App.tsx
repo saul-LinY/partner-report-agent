@@ -5,7 +5,7 @@ import { Link, Redirect, Route, Switch, useLocation } from "wouter";
 import { api } from "./api.js";
 import { ErrorBanner } from "./components.js";
 import { Login } from "./auth-pages.js";
-import { AdminConsole, TeamSettingsPage } from "./admin.js";
+import { TeamSettingsPage } from "./admin.js";
 import { ReviewPage } from "./review.js";
 import { SessionPreprocessPage } from "./preprocess.js";
 import { MemberDetailPage } from "./member-detail.js";
@@ -200,7 +200,7 @@ function AuthenticatedApp({ me }: { me: Me }) {
             <TeamSettingsPage />
           </Route>
           <Route path="/admin">
-            <AdminConsole />
+            <MemberDetailPage />
           </Route>
           <Route>
             <Redirect to="/admin" replace />

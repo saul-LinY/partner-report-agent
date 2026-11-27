@@ -50,6 +50,7 @@ const success = (projectKey: string) =>
             status: "in_progress",
             projectStatus: "development",
             projectStatusReason: "本周在实现功能。",
+            currentFocus: "推进功能实现",
             overview: "Synthetic overview",
             dailyProgress: [
               { date: "2026-09-07", summary: "Synthetic progress" },
@@ -98,7 +99,7 @@ describe("bounded project generation", () => {
     });
     await vi.advanceTimersByTimeAsync(100);
     await request;
-    expect(peak).toBe(6);
+    expect(peak).toBe(4);
     expect(active).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(8);
   });
@@ -143,5 +144,24 @@ describe("bounded project generation", () => {
     });
     expect(requestedProjects).not.toContain("g");
     expect(requestedProjects).not.toContain("h");
+  });
+
+  it("truncates an over-long model currentFocus to 25 characters instead of failing the card", async () => {
+    process.env.MODEL_API_KEY = "test-only-key";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const card = JSON.parse(
+          await (await success("a")).json().then((body) => body.output_text),
+        );
+        card.groups[0].currentFocus = `  ${"字".repeat(26)}  `;
+        return new Response(JSON.stringify({ output_text: JSON.stringify(card) }));
+      }),
+    );
+    const result = await generateAggregationByProject(
+      { ...job, input_payload: { projectBuckets: [{ projectKey: "a" }] } },
+      "deepseek-v4-flash:cloud",
+    );
+    expect(result.groups[0].currentFocus).toBe("字".repeat(25));
   });
 });

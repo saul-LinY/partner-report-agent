@@ -10,6 +10,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 import { resolve, dirname } from "node:path";
 import { createServer } from "node:net";
 
@@ -37,10 +38,27 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const database =
   process.env.COLLECTOR_DATABASE_URL ??
   "postgres://partner_report:partner_report@127.0.0.1:54339/partner_report";
-const modelBase = process.env.MODEL_API_BASE_URL ?? config.modelApiBaseUrl;
+// One key everywhere: an explicit environment wins, then the repository .env that `npm run dev` also loads, and only
+// then the local preview config. A second stale copy is how this preview once ran on a revoked key.
+const dotenv = existsSync(resolve(root, ".env"))
+  ? parseEnv(readFileSync(resolve(root, ".env"), "utf8"))
+  : {};
+const pick = (name, fallback) =>
+  process.env[name]
+    ? [process.env[name], "environment"]
+    : dotenv[name]
+      ? [dotenv[name], ".env"]
+      : fallback
+        ? [fallback, ".local/collector-dev-config.json"]
+        : [undefined, "none"];
+const [modelBase, modelBaseSource] = pick(
+  "MODEL_API_BASE_URL",
+  config.modelApiBaseUrl,
+);
+const [modelKey, modelKeySource] = pick("MODEL_API_KEY", config.modelApiKey);
 if (!modelBase)
   throw new Error(
-    "Set MODEL_API_BASE_URL (or modelApiBaseUrl in .local/collector-dev-config.json) to the cloud model gateway",
+    "Set MODEL_API_BASE_URL (in the environment, .env, or modelApiBaseUrl in .local/collector-dev-config.json) to the cloud model gateway",
   );
 const env = {
   PATH: process.env.PATH,
@@ -57,7 +75,7 @@ const env = {
   LOCAL_ADMIN_LOGIN_ALIAS: "admin",
   LOCAL_ADMIN_LOGIN_EMAIL: "admin@local.test",
   MODEL_API_BASE_URL: modelBase,
-  MODEL_API_KEY: process.env.MODEL_API_KEY ?? config.modelApiKey ?? "",
+  MODEL_API_KEY: modelKey ?? "",
   MODEL_REASONING_EFFORT: "none",
   MODEL_REQUEST_TIMEOUT_MS: process.env.MODEL_REQUEST_TIMEOUT_MS ?? "240000",
   MODEL_INSTRUCTION_ROLE: process.env.MODEL_INSTRUCTION_ROLE ?? "developer",
@@ -96,6 +114,12 @@ async function free(port) {
   });
 }
 let pids = read(pidPath);
+// Checked before anything stops: a restart with a bad key leaves the running services alone.
+if (
+  (command === "start" || command === "restart") &&
+  targets.some((name) => name !== "web")
+)
+  await checkModelGateway();
 if (command === "stop" || command === "restart") {
   for (const [name, pid] of Object.entries(pids))
     if (targets.includes(name) && isOurs(pid, name))
@@ -117,6 +141,33 @@ if (command === "stop" || command === "restart") {
     throw new Error("Services are still stopping; retry shortly");
   for (const name of targets) delete pids[name];
   writeFileSync(pidPath, JSON.stringify(pids), { mode: 0o600 });
+}
+/** Refuses to start analysis services on a gateway that rejects the key, instead of failing every job later. */
+async function checkModelGateway() {
+  const base = modelBase.replace(/\/+$/, "");
+  const url = `${base.endsWith("/v1") ? base : `${base}/v1`}/models`;
+  let status;
+  try {
+    status = (
+      await fetch(url, {
+        headers: { authorization: `Bearer ${modelKey ?? ""}` },
+        signal: AbortSignal.timeout(10_000),
+      })
+    ).status;
+  } catch (error) {
+    throw new Error(
+      `Model gateway ${base} (from ${modelBaseSource}) is unreachable: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+  if (status === 401 || status === 403)
+    throw new Error(
+      `Model gateway ${base} rejected MODEL_API_KEY from ${modelKeySource} (HTTP ${status}); fix that key before starting`,
+    );
+  if (status >= 400)
+    throw new Error(
+      `Model gateway ${base} answered HTTP ${status} for ${url}; check MODEL_API_BASE_URL from ${modelBaseSource}`,
+    );
+  console.log(`model gateway: ${base} ok (key from ${modelKeySource})`);
 }
 if (command === "start" || command === "restart") {
   if (!process.env.COLLECTOR_DATABASE_URL)

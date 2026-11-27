@@ -163,7 +163,7 @@ describe("weekly report baselines", () => {
           "m",
         ].map((id) => card(id)),
       }),
-    ).toBe(4);
+    ).toBe(5);
   });
 
   it("compacts long product descriptions to the report limit", () => {

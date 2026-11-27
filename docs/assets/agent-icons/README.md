@@ -14,6 +14,7 @@
 | Hermes           | [hermes.svg](hermes.svg)       | [NousResearch 官方仓库](https://github.com/NousResearch/hermes-agent)网站 favicon                                                                                          |
 | Grok Build       | [grokbuild.svg](grokbuild.svg) | [Grok 官网](https://grok.com/images/favicon.svg)品牌标识；明确作为品牌回退，而非声称有独立 Grok Build 图标                                                                 |
 | Antigravity      | [agy.png](agy.png)             | [Google Antigravity 官网](https://antigravity.google/)图标                                                                                                                 |
+| DeepSeek Harness | [deepseek.png](deepseek.png)   | 本机安装的 DeepSeek Harness.app 自带图标（`Contents/Resources/icon.png`）；2026-11-16 复制                                                                                    |
 
 使用规则：按来源工具识别，名称在图标旁保留；尺寸、留白可统一，但不套用 App 图标、不根据状态染红或染绿。成功、失败和等待用旁边独立的状态点表示。
 

@@ -154,6 +154,12 @@ public struct SourceLocations: Sendable {
             let root = direct ? base.deletingLastPathComponent() : base
             add(.grokbuild, root, direct ? base : root.appending(path: "sessions"), origin, .grok)
         }
+        // DeepSeek Harness (desktop app and the `dsh` CLI) keeps `--<project>--/<session-id>/session.v4.jsonl.zstd` below `sessions`.
+        let deepseekRoots = roots(.deepseek, ".dsh", "DSH_HOME", nil) + [(home.appending(path: "Library/Application Support/dsh-desktop/harness"), "桌面端")]
+        for (base, origin) in deepseekRoots {
+            let direct = base.lastPathComponent == "sessions" || (origin == "手动配置" && !fm.fileExists(atPath: base.appending(path: "sessions").path) && ![".dsh", "harness"].contains(base.lastPathComponent))
+            add(.deepseek, direct ? base.deletingLastPathComponent() : base, direct ? base : base.appending(path: "sessions"), origin, .transcript)
+        }
         var agy = [(home.appending(path: ".gemini"), "默认目录")]
         for root in switchDataRoots { agy += children(root.appending(path: "agy")).map { ($0, "CC Switch profile") } }
         if let raw = overrides[Agent.agy.id] { agy.insert((path(raw), "手动配置"), at: 0) }

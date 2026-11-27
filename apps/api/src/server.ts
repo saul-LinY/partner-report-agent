@@ -20,6 +20,7 @@ import { userLogRoutes } from "./routes/user-logs.js";
 import { inspectionRoutes } from "./routes/inspection.js";
 import { teamReportRoutes } from "./routes/team-reports.js";
 import { projectProgressRoutes } from "./routes/project-progress.js";
+import { leadershipRoutes } from "./routes/leadership.js";
 import { reviewRoutes } from "./routes/reviews.js";
 
 export async function buildApp(
@@ -145,6 +146,7 @@ export async function buildApp(
   await app.register(inspectionRoutes);
   await app.register(reviewRoutes);
   await app.register(projectProgressRoutes);
+  await app.register(leadershipRoutes);
   await app.register(teamReportRoutes);
   return app;
 }

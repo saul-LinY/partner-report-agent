@@ -1,8 +1,11 @@
 import { projectOutlookSchema } from "@partner-report/contracts";
 import { readProjectStatus } from "@partner-report/contracts/project-status";
 import {
+  applyBlockerResolutions,
   calculateProgress,
   progressDateSchema,
+  type BlockerMark,
+  type CardBlockerResolution,
   type ProgressEvent,
   type ProjectKeyEvent,
   type ProgressProject,
@@ -30,13 +33,19 @@ type Participation = {
   events: ProgressEvent[];
   updated_at: Date | string;
 };
+export type ProjectBlockerMark = BlockerMark & {
+  partner_id: string;
+  project_id: string;
+};
 export function assembleProjectProgress(input: {
   cards: Card[];
   participations: Participation[];
   today: string;
   from: string;
   to: string;
+  blockerMarks?: ProjectBlockerMark[];
 }) {
+  const cardResolutions = new Map<string, CardBlockerResolution[]>();
   const projects = new Map<string, ProgressProject>();
   const allDays = new Map<string, Set<string>>();
   const memberDays = new Map<string, Set<string>>();
@@ -220,8 +229,40 @@ export function assembleProjectProgress(input: {
             : null,
         periodKey: card.period_key ?? null,
         reviewId: card.review_id ?? null,
+        ...(event.type === "blocker"
+          ? {
+              neededSupport:
+                typeof event.neededSupport === "string" &&
+                event.neededSupport.trim()
+                  ? event.neededSupport.trim()
+                  : null,
+            }
+          : {}),
       });
     }
+    const resolutions = Array.isArray(card.payload.resolvedBlockers)
+      ? card.payload.resolvedBlockers
+      : [];
+    for (const resolution of resolutions)
+      if (
+        typeof resolution?.date === "string" &&
+        typeof resolution?.title === "string" &&
+        typeof resolution?.resolvedOn === "string"
+      ) {
+        const key = `${card.partner_id}:${card.project_id}`;
+        cardResolutions.set(key, [
+          ...(cardResolutions.get(key) ?? []),
+          {
+            date: resolution.date,
+            title: resolution.title,
+            resolvedOn: resolution.resolvedOn,
+            evidence:
+              typeof resolution.evidence === "string"
+                ? resolution.evidence
+                : null,
+          },
+        ]);
+      }
     // Cards arrive newest first, so the link points to the latest approved weekly card.
     project.reviewId ??= card.review_id;
     const status = readProjectStatus(card.payload);
@@ -257,7 +298,6 @@ export function assembleProjectProgress(input: {
         card.updated_at,
       );
     }
-    if (!entries.length) project.undatedCount++;
   }
   for (const row of input.participations) {
     const project = get(row);
@@ -291,6 +331,15 @@ export function assembleProjectProgress(input: {
     project.aiEvidence.sessionCount = projectSessionKeys.get(key)!.size;
     project.aiEvidence.periodCount = projectPeriods.get(key)!.size;
     project.aiEvidence.lastAnalyzedAt = project.lastUpdatedAt;
+    project.keyEvents = applyBlockerResolutions(
+      project.keyEvents,
+      cardResolutions.get(key) ?? [],
+      (input.blockerMarks ?? []).filter(
+        (mark) =>
+          mark.partner_id === project.partnerId &&
+          mark.project_id === project.projectId,
+      ),
+    );
     project.keyEvents.sort((a, b) => b.date.localeCompare(a.date));
     project.days.sort((a, b) => a.date.localeCompare(b.date));
     if (project.metrics.startDate)

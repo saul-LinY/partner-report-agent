@@ -60,7 +60,7 @@ function fixture() {
     team: {
       id: "team",
       name: "产品研发团队",
-      period_rule: { factCutoffWeekday: 5, factCutoffTime: "17:00" },
+      period_rule: { factCutoffWeekday: 5, factCutoffTime: "16:00" },
     },
     partners,
     connections,
@@ -216,16 +216,25 @@ async function setup(
           teamName: "产品研发团队",
         },
       });
-    if (url.pathname === "/v1/admin/project-progress")
+    if (url.pathname === "/v1/admin/leadership-snapshot")
       return route.fulfill({
         json: {
-          today: "2026-09-08",
-          timezone: "Asia/Shanghai",
-          from: "2026-08-26",
-          to: "2026-09-08",
-          generatedAt: date,
-          members: [],
-          projects: [],
+          schedule: {
+            timezone: "Asia/Shanghai",
+            current: null,
+            next: {
+              periodKey: "2026-W37",
+              startsAt: "2026-09-04T08:00:00.000Z",
+              cutoffAt: "2026-09-11T08:00:00.000Z",
+              autoApproveAt: "2026-09-14T04:00:00.000Z",
+              publishAt: "2026-09-14T05:00:00.000Z",
+              step: "collecting",
+            },
+          },
+          progress: null,
+          activity: null,
+          profiles: [],
+          reviews: [],
         },
       });
     if (url.pathname === "/v1/admin/overview")
@@ -467,9 +476,9 @@ test("team settings appears after reviews and supports direct entry", async ({
     "true",
   );
   await expect(page.getByRole("tab", { name: "生成设置" })).toBeVisible();
-  expect(calls.some((call) => call.path === "/v1/admin/project-progress")).toBe(
-    false,
-  );
+  expect(
+    calls.some((call) => call.path === "/v1/admin/leadership-snapshot"),
+  ).toBe(false);
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "团队管理", exact: true }),

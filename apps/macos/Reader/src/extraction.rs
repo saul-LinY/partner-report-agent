@@ -147,6 +147,27 @@ fn gate_file(job: &Job, root: &Path) -> Result<Gate, String> {
     if job.provider == "opencode" && !job.source.starts_with("sqlite:") {
         return gate_opencode_legacy(job, root);
     }
+    if job.provider == "deepseek" {
+        #[derive(Deserialize)]
+        struct Header { #[serde(rename = "type")] kind: String, id: String, cwd: String, #[serde(rename = "delegationDepth", default)] depth: Option<u64> }
+        let path = Path::new(&job.source).canonicalize().map_err(|e| e.to_string())?;
+        if path.file_name().and_then(|v| v.to_str()) != Some("session.v4.jsonl.zstd") { return Err("invalid DeepSeek session path".into()); }
+        if path.parent().and_then(Path::file_name).and_then(|v| v.to_str()) != Some(job.session_id.as_str()) { return Err("DeepSeek session identity mismatch".into()); }
+        const MAX_HEADER_BYTES: u64 = 8 * 1024 * 1024;
+        let mut first = String::new();
+        let mut records = crate::session_manager::providers::deepseek::open_records(&path)?;
+        std::io::Read::take(&mut records, MAX_HEADER_BYTES + 1).read_line(&mut first).map_err(|_| "cannot read DeepSeek session header")?;
+        if first.len() as u64 > MAX_HEADER_BYTES { return Err("DeepSeek session header is too large".into()); }
+        let header: Header = serde_json::from_str(first.trim()).map_err(|_| "invalid DeepSeek session header")?;
+        if header.kind != "session" || header.id != job.session_id { return Err("DeepSeek session identity mismatch".into()); }
+        if header.depth.unwrap_or(0) > 0 { return Err("DeepSeek sub-agent sessions are excluded".into()); }
+        let mut gate = Gate::default();
+        gate.source_session_id = Some(header.id);
+        gate.cross_project = !within(&header.cwd, root);
+        if gate.cross_project { return Ok(gate); }
+        gate.completed = crate::session_manager::providers::deepseek::completed_turns(&path)?;
+        return Ok(gate);
+    }
     if job.provider == "grokbuild" {
         #[derive(Deserialize)] struct Summary { info: Info }
         #[derive(Deserialize)] struct Info { id: String, cwd: String }
@@ -459,6 +480,7 @@ fn extract(job: &Job, messages: &[SessionMessage], gate: &Gate) -> Vec<Value> {
                     && gate.completed.contains(&key)
                     && stop != "commentary")
                 || (job.provider == "grokbuild" && gate.completed.contains(&key) && stop != "tool_use")
+                || (job.provider == "deepseek" && gate.completed.contains(&key) && stop != "tool_use")
                 || (job.provider == "hermes"
                     && ["stop", "end_turn", "end-turn"].contains(&stop)
                     && !msg.blocks.iter().any(|b| matches!(b, SessionBlock::ToolCall { .. }))
@@ -474,7 +496,7 @@ fn extract(job: &Job, messages: &[SessionMessage], gate: &Gate) -> Vec<Value> {
                         "explicit_final_phase"
                     } else if job.provider == "agy" {
                         "native_session_completion"
-                    } else if job.provider == "grokbuild" {
+                    } else if job.provider == "grokbuild" || job.provider == "deepseek" {
                         "native_turn_completed"
                     } else if job.provider == "codex" {
                         "task_complete"
@@ -537,6 +559,7 @@ fn load(job: &Job) -> Result<Vec<SessionMessage>, String> {
         "hermes" if job.source.starts_with("sqlite:") => hermes::load_messages_sqlite(&job.source),
         "hermes" => hermes::load_messages(p),
         "grokbuild" => grokbuild::load_messages(p),
+        "deepseek" => deepseek::load_messages(p),
         "agy" => agy::load_messages(p),
         _ => Err("unsupported provider".into()),
     }

@@ -193,7 +193,80 @@ export type ProjectKeyEvent = {
   step: string | null;
   periodKey: string | null;
   reviewId: string | null;
+  /** Blockers only: the day it stopped being an obstacle; absent while it still blocks. */
+  resolvedOn?: string;
+  /** Who said so: an approved work card ("model") or a person on the progress page ("manual"). */
+  resolvedBy?: "model" | "manual";
+  /** Blockers only: what leadership must decide or provide, as the member's card put it. */
+  neededSupport?: string | null;
+  /** Resolved blockers only: one line on why it stopped blocking (from the resolving card). */
+  resolvedEvidence?: string | null;
 };
+/** A blocker is identified by its date and title within one member's project. */
+export const blockerKey = (blocker: { date: string; title: string }) =>
+  `${blocker.date}\u0000${blocker.title.trim()}`;
+/** A resolution an approved work card recorded for an earlier blocker. */
+export type CardBlockerResolution = {
+  date: string;
+  title: string;
+  resolvedOn: string;
+  evidence?: string | null;
+};
+/** A person's explicit choice; it overrides what work cards say. */
+export type BlockerMark = {
+  date: string;
+  title: string;
+  resolved: boolean;
+  resolvedOn: string;
+};
+/**
+ * Applies resolutions to a project's blockers. A manual mark wins (reopening one the model closed, or
+ * closing one the model left open); otherwise the earliest approved card resolution counts.
+ */
+export function applyBlockerResolutions(
+  events: ProjectKeyEvent[],
+  cardResolutions: CardBlockerResolution[],
+  marks: BlockerMark[],
+): ProjectKeyEvent[] {
+  const byCard = new Map<
+    string,
+    { resolvedOn: string; evidence: string | null }
+  >();
+  for (const resolution of cardResolutions) {
+    if (!progressDateSchema.safeParse(resolution.resolvedOn).success) continue;
+    const key = blockerKey(resolution);
+    const earlier = byCard.get(key);
+    if (!earlier || resolution.resolvedOn < earlier.resolvedOn)
+      byCard.set(key, {
+        resolvedOn: resolution.resolvedOn,
+        evidence: resolution.evidence?.trim() || null,
+      });
+  }
+  const byMark = new Map(marks.map((mark) => [blockerKey(mark), mark]));
+  return events.map((event): ProjectKeyEvent => {
+    const {
+      resolvedOn: _on,
+      resolvedBy: _by,
+      resolvedEvidence: _evidence,
+      ...open
+    } = event;
+    if (event.type !== "blocker") return open;
+    const mark = byMark.get(blockerKey(event));
+    if (mark)
+      return mark.resolved
+        ? { ...open, resolvedOn: mark.resolvedOn, resolvedBy: "manual" }
+        : open;
+    const resolved = byCard.get(blockerKey(event));
+    return resolved
+      ? {
+          ...open,
+          resolvedOn: resolved.resolvedOn,
+          resolvedBy: "model",
+          resolvedEvidence: resolved.evidence,
+        }
+      : open;
+  });
+}
 export type ProjectOutlookStep = {
   name: string;
   state: "done" | "current" | "todo";
@@ -241,6 +314,8 @@ export type ProgressProject = {
     summary: string;
     source: "reviewed" | "collected";
   } | null;
+  /** The member has withdrawn collection permission for every App source mapped to this project. */
+  collectionStopped?: boolean;
 };
 export type ProjectProgressResponse = {
   today: string;

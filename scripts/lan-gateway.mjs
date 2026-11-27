@@ -6,18 +6,23 @@
 // Only listed clients (addresses or networks such as 172.20.10.0/23) may even finish a TLS handshake. Requests are
 // logged without headers or bodies.
 //
+// A second, plain-HTTP listener serves the App's update feed (appcast.xml and the release ZIPs) from one folder to the
+// same clients. Sparkle cannot trust the gateway's self-signed certificate, so integrity comes from Sparkle's EdDSA
+// signatures on the appcast and every archive, which the App requires; nothing else is served there.
+//
 //   LAN_GATEWAY_ALLOW=172.20.10.0/23 node scripts/lan-gateway.mjs
 //   node scripts/lan-gateway.mjs fingerprint     # SHA-256 of the certificate, to build into the App
 //
 // Settings (environment): LAN_GATEWAY_ALLOW (required, comma-separated IPv4 addresses or CIDR networks, no wider than /16),
 // LAN_GATEWAY_HOST (0.0.0.0: the Mac's address changes with DHCP, so the allow list is the access control, not the bind
 // address), LAN_GATEWAY_PORT (4315), LAN_GATEWAY_UPSTREAM (http://127.0.0.1:4314),
-// LAN_GATEWAY_CERT / LAN_GATEWAY_KEY (.local/lan/server.crt, .local/lan/server.key).
+// LAN_GATEWAY_CERT / LAN_GATEWAY_KEY (.local/lan/server.crt, .local/lan/server.key),
+// LAN_GATEWAY_UPDATES_PORT (4316), LAN_GATEWAY_UPDATES_DIR (.local/lan/updates).
 import http from "node:http";
 import https from "node:https";
 import { X509Certificate } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { createReadStream, mkdirSync, readFileSync, statSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const READ = ["GET"];
@@ -37,6 +42,25 @@ export function isAllowedRequest(method, rawUrl) {
   return ALLOWED.some(
     (rule) => rule.methods.includes(method) && rule.pattern.test(path),
   );
+}
+
+const UPDATE_FILES = [
+  { pattern: /^appcast\.xml$/, type: "application/xml", cache: "no-cache" },
+  {
+    pattern: /^weekly-report-\d+\.\d+\.\d+-\d+\.zip$/,
+    type: "application/zip",
+    cache: "public, max-age=31536000, immutable",
+  },
+];
+
+/** The update file a request names, or null. Only the appcast and release ZIPs, never a folder or another file. */
+export function updateFileFor(method, rawUrl) {
+  if (!["GET", "HEAD"].includes(method) || typeof rawUrl !== "string")
+    return null;
+  const match = /^\/updates\/([^/?#]+)(?:\?[^#]*)?$/.exec(rawUrl);
+  if (!match) return null;
+  const rule = UPDATE_FILES.find(({ pattern }) => pattern.test(match[1]));
+  return rule ? { name: match[1], type: rule.type, cache: rule.cache } : null;
 }
 
 /** Node reports IPv4 peers on a dual-stack socket as ::ffff:a.b.c.d. */
@@ -173,6 +197,46 @@ export function createGateway({ cert, key, upstream, allow, log = () => {} }) {
   return server;
 }
 
+/** Plain-HTTP listener for the update feed. Same allow list; files are read from `folder` only. */
+export function createUpdateServer({ folder, allow, log = () => {} }) {
+  const server = http.createServer((req, res) => {
+    const client = normalizeAddress(req.socket.remoteAddress);
+    const path = (req.url ?? "").split("?")[0];
+    const file = updateFileFor(req.method, req.url);
+    let size = -1;
+    if (file) {
+      try {
+        const stat = statSync(join(folder, file.name));
+        if (stat.isFile()) size = stat.size;
+      } catch {}
+    }
+    if (size < 0) {
+      res.writeHead(404, { "content-type": "text/plain", connection: "close" });
+      res.end("Not found.");
+      log(`${client} ${req.method} ${path} 404`);
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": file.type,
+      "content-length": size,
+      "cache-control": file.cache,
+      connection: "close",
+    });
+    log(`${client} ${req.method} ${path} 200`);
+    if (req.method === "HEAD") return res.end();
+    createReadStream(join(folder, file.name))
+      .on("error", () => res.destroy())
+      .pipe(res);
+  });
+  server.on("connection", (socket) => {
+    if (!isAllowedClient(socket.remoteAddress, allow)) {
+      log(`${normalizeAddress(socket.remoteAddress)} refused (updates)`);
+      socket.destroy();
+    }
+  });
+  return server;
+}
+
 function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const certPath =
@@ -199,20 +263,34 @@ function main() {
     );
   const port = Number(process.env.LAN_GATEWAY_PORT ?? 4315);
   const upstream = process.env.LAN_GATEWAY_UPSTREAM ?? "http://127.0.0.1:4314";
+  const updatesPort = Number(process.env.LAN_GATEWAY_UPDATES_PORT ?? 4316);
+  const updatesFolder =
+    process.env.LAN_GATEWAY_UPDATES_DIR ?? resolve(root, ".local/lan/updates");
+  mkdirSync(updatesFolder, { recursive: true });
+  const log = (line) => console.log(`${new Date().toISOString()} ${line}`);
   const server = createGateway({
     cert: readFileSync(certPath),
     key: readFileSync(keyPath),
     upstream,
     allow,
-    log: (line) => console.log(`${new Date().toISOString()} ${line}`),
+    log,
   });
+  const updates = createUpdateServer({ folder: updatesFolder, allow, log });
   server.listen(port, host, () =>
     console.log(
       `LAN gateway on https://${host}:${port} -> ${upstream}; allowed clients: ${allow.join(", ")}`,
     ),
   );
+  updates.listen(updatesPort, host, () =>
+    console.log(
+      `LAN updates on http://${host}:${updatesPort}/updates/ <- ${updatesFolder}`,
+    ),
+  );
   for (const signal of ["SIGINT", "SIGTERM"])
-    process.on(signal, () => server.close(() => process.exit(0)));
+    process.on(signal, () => {
+      updates.close();
+      server.close(() => process.exit(0));
+    });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)

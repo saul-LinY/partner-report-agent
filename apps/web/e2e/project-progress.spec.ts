@@ -4,14 +4,18 @@ import {
   type ProgressEvent,
   type ProjectProgressResponse,
 } from "@partner-report/contracts/project-progress";
+import type { LeadershipSnapshot } from "@partner-report/contracts/leadership";
+// The panel shows one published snapshot; "today" is the cutoff's local date.
 const today = "2026-09-08";
-function fixture(): ProjectProgressResponse {
+const timezone = "Asia/Shanghai";
+
+function progressFixture(): ProjectProgressResponse {
   return {
     today,
-    timezone: "Asia/Shanghai",
+    timezone,
     from: "2026-09-01",
     to: today,
-    generatedAt: "2026-09-08T08:00:00Z",
+    generatedAt: "2026-09-09T05:00:00Z",
     members: [
       { id: "member-a", name: "陈明", status: "active", contributionDays: 6 },
       { id: "member-b", name: "林安", status: "active", contributionDays: 1 },
@@ -21,60 +25,55 @@ function fixture(): ProjectProgressResponse {
         partnerId: "member-a",
         projectId: "project-a",
         projectName: "Partner Report",
-        projectDescription:
-          "面向研发团队的项目贡献采集与周报系统。支持成员确认工作卡片。",
+        projectDescription: "面向研发团队的项目贡献采集与周报系统。",
         version: 1,
-        events: [
-          { date: "2026-09-01", type: "start", reason: "确认启动" },
-          { date: "2026-09-04", type: "pause", reason: "支援客户上线" },
-          { date: "2026-09-07", type: "resume", reason: "支援结束" },
-        ],
-        days: [
-          {
-            date: "2026-09-07",
-            entries: [
-              {
-                id: "d1",
-                summary: "完成贡献采集接口与异常恢复，支持多项目同时采集。",
-                source: "reviewed",
-                reviewId: "review-a",
-                periodKey: "业务周期 A",
-              },
-            ],
-          },
-        ],
+        events: [{ date: "2026-09-01", type: "start", reason: "确认启动" }],
         contributionDays: 5,
-        undatedCount: 0,
-        conflictingDays: [],
-        reviewId: "review-a",
-        lastUpdatedAt: "2026-09-08T07:00:00Z",
+        currentFocus: {
+          text: "完成多项目贡献采集",
+          periodKey: "2026-W37",
+          reviewId: "review-a",
+        },
+        keyEvents: [],
       },
       {
         partnerId: "member-a",
         projectId: "project-b",
         projectName: "数据服务",
-        projectDescription: "为业务应用提供统一的数据查询服务。",
         version: 1,
         events: [{ date: "2026-09-03", type: "start", reason: "并行推进" }],
-        days: [
+        contributionDays: 3,
+        currentFocus: {
+          text: "梳理数据库迁移方案",
+          periodKey: "2026-W37",
+          reviewId: "review-a",
+        },
+        keyEvents: [
           {
-            date: "2026-09-07",
-            entries: [
-              {
-                id: "d2",
-                summary: "优化数据查询，处理接口超时问题。",
-                source: "reviewed",
-                reviewId: "review-a",
-                periodKey: "业务周期 A",
-              },
-            ],
+            date: "2026-09-06",
+            type: "blocker",
+            title: "数据库迁移方案未定",
+            detail: "迁移期间服务是否停机没有结论，上线时间无法确定。",
+            neededSupport: "决定是否接受一小时停机迁移",
+            periodKey: "2026-W37",
+            reviewId: "review-a",
           },
         ],
-        contributionDays: 3,
-        undatedCount: 0,
-        conflictingDays: [],
-        reviewId: null,
-        lastUpdatedAt: "2026-09-08T07:00:00Z",
+      },
+      {
+        partnerId: "member-a",
+        projectId: "project-d",
+        projectName: "旧系统收尾",
+        version: 1,
+        events: [],
+        contributionDays: 12,
+        collectionStopped: true,
+        currentFocus: {
+          text: "服务停机收尾",
+          periodKey: "2026-W36",
+          reviewId: "review-old",
+        },
+        keyEvents: [],
       },
       {
         partnerId: "member-b",
@@ -82,81 +81,137 @@ function fixture(): ProjectProgressResponse {
         projectName: "客户门户",
         version: 0,
         events: [],
-        days: [],
         contributionDays: 0,
-        undatedCount: 1,
-        conflictingDays: [],
-        reviewId: null,
-        lastUpdatedAt: "2026-09-08T07:00:00Z",
+        currentFocus: null,
+        keyEvents: [],
       },
     ].map((project) => ({
-      ...project,
-      firstContributionDate: project.days.length ? "2026-08-20" : null,
-      lastContributionDate: project.days[0]?.date ?? null,
-      currentFocus:
-        project.projectId === "project-a"
-          ? {
-              text: "完成多项目贡献采集与异常恢复，验证跨项目的数据隔离，并补充接口超时、断线重试以及重复上传场景的测试，确保周报审核后的研发记录能够准确回溯。",
-              periodKey: "业务周期 A",
-              reviewId: "review-a",
-            }
-          : null,
-      keyEvents:
-        project.projectId === "project-a"
-          ? [
-              {
-                date: "2026-09-07",
-                type: "milestone",
-                title: "完成多项目贡献采集接口",
-                detail:
-                  "打通贡献采集、异常恢复与周报审核链路。验证重复上传的去重逻辑，并补充跨项目隔离和接口超时场景的测试。",
-                periodKey: "业务周期 A",
-                reviewId: "review-a",
-              },
-              {
-                date: "2026-09-03",
-                type: "decision",
-                title: "确定按审核日期统计研发天数",
-                detail:
-                  "采用已审核工作卡片中的每日进展作为日期依据，同一天的多条工作记录只计一天，避免把项目跨度误算成研发天数。",
-                periodKey: "业务周期 A",
-                reviewId: "review-a",
-              },
-            ]
-          : [],
+      days: [],
+      undatedCount: 0,
+      conflictingDays: [],
+      reviewId: null,
+      lastUpdatedAt: "2026-09-08T07:00:00Z",
+      firstContributionDate: null,
+      lastContributionDate: null,
       aiEvidence: {
         sessionCount: 0,
         periodCount: 0,
         workCardCount: 0,
         lastAnalyzedAt: null,
       },
-      latestProgress: project.days[0]
-        ? {
-            date: project.days[0].date,
-            summary: project.days[0].entries[0]!.summary,
-            source: project.days[0].entries[0]!.source,
-          }
-        : null,
-      events: project.events as ProgressEvent[],
+      latestProgress: null,
+      ...project,
       metrics: calculateProgress(project.events as ProgressEvent[], today),
-    })) as ProjectProgressResponse["projects"],
+    })) as unknown as ProjectProgressResponse["projects"],
   };
 }
+
+function snapshotFixture(): LeadershipSnapshot {
+  return {
+    schedule: {
+      timezone,
+      current: {
+        periodKey: "2026-W37",
+        startsAt: "2026-09-01T08:00:00.000Z",
+        cutoffAt: "2026-09-08T08:00:00.000Z",
+        publishedAt: "2026-09-09T05:00:00.000Z",
+      },
+      next: {
+        periodKey: "2026-W38",
+        startsAt: "2026-09-08T08:00:00.000Z",
+        cutoffAt: "2026-09-15T08:00:00.000Z",
+        autoApproveAt: "2026-09-18T04:00:00.000Z",
+        publishAt: "2026-09-18T05:00:00.000Z",
+        step: "reviewing",
+      },
+    },
+    progress: progressFixture(),
+    activity: {
+      timezone,
+      from: "2026-06-11",
+      to: today,
+      days: 90,
+      totals: { dropped: 0 },
+      daily: [],
+      members: [
+        {
+          id: "member-a",
+          name: "陈明",
+          turns: 5,
+          sessions: 2,
+          activeDays: 2,
+          byDay: { "2026-09-07": 2, "2026-09-08": 3 },
+          byProject: {
+            "Partner Report": {
+              turns: 3,
+              lastActiveDate: "2026-09-08",
+              byDay: { "2026-09-07": 1, "2026-09-08": 2 },
+            },
+            数据服务: {
+              turns: 2,
+              lastActiveDate: "2026-09-08",
+              byDay: { "2026-09-07": 1, "2026-09-08": 1 },
+            },
+          },
+          events: [
+            { t: "2026-09-07T10:15", p: "Partner Report" },
+            { t: "2026-09-07T10:40", p: "数据服务" },
+            { t: "2026-09-08T09:05", p: "Partner Report" },
+            { t: "2026-09-08T09:30", p: "Partner Report" },
+            { t: "2026-09-08T14:10", p: "数据服务" },
+          ],
+        },
+      ],
+    } as LeadershipSnapshot["activity"],
+    profiles: [
+      {
+        id: "profile-a",
+        partnerId: "member-a",
+        projectName: "Partner Report",
+        updatedAt: "2026-09-08T00:00:00Z",
+        sessions: 3,
+        failed: false,
+        note: {
+          oneLine: { text: "让团队写周报更省事的小工具", refs: ["S1T1"] },
+          intro: {
+            text: "成员每周把工作交给 AI 整理，leader直接读到清楚的进展。",
+            refs: ["S1T1"],
+          },
+          features: [{ text: "一键汇总每周工作", refs: ["S1T2"] }],
+          status: { text: "", refs: [] },
+          openIssues: [{ text: "成员是否愿意每周使用还没验证", refs: ["S1T3"] }],
+        },
+      },
+    ] as LeadershipSnapshot["profiles"],
+    reviews: [
+      {
+        partnerId: "member-a",
+        approvedBy: "member",
+        approvedAt: "2026-09-08T10:00:00.000Z",
+      },
+      { partnerId: "member-b", approvedBy: "auto", approvedAt: null },
+    ],
+  };
+}
+
 async function setup(
   page: Page,
   options: {
-    fail?: boolean;
-    empty?: boolean;
-    conflict?: boolean;
     member?: string;
+    path?: string;
+    fail?: boolean;
+    edit?: (snapshot: LeadershipSnapshot) => void;
   } = {},
 ) {
-  const data = fixture();
-  const writes: any[] = [];
-  const reads: string[] = [];
+  const snapshot = snapshotFixture();
+  options.edit?.(snapshot);
+  const writes: Array<Record<string, unknown>> = [];
+  const paths: string[] = [];
+  const project = snapshot.progress!.projects[0]!;
   await page.route("**/v1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    paths.push(url.pathname);
     if (url.pathname === "/v1/me")
       return route.fulfill({
         json: {
@@ -179,130 +234,20 @@ async function setup(
           jobs: [],
         },
       });
-    if (url.pathname === "/v1/admin/project-profiles")
-      return route.fulfill({
-        json: {
-          items: [
-            {
-              id: "profile-a",
-              partnerId: "member-a",
-              projectName: "Partner Report",
-              updatedAt: data.to,
-              sessions: 3,
-              failed: false,
-              note: {
-                oneLine: { text: "让团队写周报更省事的小工具", refs: ["S1T1"] },
-                intro: {
-                  text: "成员每周把工作交给 AI 整理，领导直接读到清楚的进展。",
-                  refs: ["S1T1"],
-                },
-                features: [{ text: "一键汇总每周工作", refs: ["S1T2"] }],
-                status: { text: "", refs: [] },
-                openIssues: [
-                  { text: "成员是否愿意每周使用还没验证", refs: ["S1T3"] },
-                ],
-              },
-            },
-          ],
-        },
-      });
-    if (url.pathname === "/v1/admin/ai-activity")
-      return route.fulfill({
-        json: {
-          timezone: "Asia/Shanghai",
-          from: data.from,
-          to: data.to,
-          days: 28,
-          totals: {
-            sessions: 0,
-            turns: 0,
-            previousSessions: 0,
-            previousTurns: 0,
-            activeMembers: 0,
-            projects: 0,
-            dropped: 0,
-          },
-          daily: [],
-          projects: [],
-          members: [
-            {
-              id: "member-a",
-              name: "陈明",
-              turns: 5,
-              sessions: 2,
-              activeDays: 2,
-              byDay: { "2026-09-07": 2, "2026-09-08": 3 },
-              byProject: {},
-              events: [
-                { t: "2026-09-07T10:15", p: "Partner Report" },
-                { t: "2026-09-07T10:40", p: "数据服务" },
-                { t: "2026-09-08T09:05", p: "Partner Report" },
-                { t: "2026-09-08T09:30", p: "Partner Report" },
-                { t: "2026-09-08T14:10", p: "数据服务" },
-              ],
-            },
-          ],
-        },
-      });
-    if (url.pathname === "/v1/admin/project-progress") {
-      reads.push(url.search);
+    if (url.pathname === "/v1/admin/leadership-snapshot") {
       if (options.fail)
         return route.fulfill({
           status: 503,
-          json: { code: "UNAVAILABLE", message: "项目进展暂时不可用" },
+          json: { code: "UNAVAILABLE", message: "面板暂时不可用" },
         });
-      return route.fulfill({
-        json: {
-          ...data,
-          from: url.searchParams.get("from") ?? data.from,
-          to: url.searchParams.get("to") ?? data.to,
-          projects: options.empty
-            ? []
-            : data.projects.map((project) => ({
-                ...project,
-                days: project.days.filter(
-                  (day) =>
-                    day.date >= (url.searchParams.get("from") ?? data.from) &&
-                    day.date <= (url.searchParams.get("to") ?? data.to),
-                ),
-              })),
-          members: options.empty ? [] : data.members,
-        },
-      });
+      return route.fulfill({ json: snapshot });
     }
     if (url.pathname.startsWith("/v1/project-progress/participations/")) {
-      const project = data.projects.find((p) =>
-        url.pathname.endsWith(`/${p.partnerId}/${p.projectId}`),
-      )!;
       if (request.method() === "POST") {
         const input = request.postDataJSON();
         writes.push(input);
-        if (options.conflict)
-          return route.fulfill({
-            status: 409,
-            json: {
-              code: "VERSION_CONFLICT",
-              message:
-                "时间记录已被其他人修改，请重新载入后核查；当前草稿未覆盖服务器记录。",
-            },
-          });
-        project.version++;
-        project.events = input.events;
-        const status = project.events
-          .filter((event) => event.projectStatus)
-          .at(-1);
-        if (status?.projectStatus)
-          project.currentStatus = {
-            value: status.projectStatus,
-            reason: status.reason,
-            confirmedAt: `${today}T08:00:00Z`,
-            periodKey: null,
-            reviewId: null,
-            source: "manual",
-          };
-        project.metrics = calculateProgress(project.events, today);
         return route.fulfill({
-          json: { version: project.version, events: project.events },
+          json: { version: project.version + 1, events: input.events },
         });
       }
       return route.fulfill({
@@ -310,7 +255,7 @@ async function setup(
           version: project.version,
           events: project.events,
           today,
-          timezone: data.timezone,
+          timezone,
           history: [],
         },
       });
@@ -321,24 +266,19 @@ async function setup(
           review: {
             id: "review-a",
             partner_id: "member-a",
-            partner_name: "陈明",
-            period_key: "业务周期 A",
-            state: "COMPLETED",
+            state: "IN_PROGRESS",
             version: 1,
           },
+          period: null,
           items: [
             {
               id: "card",
+              title: "Partner Report",
               project_id: "project-a",
               project_name: "Partner Report",
-              review_status: "approved",
-              status: "completed",
-              payload: {
-                overview: "周卡摘要",
-                dailyProgress: [
-                  { date: "2026-09-07", summary: "完成采集接口" },
-                ],
-              },
+              review_status: "pending",
+              status: "in_progress",
+              payload: { overview: "周卡摘要", currentFocus: "完成采集接口" },
             },
           ],
           regenerationJobs: [],
@@ -349,393 +289,216 @@ async function setup(
       json: { message: "Unexpected request" },
     });
   });
-  await page.goto(`/admin/members/${options.member ?? "member-a"}`);
-  await expect(
-    page.getByRole("heading", { name: "项目进展", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("tab")).toHaveCount(0);
-  await expect(page.locator(".overview-page .aw-header")).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: "运行总览", exact: true }),
-  ).toHaveCount(0);
-  return { data, writes, reads, options };
+  await page.goto(options.path ?? `/admin/members/${options.member ?? "member-a"}`);
+  return { snapshot, writes, paths };
 }
 
-test("shows a familiar month calendar and actual daily achievements", async ({
+test("the member page opens on the published update bar with the next update steps", async ({
+  page,
+}) => {
+  const { paths } = await setup(page);
+  const bar = page.getByRole("region", { name: "数据更新" });
+  await expect(bar).toContainText("W37 · 9月1日 16:00 – 9月8日 16:00");
+  // How each item was confirmed is shown on the item itself, not in the bar.
+  await expect(page.locator(".lb-source").first()).toContainText("陈明 已于 9月8日审核确认");
+  await expect(bar).toContainText(
+    "9月18日（周五）13:00 更新为 W38（9月8日 16:00 – 9月15日 16:00）",
+  );
+  const steps = bar.getByRole("list", { name: "W38 更新进度" }).getByRole("listitem");
+  await expect(steps).toHaveCount(4);
+  await expect(steps.nth(0)).toContainText("采集本周会话");
+  await expect(steps.nth(1)).toContainText("发放审核卡");
+  await expect(steps.nth(2)).toContainText("成员审核");
+  await expect(steps.nth(2)).toContainText("9月18日 12:00 前，逾期自动通过");
+  await expect(steps.nth(3)).toContainText("面板更新");
+  await expect(bar.locator("li.is-on")).toHaveText(/成员审核/);
+  await expect(page.getByText("每分钟自动刷新")).toHaveCount(0);
+  // The page reads only the published snapshot, never the live endpoints.
+  await expect.poll(() => paths).toContain("/v1/admin/leadership-snapshot");
+  expect(paths).not.toContain("/v1/admin/project-progress");
+  expect(paths).not.toContain("/v1/admin/ai-activity");
+  expect(paths).not.toContain("/v1/admin/project-profiles");
+});
+
+test("states the verdict, then the blockers, then the moving projects; stalled ones wait in a dialog", async ({
   page,
 }) => {
   await setup(page);
-  await expect(
-    page.getByRole("heading", { name: "项目进展", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "2026 年 9 月" }),
-  ).toBeVisible();
-  await expect(page.locator(".pc-month-grid > .pc-day")).toHaveCount(35);
-  await expect(page.locator(".pc-project-choice")).toHaveCount(2);
-  await expect(
-    page.locator(".pp-overview-stats, .pp-legend, .pp-chart"),
-  ).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "新增人员" })).toHaveCount(0);
-  await page
-    .getByRole("button", {
-      name: "Partner Report 2026-09-07 的进展",
-      exact: true,
-    })
-    .click();
-  await expect(page.getByRole("dialog")).toContainText(
-    "完成贡献采集接口与异常恢复",
+  const verdict = page.getByRole("region", { name: "整体结论" });
+  await expect(verdict).toContainText("2 个在推进的项目中");
+  await expect(verdict).toContainText("1 个正常推进");
+  await expect(verdict).toContainText("1 个有卡点需要你拍板");
+  await expect(verdict.locator(".lb-strip span")).toHaveCount(2);
+
+  const issues = page.locator(".lb-issue");
+  await expect(issues).toHaveCount(1);
+  const blocked = issues.nth(0);
+  await expect(blocked).toContainText("有卡点");
+  await expect(blocked).toContainText("数据服务");
+  await expect(blocked).toContainText("数据库迁移方案未定");
+  await expect(blocked).toContainText("迁移期间服务是否停机没有结论");
+  await expect(blocked.locator(".lb-ask")).toContainText(
+    "需要你决定是否接受一小时停机迁移",
   );
-  await expect(page.getByRole("dialog")).not.toContainText("优化数据查询");
-  await page.getByRole("button", { name: "关闭详情" }).click();
-  await page
-    .getByRole("button", { name: "查看 陈明 的 数据服务", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "数据服务 2026-09-07 的进展", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toContainText("优化数据查询");
-  await expect(page.getByRole("dialog")).not.toContainText("完成贡献采集接口");
+  await expect(blocked).toContainText("9月6日出现 · 截至本期已持续 2 天");
+  await expect(blocked).toContainText(
+    "来源：W37 工作卡 · 陈明 已于 9月8日审核确认",
+  );
+
+  // Projects are always open: no folding, no stage bars, blocked first; the stalled one is not on the page.
+  const cards = page.locator(".lb-pcard");
+  await expect(cards.locator(".lb-name")).toHaveText(["数据服务", "Partner Report"]);
+  await expect(page.locator("details, .lc-stage-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /展开|收起/ }),
+  ).toHaveCount(0);
+  await expect(page.locator(".lb-verdict p, .lb-attn, .lb-pgrid").getByText("旧系统收尾")).toHaveCount(0);
+
+  await verdict.getByRole("button", { name: "停滞 1 个" }).click();
+  const dialog = page.getByRole("dialog", { name: "停滞与搁置的项目" });
+  await expect(dialog.locator("li")).toHaveCount(1);
+  await expect(dialog).toContainText("旧系统收尾");
+  await expect(dialog).toContainText("已停止采集");
+  await expect(dialog).toContainText("最后在做：服务停机收尾");
 });
 
-test("switches a member's projects at the top", async ({ page }) => {
-  const { data } = await setup(page);
-  const picker = page.getByRole("group", { name: "陈明的项目", exact: true });
-  await expect(picker.getByRole("button")).toHaveText([
-    "Partner Report",
-    "数据服务",
-  ]);
-  await expect(
-    page.getByRole("button", { name: /项目详情|设置状态|调整状态/ }),
-  ).toHaveCount(0);
-  await expect(page.locator(".pc-project-description")).toHaveText(
-    data.projects[0]!.projectDescription!,
-  );
-  await expect(page.getByLabel("累计研发天数")).toHaveText("已开发 5 天");
-  await expect(page.locator(".pc-project-title")).not.toContainText("陈明");
-  await expect(
-    page.locator(".pc-development-stats, .pc-development-bar"),
-  ).toHaveCount(0);
-  await picker
-    .getByRole("button", { name: "查看 陈明 的 数据服务", exact: true })
-    .click();
-  await expect(
-    picker.getByRole("button", { name: "查看 陈明 的 数据服务", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(
-    page.getByRole("region", { name: "当前项目进度" }).getByRole("heading"),
-  ).toHaveText("数据服务");
-  data.projects[0]!.latestProgress!.date = today;
-  await page.getByTitle("刷新项目进展").click();
-  await expect(
-    page.getByRole("region", { name: "当前项目进度" }).getByRole("heading"),
-  ).toHaveText("数据服务");
-});
-
-test("keeps each person's work separate when the project names match", async ({
+test("lists only blockers from the latest work card, not older open ones", async ({
   page,
 }) => {
-  const { data } = await setup(page, { member: "member-b" });
-  data.projects[2]!.projectId = data.projects[0]!.projectId;
-  data.projects[2]!.projectName = data.projects[0]!.projectName;
-  data.projects[2]!.projectDescription = "林安负责的工作说明";
-  await page.getByTitle("刷新项目进展").click();
-  await expect(
-    page
-      .getByRole("group", { name: "林安的项目", exact: true })
-      .getByRole("button"),
-  ).toHaveText(["Partner Report"]);
-  await expect(page.locator(".pc-project-description")).toHaveText(
-    "林安负责的工作说明",
-  );
-  await expect(page.getByLabel("累计研发天数")).toContainText("0 天");
-  await expect(page.locator(".pc-calendar-entry")).toHaveCount(0);
-});
-
-test("shows the complete description, focus and every event directly in the overview", async ({
-  page,
-}) => {
-  const { data } = await setup(page);
-  const project = data.projects[0]!;
-  project.keyEvents.push(
-    {
-      ...project.keyEvents[0]!,
-      title: "补齐自动恢复测试",
-      detail: "补充异常场景，验证恢复后的数据一致性。",
+  await setup(page, {
+    edit: (snapshot) => {
+      snapshot.progress!.projects[1]!.keyEvents.push({
+        date: "2026-08-25",
+        type: "blocker",
+        title: "上上周的老卡点",
+        detail: "",
+        step: null,
+        periodKey: "2026-W36",
+        reviewId: "review-old",
+      });
     },
-    {
-      ...project.keyEvents[0]!,
-      title: "确认历史数据迁移方案",
-      detail: "保留历史审核结果和贡献日期，验证迁移完整性。",
+  });
+  const blockers = page.locator(".lb-issue.is-block");
+  await expect(blockers).toHaveCount(1);
+  await expect(blockers).toContainText("数据库迁移方案未定");
+  await expect(page.getByText("上上周的老卡点")).toHaveCount(0);
+});
+
+test("shows a blocker resolved on the latest card, hides older ones, and shelves a long-idle project", async ({
+  page,
+}) => {
+  await setup(page, {
+    edit: (snapshot) => {
+      const report = snapshot.progress!.projects[0]!;
+      report.keyEvents = [
+        {
+          date: "2026-09-02",
+          type: "blocker",
+          title: "接口权限没开",
+          detail: "",
+          step: null,
+          periodKey: "2026-W37",
+          reviewId: "review-a",
+          resolvedOn: "2026-09-05",
+          resolvedBy: "model",
+          resolvedEvidence: "运维已开通读权限",
+        },
+        {
+          date: "2026-08-28",
+          type: "blocker",
+          title: "上期已解决的卡点",
+          detail: "",
+          step: null,
+          periodKey: "2026-W36",
+          reviewId: "review-old",
+          resolvedOn: "2026-09-05",
+        },
+      ];
+      // 30 days idle with a blocker still open: shelved, not on the attention list.
+      snapshot.activity!.members[0]!.byProject["数据服务"]!.lastActiveDate =
+        "2026-08-09";
     },
-  );
-  await page.getByTitle("刷新项目进展").click();
-  const overview = page.getByRole("region", { name: "当前项目进度" });
-  await expect(overview.locator(".pc-project-description")).toHaveText(
-    project.projectDescription!,
-  );
-  await expect(overview.locator(".pc-latest")).toHaveText(
-    project.currentFocus!.text,
-  );
-  await expect(
-    overview.getByRole("button", {
-      name: /项目详情|查看全文|查看全部|查看所有/,
-    }),
-  ).toHaveCount(0);
-  await expect(overview.locator("details")).toHaveCount(0);
-  await expect(overview.locator(".pc-key-event")).toHaveCount(4);
-  for (const event of project.keyEvents) {
-    await expect(
-      overview.getByText(event.title, { exact: true }),
-    ).toBeVisible();
-    await expect(
-      overview.getByText(event.detail, { exact: true }),
-    ).toBeVisible();
-  }
-  await expect(overview).toContainText("同一天多条记录计 1 天");
-});
-
-test("selects a member's project without inventing dates when no dated work exists", async ({
-  page,
-}) => {
-  await setup(page, { member: "member-b" });
-  await expect(page.locator(".pc-project-choice.selected")).toHaveCount(1);
-  await expect(
-    page.getByRole("region", { name: "当前项目进度" }),
-  ).toContainText("客户门户");
-  await expect(page.getByLabel("累计研发天数")).toHaveText("已开发 0 天");
-  await expect(page.locator(".pc-calendar-entry")).toHaveCount(0);
-});
-
-test("switches calendar months and filters by member without hiding latest project progress", async ({
-  page,
-}) => {
-  const { reads } = await setup(page);
-  await expect(page.locator(".pc-project-choice")).toHaveCount(2);
-  await page.getByRole("button", { name: "上个月" }).click();
-  await expect(
-    page.getByRole("heading", { name: "2026 年 8 月" }),
-  ).toBeVisible();
-  expect(reads.at(-1)).toBe("?from=2026-08-01&to=2026-08-31");
-  await expect(page.getByLabel("累计研发天数")).toHaveText("已开发 5 天");
-  await expect(page.locator(".pc-project-description")).toContainText(
-    "面向研发团队的项目贡献采集与周报系统。",
-  );
-  await page.getByRole("button", { name: "本月", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "2026 年 9 月" }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "下个月" })).toBeDisabled();
-});
-
-test("keeps weekly review and time editing accessible inside details", async ({
-  page,
-}) => {
-  const { writes } = await setup(page);
-  await page
-    .getByRole("button", {
-      name: "Partner Report 2026-09-07 的进展",
-      exact: true,
-    })
-    .click();
-  await page
-    .locator(".pc-day-detail")
-    .filter({
-      has: page.getByRole("heading", { name: "Partner Report", exact: true }),
-    })
-    .getByRole("button", { name: "查看周卡", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/partner\/review\/review-a$/);
-  await page.getByRole("button", { name: "核查时间" }).click();
-  await page.getByLabel("本次核查说明").fill("确认本周时间无调整");
-  await page.getByRole("button", { name: "保存核查" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  expect(writes[0].reviewId).toBe("review-a");
-});
-
-test("refreshes new progress and recovers from unavailable data", async ({
-  page,
-}) => {
-  const options = { fail: true, empty: false };
-  const { data } = await setup(page, options);
-  await expect(page.getByRole("alert")).toContainText("暂时不可用");
-  options.fail = false;
-  options.empty = true;
-  await page.getByTitle("刷新项目进展").click();
-  await expect(
-    page.getByText("暂无已审核的项目进展", { exact: true }),
-  ).toBeVisible();
-  await expect(page.locator(".pc-calendar")).toHaveCount(0);
-  options.empty = false;
-  data.projects[0]!.currentFocus = null;
-  data.projects[0]!.latestProgress!.summary = "本日完成上线验证";
-  await page.getByTitle("刷新项目进展").click();
-  await expect(page.locator(".pc-project-choice")).toHaveCount(2);
-  await expect(page.locator(".pc-project-description")).toContainText(
-    "面向研发团队的项目贡献采集与周报系统。",
-  );
-  await page
-    .getByRole("button", { name: "查看 陈明 的 Partner Report", exact: true })
-    .click();
-  await expect(page.locator(".pc-latest")).toContainText("本日完成上线验证");
-});
-
-for (const width of [390, 768, 1440]) {
-  test(`keeps the project choices fixed while content scrolls at ${width}px`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await setup(page);
-    const content = page.getByRole("region", { name: "项目内容", exact: true });
-    const picker = page.getByRole("group", { name: "陈明的项目", exact: true });
-    await expect(content).toBeVisible();
-    await page
-      .locator(".pc-dashboard")
-      .evaluate((element) => element.scrollIntoView({ block: "start" }));
-    const pickerBefore = await picker.boundingBox();
-    const windowBefore = await page.evaluate(() => window.scrollY);
-    await content.hover();
-    await page.mouse.wheel(0, 450);
-    await expect
-      .poll(() => content.evaluate((element) => element.scrollTop))
-      .toBeGreaterThan(100);
-    expect(await picker.boundingBox()).toEqual(pickerBefore);
-    expect(await page.evaluate(() => window.scrollY)).toBe(windowBefore);
-
-    // Reaching the bottom must not pass scrolling to the page or hide navigation.
-    await content.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
-    await expect(page.locator(".pc-day").last()).toBeInViewport();
-    await page.mouse.wheel(0, 500);
-    await page.mouse.wheel(0, 500);
-    expect(await picker.boundingBox()).toEqual(pickerBefore);
-    expect(await page.evaluate(() => window.scrollY)).toBe(windowBefore);
-
-    await picker
-      .getByRole("button", { name: "查看 陈明 的 数据服务", exact: true })
-      .click();
-    await expect
-      .poll(() => content.evaluate((element) => element.scrollTop))
-      .toBe(0);
-    await expect(
-      content.getByRole("heading", { name: "数据服务", exact: true }),
-    ).toBeInViewport();
-    await content.focus();
-    await page.keyboard.press("PageDown");
-    await expect
-      .poll(() => content.evaluate((element) => element.scrollTop))
-      .toBeGreaterThan(0);
   });
+  const done = page.locator(".lb-issue.is-done");
+  await expect(done).toHaveCount(1);
+  await expect(done.locator(".lb-pill")).toHaveText("已解决");
+  await expect(done).toContainText("接口权限没开");
+  await expect(done).toContainText("运维已开通读权限");
+  await expect(page.getByText("上期已解决的卡点")).toHaveCount(0);
 
-  test(`calendar and member project selection fit ${width}px`, async ({
-    page,
-  }, testInfo) => {
-    await page.setViewportSize({ width, height: 1000 });
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    await setup(page);
-    await expect(page.locator(".pc-project-choice")).toHaveCount(2);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
-    await page.screenshot({
-      path: testInfo.outputPath(`calendar-${width}.png`),
-      fullPage: true,
-    });
-    await page
-      .getByRole("button", { name: "查看 陈明 的 Partner Report", exact: true })
-      .click();
-    await expect(
-      page.getByRole("region", { name: "当前项目进度" }),
-    ).toBeVisible();
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
-    await page.screenshot({
-      path: testInfo.outputPath(`project-${width}.png`),
-      fullPage: true,
-    });
-    expect(errors).toEqual([]);
+  await expect(page.locator(".lb-issue", { hasText: "数据服务" })).toHaveCount(0);
+  await expect(page.locator(".lb-pcard", { hasText: "数据服务" })).toHaveCount(0);
+  await page.getByRole("button", { name: "停滞 1 个 · 已搁置 1 个" }).click();
+  const shelved = page.getByRole("dialog").locator("li", { hasText: "数据服务" });
+  await expect(shelved.locator(".lb-pill")).toHaveText("已搁置");
+});
+
+test("shows each project's focus, plain-language profile and unverified risks", async ({
+  page,
+}) => {
+  // An older focus names its card: make the wind-down project active again so it shows on the page.
+  await setup(page, {
+    edit: (snapshot) => {
+      snapshot.progress!.projects[2]!.collectionStopped = false;
+      snapshot.activity!.members[0]!.byProject["旧系统收尾"] = {
+        turns: 1,
+        lastActiveDate: "2026-09-08",
+        byDay: {},
+      };
+    },
   });
-}
-
-test("shows each project's plain-language profile", async ({ page }) => {
-  await setup(page);
-  const card = page.locator(".lc-card", { hasText: "Partner Report" });
-  await expect(card.locator(".lc-oneline")).toHaveText(
-    "让团队写周报更省事的小工具",
-  );
-  await expect(card.locator(".lc-intro")).toContainText(
-    "成员每周把工作交给 AI 整理",
-  );
+  const card = page.locator(".lb-pcard", { hasText: "Partner Report" });
+  await expect(card.locator(".lb-pill")).toHaveCount(0);
+  await expect(card.locator(".lb-what")).toHaveText("让团队写周报更省事的小工具");
+  await expect(card.locator(".lb-now")).toContainText("当前重点完成多项目贡献采集");
+  await expect(card.locator(".lb-now small")).toHaveCount(0);
+  await expect(card).toContainText("成员每周把工作交给 AI 整理");
+  await expect(card).toContainText("已开发5 天");
   await expect(card.getByText("一键汇总每周工作")).toBeVisible();
+  await expect(card.locator(".lb-risk")).toContainText("成员是否愿意每周使用还没验证");
+  await expect(card.locator(".lb-risk")).toContainText(
+    "风险是还没验证的假设，不等于卡点。",
+  );
   // A project without a profile shows no empty placeholders.
-  await expect(
-    page.locator(".lc-card", { hasText: "数据服务" }).locator(".lc-profile"),
-  ).toHaveCount(0);
+  const bare = page.locator(".lb-pcard", { hasText: "旧系统收尾" });
+  await expect(bare.locator(".lb-what, .lb-risk")).toHaveCount(0);
+  await expect(bare.getByRole("heading", { name: "主要功能" })).toHaveCount(0);
+  await expect(bare.locator(".lb-now")).toContainText("沿用 W36 工作卡");
 });
 
-test("folds a long project list on the overview card and toggles it without opening the member", async ({
-  page,
-}) => {
-  const { data } = await setup(page);
-  const first = data.projects.find((p) => p.partnerId === "member-a")!;
-  for (const n of [1, 2, 3, 4])
-    data.projects.push({
-      ...first,
-      projectId: `extra-${n}`,
-      projectName: `附加项目 ${n}`,
-    });
-  await page.goto("/admin");
-  const card = page.locator(".lc-member", { hasText: "陈明" });
-  const rows = card.locator(".lc-member-projects li");
-  await expect(card.getByText("6 个项目")).toBeVisible();
-  await expect(rows).toHaveCount(4);
-  await card.getByRole("button", { name: "展开其余 2 个项目" }).click();
-  // The card itself is a link: the toggle must not take the user to the member page.
-  await expect(page).toHaveURL(/\/admin$/);
-  await expect(rows).toHaveCount(6);
-  await card.getByRole("button", { name: "收起" }).click();
-  await expect(rows).toHaveCount(4);
-  await expect(page).toHaveURL(/\/admin$/);
-  // Opening the card still works, and a member with few projects has no toggle at all.
-  await expect(
-    page.locator(".lc-member", { hasText: "林安" }).getByRole("button"),
-  ).toHaveCount(0);
-  await card.getByRole("heading", { name: "陈明" }).click();
-  await expect(page).toHaveURL(/\/admin\/members\/member-a$/);
-});
-
-test("charts a member's AI interactions by hour and by month, and pages between months", async ({
+test("sums up the work input and charts AI interactions by hour and by month", async ({
   page,
 }) => {
   await setup(page);
+  const stats = page.locator(".lb-stats");
+  await expect(stats).toContainText("近 28 天活跃2 天");
+  await expect(stats).toContainText("最近活跃9月8日");
+  await expect(stats).toContainText("近 28 天交互5 轮");
+  await expect(stats).toContainText("（截至 9月8日 16:00 的近 28 天）");
+  await expect(stats.locator(".lb-share-labels")).toContainText("Partner Report 60%");
+  await expect(stats.locator(".lb-share-labels")).toContainText("数据服务 40%");
+
   const panel = page.locator(".lc-panel", { hasText: "会话活跃度" });
-  await expect(panel.getByRole("heading")).toHaveText(
-    "2026年9月8日 会话活跃度",
-  );
+  await expect(panel.getByRole("heading")).toHaveText("2026年9月8日 会话活跃度");
   await expect(panel.locator(".lc-axis-title")).toHaveText([
     "时间（小时）",
     "交互轮数（轮）",
   ]);
+  await expect(panel).toContainText("数据截至 9月8日 16:00，每周一 13:00 随面板更新。");
   // With several projects an extra "总计" line adds them up: 9:00 has two Partner Report turns and none elsewhere.
   await expect(panel.getByRole("button", { name: "总计" })).toBeVisible();
   const svg = panel.locator("svg");
   const box = (await svg.boundingBox())!;
-  // hover() scrolls the chart into view first; raw page coordinates miss it when it sits below the fold.
   await svg.hover({
     position: {
       x: box.width * ((52 + 9 * ((720 - 52 - 12) / 23)) / 720),
       y: box.height / 2,
     },
   });
+  // A project with no turns in the viewed range (the stalled 旧系统收尾) gets no line.
+  await expect(panel.getByRole("button", { name: "旧系统收尾" })).toHaveCount(0);
   await expect(panel.locator(".lc-tip")).toContainText(
-    "9:00–9:59 · Partner Report 2 · 数据服务 0 · 总计 2",
+    "9:00–9:59 · 数据服务 0 · Partner Report 2 · 总计 2",
   );
   await panel.getByRole("button", { name: "按月看" }).click();
   await expect(panel.getByRole("heading")).toHaveText("2026年9月 会话活跃度");
@@ -743,15 +506,72 @@ test("charts a member's AI interactions by hour and by month, and pages between 
     "日期（日）",
     "交互轮数（轮）",
   ]);
-  // Data starts in September, so there is nothing before it to page back to.
-  await expect(panel.getByRole("button", { name: "上一月" })).toBeDisabled();
-  await expect(panel.getByRole("button", { name: "下一月" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "上一月" })).toBeEnabled();
   // A legend entry hides that project's line.
   await expect(panel.locator("svg polyline")).toHaveCount(3);
   await panel.getByRole("button", { name: "数据服务" }).click();
   await expect(panel.locator("svg polyline")).toHaveCount(2);
   await panel.getByRole("button", { name: "按天看" }).click();
-  await expect(panel.getByRole("heading")).toHaveText(
-    "2026年9月8日 会话活跃度",
-  );
+  await expect(panel.getByRole("heading")).toHaveText("2026年9月8日 会话活跃度");
 });
+
+test("a member whose only project has no activity has it in the stalled dialog, not on the page", async ({
+  page,
+}) => {
+  await setup(page, { member: "member-b" });
+  const verdict = page.getByRole("region", { name: "整体结论" });
+  await expect(verdict).toContainText("林安 本期没有在推进的项目");
+  await expect(page.locator(".lb-issue, .lb-pcard")).toHaveCount(0);
+  await verdict.getByRole("button", { name: "停滞 1 个" }).click();
+  await expect(page.getByRole("dialog")).toContainText("客户门户");
+});
+
+test("recovers from an unavailable panel", async ({ page }) => {
+  await setup(page, { fail: true });
+  await expect(page.getByRole("alert")).toContainText("暂时不可用");
+  await expect(page.locator(".lb-pcard")).toHaveCount(0);
+});
+
+test("项目进展 opens the first member and switches members from the name list", async ({
+  page,
+}) => {
+  await setup(page, { path: "/admin" });
+  const names = page.getByRole("navigation", { name: "成员" }).getByRole("link");
+  await expect(names).toHaveText(["陈明3", "林安1"]);
+  await expect(names.first()).toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".lb-pcard .lb-name")).toHaveText(["数据服务", "Partner Report"]);
+  await names.filter({ hasText: "林安" }).click();
+  await expect(page).toHaveURL(/\/admin\/members\/member-b$/);
+  await expect(names.nth(1)).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("region", { name: "整体结论" })).toContainText("林安");
+});
+
+test("keeps time editing accessible on the weekly review page", async ({
+  page,
+}) => {
+  const { writes } = await setup(page, { path: "/partner/review/review-a" });
+  await expect(page).toHaveURL(/\/partner\/review\/review-a$/);
+  await page.getByRole("button", { name: "核查时间" }).click();
+  await page.getByLabel("本次核查说明").fill("确认本周时间无调整");
+  await page.getByRole("button", { name: "保存核查" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(writes[0]!.reviewId).toBe("review-a");
+});
+
+for (const width of [390, 768, 1440]) {
+  test(`the member brief fits ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await setup(page);
+    await expect(page.locator(".lb-pcard")).toHaveCount(2);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`member-brief-${width}.png`),
+      fullPage: true,
+    });
+    expect(errors).toEqual([]);
+  });
+}

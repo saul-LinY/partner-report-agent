@@ -96,6 +96,14 @@ async function setup(page: Page, path: string, longReview = false) {
           state: "IN_PROGRESS",
           version: reviewVersion,
         },
+        period: {
+          periodKey: "2026-W37",
+          startsAt: "2026-09-01T08:00:00.000Z",
+          cutoffAt: "2026-09-08T08:00:00.000Z",
+          autoApproveAt: "2099-01-04T04:00:00.000Z",
+          publishAt: "2099-01-04T05:00:00.000Z",
+          timezone: "Asia/Shanghai",
+        },
         regenerationJobs: [],
         items: [
           {
@@ -108,17 +116,25 @@ async function setup(page: Page, path: string, longReview = false) {
             payload: {
               overview: "完成项目权限与贡献上传验证。",
               projectStatus,
-              dailyProgress: longReview
-                ? Array.from({ length: 7 }, (_, i) => ({
-                    date: `2026-09-${String(i + 1).padStart(2, "0")}`,
-                    summary: `第 ${i + 1} 天：${"验证上传结果并保留历史记录。".repeat(35)}`,
-                  }))
-                : [
-                    {
-                      date: "2026-09-08",
-                      summary: "验证上传结果并保留历史记录。",
-                    },
-                  ],
+              currentFocus: "完成权限与上传验证",
+              keyEvents: [
+                {
+                  date: "2026-09-06",
+                  type: "blocker",
+                  title: "上传权限规则未定",
+                  detail: longReview
+                    ? "跨团队上传是否放开没有结论。".repeat(20)
+                    : "跨团队上传是否放开没有结论。",
+                  neededSupport: "决定是否放开跨团队上传",
+                },
+              ],
+              resolvedBlockers: [
+                {
+                  title: "项目成员范围不明确",
+                  resolvedOn: "2026-09-05",
+                  evidence: "已确认按团队范围校验",
+                },
+              ],
             },
           },
         ],
@@ -225,22 +241,41 @@ test("the monitoring group has exactly three pages and old routes redirect", asy
   ).toBeVisible();
 });
 
-test("review decisions stay available while reading a long work card", async ({
+test("the review card shows summary, focus and blockers, with the deadline banner", async ({
   page,
 }, testInfo) => {
   await setup(page, "/partner/review/review-1", true);
-  const actions = page.getByRole("complementary", { name: "工作卡审核操作" });
-  await actions.getByLabel("修改意见").fill("补充验证结果");
-  await page.getByText(/^第 6 天/).scrollIntoViewIfNeeded();
+  const banner = page.locator(".rv-deadline");
+  await expect(banner).toContainText("出现在面板上");
+  await expect(banner).toContainText("前没有处理的卡片，会按当前内容自动通过");
+  await expect(banner.locator(".rv-count")).toContainText("距自动通过");
+  const card = page.locator(".rv-card").first();
+  await expect(card.getByText("本周总结", { exact: true })).toBeVisible();
+  await expect(card).toContainText("完成项目权限与贡献上传验证。");
+  await expect(card.locator(".rv-focus")).toHaveText("完成权限与上传验证");
+  const open = card.locator(".rv-blk:not(.is-resolved)");
+  await expect(open).toContainText("上传权限规则未定");
+  await expect(open).toContainText("本周新发现");
+  await expect(open.locator(".rv-ask")).toContainText(
+    "需要的支持决定是否放开跨团队上传",
+  );
+  const resolved = card.locator(".rv-blk.is-resolved");
+  await expect(resolved).toContainText("上期遗留 · 本周已解决");
+  await expect(resolved).toContainText("✓ 已确认按团队范围校验");
+  await expect(page.getByText("每日进展")).toHaveCount(0);
+  const actions = card.locator(".rv-review");
+  await actions.getByLabel("修改意见").fill("这个不算卡点");
+  await expect(
+    actions.getByRole("button", { name: "按修改意见重新生成", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    actions.getByRole("button", { name: "拒绝", exact: true }),
+  ).toBeVisible();
   await expect(
     actions.getByRole("button", { name: "通过", exact: true }),
-  ).toBeInViewport();
-  await expect(
-    actions.getByRole("button", { name: "拒绝并忽略", exact: true }),
-  ).toBeInViewport();
-  await expect(actions.getByLabel("修改意见")).toHaveValue("补充验证结果");
+  ).toBeVisible();
   await noOverflow(page);
-  await page.screenshot({ path: testInfo.outputPath("review-scrolled.png") });
+  await page.screenshot({ path: testInfo.outputPath("review-card.png") });
 });
 
 for (const width of [320, 390, 768, 1280, 1440, 1920]) {
@@ -285,7 +320,7 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
 
     await page.goto("/partner/review/review-1");
     await expect(
-      page.getByRole("heading", { name: "项目工作卡片" }),
+      page.getByRole("heading", { name: "W37 工作卡 · 请审核" }),
     ).toBeVisible();
     await expect(
       navigation.getByRole("link", { name: "工作卡审核" }),
@@ -293,7 +328,7 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
     await noOverflow(page);
     expect(
       await page
-        .locator(".project-review-actions")
+        .locator(".rv-acts")
         .evaluate((element) => element.scrollWidth <= element.clientWidth),
     ).toBe(true);
     await page.screenshot({
@@ -301,7 +336,9 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
       fullPage: true,
     });
     await page.getByLabel("修改意见").fill("补充验证结果");
-    await page.getByRole("button", { name: "重新生成", exact: true }).click();
+    await page
+      .getByRole("button", { name: "按修改意见重新生成", exact: true })
+      .click();
     await expect(page.getByLabel("修改意见")).toHaveValue("");
     expect(
       calls.find((c) => c.path.endsWith("/card-1/regenerate"))?.body,
@@ -314,7 +351,7 @@ for (const width of [320, 390, 768, 1280, 1440, 1920]) {
           .map((c) => c.body),
       )
       .toContainEqual({ decision: "approve", baseVersion: 6 });
-    await page.getByRole("button", { name: "拒绝并忽略", exact: true }).click();
+    await page.getByRole("button", { name: "拒绝", exact: true }).click();
     await expect
       .poll(() =>
         calls
@@ -340,7 +377,8 @@ for (const width of [390, 1440]) {
     );
     await noOverflow(page);
     await page
-      .getByRole("complementary", { name: "工作卡审核操作" })
+      .locator(".rv-card")
+      .first()
       .screenshot({ path: testInfo.outputPath(`work-review-${width}.png`) });
     await page.getByRole("button", { name: "通过", exact: true }).click();
     await expect

@@ -236,6 +236,7 @@ suite("synthetic report generation pipeline", () => {
           status: "in_progress",
           projectStatus: "development",
           projectStatusReason: "本周在实现功能。",
+          currentFocus: "完成链路验证",
           overview: "完成本地非敏感链路验证。",
           dailyProgress: [
             { date: "2026-08-04", summary: "完成聚合任务验证。" },
@@ -553,6 +554,7 @@ suite("synthetic report generation pipeline", () => {
           status: "in_progress",
           projectStatus: "development",
           projectStatusReason: "本周在实现功能。",
+          currentFocus: "完善审核卡更新",
           overview:
             "本周完善了 App 审核卡片的更新流程，让用户提交修改意见后能够看到处理状态，并在生成完成后继续审核。当前链路已经完成验证。",
           dailyProgress: [
@@ -616,6 +618,149 @@ suite("synthetic report generation pipeline", () => {
       },
     ]);
   });
+
+  it.each([
+    { name: "review already approved", state: "ITEMS_APPROVED", locked: false },
+    { name: "team report locked", state: "IN_PROGRESS", locked: true },
+  ])(
+    "completes a recovered card regeneration without changes when $name",
+    async ({ state, locked }) => {
+      const periodId = randomUUID();
+      const reviewId = randomUUID();
+      const workItemId = randomUUID();
+      const factId = randomUUID();
+      const jobId = randomUUID();
+      const payload = {
+        projectKey: "stale-regeneration-project",
+        projectDescription: "",
+        overview: "原始概览。",
+        dailyProgress: [],
+      };
+      await sql.begin(async (tx) => {
+        await tx`
+          insert into report_periods (
+            id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at,
+            submission_deadline_at, timezone, status, facts_frozen_at
+          ) values (
+            ${periodId}, ${fixture.tenant}, ${fixture.team}, ${`stale-regeneration-${periodId}`},
+            '2026-08-07T06:00:00Z', '2026-08-14T06:00:00Z',
+            '2026-08-14T06:00:00Z', '2026-08-17T02:00:00Z',
+            'Asia/Shanghai', 'facts_frozen', now()
+          )
+        `;
+        await tx`
+          insert into reviews (
+            id, tenant_id, team_id, partner_id, period_id, state, version,
+            approved_count, excluded_count, pending_count
+          ) values (
+            ${reviewId}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
+            ${periodId}, ${state}, 2, 1, 0, 0
+          )
+        `;
+        if (locked)
+          await tx`
+            insert into team_reports (
+              id, tenant_id, team_id, period_id, status, current_version,
+              generated_at, locked_at
+            ) values (
+              ${randomUUID()}, ${fixture.tenant}, ${fixture.team}, ${periodId},
+              'LOCKED', 1, now(), now()
+            )
+          `;
+        await tx`
+          insert into session_facts (
+            id, tenant_id, team_id, partner_id, period_id, session_id,
+            external_fact_id, source_revision, source_hash, payload
+          ) values (
+            ${factId}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
+            ${periodId}, ${`stale-regeneration-session-${factId}`},
+            ${`stale-regeneration-fact-${factId}`}, 1, ${"s".repeat(64)},
+            ${JSON.stringify({
+              recordType: "session_contribution",
+              contributions: [
+                { kind: "outcome", confidence: "high", text: "完成审核卡片更新" },
+              ],
+            })}::jsonb
+          )
+        `;
+        await tx`
+          insert into work_items (
+            id, tenant_id, team_id, partner_id, period_id, review_id,
+            title, status, review_status, fact_ids, payload
+          ) values (
+            ${workItemId}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
+            ${periodId}, ${reviewId}, '审核卡片更新', 'in_progress', 'approved',
+            ${JSON.stringify([factId])}::jsonb, ${JSON.stringify(payload)}::jsonb
+          )
+        `;
+        await tx`
+          insert into agent_jobs (
+            id, tenant_id, team_id, partner_id, type, idempotency_key,
+            input_payload
+          ) values (
+            ${jobId}, ${fixture.tenant}, ${fixture.team}, ${fixture.partner},
+            'AGGREGATE_WORK_ITEMS', ${`stale-regeneration:${workItemId}`},
+            ${JSON.stringify({
+              schemaVersion: "1.0",
+              aggregationMode: "project_card_regeneration",
+              reviewId,
+              targetWorkItemId: workItemId,
+              period: { id: periodId, key: "stale-regeneration" },
+              projectBuckets: [
+                {
+                  projectKey: "stale-regeneration-project",
+                  projectId: null,
+                  projectName: "审核卡片更新",
+                  projectDescription: "",
+                  factIds: [factId],
+                  facts: [{ id: factId, payload: { title: "完成审核卡片更新" } }],
+                },
+              ],
+              reviewInstruction: "请改成通俗表达。",
+            })}::jsonb
+          )
+        `;
+      });
+      nextOutput = {
+        schemaVersion: "1.0",
+        groups: [
+          {
+            projectKey: "stale-regeneration-project",
+            status: "in_progress",
+            projectStatus: "development",
+            projectStatusReason: "本周在实现功能。",
+            currentFocus: "完善审核卡更新",
+            overview: "迟到的重新生成结果不应覆盖已确认的卡片。",
+            dailyProgress: [],
+          },
+        ],
+        qualityWarnings: [],
+        production: production("2026-08-12.project-card.v4"),
+      };
+
+      expect(await processNextGenerationJob(fixture.tenant)).toMatchObject({
+        processed: true,
+        jobId,
+        type: "AGGREGATE_WORK_ITEMS",
+      });
+
+      const [jobs, reviews, workItems, versions, events] = await Promise.all([
+        sql<any[]>`select status from agent_jobs where id = ${jobId}`,
+        sql<any[]>`select state, version from reviews where id = ${reviewId}`,
+        sql<any[]>`select review_status, payload from work_items where id = ${workItemId}`,
+        sql<any[]>`select version from work_item_versions where work_item_id = ${workItemId}`,
+        sql<any[]>`
+          select event_type from outbox_events
+          where tenant_id = ${fixture.tenant} and aggregate_id = ${reviewId}
+        `,
+      ]);
+      expect(jobs).toEqual([{ status: "COMPLETED" }]);
+      expect(reviews).toEqual([{ state, version: 2 }]);
+      expect(workItems).toEqual([{ review_status: "approved", payload }]);
+      expect(versions).toEqual([]);
+      expect(events).toEqual([]);
+    },
+  );
 
   it("keeps cutoff output pending for Partner review", async () => {
     const periodId = randomUUID();
@@ -697,6 +842,7 @@ suite("synthetic report generation pipeline", () => {
           status: "in_progress",
           projectStatus: "development",
           projectStatusReason: "本周在实现功能。",
+          currentFocus: "汇总现有贡献",
           overview: "系统按截止时间使用现有贡献生成待审核卡片。",
           dailyProgress: [
             { date: "2026-08-11", summary: "完成现有贡献的汇总。" },

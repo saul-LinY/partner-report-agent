@@ -9,7 +9,6 @@ import {
   Play,
   RefreshCw,
   RotateCw,
-  ScanSearch,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -234,11 +233,7 @@ export function InspectionPage() {
 
   return (
     <div className="page admin-page management-page monitoring-page">
-      <WorkspaceHeader
-        title="异常巡检"
-        icon={ScanSearch}
-        context="定时巡检 App、系统与处理链路，汇总异常并给出研判"
-      >
+      <WorkspaceHeader title="异常巡检">
         <div className="sm-refresh-time">
           <span>
             {data?.running

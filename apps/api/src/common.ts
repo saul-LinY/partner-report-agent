@@ -6,7 +6,7 @@ import { ApiError } from "./api-error.js";
 import { readSessionToken, SESSION_COOKIE_NAME } from "./auth-security.js";
 
 export { stableJsonHash };
-export { ApiError } from "./api-error.js";
+export { ApiError, leadershipRead } from "./api-error.js";
 
 export type DomainActor = {
   actorType: string;

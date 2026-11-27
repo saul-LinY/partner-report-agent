@@ -143,6 +143,7 @@ describe("fixed project outcome inputs", () => {
       outcomeMaterial: material(),
       previousProjectStatus: { value: "delivery", periodKey: "last-week" },
       previousProjectOutlook: null,
+      openBlockers: [],
     });
     expect(input.currentCard).toEqual(currentCard);
     expect(input.reviewInstructions).toEqual([

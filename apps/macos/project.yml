@@ -60,11 +60,11 @@ targets:
         PRODUCT_NAME: weekly report
         INFOPLIST_FILE: Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.2.11"
-        CURRENT_PROJECT_VERSION: "15"
+        MARKETING_VERSION: "0.2.14"
+        CURRENT_PROJECT_VERSION: "18"
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
-        WEEKLY_REPORT_SERVICE_URL: "http://127.0.0.1:4314"
+        WEEKLY_REPORT_SERVICE_URL: "https://platform.laien.org"
         WEEKLY_REPORT_PINNED_CERT_SHA256: ""
         WEEKLY_REPORT_UPDATE_FEED_URL: "https://raw.githubusercontent.com/saul-LinY/partner-report-agent/main/apps/macos/appcast.xml"
         WEEKLY_REPORT_UPDATE_PUBLIC_KEY: "LYRidDuWaeUajQ8hio/aApJHayOic/9b7S6Inb17Z6s="

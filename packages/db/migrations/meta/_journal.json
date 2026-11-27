@@ -337,6 +337,27 @@
       "when": 1794818132411,
       "tag": "0047_legacy_scope_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794885821353,
+      "tag": "0048_project_blocker_marks",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794966452111,
+      "tag": "0049_leadership_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795052852111,
+      "tag": "0050_open_period_cutoff_1600",
+      "breakpoints": true
     }
   ]
 }

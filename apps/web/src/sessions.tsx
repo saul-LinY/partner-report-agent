@@ -43,6 +43,7 @@ export const agentLabels: Record<string, string> = {
   omp: "OMP",
   grokbuild: "Grok Build",
   agy: "Antigravity",
+  deepseek: "DeepSeek Harness",
 };
 
 export function Transcript({ session }: { session: SessionDetail }) {

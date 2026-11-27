@@ -3,6 +3,7 @@ pub(crate) mod blocks;
 pub(crate) mod claude;
 pub(crate) mod codex;
 pub(crate) mod codex_items;
+pub(crate) mod deepseek;
 pub(crate) mod grokbuild;
 pub(crate) mod hermes;
 pub(crate) mod omp;

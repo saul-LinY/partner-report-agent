@@ -45,6 +45,11 @@ export class ModelGatewayError extends Error {
   }
 }
 
+/** Models overshoot length caps; cut on a character boundary instead of failing the job. */
+export function truncateChars(value: string, max: number) {
+  return Array.from(value).slice(0, max).join("").trimEnd();
+}
+
 export class ModelRequestTimeoutError extends ModelGatewayError {
   constructor(readonly timeoutMs: number) {
     super(
@@ -165,15 +170,19 @@ async function readResponse(response: Response) {
     const retryable =
       !permanentQuota &&
       [408, 409, 429, 500, 502, 503, 504].includes(response.status);
+    // 404 means the gateway does not serve this model or endpoint: a configuration problem shared by every input,
+    // unlike other 4xx answers, which reject this particular request.
     const code = permanentQuota
       ? "MODEL_QUOTA_EXHAUSTED"
       : response.status === 429
         ? "MODEL_RATE_LIMITED"
         : [401, 403].includes(response.status)
           ? "MODEL_AUTH_FAILED"
-          : response.status >= 500
-            ? "MODEL_SERVICE_UNAVAILABLE"
-            : "MODEL_REQUEST_REJECTED";
+          : response.status === 404
+            ? "MODEL_NOT_FOUND"
+            : response.status >= 500
+              ? "MODEL_SERVICE_UNAVAILABLE"
+              : "MODEL_REQUEST_REJECTED";
     throw new ModelGatewayError(
       code,
       `Model gateway HTTP ${response.status}${providerCode ? ` (${providerCode})` : ""}${requestId ? `; requestId=${requestId}` : ""}`,

@@ -4,35 +4,28 @@ import { sqlClient as sql } from "@partner-report/db";
 import { autoApproveExpiredReviews } from "./review-timeout.js";
 
 const suite = process.env.RUN_DB_TESTS === "1" ? describe : describe.skip;
-suite("review timeout after regeneration", () => {
+suite("review deadline at Monday 12:00", () => {
   const tenant = randomUUID(),
     team = randomUUID(),
     partner = randomUUID(),
     period = randomUUID(),
     review = randomUUID(),
     item = randomUUID();
-  const now = new Date("2026-10-12T12:00:00Z");
+  // Cutoff Friday 2026-10-09 16:00 Shanghai; deadline Monday 2026-10-12 12:00 Shanghai = 04:00Z.
+  const now = new Date("2026-10-12T04:00:00Z");
 
   beforeAll(async () => {
     await sql`insert into tenants (id, name) values (${tenant}, 'Timeout tests')`;
     await sql`insert into teams (id, tenant_id, name) values (${team}, ${tenant}, 'Timeout tests')`;
     await sql`insert into partners (id, tenant_id, team_id, email, display_name) values (${partner}, ${tenant}, ${team}, ${`${partner}@test.local`}, 'Timeout reviewer')`;
     await sql`insert into report_periods (id, tenant_id, team_id, period_key, starts_at, ends_at, cutoff_at, submission_deadline_at, timezone)
-      values (${period}, ${tenant}, ${team}, 'timeout-week', '2026-10-02', '2026-10-09', '2026-10-09', '2026-10-09', 'Asia/Shanghai')`;
+      values (${period}, ${tenant}, ${team}, 'timeout-week', '2026-10-02T08:00:00Z', '2026-10-09T08:00:00Z', '2026-10-09T08:00:00Z', '2026-10-09T08:00:00Z', 'Asia/Shanghai')`;
     await sql`insert into reviews (id, tenant_id, team_id, partner_id, period_id, state, pending_count)
       values (${review}, ${tenant}, ${team}, ${partner}, ${period}, 'IN_PROGRESS', 1)`;
     await sql`insert into work_items (id, tenant_id, team_id, partner_id, period_id, review_id, title, status, review_status, fact_ids, payload)
       values (${item}, ${tenant}, ${team}, ${partner}, ${period}, ${review}, 'Timeout item', 'in_progress', 'pending', '[]'::jsonb, '{}'::jsonb)`;
     await sql`insert into coverage_snapshots (id, tenant_id, team_id, partner_id, period_id, payload)
       values (${randomUUID()}, ${tenant}, ${team}, ${partner}, ${period}, '{}'::jsonb)`;
-    // First card went out four days ago, before the content was regenerated.
-    await sql`insert into app_notifications (id,tenant_id,team_id,partner_id,source_event_id,kind,title,body,target_type,target_id,delivered_at)
-      values (${randomUUID()},${tenant},${team},${partner},${randomUUID()},'work_items.draft.created','Review','Review pending','review',${review},${new Date(now.getTime() - 4 * 86_400_000).toISOString()})`;
-    await sql`insert into work_item_versions (id, tenant_id, team_id, partner_id, period_id, review_id, work_item_id, version, title, status, payload, source, created_at)
-      values (${randomUUID()}, ${tenant}, ${team}, ${partner}, ${period}, ${review}, ${item}, 1, 'Timeout item', 'in_progress', '{}'::jsonb, 'generated', ${new Date(now.getTime() - 2 * 86_400_000 - 60_000).toISOString()})`;
-    await sql`insert into app_notifications (id,tenant_id,team_id,partner_id,source_event_id,kind,title,body,target_type,target_id,delivered_at)
-      values (${randomUUID()},${tenant},${team},${partner},${randomUUID()},'work_items.draft.created','Review','Review pending','review',${review},${new Date(now.getTime() - 2 * 86_400_000).toISOString()})`;
-    await sql`update app_notifications set review_version=1 where tenant_id=${tenant}`;
   });
 
   afterAll(async () => {
@@ -53,31 +46,45 @@ suite("review timeout after regeneration", () => {
     await sql`delete from tenants where id = ${tenant}`;
   });
 
-  it("does not auto-approve a queued notification without a system receipt", async () => {
-    const receipts =
-      await sql`select id,delivered_at from app_notifications where tenant_id=${tenant}`;
-    await sql`update app_notifications set delivered_at=null where tenant_id=${tenant}`;
-    try {
-      await autoApproveExpiredReviews(
-        new Date(now.getTime() + 10 * 86_400_000),
-      );
-      expect(
-        (await sql`select state from reviews where id=${review}`)[0]!.state,
-      ).toBe("IN_PROGRESS");
-    } finally {
-      for (const row of receipts)
-        await sql`update app_notifications set delivered_at=${row.delivered_at} where id=${row.id}`;
-    }
-  });
-  it("counts three days from the message carrying the regenerated content", async () => {
-    await autoApproveExpiredReviews(now);
+  it("does not approve before the Monday deadline", async () => {
+    await autoApproveExpiredReviews(new Date(now.getTime() - 1));
     expect(await sql`select state from reviews where id = ${review}`).toEqual([
       { state: "IN_PROGRESS" },
     ]);
-
-    await autoApproveExpiredReviews(new Date(now.getTime() + 86_400_000));
+  });
+  it("approves at the deadline and marks the cards auto-approved", async () => {
+    await autoApproveExpiredReviews(now);
     expect(await sql`select state from reviews where id = ${review}`).toEqual([
       { state: "ITEMS_APPROVED" },
     ]);
+    expect(
+      (await sql`select payload from work_items where id = ${item}`)[0]!.payload
+        .autoApproved,
+    ).toBe(true);
+    expect(
+      (
+        await sql`select actor_id, action from audit_events where tenant_id = ${tenant}`
+      )[0],
+    ).toEqual({
+      actor_id: "review-deadline-monday",
+      action: "review.auto_approved_at_deadline",
+    });
+  });
+  it("leaves a review reopened after approval open for the member", async () => {
+    const reopenedPartner = randomUUID(),
+      reopenedReview = randomUUID(),
+      reopenedItem = randomUUID();
+    await sql`insert into partners (id, tenant_id, team_id, email, display_name) values (${reopenedPartner}, ${tenant}, ${team}, ${`${reopenedPartner}@test.local`}, 'Reopened reviewer')`;
+    await sql`insert into reviews (id, tenant_id, team_id, partner_id, period_id, state, pending_count, approved_count, version)
+      values (${reopenedReview}, ${tenant}, ${team}, ${reopenedPartner}, ${period}, 'IN_PROGRESS', 0, 1, 2)`;
+    await sql`insert into work_items (id, tenant_id, team_id, partner_id, period_id, review_id, title, status, review_status, fact_ids, payload)
+      values (${reopenedItem}, ${tenant}, ${team}, ${reopenedPartner}, ${period}, ${reopenedReview}, 'Reopened item', 'in_progress', 'approved', '[]'::jsonb, '{}'::jsonb)`;
+    await sql`insert into coverage_snapshots (id, tenant_id, team_id, partner_id, period_id, payload)
+      values (${randomUUID()}, ${tenant}, ${team}, ${reopenedPartner}, ${period}, '{}'::jsonb)`;
+
+    await autoApproveExpiredReviews(now);
+    expect(
+      await sql`select state, version, pending_count from reviews where id = ${reopenedReview}`,
+    ).toEqual([{ state: "IN_PROGRESS", version: 2, pending_count: 0 }]);
   });
 });

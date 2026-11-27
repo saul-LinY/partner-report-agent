@@ -7,13 +7,16 @@ public struct DemoRepository: SessionRepository {
     }
     public static var reviewBatches: [ReviewBatch] {
         [ReviewBatch(review: .init(id: "demo-review", state: "IN_PROGRESS", version: 1, period_key: "2026-W44"), items: [
-            ReviewCard(id: "demo-card-website", title: "官网重构", project_name: "官网重构", status: "in_progress", review_status: "pending", payload: .init(overview: "完成项目筛选与登录异常提示，调整移动端导航。", dailyProgress: [
-                .init(date: "2026-10-29", summary: "调整移动端导航，补齐小屏菜单的展开状态。"),
-                .init(date: "2026-10-30", summary: "新增项目状态筛选，保留上次选择；细分登录失败提示。")
-            ], projectStatus: .development)),
-            ReviewCard(id: "demo-card-platform", title: "内部平台", project_name: "内部平台", status: "awaiting_validation", review_status: "pending", payload: .init(overview: "补充项目详情的成员权限校验，核对报表字段与统计口径。", dailyProgress: [
-                .init(date: "2026-10-30", summary: "完成团队范围校验；整理报表字段中需要业务确认的口径。")
-            ], projectStatus: .delivery))
+            ReviewCard(id: "demo-card-website", title: "官网重构", project_name: "官网重构", status: "in_progress", review_status: "pending", payload: .init(
+                overview: "完成项目筛选与登录异常提示，调整移动端导航，补齐小屏菜单的展开状态；新增项目状态筛选并保留上次选择。",
+                currentFocus: "完成移动端导航验收",
+                keyEvents: [.init(type: "blocker", title: "登录失败提示口径未定", detail: "细分后的失败提示需要产品确认文案。", neededSupport: "确认失败提示的最终文案")],
+                projectStatus: .development)),
+            ReviewCard(id: "demo-card-platform", title: "内部平台", project_name: "内部平台", status: "awaiting_validation", review_status: "pending", payload: .init(
+                overview: "完成团队范围校验，补充项目详情的成员权限校验；整理报表字段中需要业务确认的口径。",
+                currentFocus: "核对报表统计口径",
+                resolvedBlockers: [.init(title: "成员权限规则不明确", resolvedOn: "2026-10-30", evidence: "已按团队范围确定权限规则并完成校验")],
+                projectStatus: .delivery))
         ], regenerationJobs: [])]
     }
     public func projects() -> [Project] {

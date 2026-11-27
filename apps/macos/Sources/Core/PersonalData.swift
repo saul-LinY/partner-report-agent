@@ -1,333 +1,227 @@
 import Foundation
 
-/// What `GET /v1/collector/personal-data` returns: the member's own version of the leadership member page.
-/// Mirrors `PersonalData` in packages/contracts/src/member-overview.ts. Decoding is tolerant by design: keys the
-/// server omits (`undefined` is dropped from JSON) become nil or empty, unknown keys are ignored, and unknown
-/// enum values fall back to a neutral case so a newer server never blanks the page.
+/// What `GET /v1/collector/personal-data` returns: the member's own progress and data for the team's current weekly period.
+/// Mirrors `PersonalData` in packages/contracts/src/member-overview.ts. Decoding is tolerant by design: counters and lists
+/// the server omits become 0 or empty, unknown keys are ignored, so a newer server never blanks the page. The period and
+/// member identity are required: without them the page has nothing to say.
 public struct PersonalData: Decodable, Equatable, Sendable {
     public struct Member: Decodable, Equatable, Sendable {
         public var id: String
         public var name: String
+        public init(id: String, name: String) { self.id = id; self.name = name }
     }
-    public struct CalendarRange: Decodable, Equatable, Sendable {
-        /// "YYYY-MM": the month `projects[].project.days` covers.
-        public var month: String
-        public var from: String
-        public var to: String
+
+    /// The weekly period the page is about. All four instants are absolute (ISO 8601 on the wire).
+    public struct Period: Decodable, Equatable, Sendable {
+        public var periodKey: String
+        public var startsAt: Date
+        public var cutoffAt: Date
+        public var autoApproveAt: Date
+        public var publishAt: Date
+        public init(periodKey: String, startsAt: Date, cutoffAt: Date, autoApproveAt: Date, publishAt: Date) {
+            self.periodKey = periodKey; self.startsAt = startsAt; self.cutoffAt = cutoffAt
+            self.autoApproveAt = autoApproveAt; self.publishAt = publishAt
+        }
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            periodKey = try c.decode(String.self, forKey: .periodKey)
+            startsAt = try Instant.decode(c, .startsAt)
+            cutoffAt = try Instant.decode(c, .cutoffAt)
+            autoApproveAt = try Instant.decode(c, .autoApproveAt)
+            publishAt = try Instant.decode(c, .publishAt)
+        }
+        private enum Keys: String, CodingKey { case periodKey, startsAt, cutoffAt, autoApproveAt, publishAt }
     }
-    /// One conversation turn at its own minute: `t` is "YYYY-MM-DDTHH:mm" in team time.
+
+    public struct LastUpload: Decodable, Equatable, Sendable {
+        public var at: Date
+        /// The server's raw upload status: only "completed" is a success; "receiving", "superseded" and the rest are not.
+        public var status: String
+        public init(at: Date, status: String) { self.at = at; self.status = status }
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            at = try Instant.decode(c, .at)
+            status = try c.decodeIfPresent(String.self, forKey: .status) ?? ""
+        }
+        private enum Keys: String, CodingKey { case at, status }
+        /// `receiving` is a batch still arriving; `superseded` was replaced by a newer batch. Neither is a failure.
+        public var label: String {
+            switch status {
+            case "completed": "成功"
+            case "receiving": "上传中"
+            case "superseded": "已被新上传替代"
+            default: status
+            }
+        }
+    }
+
+    public struct Totals: Decodable, Equatable, Sendable {
+        public var sessions: Int
+        public var turns: Int
+        /// Days this period with at least one turn.
+        public var activeDays: Int
+        /// Calendar days from the period's first day to today (inclusive, capped at the cutoff day).
+        public var elapsedDays: Int
+        public init(sessions: Int, turns: Int, activeDays: Int, elapsedDays: Int) {
+            self.sessions = sessions; self.turns = turns; self.activeDays = activeDays; self.elapsedDays = elapsedDays
+        }
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            sessions = try c.decodeIfPresent(Int.self, forKey: .sessions) ?? 0
+            turns = try c.decodeIfPresent(Int.self, forKey: .turns) ?? 0
+            activeDays = try c.decodeIfPresent(Int.self, forKey: .activeDays) ?? 0
+            elapsedDays = try c.decodeIfPresent(Int.self, forKey: .elapsedDays) ?? 0
+        }
+        private enum Keys: String, CodingKey { case sessions, turns, activeDays, elapsedDays }
+    }
+
+    /// One conversation turn at its own minute: `t` is "YYYY-MM-DDTHH:mm" in team time, `p` the project name.
     public struct ActivityEvent: Decodable, Equatable, Sendable {
         public var t: String
         public var p: String
         public init(t: String, p: String) { self.t = t; self.p = p }
     }
-    public struct Activity: Decodable, Equatable, Sendable {
-        public var timezone: String
+
+    /// 工作投入: the member's turns over the activity window (about 90 days up to now), allowed projects only.
+    public struct History: Decodable, Equatable, Sendable {
+        /// First and last team day of the window, "YYYY-MM-DD".
         public var from: String
         public var to: String
-        public var days: Int
         public var events: [ActivityEvent]
-        public init(timezone: String, from: String, to: String, days: Int, events: [ActivityEvent]) {
-            self.timezone = timezone; self.from = from; self.to = to; self.days = days; self.events = events
-        }
+        public init(from: String = "", to: String = "", events: [ActivityEvent] = []) { self.from = from; self.to = to; self.events = events }
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: Keys.self)
-            timezone = try c.decodeIfPresent(String.self, forKey: .timezone) ?? ""
             from = try c.decodeIfPresent(String.self, forKey: .from) ?? ""
             to = try c.decodeIfPresent(String.self, forKey: .to) ?? ""
-            days = try c.decodeIfPresent(Int.self, forKey: .days) ?? 0
             events = try c.decodeIfPresent([ActivityEvent].self, forKey: .events) ?? []
         }
-        private enum Keys: String, CodingKey { case timezone, from, to, days, events }
+        private enum Keys: String, CodingKey { case from, to, events }
     }
 
-    public var generatedAt: String?
-    public var today: String
+    public var generatedAt: Date?
     public var timezone: String
     public var member: Member
-    public var headline: MemberHeadline
-    public var projects: [MemberProject]
-    public var calendar: CalendarRange
-    public var activity: Activity
+    public var period: Period
+    public var lastUpload: LastUpload?
+    public var totals: Totals
+    public var events: [ActivityEvent]
+    public var projects: [PersonalWeekProject]
+    public var history: History
+    public var owned: [PersonalOwnedProject]
 
-    public init(generatedAt: String? = nil, today: String, timezone: String, member: Member, headline: MemberHeadline, projects: [MemberProject], calendar: CalendarRange, activity: Activity) {
-        self.generatedAt = generatedAt; self.today = today; self.timezone = timezone; self.member = member
-        self.headline = headline; self.projects = projects; self.calendar = calendar; self.activity = activity
+    public init(generatedAt: Date? = nil, timezone: String, member: Member, period: Period, lastUpload: LastUpload?, totals: Totals, events: [ActivityEvent], projects: [PersonalWeekProject], history: History = .init(), owned: [PersonalOwnedProject] = []) {
+        self.generatedAt = generatedAt; self.timezone = timezone; self.member = member; self.period = period
+        self.lastUpload = lastUpload; self.totals = totals; self.events = events; self.projects = projects
+        self.history = history; self.owned = owned
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
-        today = try c.decode(String.self, forKey: .today)
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt).flatMap(Instant.parse)
         timezone = try c.decodeIfPresent(String.self, forKey: .timezone) ?? ""
         member = try c.decode(Member.self, forKey: .member)
-        headline = try c.decode(MemberHeadline.self, forKey: .headline)
-        projects = try c.decodeIfPresent([MemberProject].self, forKey: .projects) ?? []
-        calendar = try c.decode(CalendarRange.self, forKey: .calendar)
-        activity = try c.decodeIfPresent(Activity.self, forKey: .activity) ?? Activity(timezone: timezone, from: "", to: "", days: 0, events: [])
+        period = try c.decode(Period.self, forKey: .period)
+        lastUpload = try c.decodeIfPresent(LastUpload.self, forKey: .lastUpload)
+        totals = try c.decodeIfPresent(Totals.self, forKey: .totals) ?? Totals(sessions: 0, turns: 0, activeDays: 0, elapsedDays: 0)
+        events = try c.decodeIfPresent([ActivityEvent].self, forKey: .events) ?? []
+        projects = try c.decodeIfPresent([PersonalWeekProject].self, forKey: .projects) ?? []
+        history = try c.decodeIfPresent(History.self, forKey: .history) ?? .init()
+        owned = try c.decodeIfPresent([PersonalOwnedProject].self, forKey: .owned) ?? []
     }
-    private enum Keys: String, CodingKey { case generatedAt, today, timezone, member, headline, projects, calendar, activity }
-
-    /// The order of the 项目详细进展 picker: most recently progressed first, as on the Web page.
-    public var projectsByRecency: [MemberProject] {
-        projects.enumerated().sorted { lhs, rhs in
-            let (a, b) = (lhs.element.project.lastProgressDate, rhs.element.project.lastProgressDate)
-            return a == b ? lhs.offset < rhs.offset : a > b
-        }.map(\.element)
-    }
+    private enum Keys: String, CodingKey { case generatedAt, timezone, member, period, lastUpload, totals, events, projects, history, owned }
 }
 
-public struct MemberHeadline: Decodable, Equatable, Sendable {
-    public var projectCount: Int
-    /// Projects that are blocked or stalled.
-    public var attention: Int
-    public var activeDays28: Int
-    /// "YYYY-MM-DD", nil when the member has no activity.
-    public var lastActiveDate: String?
-    public init(projectCount: Int, attention: Int, activeDays28: Int, lastActiveDate: String?) {
-        self.projectCount = projectCount; self.attention = attention; self.activeDays28 = activeDays28; self.lastActiveDate = lastActiveDate
-    }
-}
-
-public enum ProjectState: String, Decodable, Equatable, Sendable {
-    case ok, stalled, blocked
-    public init(from decoder: any Decoder) throws {
-        self = ProjectState(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .ok
-    }
-    /// `stateLabels` in member-overview.ts.
-    public var label: String {
-        switch self {
-        case .ok: "进行中"
-        case .stalled: "停滞"
-        case .blocked: "有卡点"
-        }
-    }
-}
-
-public enum StepState: String, Decodable, Equatable, Sendable {
-    case done, current, todo
-    public init(from decoder: any Decoder) throws {
-        self = StepState(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .todo
-    }
-    /// `roadmapStateLabels` in apps/web/src/project-progress.tsx.
-    public var label: String {
-        switch self {
-        case .done: "已完成"
-        case .current: "进行中"
-        case .todo: "未开始"
-        }
-    }
-}
-
-public struct ProjectStep: Decodable, Equatable, Sendable {
+/// 负责的项目: the leadership page's moving projects (正常推进 or 有卡点), computed live, limited to ones the member still allows.
+public struct PersonalOwnedProject: Decodable, Equatable, Identifiable, Sendable {
     public var name: String
-    public var state: StepState
-    public init(name: String, state: StepState) { self.name = name; self.state = state }
-}
-
-public struct ProfileClaim: Decodable, Equatable, Sendable {
-    public var text: String
-    public init(text: String) { self.text = text }
-}
-
-public struct ProjectProfileNote: Decodable, Equatable, Sendable {
-    public var oneLine: ProfileClaim?
-    public var intro: ProfileClaim?
-    public var features: [ProfileClaim]
-    public var openIssues: [ProfileClaim]
-    public var status: ProfileClaim?
-    public init(oneLine: ProfileClaim? = nil, intro: ProfileClaim? = nil, features: [ProfileClaim] = [], openIssues: [ProfileClaim] = [], status: ProfileClaim? = nil) {
-        self.oneLine = oneLine; self.intro = intro; self.features = features; self.openIssues = openIssues; self.status = status
-    }
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        oneLine = try c.decodeIfPresent(ProfileClaim.self, forKey: .oneLine)
-        intro = try c.decodeIfPresent(ProfileClaim.self, forKey: .intro)
-        features = try c.decodeIfPresent([ProfileClaim].self, forKey: .features) ?? []
-        openIssues = try c.decodeIfPresent([ProfileClaim].self, forKey: .openIssues) ?? []
-        status = try c.decodeIfPresent(ProfileClaim.self, forKey: .status)
-    }
-    private enum Keys: String, CodingKey { case oneLine, intro, features, openIssues, status }
-}
-
-/// The project profile attached to a card; the server sends more keys (id, sessions, …) that the App does not show.
-public struct ProjectProfile: Decodable, Equatable, Sendable {
-    public var note: ProjectProfileNote
-    public init(note: ProjectProfileNote) { self.note = note }
-}
-
-/// One project card on the member's page.
-public struct MemberProject: Decodable, Equatable, Identifiable, Sendable {
-    public var project: ProgressProject
-    public var profile: ProjectProfile?
-    public var steps: [ProjectStep]
-    public var done: Int
-    public var current: ProjectStep?
-    public var blocker: ProjectKeyEvent?
-    public var state: ProjectState
-    /// Days since the project's last activity; nil when it has none.
-    public var idle: Int?
-    public var focus: String
-    public var id: String { project.projectId }
-
-    public init(project: ProgressProject, profile: ProjectProfile? = nil, steps: [ProjectStep] = [], done: Int = 0, current: ProjectStep? = nil, blocker: ProjectKeyEvent? = nil, state: ProjectState = .ok, idle: Int? = nil, focus: String = "") {
-        self.project = project; self.profile = profile; self.steps = steps; self.done = done; self.current = current
-        self.blocker = blocker; self.state = state; self.idle = idle; self.focus = focus
-    }
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        project = try c.decode(ProgressProject.self, forKey: .project)
-        profile = try c.decodeIfPresent(ProjectProfile.self, forKey: .profile)
-        steps = try c.decodeIfPresent([ProjectStep].self, forKey: .steps) ?? []
-        done = try c.decodeIfPresent(Int.self, forKey: .done) ?? 0
-        current = try c.decodeIfPresent(ProjectStep.self, forKey: .current)
-        blocker = try c.decodeIfPresent(ProjectKeyEvent.self, forKey: .blocker)
-        state = try c.decodeIfPresent(ProjectState.self, forKey: .state) ?? .ok
-        idle = try c.decodeIfPresent(Int.self, forKey: .idle)
-        focus = try c.decodeIfPresent(String.self, forKey: .focus) ?? ""
-    }
-    private enum Keys: String, CodingKey { case project, profile, steps, done, current, blocker, state, idle, focus }
-}
-
-public struct ProgressEvent: Decodable, Equatable, Sendable {
-    public var date: String
-    /// start, pause, resume, complete, reopen or milestone; kept as sent so a new type still shows.
-    public var type: String
-    public var reason: String
-    public init(date: String, type: String, reason: String = "") { self.date = date; self.type = type; self.reason = reason }
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        date = try c.decode(String.self, forKey: .date)
-        type = try c.decode(String.self, forKey: .type)
-        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
-    }
-    private enum Keys: String, CodingKey { case date, type, reason }
-    /// `progressEventLabels` in packages/contracts/src/project-progress.ts.
-    public var label: String {
-        ["start": "开始", "pause": "暂停", "resume": "恢复", "complete": "完成", "reopen": "重新开启", "milestone": "里程碑"][type] ?? type
-    }
-}
-
-public struct ProgressDayEntry: Decodable, Equatable, Identifiable, Sendable {
-    public var id: String
-    public var summary: String
-    public init(id: String, summary: String) { self.id = id; self.summary = summary }
-}
-
-public struct ProgressDay: Decodable, Equatable, Sendable {
-    public var date: String
-    public var entries: [ProgressDayEntry]
-    public init(date: String, entries: [ProgressDayEntry]) { self.date = date; self.entries = entries }
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        date = try c.decode(String.self, forKey: .date)
-        entries = try c.decodeIfPresent([ProgressDayEntry].self, forKey: .entries) ?? []
-    }
-    private enum Keys: String, CodingKey { case date, entries }
-}
-
-public struct ProjectKeyEvent: Decodable, Equatable, Identifiable, Sendable {
-    public var date: String
-    /// goal_change, milestone, decision, blocker or stage_change.
-    public var type: String
-    public var title: String
-    public var detail: String
-    /// The roadmap stage the event belongs to.
-    public var step: String?
-    public var id: String { "\(date)|\(type)|\(title)|\(detail)" }
-    public init(date: String, type: String, title: String, detail: String = "", step: String? = nil) {
-        self.date = date; self.type = type; self.title = title; self.detail = detail; self.step = step
-    }
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        date = try c.decode(String.self, forKey: .date)
-        type = try c.decode(String.self, forKey: .type)
-        title = try c.decode(String.self, forKey: .title)
-        detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
-        step = try c.decodeIfPresent(String.self, forKey: .step)
-    }
-    private enum Keys: String, CodingKey { case date, type, title, detail, step }
-    /// `keyEventTypeLabels` in apps/web/src/project-progress.tsx.
-    public var typeLabel: String {
-        ["goal_change": "目标调整", "milestone": "里程碑", "decision": "重要决定", "blocker": "问题阻塞", "stage_change": "阶段切换"][type] ?? type
-    }
-}
-
-public struct ProjectOutlook: Decodable, Equatable, Sendable {
-    public var goal: String
-    public var roadmap: [ProjectStep]
-    public var position: String
-    public init(goal: String, roadmap: [ProjectStep], position: String = "") { self.goal = goal; self.roadmap = roadmap; self.position = position }
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        goal = try c.decodeIfPresent(String.self, forKey: .goal) ?? ""
-        roadmap = try c.decodeIfPresent([ProjectStep].self, forKey: .roadmap) ?? []
-        position = try c.decodeIfPresent(String.self, forKey: .position) ?? ""
-    }
-    private enum Keys: String, CodingKey { case goal, roadmap, position }
-}
-
-public struct ProgressProject: Decodable, Equatable, Identifiable, Sendable {
-    public struct Focus: Decodable, Equatable, Sendable {
-        public var text: String
-        public init(text: String) { self.text = text }
-    }
-    public struct Latest: Decodable, Equatable, Sendable {
-        public var date: String
-        public var summary: String
-        public init(date: String, summary: String) { self.date = date; self.summary = summary }
-    }
-    public var partnerId: String
-    public var projectId: String
-    public var projectName: String
-    public var projectDescription: String?
-    public var events: [ProgressEvent]
-    /// Only the calendar month the request asked for.
-    public var days: [ProgressDay]
+    public var oneLine: String?
+    /// The newest approved work card's focus, else the profile's status.
+    public var focus: String?
+    public var intro: String?
     public var contributionDays: Int
-    public var undatedCount: Int
-    public var currentFocus: Focus?
-    public var outlook: ProjectOutlook?
-    public var keyEvents: [ProjectKeyEvent]
-    public var latestProgress: Latest?
-    public var id: String { projectId }
-
-    public init(partnerId: String = "", projectId: String, projectName: String, projectDescription: String? = nil, events: [ProgressEvent] = [], days: [ProgressDay] = [], contributionDays: Int = 0, undatedCount: Int = 0, currentFocus: Focus? = nil, outlook: ProjectOutlook? = nil, keyEvents: [ProjectKeyEvent] = [], latestProgress: Latest? = nil) {
-        self.partnerId = partnerId; self.projectId = projectId; self.projectName = projectName; self.projectDescription = projectDescription
-        self.events = events; self.days = days; self.contributionDays = contributionDays; self.undatedCount = undatedCount
-        self.currentFocus = currentFocus; self.outlook = outlook; self.keyEvents = keyEvents; self.latestProgress = latestProgress
+    public var features: [String]
+    public var openIssues: [String]
+    public var id: String { name }
+    public init(name: String, oneLine: String? = nil, focus: String? = nil, intro: String? = nil, contributionDays: Int = 0, features: [String] = [], openIssues: [String] = []) {
+        self.name = name; self.oneLine = oneLine; self.focus = focus; self.intro = intro
+        self.contributionDays = contributionDays; self.features = features; self.openIssues = openIssues
     }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        partnerId = try c.decodeIfPresent(String.self, forKey: .partnerId) ?? ""
-        projectId = try c.decode(String.self, forKey: .projectId)
-        projectName = try c.decode(String.self, forKey: .projectName)
-        projectDescription = try c.decodeIfPresent(String.self, forKey: .projectDescription)
-        events = try c.decodeIfPresent([ProgressEvent].self, forKey: .events) ?? []
-        days = try c.decodeIfPresent([ProgressDay].self, forKey: .days) ?? []
+        name = try c.decode(String.self, forKey: .name)
+        oneLine = try c.decodeIfPresent(String.self, forKey: .oneLine)
+        focus = try c.decodeIfPresent(String.self, forKey: .focus)
+        intro = try c.decodeIfPresent(String.self, forKey: .intro)
         contributionDays = try c.decodeIfPresent(Int.self, forKey: .contributionDays) ?? 0
-        undatedCount = try c.decodeIfPresent(Int.self, forKey: .undatedCount) ?? 0
-        currentFocus = try c.decodeIfPresent(Focus.self, forKey: .currentFocus)
-        outlook = try c.decodeIfPresent(ProjectOutlook.self, forKey: .outlook)
-        keyEvents = try c.decodeIfPresent([ProjectKeyEvent].self, forKey: .keyEvents) ?? []
-        latestProgress = try c.decodeIfPresent(Latest.self, forKey: .latestProgress)
+        features = try c.decodeIfPresent([String].self, forKey: .features) ?? []
+        openIssues = try c.decodeIfPresent([String].self, forKey: .openIssues) ?? []
     }
-    private enum Keys: String, CodingKey {
-        case partnerId, projectId, projectName, projectDescription, events, days, contributionDays, undatedCount
-        case currentFocus, outlook, keyEvents, latestProgress
-    }
+    private enum Keys: String, CodingKey { case name, oneLine, focus, intro, contributionDays, features, openIssues }
+}
 
-    /// The latest reviewed entry's date, else the last lifecycle event's; empty when there is neither.
-    public var lastProgressDate: String { latestProgress?.date ?? events.last?.date ?? "" }
-    /// 当前重点: the reviewed focus, else the latest reviewed entry, else a fixed sentence (as on the Web page).
-    public var focusText: String {
-        for text in [currentFocus?.text, latestProgress?.summary] {
-            if let text, !text.isEmpty { return text }
-        }
-        return "暂无已审核的工作进展。"
+/// A list of at most a few shown items plus how many the project has in all.
+public struct PersonalWeekItems: Decodable, Equatable, Sendable {
+    public var items: [String]
+    public var total: Int
+    public init(items: [String] = [], total: Int = 0) { self.items = items; self.total = total }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        items = try c.decodeIfPresent([String].self, forKey: .items) ?? []
+        total = try c.decodeIfPresent(Int.self, forKey: .total) ?? items.count
     }
-    /// What happened on `date` (YYYY-MM-DD): the day's entries and the lifecycle events recorded for it.
-    public func activity(on date: String) -> (entries: [ProgressDayEntry], events: [ProgressEvent]) {
-        (days.first { $0.date == date }?.entries ?? [], events.filter { $0.date == date })
+    private enum Keys: String, CodingKey { case items, total }
+    /// Items the project has beyond the ones shown.
+    public var hidden: Int { max(0, total - items.count) }
+}
+
+/// One project card of the week.
+public struct PersonalWeekProject: Decodable, Equatable, Identifiable, Sendable {
+    public var name: String
+    public var oneLine: String?
+    public var sessions: Int
+    public var turns: Int
+    /// The last turn this period, "YYYY-MM-DDTHH:mm" in team time.
+    public var lastAt: String?
+    /// The last activity ever, "YYYY-MM-DD"; shown when the project has no session this week.
+    public var lastActiveDate: String?
+    public var outcomes: PersonalWeekItems
+    public var decisions: PersonalWeekItems
+    public var problems: PersonalWeekItems
+    public var id: String { name }
+    /// A project with neither a kept session nor turns this week gets the grey "还没有会话" card. Turns without a session
+    /// are real: the upload has not been analysed yet, so the card shows its stats with empty groups.
+    public var hasActivity: Bool { sessions > 0 || turns > 0 }
+
+    public init(name: String, oneLine: String? = nil, sessions: Int = 0, turns: Int = 0, lastAt: String? = nil, lastActiveDate: String? = nil, outcomes: PersonalWeekItems = .init(), decisions: PersonalWeekItems = .init(), problems: PersonalWeekItems = .init()) {
+        self.name = name; self.oneLine = oneLine; self.sessions = sessions; self.turns = turns; self.lastAt = lastAt
+        self.lastActiveDate = lastActiveDate; self.outcomes = outcomes; self.decisions = decisions; self.problems = problems
+    }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        name = try c.decode(String.self, forKey: .name)
+        oneLine = try c.decodeIfPresent(String.self, forKey: .oneLine)
+        sessions = try c.decodeIfPresent(Int.self, forKey: .sessions) ?? 0
+        turns = try c.decodeIfPresent(Int.self, forKey: .turns) ?? 0
+        lastAt = try c.decodeIfPresent(String.self, forKey: .lastAt)
+        lastActiveDate = try c.decodeIfPresent(String.self, forKey: .lastActiveDate)
+        outcomes = try c.decodeIfPresent(PersonalWeekItems.self, forKey: .outcomes) ?? .init()
+        decisions = try c.decodeIfPresent(PersonalWeekItems.self, forKey: .decisions) ?? .init()
+        problems = try c.decodeIfPresent(PersonalWeekItems.self, forKey: .problems) ?? .init()
+    }
+    private enum Keys: String, CodingKey { case name, oneLine, sessions, turns, lastAt, lastActiveDate, outcomes, decisions, problems }
+}
+
+/// ISO 8601 instants as the server writes them (`2026-11-20T08:00:00.000Z`), with or without fractional seconds.
+enum Instant {
+    static func parse(_ value: String) -> Date? {
+        (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            ?? (try? Date(value, strategy: Date.ISO8601FormatStyle()))
+    }
+    static func decode<K: CodingKey>(_ container: KeyedDecodingContainer<K>, _ key: K) throws -> Date {
+        let value = try container.decode(String.self, forKey: key)
+        guard let date = parse(value) else {
+            throw DecodingError.dataCorruptedError(forKey: key, in: container, debugDescription: "Not an ISO 8601 instant: \(value)")
+        }
+        return date
     }
 }

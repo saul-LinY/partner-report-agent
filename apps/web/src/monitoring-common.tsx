@@ -150,6 +150,7 @@ const agentLabels: Record<string, string> = {
   omp: "OMP",
   grokbuild: "Grok Build",
   agy: "AGY",
+  deepseek: "DeepSeek",
 };
 
 export const jobTypeMeta: Record<string, { label: string; stage: string }> = {

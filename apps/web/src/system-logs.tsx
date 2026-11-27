@@ -1129,11 +1129,7 @@ export function SystemLogsPage() {
 
   return (
     <div className="page admin-page monitoring-page">
-      <WorkspaceHeader
-        title="系统日志"
-        icon={ServerCog}
-        context="查看中台模块健康、Worker 心跳、后台任务运行记录与模型分析"
-      >
+      <WorkspaceHeader title="系统日志">
         <div className="sm-refresh-time">
           <span className={`sm-live-dot ${autoRefresh ? "" : "is-paused"}`} />
           <span>
